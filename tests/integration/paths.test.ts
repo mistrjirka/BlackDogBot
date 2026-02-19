@@ -24,6 +24,7 @@ import {
   getNodeTestFilePath,
   getCronFilePath,
   getPromptFilePath,
+  getWorkspaceDir,
   ensureDirectoryExistsAsync,
   ensureAllDirectoriesAsync,
 } from "../../src/utils/paths.js";
@@ -119,6 +120,13 @@ describe("paths utility", () => {
     expect(getPromptFragmentsDir()).toContain("prompt-fragments");
   });
 
+  it("should return workspace directory under base dir", () => {
+    const workspaceDir: string = getWorkspaceDir();
+
+    expect(workspaceDir).toContain("workspace");
+    expect(workspaceDir.startsWith(getBaseDir())).toBe(true);
+  });
+
   it("should return skill-specific paths", () => {
     const skillDir: string = getSkillDir("my-skill");
     const skillFilePath: string = getSkillFilePath("my-skill");
@@ -166,8 +174,9 @@ describe("paths utility", () => {
     const cronDir: string = getCronDir();
     const logsDir: string = getLogsDir();
     const promptsDir: string = getPromptsDir();
+    const workspaceDir: string = getWorkspaceDir();
 
-    for (const dir of [base, skillsDir, cronDir, logsDir, promptsDir]) {
+    for (const dir of [base, skillsDir, cronDir, logsDir, promptsDir, workspaceDir]) {
       const stat = await fs.stat(dir);
 
       expect(stat.isDirectory()).toBe(true);

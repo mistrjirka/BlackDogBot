@@ -482,6 +482,71 @@ export const listCronsToolOutputSchema = z.object({
 
 //#endregion Cron Tools
 
+//#region File Tools
+
+export const readFileToolInputSchema = z.object({
+  filePath: z.string()
+    .default("")
+    .describe("Path to the file. Use just a filename (e.g. 'notes.txt') for the default workspace directory. Only specify a full absolute path when you need to access files outside the workspace. For most tasks, do NOT specify a path — just use the filename."),
+});
+
+export const readFileToolOutputSchema = z.object({
+  success: z.boolean(),
+  content: z.string()
+    .optional(),
+  message: z.string(),
+});
+
+export const writeFileToolInputSchema = z.object({
+  filePath: z.string()
+    .default("")
+    .describe("Path to the file. Use just a filename (e.g. 'notes.txt') for the default workspace directory. Only specify a full absolute path when you need to access files outside the workspace. For most tasks, do NOT specify a path — just use the filename."),
+  content: z.string()
+    .describe("Content to write to the file"),
+});
+
+export const writeFileToolOutputSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+});
+
+export const appendFileToolInputSchema = z.object({
+  filePath: z.string()
+    .default("")
+    .describe("Path to the file. Use just a filename (e.g. 'notes.txt') for the default workspace directory. Only specify a full absolute path when you need to access files outside the workspace. For most tasks, do NOT specify a path — just use the filename."),
+  content: z.string()
+    .min(1)
+    .describe("Content to append to the file"),
+});
+
+export const appendFileToolOutputSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+});
+
+export const editFileToolInputSchema = z.object({
+  filePath: z.string()
+    .default("")
+    .describe("Path to the file. Use just a filename (e.g. 'notes.txt') for the default workspace directory. Only specify a full absolute path when you need to access files outside the workspace. For most tasks, do NOT specify a path — just use the filename."),
+  oldString: z.string()
+    .min(1)
+    .describe("The exact string to find in the file"),
+  newString: z.string()
+    .describe("The replacement string"),
+  replaceAll: z.boolean()
+    .default(false)
+    .describe("Replace all occurrences (default: first occurrence only)"),
+});
+
+export const editFileToolOutputSchema = z.object({
+  success: z.boolean(),
+  replacements: z.number()
+    .optional(),
+  message: z.string(),
+});
+
+//#endregion File Tools
+
 //#region Prompt Tools
 
 export const modifyPromptToolInputSchema = z.object({

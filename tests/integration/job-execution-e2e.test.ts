@@ -42,38 +42,17 @@ describe("Job Execution E2E", () => {
 
     resetSingletons();
 
-    // Create required directories
-    const baseDir: string = path.join(tempDir, ".betterclaw");
+    // Copy real config and append Docker service URLs
+    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const configPath: string = path.join(tempConfigDir, "config.yaml");
 
-    await fs.mkdir(baseDir, { recursive: true });
+    await fs.mkdir(tempConfigDir, { recursive: true });
 
-    // Write a config file with real OpenRouter credentials and Docker service URLs
-    const configPath: string = path.join(baseDir, "config.yaml");
-    const configYaml: string = `
-ai:
-  provider: openrouter
-  openrouter:
-    apiKey: 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
-    model: minimax/minimax-m2.5
-    rateLimits:
-      rpm: 60
-      tpm: 100000
-scheduler:
-  enabled: false
-  notificationChatId: null
-knowledge:
-  embeddingModelPath: Xenova/bge-m3
-  lancedbPath: ~/.betterclaw/knowledge/lancedb
-skills:
-  directories: []
-logging:
-  level: info
-services:
-  searxngUrl: http://localhost:18731
-  crawl4aiUrl: http://localhost:18732
-`;
+    const realConfigContent: string = await fs.readFile(realConfigPath, "utf-8");
+    const servicesSection: string = `\nservices:\n  searxngUrl: http://localhost:18731\n  crawl4aiUrl: http://localhost:18732\n`;
 
-    await writeConfigAsync(configPath, configYaml);
+    await writeConfigAsync(configPath, realConfigContent + servicesSection);
 
     // Initialize all required services
     const loggerService: LoggerService = LoggerService.getInstance();

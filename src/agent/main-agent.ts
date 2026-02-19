@@ -31,6 +31,11 @@ import {
   removeCronTool,
   listCronsTool,
   createRenderGraphTool,
+  createReadFileTool,
+  createWriteFileTool,
+  appendFileTool,
+  editFileTool,
+  FileReadTracker,
   type MessageSender,
   type PhotoSender,
 } from "../tools/index.js";
@@ -78,6 +83,8 @@ export class MainAgent extends BaseAgentBase {
     const model: LanguageModel = aiProviderService.getModel();
     const instructions: string = await buildMainAgentPromptAsync();
 
+    const readTracker: FileReadTracker = new FileReadTracker();
+
     const tools: ToolSet = {
       think: thinkTool,
       run_cmd: runCmdTool,
@@ -87,6 +94,10 @@ export class MainAgent extends BaseAgentBase {
       add_knowledge: addKnowledgeTool,
       edit_knowledge: editKnowledgeTool,
       send_message: createSendMessageTool(messageSender),
+      read_file: createReadFileTool(readTracker),
+      write_file: createWriteFileTool(readTracker),
+      append_file: appendFileTool,
+      edit_file: editFileTool,
       add_job: addJobTool,
       edit_job: editJobTool,
       remove_job: removeJobTool,

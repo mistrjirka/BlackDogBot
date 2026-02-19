@@ -19,6 +19,7 @@ export const LANCEDB_DIR: string = "lancedb";
 export const CRON_DIR: string = "cron";
 export const LOGS_DIR: string = "logs";
 export const PROMPTS_DIR: string = "prompts";
+export const WORKSPACE_DIR: string = "workspace";
 export const PROMPT_FRAGMENTS_DIR: string = "prompt-fragments";
 export const DEFAULTS_DIR: string = "defaults";
 
