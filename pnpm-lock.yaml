@@ -29,6 +29,9 @@ importers:
       bottleneck:
         specifier: ^2.19.0
         version: 2.19.5
+      dotenv:
+        specifier: ^17.3.1
+        version: 17.3.1
       grammy:
         specifier: ^1.35.0
         version: 1.40.0
@@ -892,6 +895,10 @@ packages:
 
   detect-node@2.1.0:
     resolution: {integrity: sha512-T0NIuQpnTvFDATNuHN5roPwSBG83rFsuO+MXXH9/3N1eFbn4wcPjttvjMLEPWJ0RGUYgQE7cGgS3tNxbqCGM7g==}
+
+  dotenv@17.3.1:
+    resolution: {integrity: sha512-IO8C/dzEb6O3F9/twg6ZLXz164a2fhTnEWb95H23Dm4OuN+92NmEAlTrupP9VW6Jm3sO26tQlqyvyi4CsnY9GA==}
+    engines: {node: '>=12'}
 
   eastasianwidth@0.2.0:
     resolution: {integrity: sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA==}
@@ -2133,6 +2140,8 @@ snapshots:
   detect-libc@2.1.2: {}
 
   detect-node@2.1.0: {}
+
+  dotenv@17.3.1: {}
 
   eastasianwidth@0.2.0: {}
 

@@ -1,3 +1,4 @@
+import "./env.js";
 import { ConfigService } from "./services/config.service.js";
 import { LoggerService } from "./services/logger.service.js";
 import { AiProviderService } from "./services/ai-provider.service.js";

@@ -87,6 +87,22 @@ Expected output structure with JSON schema descriptions and examples.
 8. **Match input/output schemas** — ensure the system prompt guides the agent
    to produce output that exactly matches the node's output JSON schema.
 
+## maxSteps
+
+`maxSteps` controls how many LLM→tool→LLM cycles the agent is allowed
+before it is forcibly stopped. Always set it explicitly — do not rely on
+the default.
+
+| Situation | Recommended value |
+|---|---|
+| Simple, focused task (1-3 tools) | 15–20 |
+| General-purpose agent with several tools | 50 |
+| Agent with 5+ tools or complex multi-step work | 50+ |
+
+**50 is the recommended safe default.** Setting it too low is a common
+source of incomplete results — the agent simply stops mid-task. It is
+almost always better to allow more steps than too few.
+
 ## Tool Selection
 
 When creating an agent node, select from these available tools:

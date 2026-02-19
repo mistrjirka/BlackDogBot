@@ -89,6 +89,8 @@ export const searxngConfigSchema = z.object({
     .describe("Maximum results to return"),
 });
 
+export const rssFetchModeSchema = z.enum(["latest", "unseen"]);
+
 export const rssFetcherConfigSchema = z.object({
   url: z.string()
     .url()
@@ -98,6 +100,9 @@ export const rssFetcherConfigSchema = z.object({
     .positive()
     .default(20)
     .describe("Maximum number of items to return"),
+  mode: rssFetchModeSchema
+    .default("latest")
+    .describe("Fetch mode: 'latest' returns newest N items, 'unseen' returns only items not seen in previous fetches"),
 });
 
 export const pythonCodeConfigSchema = z.object({
@@ -129,6 +134,7 @@ export const nodeConfigSchema = z.union([
   curlFetcherConfigSchema,
   crawl4AiConfigSchema,
   searxngConfigSchema,
+  rssFetcherConfigSchema,
   pythonCodeConfigSchema,
   outputToAiConfigSchema,
   z.object({}).strict(),

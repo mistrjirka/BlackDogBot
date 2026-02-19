@@ -25,6 +25,8 @@ import {
   getCronFilePath,
   getPromptFilePath,
   getWorkspaceDir,
+  getRssStateDir,
+  getRssStateFilePath,
   ensureDirectoryExistsAsync,
   ensureAllDirectoriesAsync,
 } from "../../src/utils/paths.js";
@@ -127,6 +129,29 @@ describe("paths utility", () => {
     expect(workspaceDir.startsWith(getBaseDir())).toBe(true);
   });
 
+  it("should return rss-state directory under base dir", () => {
+    const rssStateDir: string = getRssStateDir();
+
+    expect(rssStateDir).toContain("rss-state");
+    expect(rssStateDir.startsWith(getBaseDir())).toBe(true);
+  });
+
+  it("should return rss-state file path as SHA-256 hash of URL", () => {
+    const feedUrl: string = "https://example.com/feed.xml";
+    const filePath: string = getRssStateFilePath(feedUrl);
+
+    expect(filePath.startsWith(getRssStateDir())).toBe(true);
+    expect(filePath).toMatch(/[a-f0-9]{64}\.json$/);
+
+    // Same URL should produce the same path
+    const filePath2: string = getRssStateFilePath(feedUrl);
+    expect(filePath).toBe(filePath2);
+
+    // Different URL should produce a different path
+    const filePath3: string = getRssStateFilePath("https://example.com/other.xml");
+    expect(filePath3).not.toBe(filePath);
+  });
+
   it("should return skill-specific paths", () => {
     const skillDir: string = getSkillDir("my-skill");
     const skillFilePath: string = getSkillFilePath("my-skill");
@@ -175,8 +200,9 @@ describe("paths utility", () => {
     const logsDir: string = getLogsDir();
     const promptsDir: string = getPromptsDir();
     const workspaceDir: string = getWorkspaceDir();
+    const rssStateDir: string = getRssStateDir();
 
-    for (const dir of [base, skillsDir, cronDir, logsDir, promptsDir, workspaceDir]) {
+    for (const dir of [base, skillsDir, cronDir, logsDir, promptsDir, workspaceDir, rssStateDir]) {
       const stat = await fs.stat(dir);
 
       expect(stat.isDirectory()).toBe(true);

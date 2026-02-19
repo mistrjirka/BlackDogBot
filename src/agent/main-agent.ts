@@ -2,7 +2,8 @@ import { ToolSet, LanguageModel, type ModelMessage } from "ai";
 
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { buildMainAgentPromptAsync } from "./system-prompt.js";
-import { BaseAgentBase, type IAgentResult } from "./base-agent.js";
+import { BaseAgentBase, type IAgentResult, type OnStepCallback } from "./base-agent.js";
+import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import {
   thinkTool,
   runCmdTool,
@@ -62,7 +63,9 @@ export class MainAgent extends BaseAgentBase {
   //#region Constructors
 
   private constructor() {
-    super();
+    const rawSteps: number = parseInt(process.env.BETTERCLAW_MAIN_AGENT_MAX_STEPS ?? "", 10);
+
+    super({ maxSteps: isNaN(rawSteps) ? DEFAULT_AGENT_MAX_STEPS : rawSteps });
     this._sessions = new Map<string, IChatSession>();
   }
 
@@ -78,7 +81,12 @@ export class MainAgent extends BaseAgentBase {
     return MainAgent._instance;
   }
 
-  public async initializeForChatAsync(chatId: string, messageSender: MessageSender, photoSender: PhotoSender): Promise<void> {
+  public async initializeForChatAsync(
+    chatId: string,
+    messageSender: MessageSender,
+    photoSender: PhotoSender,
+    onStepAsync?: OnStepCallback,
+  ): Promise<void> {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model: LanguageModel = aiProviderService.getModel();
     const instructions: string = await buildMainAgentPromptAsync();
@@ -119,7 +127,7 @@ export class MainAgent extends BaseAgentBase {
       render_graph: createRenderGraphTool(photoSender),
     };
 
-    this._buildAgent(model, instructions, tools);
+    this._buildAgent(model, instructions, tools, onStepAsync);
 
     // Create session for this chat if it doesn't exist
     if (!this._sessions.has(chatId)) {
@@ -166,8 +174,26 @@ export class MainAgent extends BaseAgentBase {
 
     this._logger.debug("Agent response generated", { chatId, stepsCount, historyLength: session.messages.length });
 
+    // If the model produced no text (e.g. was forced to call done at maxSteps without
+    // having called send_message), fall back to the done tool's summary so the user
+    // always receives a reply.
+    let text: string = result.text ?? "";
+
+    if (!text && result.steps) {
+      interface IToolCallLike { toolName: string; input: Record<string, unknown>; }
+      interface IStepLike { toolCalls?: IToolCallLike[]; }
+
+      const doneCall: IToolCallLike | undefined = (result.steps as IStepLike[])
+        .flatMap((s: IStepLike): IToolCallLike[] => s.toolCalls ?? [])
+        .find((tc: IToolCallLike): boolean => tc.toolName === "done");
+
+      if (doneCall && typeof doneCall.input?.summary === "string") {
+        text = doneCall.input.summary;
+      }
+    }
+
     return {
-      text: result.text ?? "",
+      text,
       stepsCount,
     };
   }

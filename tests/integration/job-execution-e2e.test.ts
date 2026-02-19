@@ -9,6 +9,7 @@ import { AiProviderService } from "../../src/services/ai-provider.service.js";
 import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
 import { JobStorageService } from "../../src/services/job-storage.service.js";
 import { JobExecutorService } from "../../src/services/job-executor.service.js";
+import { RssStateService } from "../../src/services/rss-state.service.js";
 import type { IJob, INode } from "../../src/shared/types/index.js";
 
 //#region Helpers
@@ -23,6 +24,7 @@ function resetSingletons(): void {
   (RateLimiterService as unknown as { _instance: null })._instance = null;
   (JobStorageService as unknown as { _instance: null })._instance = null;
   (JobExecutorService as unknown as { _instance: null })._instance = null;
+  (RssStateService as unknown as { _instance: null })._instance = null;
 }
 
 async function writeConfigAsync(configPath: string, content: string): Promise<void> {
@@ -649,6 +651,7 @@ describe("Job Execution E2E", () => {
       {
         url: "https://news.ycombinator.com/rss",
         maxItems: 5,
+        mode: "latest",
       },
     );
 
@@ -709,6 +712,7 @@ describe("Job Execution E2E", () => {
       {
         url: "{{feedUrl}}",
         maxItems: 3,
+        mode: "latest",
       },
     );
 
@@ -728,6 +732,207 @@ describe("Job Execution E2E", () => {
 
     expect((output.items as unknown[]).length).toBeLessThanOrEqual(3);
     expect(output.feedUrl).toBe("https://news.ycombinator.com/rss");
+  }, 30000);
+
+  it("should return mode field in output for latest mode", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+
+    const job: IJob = await storageService.createJobAsync("RSS Mode Field Job", "");
+    const inputSchema: Record<string, unknown> = { type: "object", properties: {} };
+    const outputSchema: Record<string, unknown> = { type: "object", properties: { items: { type: "array" }, mode: { type: "string" } }, required: ["items", "mode"] };
+
+    const node: INode = await storageService.addNodeAsync(
+      job.jobId, "rss_fetcher", "RSS Node", "",
+      inputSchema, outputSchema,
+      { url: "https://itsfoss.com/feed", maxItems: 3, mode: "latest" },
+    );
+
+    await storageService.updateJobAsync(job.jobId, { entrypointNodeId: node.nodeId, status: "ready" });
+
+    const result = await executorService.executeJobAsync(job.jobId, {});
+
+    expect(result.success).toBe(true);
+
+    const output: Record<string, unknown> = result.output as Record<string, unknown>;
+
+    expect(output.mode).toBe("latest");
+    expect(Array.isArray(output.items)).toBe(true);
+    expect((output.items as unknown[]).length).toBeLessThanOrEqual(3);
+    expect(output.unseenCount).toBeUndefined();
+  }, 30000);
+
+  it("should parse an Atom feed (The Verge) and return items", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+
+    const job: IJob = await storageService.createJobAsync("Atom Feed Job", "Parses an Atom feed");
+    const inputSchema: Record<string, unknown> = { type: "object", properties: {} };
+    const outputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        items: { type: "array" },
+        feedUrl: { type: "string" },
+        mode: { type: "string" },
+      },
+      required: ["items", "feedUrl"],
+    };
+
+    const node: INode = await storageService.addNodeAsync(
+      job.jobId, "rss_fetcher", "Atom Node", "The Verge Atom feed",
+      inputSchema, outputSchema,
+      { url: "https://www.theverge.com/rss/index.xml", maxItems: 5, mode: "latest" },
+    );
+
+    await storageService.updateJobAsync(job.jobId, { entrypointNodeId: node.nodeId, status: "ready" });
+
+    const result = await executorService.executeJobAsync(job.jobId, {});
+
+    expect(result.success).toBe(true);
+
+    const output: Record<string, unknown> = result.output as Record<string, unknown>;
+
+    expect(Array.isArray(output.items)).toBe(true);
+    expect((output.items as unknown[]).length).toBeGreaterThan(0);
+    expect((output.items as unknown[]).length).toBeLessThanOrEqual(5);
+    expect(output.mode).toBe("latest");
+
+    // Each entry should have an id (Atom) and a link
+    const firstItem: Record<string, unknown> = (output.items as Record<string, unknown>[])[0];
+
+    expect(firstItem.id ?? firstItem.link).toBeDefined();
+  }, 30000);
+
+  it("should execute unseen mode: first fetch returns items, second fetch returns empty", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+    const rssStateService: RssStateService = RssStateService.getInstance();
+
+    const feedUrl: string = "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml";
+
+    // Ensure no leftover state from a previous run
+    const stateFilePath: string = (await import("../../src/utils/paths.js")).getRssStateFilePath(feedUrl);
+
+    try {
+      await fs.rm(stateFilePath);
+    } catch {
+      // File may not exist, that's fine
+    }
+
+    // --- First fetch ---
+    const job1: IJob = await storageService.createJobAsync("RSS Unseen First Fetch", "");
+    const schema: Record<string, unknown> = { type: "object", properties: {} };
+
+    const node1: INode = await storageService.addNodeAsync(
+      job1.jobId, "rss_fetcher", "RSS Node", "",
+      schema, schema,
+      { url: feedUrl, maxItems: 50, mode: "unseen" },
+    );
+
+    await storageService.updateJobAsync(job1.jobId, { entrypointNodeId: node1.nodeId, status: "ready" });
+
+    const result1 = await executorService.executeJobAsync(job1.jobId, {});
+
+    expect(result1.success).toBe(true);
+
+    const output1: Record<string, unknown> = result1.output as Record<string, unknown>;
+
+    expect(output1.mode).toBe("unseen");
+    expect(typeof output1.unseenCount).toBe("number");
+    expect(Array.isArray(output1.items)).toBe(true);
+    // First fetch with no prior state — items should be the feed items
+    expect((output1.items as unknown[]).length).toBeGreaterThan(0);
+
+    // State file must have been created
+    const state = await rssStateService.loadStateAsync(feedUrl);
+
+    expect(state).not.toBeNull();
+    expect(state!.seenIds.length).toBeGreaterThan(0);
+    expect(state!.feedUrl).toBe(feedUrl);
+
+    // --- Second fetch ---
+    const job2: IJob = await storageService.createJobAsync("RSS Unseen Second Fetch", "");
+
+    const node2: INode = await storageService.addNodeAsync(
+      job2.jobId, "rss_fetcher", "RSS Node", "",
+      schema, schema,
+      { url: feedUrl, maxItems: 50, mode: "unseen" },
+    );
+
+    await storageService.updateJobAsync(job2.jobId, { entrypointNodeId: node2.nodeId, status: "ready" });
+
+    const result2 = await executorService.executeJobAsync(job2.jobId, {});
+
+    expect(result2.success).toBe(true);
+
+    const output2: Record<string, unknown> = result2.output as Record<string, unknown>;
+
+    expect(output2.mode).toBe("unseen");
+    // Second fetch with all items already seen — should return zero items
+    expect((output2.items as unknown[]).length).toBe(0);
+    expect(output2.unseenCount).toBe(0);
+
+    // Cleanup
+    try {
+      await fs.rm(stateFilePath);
+    } catch {
+      // ignore
+    }
+  }, 60000);
+
+  it("should unseen mode: maxItems caps returned items even when more are unseen", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+    const rssStateService: RssStateService = RssStateService.getInstance();
+
+    const feedUrl: string = "https://itsfoss.com/feed";
+
+    // Ensure clean state
+    const stateFilePath: string = (await import("../../src/utils/paths.js")).getRssStateFilePath(feedUrl);
+
+    try {
+      await fs.rm(stateFilePath);
+    } catch {
+      // File may not exist
+    }
+
+    const job: IJob = await storageService.createJobAsync("RSS Unseen Cap Job", "");
+    const schema: Record<string, unknown> = { type: "object", properties: {} };
+    const cap: number = 2;
+
+    const node: INode = await storageService.addNodeAsync(
+      job.jobId, "rss_fetcher", "RSS Node", "",
+      schema, schema,
+      { url: feedUrl, maxItems: cap, mode: "unseen" },
+    );
+
+    await storageService.updateJobAsync(job.jobId, { entrypointNodeId: node.nodeId, status: "ready" });
+
+    const result = await executorService.executeJobAsync(job.jobId, {});
+
+    expect(result.success).toBe(true);
+
+    const output: Record<string, unknown> = result.output as Record<string, unknown>;
+
+    // Returned items must be <= cap
+    expect((output.items as unknown[]).length).toBeLessThanOrEqual(cap);
+
+    // unseenCount is total unseen before the cap was applied
+    expect(typeof output.unseenCount).toBe("number");
+
+    // All items in the feed must have been marked as seen (not just the capped ones)
+    const state = await rssStateService.loadStateAsync(feedUrl);
+
+    expect(state).not.toBeNull();
+    expect(state!.seenIds.length).toBeGreaterThanOrEqual(output.totalItems as number);
+
+    // Cleanup
+    try {
+      await fs.rm(stateFilePath);
+    } catch {
+      // ignore
+    }
   }, 30000);
 
   //#endregion rss_fetcher Node Tests

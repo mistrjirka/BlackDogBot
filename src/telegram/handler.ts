@@ -4,6 +4,7 @@ import { LoggerService } from "../services/logger.service.js";
 import { MessagingService } from "../services/messaging.service.js";
 import { MainAgent } from "../agent/main-agent.js";
 import { type IAgentResult } from "../agent/base-agent.js";
+import { type OnStepCallback } from "../agent/base-agent.js";
 import { type IIncomingMessage } from "../shared/types/messaging.types.js";
 import { generateId } from "../utils/id.js";
 import {
@@ -64,6 +65,18 @@ export class TelegramHandler {
 
     this._processing.add(chatId);
 
+    // Progress message state — declared at method scope so catch block can update it too
+    let progressMsgId: number | null = null;
+    const stepLogs: string[] = [];
+
+    const buildProgressText = (status: string): string => {
+      if (stepLogs.length === 0) {
+        return status;
+      }
+
+      return `${status}\n\n<blockquote expandable>${stepLogs.join("\n")}</blockquote>`;
+    };
+
     try {
       const incoming: IIncomingMessage = {
         id: generateId(),
@@ -85,7 +98,34 @@ export class TelegramHandler {
       const sender = this._messagingService.createSenderForChat("telegram", chatId);
       const photoSender = this._messagingService.createPhotoSenderForChat("telegram", chatId);
 
-      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender);
+      // Send initial progress message — failure is non-fatal
+      try {
+        const progressMsg = await ctx.reply("⚙️ Working...", { parse_mode: "HTML" });
+        progressMsgId = progressMsg.message_id;
+      } catch {
+        // Continue without progress message
+      }
+
+      const onStepAsync: OnStepCallback | undefined = progressMsgId !== null
+        ? async (stepNumber: number, toolNames: string[]): Promise<void> => {
+            if (toolNames.length > 0) {
+              stepLogs.push(`Step ${stepNumber}: ${toolNames.join(", ")}`);
+            }
+
+            try {
+              await ctx.api.editMessageText(
+                chatId,
+                progressMsgId!,
+                buildProgressText("⚙️ Working..."),
+                { parse_mode: "HTML" },
+              );
+            } catch {
+              // Ignore edit failures (rate limits, message not modified, etc.)
+            }
+          }
+        : undefined;
+
+      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync);
 
       // Start typing indicator
       const typingInterval: ReturnType<typeof setInterval> = setInterval(async () => {
@@ -101,6 +141,21 @@ export class TelegramHandler {
 
       try {
         const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(chatId, incoming.text);
+
+        // Update progress message to done
+        if (progressMsgId !== null) {
+          try {
+            const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
+            await ctx.api.editMessageText(
+              chatId,
+              progressMsgId,
+              buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`),
+              { parse_mode: "HTML" },
+            );
+          } catch {
+            // Ignore
+          }
+        }
 
         // If the agent produced text output and hasn't already sent it via send_message tool,
         // send it as a final response
@@ -119,6 +174,20 @@ export class TelegramHandler {
         clearInterval(typingInterval);
       }
     } catch (error: unknown) {
+      // Update progress message to error state
+      if (progressMsgId !== null) {
+        try {
+          await ctx.api.editMessageText(
+            chatId,
+            progressMsgId,
+            buildProgressText("❌ Error"),
+            { parse_mode: "HTML" },
+          );
+        } catch {
+          // Ignore
+        }
+      }
+
       const errorDetails: IAiErrorDetails = extractAiErrorDetails(error);
       const logMessage: string = formatAiErrorForLog(errorDetails);
 

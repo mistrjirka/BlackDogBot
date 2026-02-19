@@ -25,6 +25,8 @@ export interface IAgentResult {
   stepsCount: number;
 }
 
+export type OnStepCallback = (stepNumber: number, toolNames: string[]) => Promise<void>;
+
 export interface IBaseAgentOptions {
   maxSteps?: number;
   compactionThreshold?: number;
@@ -84,6 +86,7 @@ export abstract class BaseAgentBase {
     model: LanguageModel,
     instructions: string,
     tools: ToolSet,
+    onStepAsync?: OnStepCallback,
   ): void {
     const maxSteps: number = this._maxSteps;
     const compactionThreshold: number = this._compactionThreshold;
@@ -103,6 +106,17 @@ export abstract class BaseAgentBase {
         hasToolCall("done"),
       ],
       prepareStep: async ({ stepNumber, messages }) => {
+        // Notify about completed previous step before doing anything else
+        if (stepNumber > 0 && onStepAsync) {
+          const toolNames: string[] = _extractLastAssistantToolNames(messages);
+
+          try {
+            await onStepAsync(stepNumber, toolNames);
+          } catch {
+            // Ignore step callback errors — never let UI failures affect agent execution
+          }
+        }
+
         // Force done tool on last step
         if (stepNumber >= maxSteps - 1) {
           logger.warn("Agent reached max steps, forcing done tool", {
@@ -229,6 +243,35 @@ function _extractTextContent(message: ModelMessage): string {
   }
 
   return "";
+}
+
+function _extractLastAssistantToolNames(messages: ModelMessage[]): string[] {
+  for (let i: number = messages.length - 1; i >= 0; i--) {
+    const msg: ModelMessage = messages[i];
+
+    if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      const toolNames: string[] = [];
+
+      for (const part of msg.content) {
+        if (
+          typeof part === "object" &&
+          part !== null &&
+          "type" in part &&
+          (part as { type: string }).type === "tool-call" &&
+          "toolName" in part &&
+          typeof (part as { toolName: unknown }).toolName === "string"
+        ) {
+          toolNames.push((part as { toolName: string }).toolName);
+        }
+      }
+
+      if (toolNames.length > 0) {
+        return toolNames;
+      }
+    }
+  }
+
+  return [];
 }
 
 //#endregion Private functions

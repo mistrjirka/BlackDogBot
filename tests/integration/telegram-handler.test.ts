@@ -341,8 +341,11 @@ describe("TelegramHandler", () => {
     await handler.handleMessageAsync(ctx);
 
     // Assert — user reply includes actionable provider info
-    const userReply: string = replySpy.mock.calls[0][0];
+    // ctx.reply is also called for the progress message, so search all calls for the error reply
+    const allReplies: string[] = replySpy.mock.calls.map((call: unknown[]): string => call[0] as string);
+    const userReply: string | undefined = allReplies.find((r: string): boolean => r.includes("Authentication failed"));
 
+    expect(userReply).toBeDefined();
     expect(userReply).toContain("Authentication failed");
     expect(userReply).toContain("openrouter.ai");
     expect(userReply).toContain("minimax/minimax-m2.5");

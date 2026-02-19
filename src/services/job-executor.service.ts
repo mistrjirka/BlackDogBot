@@ -18,6 +18,7 @@ import {
   ICrawl4AiConfig,
   ISearxngConfig,
   IRssFetcherConfig,
+  IRssState,
   IOutputToAiConfig,
   IAgentNodeConfig,
   NodeType,
@@ -25,6 +26,7 @@ import {
 import { DEFAULT_PYTHON_TIMEOUT_MS, DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import { LoggerService } from "./logger.service.js";
 import { JobStorageService } from "./job-storage.service.js";
+import { RssStateService } from "./rss-state.service.js";
 import { ConfigService } from "./config.service.js";
 import { AiProviderService } from "./ai-provider.service.js";
 import { getExecutionOrder } from "../jobs/graph.js";
@@ -534,7 +536,7 @@ export class JobExecutorService {
       url = url.replaceAll(`{{${key}}}`, String(value));
     }
 
-    this._logger.debug("Executing rss_fetcher node", { url });
+    this._logger.debug("Executing rss_fetcher node", { url, mode: config.mode });
 
     const response: Response = await fetch(url, {
       method: "GET",
@@ -553,17 +555,46 @@ export class JobExecutorService {
     const parsed: Record<string, unknown> = this._parseRssFeed(xmlText);
 
     const maxItems: number = config.maxItems || 20;
-    const items: unknown[] = (parsed.items ?? []) as unknown[];
-    const trimmedItems: unknown[] = items.slice(0, maxItems);
+    const mode: string = config.mode || "latest";
+    const allItems: Record<string, unknown>[] = (parsed.items ?? []) as Record<string, unknown>[];
 
-    return {
+    let returnedItems: Record<string, unknown>[];
+    let unseenCount: number | undefined;
+
+    if (mode === "unseen") {
+      const rssStateService: RssStateService = RssStateService.getInstance();
+      const state: IRssState | null = await rssStateService.loadStateAsync(url);
+      const unseenItems: Record<string, unknown>[] = rssStateService.filterUnseenItems(allItems, state);
+
+      unseenCount = unseenItems.length;
+      returnedItems = unseenItems.slice(0, maxItems);
+
+      // Persist seen IDs: union of previously seen + all fetched (not just returned)
+      const updatedSeenIds: string[] = rssStateService.mergeSeenIds(
+        state?.seenIds ?? [],
+        allItems,
+      );
+
+      await rssStateService.saveStateAsync(url, updatedSeenIds);
+    } else {
+      returnedItems = allItems.slice(0, maxItems);
+    }
+
+    const output: Record<string, unknown> = {
       title: parsed.title,
       description: parsed.description,
       link: parsed.link,
-      items: trimmedItems,
-      totalItems: items.length,
+      items: returnedItems,
+      totalItems: allItems.length,
       feedUrl: url,
+      mode,
     };
+
+    if (unseenCount !== undefined) {
+      output.unseenCount = unseenCount;
+    }
+
+    return output;
   }
 
   private _parseRssFeed(xml: string): Record<string, unknown> {
@@ -571,24 +602,27 @@ export class JobExecutorService {
       items: [],
     };
 
-    const titleMatch: RegExpMatchArray | null = xml.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>|<title[^>]*>(.*?)<\/title>/is);
-    if (titleMatch) {
-      result.title = titleMatch[1] || titleMatch[2];
-    }
-
-    const descriptionMatch: RegExpMatchArray | null = xml.match(/<description[^>]*><!\[CDATA\[(.*?)\]\]><\/description>|<description[^>]*>(.*?)<\/description>/is);
-    if (descriptionMatch) {
-      result.description = descriptionMatch[1] || descriptionMatch[2];
-    }
-
-    const linkMatch: RegExpMatchArray | null = xml.match(/<link[^>]*><!\[CDATA\[(.*?)\]\]><\/link>|<link[^>]*>(.*?)<\/link>/is);
-    if (linkMatch) {
-      result.link = linkMatch[1] || linkMatch[2];
-    }
-
-    const isAtom: boolean = /<feed[^>]* xmlns=["']http:\/\/www\.w3\.org\/2005\/Atom["']/.test(xml);
+    const isAtom: boolean = /<feed[^>]*xmlns=["']http:\/\/www\.w3\.org\/2005\/Atom["']/.test(xml);
 
     if (isAtom) {
+      // For Atom, extract feed-level metadata from outside <entry> blocks
+      const feedWithoutEntries: string = xml.replace(/<entry[\s\S]*?<\/entry>/gi, "");
+
+      const atomTitleMatch: RegExpMatchArray | null = feedWithoutEntries.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>|<title[^>]*>(.*?)<\/title>/is);
+      if (atomTitleMatch) {
+        result.title = (atomTitleMatch[1] ?? atomTitleMatch[2] ?? "").trim();
+      }
+
+      const atomSubtitleMatch: RegExpMatchArray | null = feedWithoutEntries.match(/<subtitle[^>]*><!\[CDATA\[(.*?)\]\]><\/subtitle>|<subtitle[^>]*>(.*?)<\/subtitle>/is);
+      if (atomSubtitleMatch) {
+        result.description = (atomSubtitleMatch[1] ?? atomSubtitleMatch[2] ?? "").trim();
+      }
+
+      const atomLinkMatch: RegExpMatchArray | null = feedWithoutEntries.match(/<link[^>]*href=["']([^"']+)["'][^>]*(?:\/>|>.*?<\/link>)/is);
+      if (atomLinkMatch) {
+        result.link = atomLinkMatch[1];
+      }
+
       const entryRegex: RegExp = /<entry[^>]*>([\s\S]*?)<\/entry>/gi;
       const entries: string[] = [];
       let match: RegExpExecArray | null;
@@ -602,7 +636,7 @@ export class JobExecutorService {
 
         const entryTitleMatch: RegExpMatchArray | null = entry.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>|<title[^>]*>(.*?)<\/title>/is);
         if (entryTitleMatch) {
-          item.title = entryTitleMatch[1] || entryTitleMatch[2];
+          item.title = (entryTitleMatch[1] ?? entryTitleMatch[2] ?? "").trim();
         }
 
         const entryLinkMatch: RegExpMatchArray | null = entry.match(/<link[^>]*href=["']([^"']+)["'][^>]*>|<link[^>]*>(.*?)<\/link>/is);
@@ -612,12 +646,12 @@ export class JobExecutorService {
 
         const entryContentMatch: RegExpMatchArray | null = entry.match(/<content[^>]*><!\[CDATA\[(.*?)\]\]><\/content>|<content[^>]*>(.*?)<\/content>/is);
         if (entryContentMatch) {
-          item.content = entryContentMatch[1] || entryContentMatch[2];
+          item.content = entryContentMatch[1] ?? entryContentMatch[2];
         }
 
         const entrySummaryMatch: RegExpMatchArray | null = entry.match(/<summary[^>]*><!\[CDATA\[(.*?)\]\]><\/summary>|<summary[^>]*>(.*?)<\/summary>/is);
         if (entrySummaryMatch) {
-          item.summary = entrySummaryMatch[1] || entrySummaryMatch[2];
+          item.summary = entrySummaryMatch[1] ?? entrySummaryMatch[2];
         }
 
         const entryIdMatch: RegExpMatchArray | null = entry.match(/<id[^>]*>(.*?)<\/id>/is);
@@ -627,17 +661,40 @@ export class JobExecutorService {
 
         const entryPublishedMatch: RegExpMatchArray | null = entry.match(/<published[^>]*>(.*?)<\/published>|<updated[^>]*>(.*?)<\/updated>/is);
         if (entryPublishedMatch) {
-          item.published = entryPublishedMatch[1] || entryPublishedMatch[2];
+          item.published = entryPublishedMatch[1] ?? entryPublishedMatch[2];
         }
 
         return item;
       });
     } else {
+      // RSS 2.0 — scope feed-level metadata to within the <channel> block
+      const channelMatch: RegExpMatchArray | null = xml.match(/<channel[^>]*>([\s\S]*?)<\/channel>/i);
+      const channelContent: string = channelMatch ? channelMatch[1] : xml;
+
+      // Strip <item> blocks so feed-level tags don't get confused with item-level ones
+      const channelWithoutItems: string = channelContent.replace(/<item[\s\S]*?<\/item>/gi, "");
+
+      const titleMatch: RegExpMatchArray | null = channelWithoutItems.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>|<title[^>]*>(.*?)<\/title>/is);
+      if (titleMatch) {
+        result.title = (titleMatch[1] ?? titleMatch[2] ?? "").trim();
+      }
+
+      const descriptionMatch: RegExpMatchArray | null = channelWithoutItems.match(/<description[^>]*><!\[CDATA\[(.*?)\]\]><\/description>|<description[^>]*>(.*?)<\/description>/is);
+      if (descriptionMatch) {
+        result.description = (descriptionMatch[1] ?? descriptionMatch[2] ?? "").trim();
+      }
+
+      // For RSS 2.0, prefer plain <link>...</link> (not atom:link which has href attribute)
+      const linkMatch: RegExpMatchArray | null = channelWithoutItems.match(/<link[^>]*>(.*?)<\/link>/is);
+      if (linkMatch) {
+        result.link = linkMatch[1].trim();
+      }
+
       const itemRegex: RegExp = /<item[^>]*>([\s\S]*?)<\/item>/gi;
       const items: string[] = [];
       let match: RegExpExecArray | null;
 
-      while ((match = itemRegex.exec(xml)) !== null) {
+      while ((match = itemRegex.exec(channelContent)) !== null) {
         items.push(match[1]);
       }
 
@@ -646,17 +703,17 @@ export class JobExecutorService {
 
         const itemTitleMatch: RegExpMatchArray | null = itemXml.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>|<title[^>]*>(.*?)<\/title>/is);
         if (itemTitleMatch) {
-          item.title = itemTitleMatch[1] || itemTitleMatch[2];
+          item.title = (itemTitleMatch[1] ?? itemTitleMatch[2] ?? "").trim();
         }
 
         const itemLinkMatch: RegExpMatchArray | null = itemXml.match(/<link[^>]*>(.*?)<\/link>/is);
         if (itemLinkMatch) {
-          item.link = itemLinkMatch[1];
+          item.link = itemLinkMatch[1].trim();
         }
 
         const itemDescMatch: RegExpMatchArray | null = itemXml.match(/<description[^>]*><!\[CDATA\[(.*?)\]\]><\/description>|<description[^>]*>(.*?)<\/description>/is);
         if (itemDescMatch) {
-          item.description = itemDescMatch[1] || itemDescMatch[2];
+          item.description = itemDescMatch[1] ?? itemDescMatch[2];
         }
 
         const itemGuidMatch: RegExpMatchArray | null = itemXml.match(/<guid[^>]*>(.*?)<\/guid>/is);

@@ -1,6 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
+import crypto from "node:crypto";
 
 //#region Constants
 
@@ -94,6 +95,15 @@ export function getPromptFilePath(promptName: string): string {
   return path.join(getPromptsDir(), `${promptName}.md`);
 }
 
+export function getRssStateDir(): string {
+  return path.join(getBaseDir(), "rss-state");
+}
+
+export function getRssStateFilePath(feedUrl: string): string {
+  const hash: string = crypto.createHash("sha256").update(feedUrl).digest("hex");
+  return path.join(getRssStateDir(), `${hash}.json`);
+}
+
 export async function ensureDirectoryExistsAsync(dirPath: string): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });
 }
@@ -108,6 +118,7 @@ export async function ensureAllDirectoriesAsync(): Promise<void> {
     getCronDir(),
     getLogsDir(),
     getWorkspaceDir(),
+    getRssStateDir(),
     getPromptsDir(),
     getPromptFragmentsDir(),
   ];

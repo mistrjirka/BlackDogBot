@@ -49,9 +49,18 @@ export interface ISearxngConfig {
   maxResults: number;
 }
 
+export type RssFetchMode = "latest" | "unseen";
+
 export interface IRssFetcherConfig {
   url: string;
   maxItems: number;
+  mode: RssFetchMode;
+}
+
+export interface IRssState {
+  feedUrl: string;
+  seenIds: string[];
+  lastFetchedAt: string;
 }
 
 export interface IPythonCodeConfig {

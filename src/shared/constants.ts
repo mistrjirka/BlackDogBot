@@ -20,6 +20,7 @@ export const CRON_DIR: string = "cron";
 export const LOGS_DIR: string = "logs";
 export const PROMPTS_DIR: string = "prompts";
 export const WORKSPACE_DIR: string = "workspace";
+export const RSS_STATE_DIR: string = "rss-state";
 export const PROMPT_FRAGMENTS_DIR: string = "prompt-fragments";
 export const DEFAULTS_DIR: string = "defaults";
 
@@ -35,7 +36,7 @@ export const DEFAULT_MAX_SEARCH_RESULTS: number = 10;
 export const DEFAULT_RPM: number = 60;
 export const DEFAULT_TPM: number = 100000;
 
-export const DEFAULT_AGENT_MAX_STEPS: number = 20;
+export const DEFAULT_AGENT_MAX_STEPS: number = 150;
 export const DEFAULT_CMD_TIMEOUT_MS: number = 30000;
 export const DEFAULT_PYTHON_TIMEOUT_MS: number = 30000;
 export const DEFAULT_NODE_TEST_TIMEOUT_MS: number = 60000;
