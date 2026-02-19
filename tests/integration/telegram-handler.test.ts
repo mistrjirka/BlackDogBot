@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { APICallError } from "ai";
 
 import { TelegramHandler } from "../../src/telegram/handler.js";
 import { MainAgent } from "../../src/agent/main-agent.js";
@@ -222,9 +223,47 @@ describe("TelegramHandler", () => {
     // Act
     await handler.handleMessageAsync(ctx);
 
-    // Assert — error reply was sent
+    // Assert — error reply was sent with the error message
     expect(replySpy).toHaveBeenCalledWith(
-      expect.stringContaining("error occurred"),
+      expect.stringContaining("agent boom"),
+    );
+  });
+
+  it("should include provider details in error reply when an APICallError is thrown", async () => {
+    // Arrange — agent throws an APICallError (like OpenRouter returning "User not found.")
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    const apiError: APICallError = new APICallError({
+      message: "User not found.",
+      url: "https://openrouter.ai/api/v1/chat/completions",
+      requestBodyValues: { model: "minimax/minimax-m2.5", messages: [] },
+      statusCode: 401,
+      responseBody: '{"error":{"message":"User not found."}}',
+      isRetryable: false,
+    });
+    vi.spyOn(mainAgent, "processMessageForChatAsync").mockRejectedValue(apiError);
+
+    const replySpy: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined);
+    const ctx: Context = makeCtx({ text: "trigger api error", replyImpl: replySpy });
+    const handler: TelegramHandler = TelegramHandler.getInstance();
+    const logger: LoggerService = LoggerService.getInstance();
+
+    // Act
+    await handler.handleMessageAsync(ctx);
+
+    // Assert — user reply includes actionable provider info
+    const userReply: string = replySpy.mock.calls[0][0];
+    expect(userReply).toContain("Authentication failed");
+    expect(userReply).toContain("openrouter.ai");
+    expect(userReply).toContain("minimax/minimax-m2.5");
+
+    // Assert — log includes structured error details
+    expect(logger.error).toHaveBeenCalledWith(
+      "Error processing Telegram message",
+      expect.objectContaining({
+        statusCode: 401,
+        provider: "openrouter.ai",
+        model: "minimax/minimax-m2.5",
+      }),
     );
   });
 

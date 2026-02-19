@@ -3,6 +3,7 @@ import { generateText, type LanguageModel } from "ai";
 import { LoggerService } from "../services/logger.service.js";
 import { RateLimiterService } from "../services/rate-limiter.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
+import { extractAiErrorDetails, formatAiErrorForLog } from "./ai-error.js";
 
 //#region Constants
 
@@ -50,7 +51,7 @@ export async function generateTextWithRetryAsync(
       return result;
     } catch (error: unknown) {
       lastError = error;
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = formatAiErrorForLog(extractAiErrorDetails(error));
 
       logger.warn("LLM call failed, retrying", {
         attempt,

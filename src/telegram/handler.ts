@@ -6,6 +6,12 @@ import { MainAgent } from "../agent/main-agent.js";
 import { type IAgentResult } from "../agent/base-agent.js";
 import { type IIncomingMessage } from "../shared/types/messaging.types.js";
 import { generateId } from "../utils/id.js";
+import {
+  extractAiErrorDetails,
+  formatAiErrorForLog,
+  formatAiErrorForUser,
+  type IAiErrorDetails,
+} from "../utils/ai-error.js";
 
 //#region TelegramHandler
 
@@ -96,13 +102,21 @@ export class TelegramHandler {
         responseLength: result.text.length,
       });
     } catch (error: unknown) {
+      const errorDetails: IAiErrorDetails = extractAiErrorDetails(error);
+      const logMessage: string = formatAiErrorForLog(errorDetails);
+
       this._logger.error("Error processing Telegram message", {
         chatId,
-        error: error instanceof Error ? error.message : String(error),
+        error: logMessage,
+        statusCode: errorDetails.statusCode,
+        provider: errorDetails.provider,
+        model: errorDetails.model,
+        retryable: errorDetails.isRetryable,
       });
 
       try {
-        await ctx.reply("An error occurred while processing your message. Please try again.");
+        const userMessage: string = formatAiErrorForUser(errorDetails);
+        await ctx.reply(userMessage);
       } catch (replyError: unknown) {
         this._logger.error("Failed to send error reply", {
           chatId,
