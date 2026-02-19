@@ -102,12 +102,23 @@ export const pythonCodeConfigSchema = z.object({
     .describe("Execution timeout in milliseconds"),
 });
 
+export const outputToAiConfigSchema = z.object({
+  prompt: z.string()
+    .min(1)
+    .describe("Prompt to send to the LLM along with the node input"),
+  model: z.string()
+    .nullable()
+    .default(null)
+    .describe("Optional model override"),
+});
+
 export const nodeConfigSchema = z.union([
   agentNodeConfigSchema,
   curlFetcherConfigSchema,
   crawl4AiConfigSchema,
   searxngConfigSchema,
   pythonCodeConfigSchema,
+  outputToAiConfigSchema,
   z.object({}).strict(),
 ]);
 

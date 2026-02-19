@@ -12,13 +12,13 @@ export function createSendMessageTool(sender: MessageSender) {
       message,
     }: {
       message: string;
-    }): Promise<{ sent: boolean; messageId: string | null }> => {
+    }): Promise<{ sent: boolean; messageId: string | null; error?: string }> => {
       try {
         const messageId: string | null = await sender(message);
         return { sent: true, messageId };
       } catch (error: unknown) {
-        void error;
-        return { sent: false, messageId: null };
+        const errorMessage: string = error instanceof Error ? error.message : String(error);
+        return { sent: false, messageId: null, error: errorMessage };
       }
     },
   });

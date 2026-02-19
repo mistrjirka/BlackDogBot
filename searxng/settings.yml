@@ -1,0 +1,24 @@
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "betterclaw-searxng-secret-key"
+  limiter: false
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+  - name: bing
+    engine: bing
+    shortcut: b
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp

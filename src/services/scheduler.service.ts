@@ -1,0 +1,307 @@
+import cron from "node-cron";
+import fs from "node:fs/promises";
+import path from "node:path";
+
+import { IScheduledTask } from "../shared/types/index.js";
+import { scheduledTaskSchema } from "../shared/schemas/index.js";
+import {
+  getCronDir,
+  getCronFilePath,
+  ensureDirectoryExistsAsync,
+} from "../utils/paths.js";
+import { LoggerService } from "./logger.service.js";
+
+export class SchedulerService {
+  //#region Data members
+
+  private static _instance: SchedulerService | null;
+  private _logger: LoggerService;
+  private _scheduledJobs: Map<string, cron.ScheduledTask>;
+  private _tasks: Map<string, IScheduledTask>;
+  private _taskExecutor: ((task: IScheduledTask) => Promise<void>) | null;
+  private _intervals: Map<string, NodeJS.Timeout>;
+  private _timeouts: Map<string, NodeJS.Timeout>;
+
+  //#endregion Data members
+
+  //#region Constructors
+
+  private constructor() {
+    this._logger = LoggerService.getInstance();
+    this._scheduledJobs = new Map();
+    this._tasks = new Map();
+    this._taskExecutor = null;
+    this._intervals = new Map();
+    this._timeouts = new Map();
+  }
+
+  //#endregion Constructors
+
+  //#region Public methods
+
+  public static getInstance(): SchedulerService {
+    if (!SchedulerService._instance) {
+      SchedulerService._instance = new SchedulerService();
+    }
+
+    return SchedulerService._instance;
+  }
+
+  public setTaskExecutor(
+    executor: (task: IScheduledTask) => Promise<void>,
+  ): void {
+    this._taskExecutor = executor;
+  }
+
+  public async startAsync(): Promise<void> {
+    await ensureDirectoryExistsAsync(getCronDir());
+    await this._loadAllTasksAsync();
+
+    for (const task of this._tasks.values()) {
+      if (task.enabled) {
+        this._scheduleTask(task);
+      }
+    }
+
+    this._logger.info("Scheduler started", {
+      totalTasks: this._tasks.size,
+      enabledTasks: this.getTasksByEnabled(true).length,
+    });
+  }
+
+  public async stopAsync(): Promise<void> {
+    for (const [taskId, job] of this._scheduledJobs) {
+      job.stop();
+      this._scheduledJobs.delete(taskId);
+    }
+
+    for (const [taskId, intervalId] of this._intervals) {
+      clearInterval(intervalId);
+      this._intervals.delete(taskId);
+    }
+
+    for (const [taskId, timeoutId] of this._timeouts) {
+      clearTimeout(timeoutId);
+      this._timeouts.delete(taskId);
+    }
+
+    this._scheduledJobs.clear();
+    this._intervals.clear();
+    this._timeouts.clear();
+
+    this._logger.info("Scheduler stopped");
+  }
+
+  public async addTaskAsync(task: IScheduledTask): Promise<void> {
+    await this._saveTaskAsync(task);
+    this._tasks.set(task.taskId, task);
+
+    if (task.enabled) {
+      this._scheduleTask(task);
+    }
+
+    this._logger.info("Task added", { taskId: task.taskId, name: task.name });
+  }
+
+  public async removeTaskAsync(taskId: string): Promise<void> {
+    this._unscheduleTask(taskId);
+    this._tasks.delete(taskId);
+
+    const filePath: string = getCronFilePath(taskId);
+
+    try {
+      await fs.unlink(filePath);
+    } catch (error: unknown) {
+      this._logger.warn("Failed to delete task file", {
+        taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    this._logger.info("Task removed", { taskId });
+  }
+
+  public async getTaskAsync(
+    taskId: string,
+  ): Promise<IScheduledTask | undefined> {
+    return this._tasks.get(taskId);
+  }
+
+  public getAllTasks(): IScheduledTask[] {
+    return Array.from(this._tasks.values());
+  }
+
+  public getTasksByEnabled(enabledOnly: boolean): IScheduledTask[] {
+    return Array.from(this._tasks.values()).filter(
+      (task: IScheduledTask) => task.enabled === enabledOnly,
+    );
+  }
+
+  //#endregion Public methods
+
+  //#region Private methods
+
+  private async _loadAllTasksAsync(): Promise<void> {
+    const cronDir: string = getCronDir();
+
+    let entries: string[];
+
+    try {
+      entries = await fs.readdir(cronDir);
+    } catch (error: unknown) {
+      this._logger.warn("Failed to read cron directory", {
+        cronDir,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    const jsonFiles: string[] = entries.filter((entry: string) =>
+      entry.endsWith(".json"),
+    );
+
+    for (const fileName of jsonFiles) {
+      const filePath: string = path.join(cronDir, fileName);
+
+      try {
+        const content: string = await fs.readFile(filePath, "utf-8");
+        const parsed: unknown = JSON.parse(content);
+        const task: IScheduledTask = scheduledTaskSchema.parse(parsed);
+
+        this._tasks.set(task.taskId, task);
+      } catch (error: unknown) {
+        this._logger.warn("Failed to parse task file, skipping", {
+          filePath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  private async _saveTaskAsync(task: IScheduledTask): Promise<void> {
+    const filePath: string = getCronFilePath(task.taskId);
+
+    await ensureDirectoryExistsAsync(getCronDir());
+    await fs.writeFile(filePath, JSON.stringify(task, null, 2), "utf-8");
+  }
+
+  private _scheduleTask(task: IScheduledTask): void {
+    const executeCallback = async (): Promise<void> => {
+      this._logger.info("Task starting", {
+        taskId: task.taskId,
+        name: task.name,
+      });
+
+      try {
+        if (this._taskExecutor) {
+          await this._taskExecutor(task);
+        }
+
+        task.lastRunAt = new Date().toISOString();
+        task.lastRunStatus = "success";
+        task.lastRunError = null;
+        this._tasks.set(task.taskId, task);
+        await this._saveTaskAsync(task);
+      } catch (error: unknown) {
+        const errorMessage: string =
+          error instanceof Error ? error.message : String(error);
+
+        task.lastRunAt = new Date().toISOString();
+        task.lastRunStatus = "failure";
+        task.lastRunError = errorMessage;
+        this._tasks.set(task.taskId, task);
+        await this._saveTaskAsync(task);
+
+        this._logger.error("Task execution failed", {
+          taskId: task.taskId,
+          error: errorMessage,
+        });
+      }
+    };
+
+    const schedule = task.schedule;
+
+    switch (schedule.type) {
+      case "cron": {
+        const job: cron.ScheduledTask = cron.schedule(
+          schedule.expression,
+          () => {
+            void executeCallback();
+          },
+        );
+
+        this._scheduledJobs.set(task.taskId, job);
+        this._logger.debug("Scheduled cron task", {
+          taskId: task.taskId,
+          expression: schedule.expression,
+        });
+        break;
+      }
+
+      case "interval": {
+        const intervalId: NodeJS.Timeout = setInterval(() => {
+          void executeCallback();
+        }, schedule.intervalMs);
+
+        this._intervals.set(task.taskId, intervalId);
+        this._logger.debug("Scheduled interval task", {
+          taskId: task.taskId,
+          intervalMs: schedule.intervalMs,
+        });
+        break;
+      }
+
+      case "once": {
+        const delayMs: number = Date.parse(schedule.runAt) - Date.now();
+
+        if (delayMs <= 0) {
+          this._logger.warn("Scheduled time has already passed, skipping", {
+            taskId: task.taskId,
+            runAt: schedule.runAt,
+          });
+          return;
+        }
+
+        const timeoutId: NodeJS.Timeout = setTimeout(() => {
+          void executeCallback();
+        }, delayMs);
+
+        this._timeouts.set(task.taskId, timeoutId);
+        this._logger.debug("Scheduled one-time task", {
+          taskId: task.taskId,
+          runAt: schedule.runAt,
+          delayMs,
+        });
+        break;
+      }
+    }
+  }
+
+  private _unscheduleTask(taskId: string): void {
+    const job: cron.ScheduledTask | undefined =
+      this._scheduledJobs.get(taskId);
+
+    if (job) {
+      job.stop();
+      this._scheduledJobs.delete(taskId);
+    }
+
+    const intervalId: NodeJS.Timeout | undefined =
+      this._intervals.get(taskId);
+
+    if (intervalId) {
+      clearInterval(intervalId);
+      this._intervals.delete(taskId);
+    }
+
+    const timeoutId: NodeJS.Timeout | undefined =
+      this._timeouts.get(taskId);
+
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      this._timeouts.delete(taskId);
+    }
+  }
+
+  //#endregion Private methods
+}

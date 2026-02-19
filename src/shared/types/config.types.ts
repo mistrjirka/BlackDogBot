@@ -32,6 +32,7 @@ export interface ITelegramConfig {
 
 export interface ISchedulerConfig {
   enabled: boolean;
+  notificationChatId: string | null;
 }
 
 export interface IKnowledgeConfig {
@@ -49,6 +50,11 @@ export interface ILoggingConfig {
   level: LogLevel;
 }
 
+export interface IServicesConfig {
+  searxngUrl: string;
+  crawl4aiUrl: string;
+}
+
 export interface IConfig {
   ai: IAiConfig;
   telegram?: ITelegramConfig;
@@ -56,6 +62,7 @@ export interface IConfig {
   knowledge: IKnowledgeConfig;
   skills: ISkillsConfig;
   logging: ILoggingConfig;
+  services: IServicesConfig;
 }
 
 //#endregion Config Types

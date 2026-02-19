@@ -54,12 +54,18 @@ export interface IPythonCodeConfig {
   timeout: number;
 }
 
+export interface IOutputToAiConfig {
+  prompt: string;
+  model: string | null;
+}
+
 export type NodeConfig =
   | IAgentNodeConfig
   | ICurlFetcherConfig
   | ICrawl4AiConfig
   | ISearxngConfig
   | IPythonCodeConfig
+  | IOutputToAiConfig
   | Record<string, never>;
 
 export interface INode {

@@ -57,22 +57,6 @@ export const PROMPT_PERSISTENCE: string = "persistence";
 
 //#endregion Prompt Names
 
-//#region Available Agent Node Tools
-
-export const AGENT_NODE_AVAILABLE_TOOLS: string[] = [
-  "curl_fetcher",
-  "crawl4ai",
-  "searxng",
-  "add_knowledge",
-  "edit_knowledge",
-  "search_knowledge",
-  "think_tool",
-  "send_message",
-  "run_cmd",
-];
-
-//#endregion Available Agent Node Tools
-
 //#region Include Directive
 
 export const INCLUDE_DIRECTIVE_REGEX: RegExp = /\{\{include:(.+?)\}\}/g;

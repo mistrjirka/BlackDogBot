@@ -14,3 +14,9 @@ export { JobStorageService } from "./job-storage.service.js";
 export { JobExecutorService } from "./job-executor.service.js";
 export { SkillStateService } from "./skill-state.service.js";
 export { SkillLoaderService } from "./skill-loader.service.js";
+export { SchedulerService } from "./scheduler.service.js";
+export {
+  MessagingService,
+  TelegramAdapter,
+  type IPlatformAdapter,
+} from "./messaging.service.js";

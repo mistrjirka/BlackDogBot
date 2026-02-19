@@ -6,7 +6,7 @@ import { INode, NodeType, NodeConfig } from "../shared/types/index.js";
 export const addNodeTool = tool({
   description: "Add a new node to a job. Define its type, schemas, and configuration.",
   inputSchema: addNodeToolInputSchema,
-  execute: async ({ jobId, type, name, description, inputSchema, outputSchema, config }: { jobId: string; type: string; name: string; description: string; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>; config: Record<string, unknown> }): Promise<{ nodeId: string; success: boolean }> => {
+  execute: async ({ jobId, type, name, description, inputSchema, outputSchema, config }: { jobId: string; type: string; name: string; description: string; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>; config: Record<string, unknown> }): Promise<{ nodeId: string; success: boolean; error?: string }> => {
     try {
       const storageService: JobStorageService = JobStorageService.getInstance();
       const node: INode = await storageService.addNodeAsync(
@@ -21,8 +21,8 @@ export const addNodeTool = tool({
 
       return { nodeId: node.nodeId, success: true };
     } catch (error: unknown) {
-      void error;
-      return { nodeId: "", success: false };
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      return { nodeId: "", success: false, error: errorMessage };
     }
   },
 });

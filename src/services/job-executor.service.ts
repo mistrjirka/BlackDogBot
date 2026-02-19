@@ -1,13 +1,42 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
-import { IJob, INode, INodeTestCase, INodeTestResult, IPythonCodeConfig, NodeType } from "../shared/types/index.js";
-import { DEFAULT_PYTHON_TIMEOUT_MS } from "../shared/constants.js";
+import { ToolLoopAgent, ToolSet, LanguageModel, hasToolCall, tool } from "ai";
+import { z } from "zod";
+
+import {
+  IJob,
+  INode,
+  INodeTestCase,
+  INodeTestResult,
+  IPythonCodeConfig,
+  ICurlFetcherConfig,
+  ICrawl4AiConfig,
+  ISearxngConfig,
+  IOutputToAiConfig,
+  IAgentNodeConfig,
+  NodeType,
+} from "../shared/types/index.js";
+import { DEFAULT_PYTHON_TIMEOUT_MS, DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import { LoggerService } from "./logger.service.js";
 import { JobStorageService } from "./job-storage.service.js";
+import { ConfigService } from "./config.service.js";
+import { AiProviderService } from "./ai-provider.service.js";
 import { getExecutionOrder } from "../jobs/graph.js";
 import { validateDataAgainstSchema } from "../jobs/schema-compat.js";
 import { ISchemaCompatResult } from "../jobs/schema-compat.js";
+import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
+import {
+  thinkTool,
+  runCmdTool,
+  searchKnowledgeTool,
+  addKnowledgeTool,
+  editKnowledgeTool,
+  createSendMessageTool,
+} from "../tools/index.js";
 
 const _execAsync: typeof exec.__promisify__ = promisify(exec);
 
@@ -68,6 +97,7 @@ export class JobExecutorService {
       }
 
       const nodeOutputs: Map<string, Record<string, unknown>> = new Map<string, Record<string, unknown>>();
+      let nodesExecuted: number = 0;
 
       for (const nodeId of executionOrder) {
         const node: INode | undefined = nodeMap.get(nodeId);
@@ -103,12 +133,14 @@ export class JobExecutorService {
 
           this._logger.error(errorMessage, { jobId, nodeId });
 
-          return { success: false, output: null, error: errorMessage, nodesExecuted: 0 };
+          return { success: false, output: null, error: errorMessage, nodesExecuted };
         }
 
         this._logger.debug(`Executing node "${node.name}"`, { jobId, nodeId, type: node.type });
 
         const nodeOutput: Record<string, unknown> = await this._executeNodeAsync(node, nodeInput);
+
+        nodesExecuted++;
 
         const outputValidation: ISchemaCompatResult = validateDataAgainstSchema(nodeOutput, node.outputSchema);
 
@@ -119,7 +151,7 @@ export class JobExecutorService {
 
           this._logger.error(errorMessage, { jobId, nodeId });
 
-          return { success: false, output: null, error: errorMessage, nodesExecuted: 0 };
+          return { success: false, output: null, error: errorMessage, nodesExecuted };
         }
 
         nodeOutputs.set(nodeId, nodeOutput);
@@ -220,13 +252,19 @@ export class JobExecutorService {
         return this._executePythonAsync(node, input);
 
       case "curl_fetcher":
+        return this._executeCurlFetcherAsync(node, input);
+
       case "crawl4ai":
+        return this._executeCrawl4AiAsync(node, input);
+
       case "searxng":
-        return { error: "Node type not yet implemented", type: node.type };
+        return this._executeSearxngAsync(node, input);
 
       case "output_to_ai":
+        return this._executeOutputToAiAsync(node, input);
+
       case "agent":
-        return { error: "Agent node execution requires AI provider setup", type: node.type };
+        return this._executeAgentAsync(node, input);
 
       default:
         throw new Error(`Unsupported node type: ${nodeType}`);
@@ -246,21 +284,347 @@ export class JobExecutorService {
       pythonConfig.code,
     ].join("\n");
 
-    const { stdout, stderr } = await _execAsync(
-      `${pythonConfig.pythonPath || "python3"} -c ${JSON.stringify(wrappedCode)}`,
-      {
-        timeout: pythonConfig.timeout || DEFAULT_PYTHON_TIMEOUT_MS,
-        env: { ...process.env, BETTERCLAW_INPUT: inputBase64 },
+    // Write code to a temp file to avoid shell escaping issues with python3 -c
+    const tmpFile: string = path.join(os.tmpdir(), `betterclaw-py-${node.nodeId}-${Date.now()}.py`);
+
+    try {
+      await fs.writeFile(tmpFile, wrappedCode, "utf-8");
+
+      const { stdout, stderr } = await _execAsync(
+        `${pythonConfig.pythonPath || "python3"} ${JSON.stringify(tmpFile)}`,
+        {
+          timeout: pythonConfig.timeout || DEFAULT_PYTHON_TIMEOUT_MS,
+          env: { ...process.env, BETTERCLAW_INPUT: inputBase64 },
+        },
+      );
+
+      const parsed: Record<string, unknown> = JSON.parse(stdout.trim()) as Record<string, unknown>;
+
+      if (stderr) {
+        parsed._stderr = stderr;
+      }
+
+      return parsed;
+    } finally {
+      // Clean up the temp file
+      try {
+        await fs.unlink(tmpFile);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
+
+  private async _executeCurlFetcherAsync(
+    node: INode,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const config: ICurlFetcherConfig = node.config as ICurlFetcherConfig;
+
+    let url: string = config.url;
+
+    // Allow template substitution from input: {{key}} -> input[key]
+    for (const [key, value] of Object.entries(input)) {
+      url = url.replaceAll(`{{${key}}}`, String(value));
+    }
+
+    const fetchOptions: RequestInit = {
+      method: config.method || "GET",
+      headers: config.headers || {},
+    };
+
+    if (config.body) {
+      let body: string = config.body;
+
+      for (const [key, value] of Object.entries(input)) {
+        body = body.replaceAll(`{{${key}}}`, String(value));
+      }
+
+      fetchOptions.body = body;
+    }
+
+    this._logger.debug("Executing curl_fetcher node", { url, method: fetchOptions.method });
+
+    const response: Response = await fetch(url, fetchOptions);
+    const responseText: string = await response.text();
+
+    let responseBody: unknown;
+
+    try {
+      responseBody = JSON.parse(responseText);
+    } catch {
+      responseBody = responseText;
+    }
+
+    return {
+      statusCode: response.status,
+      headers: Object.fromEntries(response.headers.entries()),
+      body: responseBody,
+    };
+  }
+
+  private async _executeCrawl4AiAsync(
+    node: INode,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const config: ICrawl4AiConfig = node.config as ICrawl4AiConfig;
+    const configService: ConfigService = ConfigService.getInstance();
+    const servicesConfig = configService.getConfig().services;
+
+    let url: string = config.url;
+
+    for (const [key, value] of Object.entries(input)) {
+      url = url.replaceAll(`{{${key}}}`, String(value));
+    }
+
+    const crawlRequestBody: Record<string, unknown> = {
+      urls: [url],
+      crawler_config: {
+        cache_mode: "bypass",
       },
-    );
+    };
 
-    const parsed: Record<string, unknown> = JSON.parse(stdout.trim()) as Record<string, unknown>;
+    if (config.selector) {
+      (crawlRequestBody.crawler_config as Record<string, unknown>).css_selector = config.selector;
+    }
 
-    if (stderr) {
-      parsed._stderr = stderr;
+    this._logger.debug("Executing crawl4ai node", { url });
+
+    const response: Response = await fetch(`${servicesConfig.crawl4aiUrl}/crawl`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(crawlRequestBody),
+    });
+
+    if (!response.ok) {
+      const errorText: string = await response.text();
+      throw new Error(`Crawl4AI request failed (${response.status}): ${errorText}`);
+    }
+
+    const crawlResult: Record<string, unknown> = await response.json() as Record<string, unknown>;
+
+    const results: unknown[] = (crawlResult.results ?? []) as unknown[];
+    const firstResult: Record<string, unknown> = (results[0] ?? {}) as Record<string, unknown>;
+
+    // Crawl4AI returns markdown as an object with raw_markdown, markdown_with_citations, etc.
+    const markdownField: unknown = firstResult.markdown;
+    let markdown: string;
+
+    if (markdownField && typeof markdownField === "object" && (markdownField as Record<string, unknown>).raw_markdown) {
+      markdown = (markdownField as Record<string, unknown>).raw_markdown as string;
+    } else if (typeof markdownField === "string") {
+      markdown = markdownField;
+    } else {
+      markdown = "";
+    }
+
+    const html: string = (typeof firstResult.html === "string" ? firstResult.html : "") as string;
+    const success: boolean = (firstResult.success ?? false) as boolean;
+
+    const output: Record<string, unknown> = {
+      url,
+      success,
+      markdown,
+      html,
+    };
+
+    // If extraction prompt is provided, run AI extraction on the markdown content
+    if (config.extractionPrompt && markdown) {
+      const aiProviderService: AiProviderService = AiProviderService.getInstance();
+      const model: LanguageModel = aiProviderService.getDefaultModel();
+
+      const extractionResult = await generateTextWithRetryAsync({
+        model,
+        prompt: `${config.extractionPrompt}\n\nContent:\n${markdown}`,
+      });
+
+      let extractedData: unknown;
+
+      try {
+        extractedData = JSON.parse(extractionResult.text.trim());
+      } catch {
+        extractedData = extractionResult.text;
+      }
+
+      output.extracted = extractedData;
+    }
+
+    return output;
+  }
+
+  private async _executeSearxngAsync(
+    node: INode,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const config: ISearxngConfig = node.config as ISearxngConfig;
+    const configService: ConfigService = ConfigService.getInstance();
+    const servicesConfig = configService.getConfig().services;
+
+    let query: string = config.query;
+
+    for (const [key, value] of Object.entries(input)) {
+      query = query.replaceAll(`{{${key}}}`, String(value));
+    }
+
+    const params: URLSearchParams = new URLSearchParams({
+      q: query,
+      format: "json",
+    });
+
+    if (config.categories.length > 0) {
+      params.set("categories", config.categories.join(","));
+    }
+
+    this._logger.debug("Executing searxng node", { query });
+
+    const response: Response = await fetch(`${servicesConfig.searxngUrl}/search?${params.toString()}`, {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+    });
+
+    if (!response.ok) {
+      const errorText: string = await response.text();
+      throw new Error(`SearXNG request failed (${response.status}): ${errorText}`);
+    }
+
+    const searchResult: Record<string, unknown> = await response.json() as Record<string, unknown>;
+    const allResults: unknown[] = (searchResult.results ?? []) as unknown[];
+
+    const maxResults: number = config.maxResults || 10;
+    const trimmedResults: unknown[] = allResults.slice(0, maxResults);
+
+    return {
+      query,
+      results: trimmedResults,
+      totalResults: allResults.length,
+    };
+  }
+
+  private async _executeOutputToAiAsync(
+    node: INode,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const config: IOutputToAiConfig = node.config as IOutputToAiConfig;
+    const aiProviderService: AiProviderService = AiProviderService.getInstance();
+    const model: LanguageModel = aiProviderService.getModel(config.model ?? undefined);
+
+    const fullPrompt: string = `${config.prompt}\n\nInput data:\n${JSON.stringify(input, null, 2)}\n\nRespond with valid JSON only.`;
+
+    this._logger.debug("Executing output_to_ai node", { promptLength: fullPrompt.length });
+
+    const result = await generateTextWithRetryAsync({
+      model,
+      prompt: fullPrompt,
+    });
+
+    const responseText: string = result.text ?? "";
+
+    let parsed: Record<string, unknown>;
+
+    try {
+      parsed = JSON.parse(responseText.trim()) as Record<string, unknown>;
+    } catch {
+      // If the LLM doesn't return valid JSON, wrap the response
+      parsed = { response: responseText };
     }
 
     return parsed;
+  }
+
+  private async _executeAgentAsync(
+    node: INode,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const config: IAgentNodeConfig = node.config as IAgentNodeConfig;
+    const aiProviderService: AiProviderService = AiProviderService.getInstance();
+    const model: LanguageModel = aiProviderService.getModel(config.model ?? undefined);
+    const maxSteps: number = config.maxSteps || DEFAULT_AGENT_MAX_STEPS;
+
+    // Build the tool set from selected tools
+    const toolPool: Record<string, ToolSet[string]> = this._getAgentNodeToolPool();
+    const selectedTools: ToolSet = {};
+
+    for (const toolName of config.selectedTools) {
+      if (toolPool[toolName]) {
+        selectedTools[toolName] = toolPool[toolName];
+      } else {
+        this._logger.warn(`Agent node requested unknown tool: ${toolName}`, { nodeId: node.nodeId });
+      }
+    }
+
+    // Add the done tool
+    const doneTool = tool({
+      description: "Call this when the task is complete. Return the final result as JSON.",
+      inputSchema: z.object({
+        result: z.record(z.string(), z.unknown())
+          .describe("The final output of this agent node as a JSON object"),
+      }),
+      execute: async (_input: { result: Record<string, unknown> }): Promise<{ finished: boolean }> => {
+        return { finished: true };
+      },
+    });
+
+    selectedTools.done = doneTool;
+
+    const instructions: string = `${config.systemPrompt}\n\nYou have been given the following input data:\n${JSON.stringify(input, null, 2)}\n\nWhen you are done, call the "done" tool with your final result as a JSON object matching the expected output schema.`;
+
+    this._logger.debug("Executing agent node", { nodeId: node.nodeId, toolCount: Object.keys(selectedTools).length, maxSteps });
+
+    const agent: ToolLoopAgent = new ToolLoopAgent({
+      model,
+      instructions,
+      tools: selectedTools,
+      stopWhen: [
+        hasToolCall("done"),
+      ],
+    });
+
+    const agentResult = await agent.generate({ prompt: "Begin the task." });
+
+    // Extract the result from the done tool call
+    let output: Record<string, unknown> = {};
+
+    if (agentResult.steps) {
+      for (const step of agentResult.steps) {
+        if (step.toolCalls) {
+          for (const toolCall of step.toolCalls) {
+            if (toolCall.toolName === "done" && toolCall.input) {
+              const inputData: Record<string, unknown> = toolCall.input as Record<string, unknown>;
+              output = (inputData.result ?? inputData) as Record<string, unknown>;
+            }
+          }
+        }
+      }
+    }
+
+    // If no done tool result was found, try to parse the text output
+    if (Object.keys(output).length === 0 && agentResult.text) {
+      try {
+        output = JSON.parse(agentResult.text.trim()) as Record<string, unknown>;
+      } catch {
+        output = { response: agentResult.text };
+      }
+    }
+
+    return output;
+  }
+
+  private _getAgentNodeToolPool(): Record<string, ToolSet[string]> {
+    // The agent node can use a subset of system tools.
+    // We create a simple message sender that logs rather than sends to a chat.
+    const logSender = async (message: string): Promise<string | null> => {
+      this._logger.info("Agent node message", { message });
+      return null;
+    };
+
+    return {
+      think: thinkTool,
+      run_cmd: runCmdTool,
+      search_knowledge: searchKnowledgeTool,
+      add_knowledge: addKnowledgeTool,
+      edit_knowledge: editKnowledgeTool,
+      send_message: createSendMessageTool(logSender),
+    };
   }
 
   //#endregion Private methods

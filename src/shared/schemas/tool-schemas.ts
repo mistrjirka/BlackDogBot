@@ -416,6 +416,8 @@ export const addCronToolInputSchema = z.object({
 export const addCronToolOutputSchema = z.object({
   taskId: z.string(),
   success: z.boolean(),
+  error: z.string()
+    .optional(),
 });
 
 export const removeCronToolInputSchema = z.object({

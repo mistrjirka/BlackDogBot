@@ -1,4 +1,4 @@
-import { ToolSet, LanguageModel } from "ai";
+import { ToolSet, LanguageModel, type ModelMessage } from "ai";
 
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { buildMainAgentPromptAsync } from "./system-prompt.js";
@@ -27,8 +27,20 @@ import {
   runNodeTestTool,
   callSkillTool,
   getSkillFileTool,
+  addCronTool,
+  removeCronTool,
+  listCronsTool,
   type MessageSender,
 } from "../tools/index.js";
+
+//#region Interfaces
+
+interface IChatSession {
+  messages: ModelMessage[];
+  lastActivityAt: number;
+}
+
+//#endregion Interfaces
 
 //#region MainAgent
 
@@ -36,6 +48,7 @@ export class MainAgent extends BaseAgentBase {
   //#region Data members
 
   private static _instance: MainAgent | null;
+  private _sessions: Map<string, IChatSession>;
 
   //#endregion Data members
 
@@ -43,7 +56,7 @@ export class MainAgent extends BaseAgentBase {
 
   private constructor() {
     super();
-    MainAgent._instance = null;
+    this._sessions = new Map<string, IChatSession>();
   }
 
   //#endregion Constructors
@@ -58,7 +71,7 @@ export class MainAgent extends BaseAgentBase {
     return MainAgent._instance;
   }
 
-  public async initializeAsync(messageSender: MessageSender): Promise<void> {
+  public async initializeForChatAsync(chatId: string, messageSender: MessageSender): Promise<void> {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model: LanguageModel = aiProviderService.getModel();
     const instructions: string = await buildMainAgentPromptAsync();
@@ -87,10 +100,67 @@ export class MainAgent extends BaseAgentBase {
       run_node_test: runNodeTestTool,
       call_skill: callSkillTool,
       get_skill_file: getSkillFileTool,
+      add_cron: addCronTool,
+      remove_cron: removeCronTool,
+      list_crons: listCronsTool,
     };
 
     this._buildAgent(model, instructions, tools);
-    this._logger.info("MainAgent initialized.");
+
+    // Create session for this chat if it doesn't exist
+    if (!this._sessions.has(chatId)) {
+      this._sessions.set(chatId, {
+        messages: [],
+        lastActivityAt: Date.now(),
+      });
+    }
+
+    this._logger.info("MainAgent initialized for chat.", { chatId });
+  }
+
+  public async processMessageForChatAsync(chatId: string, userMessage: string): Promise<IAgentResult> {
+    this._ensureInitialized();
+
+    const session: IChatSession = this._sessions.get(chatId)!;
+
+    session.lastActivityAt = Date.now();
+
+    this._logger.debug("Processing user message", { chatId, messageLength: userMessage.length });
+
+    // Append the user message to session history
+    const userModelMessage: ModelMessage = {
+      role: "user",
+      content: [{ type: "text", text: userMessage }],
+    };
+
+    const messagesForCall: ModelMessage[] = [...session.messages, userModelMessage];
+
+    const result = await this._agent!.generate({
+      messages: messagesForCall,
+    });
+
+    const stepsCount: number = result.steps?.length ?? 1;
+
+    // Persist the conversation: add user message + response messages to session
+    session.messages.push(userModelMessage);
+
+    if (result.response?.messages) {
+      for (const responseMsg of result.response.messages) {
+        session.messages.push(responseMsg as ModelMessage);
+      }
+    }
+
+    this._logger.debug("Agent response generated", { chatId, stepsCount, historyLength: session.messages.length });
+
+    return {
+      text: result.text ?? "",
+      stepsCount,
+    };
+  }
+
+  public clearChatHistory(chatId: string): void {
+    this._sessions.delete(chatId);
+    this._logger.info("Chat history cleared.", { chatId });
   }
 
   //#endregion Public methods

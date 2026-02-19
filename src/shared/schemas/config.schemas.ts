@@ -57,6 +57,10 @@ const schedulerConfigSchema = z.object({
   enabled: z.boolean()
     .default(true)
     .describe("Whether the scheduler is active"),
+  notificationChatId: z.string()
+    .nullable()
+    .default(null)
+    .describe("Telegram chat ID where cron task notifications are sent. If null, messages are logged only."),
 });
 
 const knowledgeConfigSchema = z.object({
@@ -81,6 +85,17 @@ const loggingConfigSchema = z.object({
     .describe("Minimum log level"),
 });
 
+const servicesConfigSchema = z.object({
+  searxngUrl: z.string()
+    .url()
+    .default("http://localhost:18731")
+    .describe("SearXNG instance URL"),
+  crawl4aiUrl: z.string()
+    .url()
+    .default("http://localhost:18732")
+    .describe("Crawl4AI instance URL"),
+});
+
 export const configSchema = z.object({
   ai: aiConfigSchema,
   telegram: telegramConfigSchema
@@ -92,6 +107,8 @@ export const configSchema = z.object({
   skills: skillsConfigSchema
     .default({}),
   logging: loggingConfigSchema
+    .default({}),
+  services: servicesConfigSchema
     .default({}),
 });
 

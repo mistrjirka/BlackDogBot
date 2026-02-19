@@ -3,19 +3,18 @@ import {
   ToolSet,
   LanguageModel,
   hasToolCall,
-  generateText,
   type ModelMessage,
 } from "ai";
 
 import { doneTool } from "../tools/done.tool.js";
 import { LoggerService } from "../services/logger.service.js";
 import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
+import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
 
 //#region Constants
 
 const DEFAULT_COMPACTION_THRESHOLD: number = 40;
 const COMPACTION_KEEP_RECENT: number = 6;
-const COMPACTION_MAX_RETRIES: number = 3;
 
 //#endregion Constants
 
@@ -184,50 +183,30 @@ async function _compactMessagesAsync(
     })
     .join("\n");
 
-  let lastError: unknown;
+  const summaryResult = await generateTextWithRetryAsync({
+    model,
+    prompt: `Summarize the following conversation history concisely. Focus on key decisions made, actions taken, important context, and any pending tasks. Be thorough but brief.\n\n${oldConversationText}`,
+  });
 
-  for (let attempt: number = 1; attempt <= COMPACTION_MAX_RETRIES; attempt++) {
-    logger.debug("History compaction attempt", { attempt, maxRetries: COMPACTION_MAX_RETRIES });
+  const summaryText: string = summaryResult.text || "No summary available.";
 
-    const summaryResult = await generateText({
-      model,
-      prompt: `Summarize the following conversation history concisely. Focus on key decisions made, actions taken, important context, and any pending tasks. Be thorough but brief.\n\n${oldConversationText}`,
-    }).catch((error: unknown) => {
-      lastError = error;
-      return null;
-    });
+  logger.debug("History compaction complete", {
+    originalCount: messages.length,
+    compactedCount: 2 + recentMessages.length,
+    summaryLength: summaryText.length,
+  });
 
-    if (summaryResult) {
-      const summaryText: string = summaryResult.text ?? "No summary available.";
+  const summaryMessage: ModelMessage = {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `[CONVERSATION SUMMARY - Earlier messages were compacted]\n\n${summaryText}\n\n[END OF SUMMARY - Recent conversation follows]`,
+      },
+    ],
+  };
 
-      logger.debug("History compaction complete", {
-        originalCount: messages.length,
-        compactedCount: 2 + recentMessages.length,
-        summaryLength: summaryText.length,
-      });
-
-      const summaryMessage: ModelMessage = {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `[CONVERSATION SUMMARY - Earlier messages were compacted]\n\n${summaryText}\n\n[END OF SUMMARY - Recent conversation follows]`,
-          },
-        ],
-      };
-
-      return [firstMessage, summaryMessage, ...recentMessages];
-    }
-
-    logger.warn("History compaction attempt failed", {
-      attempt,
-      error: lastError instanceof Error ? lastError.message : String(lastError),
-    });
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(`History compaction failed after ${COMPACTION_MAX_RETRIES} retries: ${String(lastError)}`);
+  return [firstMessage, summaryMessage, ...recentMessages];
 }
 
 function _extractTextContent(message: ModelMessage): string {
