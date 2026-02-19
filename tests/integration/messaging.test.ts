@@ -6,7 +6,10 @@ import {
   type IPlatformAdapter,
 } from "../../src/services/messaging.service.js";
 import { LoggerService } from "../../src/services/logger.service.js";
-import type { IOutgoingMessage } from "../../src/shared/types/messaging.types.js";
+import type {
+  IOutgoingMessage,
+  IOutgoingPhoto,
+} from "../../src/shared/types/messaging.types.js";
 
 //#region Helpers
 
@@ -19,6 +22,8 @@ function createFakeAdapter(platform: "telegram" | "console" | "api"): IPlatformA
   return {
     platform,
     sendMessageAsync: vi.fn().mockResolvedValue("msg-123"),
+    sendPhotoAsync: vi.fn().mockResolvedValue("photo-123"),
+    sendChatActionAsync: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -122,6 +127,80 @@ describe("MessagingService", () => {
       userId: "chat-42",
       replyToMessageId: null,
     });
+  });
+
+  it("should create a photo sender function bound to a specific chat", async () => {
+    const service: MessagingService = MessagingService.getInstance();
+    const adapter: IPlatformAdapter = createFakeAdapter("telegram");
+
+    service.registerAdapter(adapter);
+
+    const photoSender = service.createPhotoSenderForChat("telegram", "chat-42");
+
+    const imageBuffer: Buffer = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const result: string | null = await photoSender(imageBuffer, "test caption");
+
+    expect(result).toBe("photo-123");
+    expect(adapter.sendPhotoAsync).toHaveBeenCalledWith({
+      imageBuffer,
+      caption: "test caption",
+      platform: "telegram",
+      userId: "chat-42",
+    });
+  });
+
+  it("should send a photo via sendPhotoAsync", async () => {
+    const service: MessagingService = MessagingService.getInstance();
+    const adapter: IPlatformAdapter = createFakeAdapter("telegram");
+
+    service.registerAdapter(adapter);
+
+    const photo: IOutgoingPhoto = {
+      imageBuffer: Buffer.from([0x89, 0x50]),
+      caption: "Graph image",
+      platform: "telegram",
+      userId: "user-99",
+    };
+
+    const messageId: string | null = await service.sendPhotoAsync(photo);
+
+    expect(messageId).toBe("photo-123");
+    expect(adapter.sendPhotoAsync).toHaveBeenCalledWith(photo);
+  });
+
+  it("should throw when sending photo with no adapter registered", async () => {
+    const service: MessagingService = MessagingService.getInstance();
+
+    const photo: IOutgoingPhoto = {
+      imageBuffer: Buffer.from([0x89]),
+      caption: null,
+      platform: "api",
+      userId: "user-1",
+    };
+
+    await expect(service.sendPhotoAsync(photo)).rejects.toThrow(
+      "No messaging adapter registered for platform: api",
+    );
+  });
+
+  it("should silently ignore sendChatActionAsync when no adapter registered", async () => {
+    const service: MessagingService = MessagingService.getInstance();
+
+    // Should not throw — just silently returns
+    await expect(
+      service.sendChatActionAsync("api", "user-1", "typing"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("should call adapter sendChatActionAsync when adapter is registered", async () => {
+    const service: MessagingService = MessagingService.getInstance();
+    const adapter: IPlatformAdapter = createFakeAdapter("telegram");
+
+    service.registerAdapter(adapter);
+
+    await service.sendChatActionAsync("telegram", "user-1", "typing");
+
+    expect(adapter.sendChatActionAsync).toHaveBeenCalledWith("user-1", "typing");
   });
 });
 

@@ -7,6 +7,7 @@ export type NodeType =
   | "curl_fetcher"
   | "crawl4ai"
   | "searxng"
+  | "rss_fetcher"
   | "python_code"
   | "output_to_ai"
   | "agent";
@@ -48,6 +49,11 @@ export interface ISearxngConfig {
   maxResults: number;
 }
 
+export interface IRssFetcherConfig {
+  url: string;
+  maxItems: number;
+}
+
 export interface IPythonCodeConfig {
   code: string;
   pythonPath: string;
@@ -64,6 +70,7 @@ export type NodeConfig =
   | ICurlFetcherConfig
   | ICrawl4AiConfig
   | ISearxngConfig
+  | IRssFetcherConfig
   | IPythonCodeConfig
   | IOutputToAiConfig
   | Record<string, never>;
@@ -80,6 +87,15 @@ export interface INode {
   config: NodeConfig;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface IJobExecutionResult {
+  success: boolean;
+  output: unknown;
+  error: string | null;
+  nodesExecuted: number;
+  failedNodeId: string | null;
+  failedNodeName: string | null;
 }
 
 export interface INodeTestCase {

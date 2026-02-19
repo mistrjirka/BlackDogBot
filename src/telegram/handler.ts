@@ -83,24 +83,41 @@ export class TelegramHandler {
 
       // Initialize the main agent with a sender bound to this chat
       const sender = this._messagingService.createSenderForChat("telegram", chatId);
+      const photoSender = this._messagingService.createPhotoSenderForChat("telegram", chatId);
 
-      await this._mainAgent.initializeForChatAsync(chatId, sender);
+      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender);
 
-      const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(chatId, incoming.text);
+      // Start typing indicator
+      const typingInterval: ReturnType<typeof setInterval> = setInterval(async () => {
+        try {
+          await this._messagingService.sendChatActionAsync("telegram", chatId, "typing");
+        } catch {
+          // Silently ignore typing indicator failures
+        }
+      }, 5000);
 
-      // If the agent produced text output and hasn't already sent it via send_message tool,
-      // send it as a final response
-      if (result.text) {
-        await ctx.reply(result.text, {
-          reply_parameters: { message_id: message.message_id },
+      // Send initial typing action immediately
+      await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
+
+      try {
+        const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(chatId, incoming.text);
+
+        // If the agent produced text output and hasn't already sent it via send_message tool,
+        // send it as a final response
+        if (result.text) {
+          await ctx.reply(result.text, {
+            reply_parameters: { message_id: message.message_id },
+          });
+        }
+
+        this._logger.info("Telegram message processed", {
+          chatId,
+          stepsCount: result.stepsCount,
+          responseLength: result.text.length,
         });
+      } finally {
+        clearInterval(typingInterval);
       }
-
-      this._logger.info("Telegram message processed", {
-        chatId,
-        stepsCount: result.stepsCount,
-        responseLength: result.text.length,
-      });
     } catch (error: unknown) {
       const errorDetails: IAiErrorDetails = extractAiErrorDetails(error);
       const logMessage: string = formatAiErrorForLog(errorDetails);

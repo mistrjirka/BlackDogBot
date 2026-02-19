@@ -15,6 +15,7 @@ export const nodeTypeSchema = z.enum([
   "curl_fetcher",
   "crawl4ai",
   "searxng",
+  "rss_fetcher",
   "python_code",
   "output_to_ai",
   "agent",
@@ -86,6 +87,17 @@ export const searxngConfigSchema = z.object({
     .positive()
     .default(10)
     .describe("Maximum results to return"),
+});
+
+export const rssFetcherConfigSchema = z.object({
+  url: z.string()
+    .url()
+    .describe("RSS/Atom feed URL"),
+  maxItems: z.number()
+    .int()
+    .positive()
+    .default(20)
+    .describe("Maximum number of items to return"),
 });
 
 export const pythonCodeConfigSchema = z.object({

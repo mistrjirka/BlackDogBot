@@ -25,3 +25,4 @@ export { getSkillFileTool } from "./get-skill-file.tool.js";
 export { addCronTool } from "./add-cron.tool.js";
 export { removeCronTool } from "./remove-cron.tool.js";
 export { listCronsTool } from "./list-crons.tool.js";
+export { createRenderGraphTool, type PhotoSender } from "./render-graph.tool.js";

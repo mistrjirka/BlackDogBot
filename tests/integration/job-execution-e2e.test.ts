@@ -632,6 +632,127 @@ services:
 
   //#endregion searxng Node Tests
 
+  //#region rss_fetcher Node Tests
+
+  it("should execute an rss_fetcher node and return feed items", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+
+    const job: IJob = await storageService.createJobAsync(
+      "RSS Fetch Job",
+      "Fetches an RSS feed",
+    );
+
+    const inputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: {},
+    };
+    const outputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        description: { type: "string" },
+        link: { type: "string" },
+        items: { type: "array" },
+        totalItems: { type: "number" },
+        feedUrl: { type: "string" },
+      },
+      required: ["title", "items", "feedUrl"],
+    };
+
+    const node: INode = await storageService.addNodeAsync(
+      job.jobId,
+      "rss_fetcher",
+      "RSS Feed Node",
+      "Fetches Hacker News RSS feed",
+      inputSchema,
+      outputSchema,
+      {
+        url: "https://news.ycombinator.com/rss",
+        maxItems: 5,
+      },
+    );
+
+    await storageService.updateJobAsync(job.jobId, {
+      entrypointNodeId: node.nodeId,
+      status: "ready",
+    });
+
+    const result = await executorService.executeJobAsync(job.jobId, {});
+
+    expect(result.success).toBe(true);
+    expect(result.error).toBeNull();
+    expect(result.nodesExecuted).toBe(1);
+
+    const output: Record<string, unknown> = result.output as Record<string, unknown>;
+
+    expect(output.title).toBeDefined();
+    expect(output.description).toBeDefined();
+    expect(output.link).toBeDefined();
+    expect(Array.isArray(output.items)).toBe(true);
+    expect((output.items as unknown[]).length).toBeLessThanOrEqual(5);
+    expect(output.totalItems).toBeDefined();
+    expect(output.feedUrl).toBe("https://news.ycombinator.com/rss");
+  }, 30000);
+
+  it("should execute an rss_fetcher node with template substitution", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+
+    const job: IJob = await storageService.createJobAsync(
+      "RSS Template Job",
+      "Fetches RSS with dynamic URL",
+    );
+
+    const inputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        feedUrl: { type: "string" },
+      },
+      required: ["feedUrl"],
+    };
+    const outputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        items: { type: "array" },
+        feedUrl: { type: "string" },
+      },
+      required: ["items", "feedUrl"],
+    };
+
+    const node: INode = await storageService.addNodeAsync(
+      job.jobId,
+      "rss_fetcher",
+      "Dynamic RSS Node",
+      "Fetches RSS with template URL",
+      inputSchema,
+      outputSchema,
+      {
+        url: "{{feedUrl}}",
+        maxItems: 3,
+      },
+    );
+
+    await storageService.updateJobAsync(job.jobId, {
+      entrypointNodeId: node.nodeId,
+      status: "ready",
+    });
+
+    const result = await executorService.executeJobAsync(job.jobId, {
+      feedUrl: "https://news.ycombinator.com/rss",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.error).toBeNull();
+
+    const output: Record<string, unknown> = result.output as Record<string, unknown>;
+
+    expect((output.items as unknown[]).length).toBeLessThanOrEqual(3);
+    expect(output.feedUrl).toBe("https://news.ycombinator.com/rss");
+  }, 30000);
+
+  //#endregion rss_fetcher Node Tests
+
   //#region crawl4ai Node Tests
 
   it("should execute a crawl4ai node to crawl a webpage", async () => {
@@ -808,7 +929,7 @@ services:
     expect(typeof output.wordCount).toBe("number");
     expect(typeof output.language).toBe("string");
     expect((output.language as string).toLowerCase()).toContain("english");
-  }, 60000);
+  }, 120000);
 
   //#endregion output_to_ai Node Tests
 
@@ -986,6 +1107,156 @@ services:
   }, 120000);
 
   //#endregion Pipeline Tests with New Node Types
+
+  //#region Error Reporting Tests
+
+  it("should report failedNodeId and failedNodeName when curl_fetcher gets a 404", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+
+    const job: IJob = await storageService.createJobAsync(
+      "Curl 404 Error Job",
+      "A curl_fetcher that hits a 404 endpoint",
+    );
+
+    const inputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: {},
+    };
+    const outputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        statusCode: { type: "number" },
+      },
+    };
+
+    const node: INode = await storageService.addNodeAsync(
+      job.jobId,
+      "curl_fetcher",
+      "NotFound Fetcher",
+      "Fetches a 404 endpoint",
+      inputSchema,
+      outputSchema,
+      {
+        url: "https://httpbin.org/status/404",
+        method: "GET",
+        headers: {},
+        body: null,
+      },
+    );
+
+    await storageService.updateJobAsync(job.jobId, {
+      entrypointNodeId: node.nodeId,
+      status: "ready",
+    });
+
+    const result = await executorService.executeJobAsync(job.jobId, {});
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("404");
+    expect(result.error).toContain("NotFound Fetcher");
+    expect(result.failedNodeId).toBe(node.nodeId);
+    expect(result.failedNodeName).toBe("NotFound Fetcher");
+    expect(result.nodesExecuted).toBe(0);
+  }, 30000);
+
+  it("should count nodesExecuted correctly when second node in pipeline fails", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+
+    const job: IJob = await storageService.createJobAsync(
+      "Second Node Failure Job",
+      "First node succeeds, second node fails with 500",
+    );
+
+    const emptySchema: Record<string, unknown> = {
+      type: "object",
+      properties: {},
+    };
+
+    const nodeA: INode = await storageService.addNodeAsync(
+      job.jobId,
+      "manual",
+      "Passthrough Entry",
+      "Passes input through",
+      emptySchema,
+      emptySchema,
+      {},
+    );
+
+    const nodeB: INode = await storageService.addNodeAsync(
+      job.jobId,
+      "curl_fetcher",
+      "Failing Fetcher",
+      "Fetches a 500 endpoint",
+      emptySchema,
+      emptySchema,
+      {
+        url: "https://httpbin.org/status/500",
+        method: "GET",
+        headers: {},
+        body: null,
+      },
+    );
+
+    await storageService.updateNodeAsync(job.jobId, nodeA.nodeId, {
+      connections: [nodeB.nodeId],
+    });
+
+    await storageService.updateJobAsync(job.jobId, {
+      entrypointNodeId: nodeA.nodeId,
+      status: "ready",
+    });
+
+    const result = await executorService.executeJobAsync(job.jobId, {});
+
+    expect(result.success).toBe(false);
+    expect(result.nodesExecuted).toBe(1);
+    expect(result.failedNodeId).toBe(nodeB.nodeId);
+    expect(result.failedNodeName).toBe("Failing Fetcher");
+    expect(result.error).toContain("500");
+  }, 30000);
+
+  it("should set failedNodeId and failedNodeName to null on success", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+
+    const job: IJob = await storageService.createJobAsync(
+      "Success No Failure Info Job",
+      "A simple successful job should have null failure fields",
+    );
+
+    const schema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        value: { type: "string" },
+      },
+      required: ["value"],
+    };
+
+    const node: INode = await storageService.addNodeAsync(
+      job.jobId,
+      "manual",
+      "Simple Node",
+      "A simple passthrough node",
+      schema,
+      schema,
+      {},
+    );
+
+    await storageService.updateJobAsync(job.jobId, {
+      entrypointNodeId: node.nodeId,
+      status: "ready",
+    });
+
+    const result = await executorService.executeJobAsync(job.jobId, { value: "test" });
+
+    expect(result.success).toBe(true);
+    expect(result.failedNodeId).toBeNull();
+    expect(result.failedNodeName).toBeNull();
+  });
+
+  //#endregion Error Reporting Tests
 });
 
 //#endregion Tests

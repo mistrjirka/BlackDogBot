@@ -16,7 +16,7 @@ import { JobExecutorService } from "../../src/services/job-executor.service.js";
 import { SkillLoaderService } from "../../src/services/skill-loader.service.js";
 import { MainAgent, type IAgentResult } from "../../src/agent/main-agent.js";
 import type { IJob } from "../../src/shared/types/index.js";
-import type { MessageSender } from "../../src/tools/index.js";
+import type { MessageSender, PhotoSender } from "../../src/tools/index.js";
 
 //#region Helpers
 
@@ -42,6 +42,10 @@ function resetSingletons(): void {
 const mockMessageSender: MessageSender = async (message: string): Promise<string | null> => {
   sentMessages.push(message);
   return "mock-message-id";
+};
+
+const mockPhotoSender: PhotoSender = async (): Promise<string | null> => {
+  return "mock-photo-id";
 };
 
 //#endregion Helpers
@@ -96,7 +100,7 @@ describe("AI-Driven Job Creation E2E", () => {
 
     const mainAgent: MainAgent = MainAgent.getInstance();
 
-    await mainAgent.initializeForChatAsync("test-chat", mockMessageSender);
+    await mainAgent.initializeForChatAsync("test-chat", mockMessageSender, mockPhotoSender);
   }, 120000);
 
   afterAll(async () => {

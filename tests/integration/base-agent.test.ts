@@ -1,14 +1,23 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 import { BaseAgentBase } from "../../src/agent/base-agent.js";
 import { LoggerService } from "../../src/services/logger.service.js";
+import { ConfigService } from "../../src/services/config.service.js";
+import { AiProviderService } from "../../src/services/ai-provider.service.js";
+import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
 import type { ToolSet, LanguageModel } from "ai";
 
 //#region Helpers
 
+let tempDir: string;
+let originalHome: string;
+
 /**
  * Concrete subclass of BaseAgentBase for testing purposes.
- * Exposes protected methods publicly.
+ * Exposes protected members publicly.
  */
 class TestAgent extends BaseAgentBase {
   constructor(options?: { maxSteps?: number; compactionThreshold?: number }) {
@@ -26,10 +35,9 @@ class TestAgent extends BaseAgentBase {
 
 function resetSingletons(): void {
   (LoggerService as unknown as { _instance: null })._instance = null;
-}
-
-function createMockModel(): LanguageModel {
-  return {} as LanguageModel;
+  (ConfigService as unknown as { _instance: null })._instance = null;
+  (AiProviderService as unknown as { _instance: null })._instance = null;
+  (RateLimiterService as unknown as { _instance: null })._instance = null;
 }
 
 //#endregion Helpers
@@ -37,19 +45,34 @@ function createMockModel(): LanguageModel {
 //#region Tests
 
 describe("BaseAgentBase", () => {
-  beforeEach(() => {
+  beforeAll(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-base-agent-"));
+    originalHome = process.env.HOME ?? os.homedir();
+    process.env.HOME = tempDir;
+
     resetSingletons();
 
-    const logger: LoggerService = LoggerService.getInstance();
-    vi.spyOn(logger, "debug").mockReturnValue(undefined);
-    vi.spyOn(logger, "info").mockReturnValue(undefined);
-    vi.spyOn(logger, "warn").mockReturnValue(undefined);
-    vi.spyOn(logger, "error").mockReturnValue(undefined);
+    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
+
+    await fs.mkdir(tempConfigDir, { recursive: true });
+    await fs.cp(realConfigPath, tempConfigPath);
+
+    const loggerService: LoggerService = LoggerService.getInstance();
+    await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
+
+    const configService: ConfigService = ConfigService.getInstance();
+    await configService.initializeAsync(tempConfigPath);
+
+    const aiProviderService: AiProviderService = AiProviderService.getInstance();
+    aiProviderService.initialize(configService.getConfig().ai);
   });
 
-  afterEach(() => {
+  afterAll(async () => {
+    process.env.HOME = originalHome;
     resetSingletons();
-    vi.restoreAllMocks();
+    await fs.rm(tempDir, { recursive: true, force: true });
   });
 
   it("should throw when processMessageAsync is called before initialization", async () => {
@@ -61,11 +84,12 @@ describe("BaseAgentBase", () => {
   });
 
   it("should mark as initialized after _buildAgent is called", () => {
+    const model: LanguageModel = AiProviderService.getInstance().getModel();
     const agent: TestAgent = new TestAgent();
 
     expect(agent.initialized).toBe(false);
 
-    agent.buildAgentPublic(createMockModel(), "Test instructions", {});
+    agent.buildAgentPublic(model, "Test instructions", {});
 
     expect(agent.initialized).toBe(true);
   });

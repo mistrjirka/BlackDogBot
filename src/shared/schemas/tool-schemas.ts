@@ -240,6 +240,12 @@ export const runJobToolOutputSchema = z.object({
   error: z.string()
     .nullable(),
   nodesExecuted: z.number(),
+  failedNodeId: z.string()
+    .nullable()
+    .describe("ID of the node that failed, if any"),
+  failedNodeName: z.string()
+    .nullable()
+    .describe("Name of the node that failed, if any"),
 });
 
 export const finishJobToolInputSchema = z.object({
@@ -261,7 +267,7 @@ export const finishJobToolOutputSchema = z.object({
 export const addNodeToolInputSchema = z.object({
   jobId: z.string()
     .min(1),
-  type: z.enum(["manual", "curl_fetcher", "crawl4ai", "searxng", "python_code", "output_to_ai", "agent"]),
+  type: z.enum(["manual", "curl_fetcher", "crawl4ai", "searxng", "rss_fetcher", "python_code", "output_to_ai", "agent"]),
   name: z.string()
     .min(1),
   description: z.string()
@@ -384,6 +390,21 @@ export const runNodeTestToolOutputSchema = z.object({
 });
 
 //#endregion Node Tools
+
+//#region Graph Tools
+
+export const renderGraphToolInputSchema = z.object({
+  jobId: z.string()
+    .min(1)
+    .describe("Job ID whose graph to render and send as an image"),
+});
+
+export const renderGraphToolOutputSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+});
+
+//#endregion Graph Tools
 
 //#region Cron Tools
 

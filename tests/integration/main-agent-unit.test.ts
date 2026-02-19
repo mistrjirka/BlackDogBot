@@ -1,46 +1,84 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 import { MainAgent } from "../../src/agent/main-agent.js";
+import { ConfigService } from "../../src/services/config.service.js";
 import { AiProviderService } from "../../src/services/ai-provider.service.js";
-import { MessagingService } from "../../src/services/messaging.service.js";
 import { LoggerService } from "../../src/services/logger.service.js";
 import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
 import { PromptService } from "../../src/services/prompt.service.js";
+import type { MessageSender, PhotoSender } from "../../src/tools/index.js";
 
 //#region Helpers
+
+let tempDir: string;
+let originalHome: string;
 
 /**
  * Resets all singletons involved in MainAgent unit tests.
  */
 function resetSingletons(): void {
   (MainAgent as unknown as { _instance: null })._instance = null;
+  (ConfigService as unknown as { _instance: null })._instance = null;
   (AiProviderService as unknown as { _instance: null })._instance = null;
-  (MessagingService as unknown as { _instance: null })._instance = null;
   (LoggerService as unknown as { _instance: null })._instance = null;
   (RateLimiterService as unknown as { _instance: null })._instance = null;
   (PromptService as unknown as { _instance: null })._instance = null;
 }
+
+/**
+ * Initializes all services required by MainAgent.initializeForChatAsync
+ * using real implementations (no mocks).
+ */
+async function initializeServicesAsync(): Promise<void> {
+  const loggerService: LoggerService = LoggerService.getInstance();
+
+  await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
+
+  const configService: ConfigService = ConfigService.getInstance();
+  const tempConfigPath: string = path.join(tempDir, ".betterclaw", "config.yaml");
+
+  await configService.initializeAsync(tempConfigPath);
+
+  const aiProviderService: AiProviderService = AiProviderService.getInstance();
+
+  aiProviderService.initialize(configService.getConfig().ai);
+
+  const promptService: PromptService = PromptService.getInstance();
+
+  await promptService.initializeAsync();
+}
+
+const messageSender: MessageSender = async (): Promise<string | null> => null;
+const photoSender: PhotoSender = async (): Promise<string | null> => null;
 
 //#endregion Helpers
 
 //#region Tests
 
 describe("MainAgent unit", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-agent-unit-"));
+    originalHome = process.env.HOME ?? os.homedir();
+    process.env.HOME = tempDir;
+
     resetSingletons();
 
-    // Silence logger
-    const logger: LoggerService = LoggerService.getInstance();
-    (logger as unknown as { _initialized: boolean })._initialized = true;
-    (logger as unknown as { info: unknown }).info = vi.fn();
-    (logger as unknown as { warn: unknown }).warn = vi.fn();
-    (logger as unknown as { error: unknown }).error = vi.fn();
-    (logger as unknown as { debug: unknown }).debug = vi.fn();
+    // Copy real config into the temp home directory
+    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
+
+    await fs.mkdir(tempConfigDir, { recursive: true });
+    await fs.cp(realConfigPath, tempConfigPath);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    process.env.HOME = originalHome;
     resetSingletons();
-    vi.restoreAllMocks();
+    await fs.rm(tempDir, { recursive: true, force: true });
   });
 
   it("should throw when processMessageForChatAsync is called before initializeForChatAsync", async () => {
@@ -54,24 +92,12 @@ describe("MainAgent unit", () => {
   });
 
   it("should clear chat history and allow reinitialisation for the same chatId", async () => {
-    // Arrange — stub initializeForChatAsync so we don't need a real LLM stack
+    // Arrange — initialize services and MainAgent with real implementations
+    await initializeServicesAsync();
+
     const mainAgent: MainAgent = MainAgent.getInstance();
 
-    vi.spyOn(mainAgent, "initializeForChatAsync").mockImplementation(
-      async (chatId: string) => {
-        // Manually create the session the way the real implementation does
-        const sessions = (
-          mainAgent as unknown as { _sessions: Map<string, unknown> }
-        )._sessions;
-
-        if (!sessions.has(chatId)) {
-          sessions.set(chatId, { messages: [], lastActivityAt: Date.now() });
-        }
-      },
-    );
-
-    // Create a session for chat-1
-    await mainAgent.initializeForChatAsync("chat-1", async () => null);
+    await mainAgent.initializeForChatAsync("chat-1", messageSender, photoSender);
 
     const sessions = (
       mainAgent as unknown as { _sessions: Map<string, unknown> }
@@ -87,23 +113,13 @@ describe("MainAgent unit", () => {
   });
 
   it("should keep sessions for other chats when clearing one", async () => {
-    // Arrange
+    // Arrange — initialize services and create two chat sessions
+    await initializeServicesAsync();
+
     const mainAgent: MainAgent = MainAgent.getInstance();
 
-    vi.spyOn(mainAgent, "initializeForChatAsync").mockImplementation(
-      async (chatId: string) => {
-        const sessions = (
-          mainAgent as unknown as { _sessions: Map<string, unknown> }
-        )._sessions;
-
-        if (!sessions.has(chatId)) {
-          sessions.set(chatId, { messages: [], lastActivityAt: Date.now() });
-        }
-      },
-    );
-
-    await mainAgent.initializeForChatAsync("chat-1", async () => null);
-    await mainAgent.initializeForChatAsync("chat-2", async () => null);
+    await mainAgent.initializeForChatAsync("chat-1", messageSender, photoSender);
+    await mainAgent.initializeForChatAsync("chat-2", messageSender, photoSender);
 
     const sessions = (
       mainAgent as unknown as { _sessions: Map<string, unknown> }
@@ -120,30 +136,13 @@ describe("MainAgent unit", () => {
   });
 
   it("should not create a duplicate session when initializeForChatAsync is called twice for the same chat", async () => {
-    // Arrange
+    // Arrange — initialize services and call initializeForChatAsync twice
+    await initializeServicesAsync();
+
     const mainAgent: MainAgent = MainAgent.getInstance();
 
-    // Stub _buildAgent to avoid needing a full AI stack
-    vi.spyOn(
-      mainAgent as unknown as { _buildAgent: () => void },
-      "_buildAgent",
-    ).mockReturnValue(undefined);
-
-    // Stub AiProviderService and PromptService
-    const aiProviderService: AiProviderService = AiProviderService.getInstance();
-    vi.spyOn(aiProviderService, "getModel").mockReturnValue(
-      {} as import("ai").LanguageModel,
-    );
-
-    const promptService: PromptService = PromptService.getInstance();
-    vi.spyOn(
-      promptService as unknown as { getPromptAsync: (key: string) => Promise<string> },
-      "getPromptAsync",
-    ).mockResolvedValue("system prompt");
-
-    // Act — call initializeForChatAsync twice for the same chatId
-    await mainAgent.initializeForChatAsync("chat-1", async () => null);
-    await mainAgent.initializeForChatAsync("chat-1", async () => null);
+    await mainAgent.initializeForChatAsync("chat-1", messageSender, photoSender);
+    await mainAgent.initializeForChatAsync("chat-1", messageSender, photoSender);
 
     const sessions = (
       mainAgent as unknown as { _sessions: Map<string, unknown> }

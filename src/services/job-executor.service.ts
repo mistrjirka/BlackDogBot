@@ -12,10 +12,12 @@ import {
   INode,
   INodeTestCase,
   INodeTestResult,
+  IJobExecutionResult,
   IPythonCodeConfig,
   ICurlFetcherConfig,
   ICrawl4AiConfig,
   ISearxngConfig,
+  IRssFetcherConfig,
   IOutputToAiConfig,
   IAgentNodeConfig,
   NodeType,
@@ -71,7 +73,7 @@ export class JobExecutorService {
   public async executeJobAsync(
     jobId: string,
     input: Record<string, unknown>,
-  ): Promise<{ success: boolean; output: unknown; error: string | null; nodesExecuted: number }> {
+  ): Promise<IJobExecutionResult> {
     try {
       const job: IJob | null = await this._storageService.getJobAsync(jobId);
 
@@ -131,14 +133,27 @@ export class JobExecutorService {
 
           const errorMessage: string = `Input validation failed for node "${node.name}" (${nodeId}): ${inputValidation.errors.join(", ")}`;
 
-          this._logger.error(errorMessage, { jobId, nodeId });
+          this._logger.error(errorMessage, { jobId, nodeId, nodeType: node.type });
 
-          return { success: false, output: null, error: errorMessage, nodesExecuted };
+          return { success: false, output: null, error: errorMessage, nodesExecuted, failedNodeId: nodeId, failedNodeName: node.name };
         }
 
         this._logger.debug(`Executing node "${node.name}"`, { jobId, nodeId, type: node.type });
 
-        const nodeOutput: Record<string, unknown> = await this._executeNodeAsync(node, nodeInput);
+        let nodeOutput: Record<string, unknown>;
+
+        try {
+          nodeOutput = await this._executeNodeAsync(node, nodeInput);
+        } catch (nodeError: unknown) {
+          const rawMessage: string = nodeError instanceof Error ? nodeError.message : String(nodeError);
+          const errorMessage: string = `Node "${node.name}" (${nodeId}, type: ${node.type}) failed: ${rawMessage}`;
+
+          this._logger.error(errorMessage, { jobId, nodeId, nodeType: node.type });
+
+          await this._storageService.updateJobAsync(jobId, { status: "failed" });
+
+          return { success: false, output: null, error: errorMessage, nodesExecuted, failedNodeId: nodeId, failedNodeName: node.name };
+        }
 
         nodesExecuted++;
 
@@ -149,9 +164,9 @@ export class JobExecutorService {
 
           const errorMessage: string = `Output validation failed for node "${node.name}" (${nodeId}): ${outputValidation.errors.join(", ")}`;
 
-          this._logger.error(errorMessage, { jobId, nodeId });
+          this._logger.error(errorMessage, { jobId, nodeId, nodeType: node.type });
 
-          return { success: false, output: null, error: errorMessage, nodesExecuted };
+          return { success: false, output: null, error: errorMessage, nodesExecuted, failedNodeId: nodeId, failedNodeName: node.name };
         }
 
         nodeOutputs.set(nodeId, nodeOutput);
@@ -164,7 +179,7 @@ export class JobExecutorService {
 
       this._logger.info("Job execution completed", { jobId, nodesExecuted: executionOrder.length });
 
-      return { success: true, output: lastOutput ?? null, error: null, nodesExecuted: executionOrder.length };
+      return { success: true, output: lastOutput ?? null, error: null, nodesExecuted: executionOrder.length, failedNodeId: null, failedNodeName: null };
     } catch (error: unknown) {
       const errorMessage: string = error instanceof Error ? error.message : String(error);
 
@@ -176,7 +191,7 @@ export class JobExecutorService {
         // Ignore update errors during failure handling
       }
 
-      return { success: false, output: null, error: errorMessage, nodesExecuted: 0 };
+      return { success: false, output: null, error: errorMessage, nodesExecuted: 0, failedNodeId: null, failedNodeName: null };
     }
   }
 
@@ -259,6 +274,9 @@ export class JobExecutorService {
 
       case "searxng":
         return this._executeSearxngAsync(node, input);
+
+      case "rss_fetcher":
+        return this._executeRssFetcherAsync(node, input);
 
       case "output_to_ai":
         return this._executeOutputToAiAsync(node, input);
@@ -347,6 +365,10 @@ export class JobExecutorService {
 
     const response: Response = await fetch(url, fetchOptions);
     const responseText: string = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`HTTP request failed (${response.status} ${response.statusText}): ${responseText}`);
+    }
 
     let responseBody: unknown;
 
@@ -500,6 +522,160 @@ export class JobExecutorService {
     };
   }
 
+  private async _executeRssFetcherAsync(
+    node: INode,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const config: IRssFetcherConfig = node.config as IRssFetcherConfig;
+
+    let url: string = config.url;
+
+    for (const [key, value] of Object.entries(input)) {
+      url = url.replaceAll(`{{${key}}}`, String(value));
+    }
+
+    this._logger.debug("Executing rss_fetcher node", { url });
+
+    const response: Response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml",
+        "User-Agent": "BetterClaw/1.0",
+      },
+    });
+
+    if (!response.ok) {
+      const errorText: string = await response.text();
+      throw new Error(`RSS fetch failed (${response.status}): ${errorText}`);
+    }
+
+    const xmlText: string = await response.text();
+    const parsed: Record<string, unknown> = this._parseRssFeed(xmlText);
+
+    const maxItems: number = config.maxItems || 20;
+    const items: unknown[] = (parsed.items ?? []) as unknown[];
+    const trimmedItems: unknown[] = items.slice(0, maxItems);
+
+    return {
+      title: parsed.title,
+      description: parsed.description,
+      link: parsed.link,
+      items: trimmedItems,
+      totalItems: items.length,
+      feedUrl: url,
+    };
+  }
+
+  private _parseRssFeed(xml: string): Record<string, unknown> {
+    const result: Record<string, unknown> = {
+      items: [],
+    };
+
+    const titleMatch: RegExpMatchArray | null = xml.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>|<title[^>]*>(.*?)<\/title>/is);
+    if (titleMatch) {
+      result.title = titleMatch[1] || titleMatch[2];
+    }
+
+    const descriptionMatch: RegExpMatchArray | null = xml.match(/<description[^>]*><!\[CDATA\[(.*?)\]\]><\/description>|<description[^>]*>(.*?)<\/description>/is);
+    if (descriptionMatch) {
+      result.description = descriptionMatch[1] || descriptionMatch[2];
+    }
+
+    const linkMatch: RegExpMatchArray | null = xml.match(/<link[^>]*><!\[CDATA\[(.*?)\]\]><\/link>|<link[^>]*>(.*?)<\/link>/is);
+    if (linkMatch) {
+      result.link = linkMatch[1] || linkMatch[2];
+    }
+
+    const isAtom: boolean = /<feed[^>]* xmlns=["']http:\/\/www\.w3\.org\/2005\/Atom["']/.test(xml);
+
+    if (isAtom) {
+      const entryRegex: RegExp = /<entry[^>]*>([\s\S]*?)<\/entry>/gi;
+      const entries: string[] = [];
+      let match: RegExpExecArray | null;
+
+      while ((match = entryRegex.exec(xml)) !== null) {
+        entries.push(match[1]);
+      }
+
+      result.items = entries.map((entry: string): Record<string, unknown> => {
+        const item: Record<string, unknown> = {};
+
+        const entryTitleMatch: RegExpMatchArray | null = entry.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>|<title[^>]*>(.*?)<\/title>/is);
+        if (entryTitleMatch) {
+          item.title = entryTitleMatch[1] || entryTitleMatch[2];
+        }
+
+        const entryLinkMatch: RegExpMatchArray | null = entry.match(/<link[^>]*href=["']([^"']+)["'][^>]*>|<link[^>]*>(.*?)<\/link>/is);
+        if (entryLinkMatch) {
+          item.link = entryLinkMatch[1] || entryLinkMatch[2];
+        }
+
+        const entryContentMatch: RegExpMatchArray | null = entry.match(/<content[^>]*><!\[CDATA\[(.*?)\]\]><\/content>|<content[^>]*>(.*?)<\/content>/is);
+        if (entryContentMatch) {
+          item.content = entryContentMatch[1] || entryContentMatch[2];
+        }
+
+        const entrySummaryMatch: RegExpMatchArray | null = entry.match(/<summary[^>]*><!\[CDATA\[(.*?)\]\]><\/summary>|<summary[^>]*>(.*?)<\/summary>/is);
+        if (entrySummaryMatch) {
+          item.summary = entrySummaryMatch[1] || entrySummaryMatch[2];
+        }
+
+        const entryIdMatch: RegExpMatchArray | null = entry.match(/<id[^>]*>(.*?)<\/id>/is);
+        if (entryIdMatch) {
+          item.id = entryIdMatch[1];
+        }
+
+        const entryPublishedMatch: RegExpMatchArray | null = entry.match(/<published[^>]*>(.*?)<\/published>|<updated[^>]*>(.*?)<\/updated>/is);
+        if (entryPublishedMatch) {
+          item.published = entryPublishedMatch[1] || entryPublishedMatch[2];
+        }
+
+        return item;
+      });
+    } else {
+      const itemRegex: RegExp = /<item[^>]*>([\s\S]*?)<\/item>/gi;
+      const items: string[] = [];
+      let match: RegExpExecArray | null;
+
+      while ((match = itemRegex.exec(xml)) !== null) {
+        items.push(match[1]);
+      }
+
+      result.items = items.map((itemXml: string): Record<string, unknown> => {
+        const item: Record<string, unknown> = {};
+
+        const itemTitleMatch: RegExpMatchArray | null = itemXml.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>|<title[^>]*>(.*?)<\/title>/is);
+        if (itemTitleMatch) {
+          item.title = itemTitleMatch[1] || itemTitleMatch[2];
+        }
+
+        const itemLinkMatch: RegExpMatchArray | null = itemXml.match(/<link[^>]*>(.*?)<\/link>/is);
+        if (itemLinkMatch) {
+          item.link = itemLinkMatch[1];
+        }
+
+        const itemDescMatch: RegExpMatchArray | null = itemXml.match(/<description[^>]*><!\[CDATA\[(.*?)\]\]><\/description>|<description[^>]*>(.*?)<\/description>/is);
+        if (itemDescMatch) {
+          item.description = itemDescMatch[1] || itemDescMatch[2];
+        }
+
+        const itemGuidMatch: RegExpMatchArray | null = itemXml.match(/<guid[^>]*>(.*?)<\/guid>/is);
+        if (itemGuidMatch) {
+          item.guid = itemGuidMatch[1];
+        }
+
+        const itemPubDateMatch: RegExpMatchArray | null = itemXml.match(/<pubDate[^>]*>(.*?)<\/pubDate>/is);
+        if (itemPubDateMatch) {
+          item.pubDate = itemPubDateMatch[1];
+        }
+
+        return item;
+      });
+    }
+
+    return result;
+  }
+
   private async _executeOutputToAiAsync(
     node: INode,
     input: Record<string, unknown>,
@@ -508,7 +684,18 @@ export class JobExecutorService {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model: LanguageModel = aiProviderService.getModel(config.model ?? undefined);
 
-    const fullPrompt: string = `${config.prompt}\n\nInput data:\n${JSON.stringify(input, null, 2)}\n\nRespond with valid JSON only.`;
+    const outputSchemaStr: string = JSON.stringify(node.outputSchema, null, 2);
+    const fullPrompt: string = [
+      config.prompt,
+      "",
+      "Input data:",
+      JSON.stringify(input, null, 2),
+      "",
+      "Required output JSON schema:",
+      outputSchemaStr,
+      "",
+      "IMPORTANT: Respond with ONLY raw JSON matching the schema above. Do NOT wrap it in markdown code fences. Do NOT include any text before or after the JSON.",
+    ].join("\n");
 
     this._logger.debug("Executing output_to_ai node", { promptLength: fullPrompt.length });
 
@@ -518,17 +705,45 @@ export class JobExecutorService {
     });
 
     const responseText: string = result.text ?? "";
-
-    let parsed: Record<string, unknown>;
-
-    try {
-      parsed = JSON.parse(responseText.trim()) as Record<string, unknown>;
-    } catch {
-      // If the LLM doesn't return valid JSON, wrap the response
-      parsed = { response: responseText };
-    }
+    const parsed: Record<string, unknown> = this._extractJsonFromResponse(responseText);
 
     return parsed;
+  }
+
+  private _extractJsonFromResponse(responseText: string): Record<string, unknown> {
+    const trimmed: string = responseText.trim();
+
+    // Try direct parse first
+    try {
+      return JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      // Continue to fallback strategies
+    }
+
+    // Try extracting from markdown code fences: ```json ... ``` or ``` ... ```
+    const fenceMatch: RegExpMatchArray | null = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+
+    if (fenceMatch) {
+      try {
+        return JSON.parse(fenceMatch[1].trim()) as Record<string, unknown>;
+      } catch {
+        // Continue to next fallback
+      }
+    }
+
+    // Try extracting the first JSON object from the response
+    const objectMatch: RegExpMatchArray | null = trimmed.match(/\{[\s\S]*\}/);
+
+    if (objectMatch) {
+      try {
+        return JSON.parse(objectMatch[0]) as Record<string, unknown>;
+      } catch {
+        // Fall through
+      }
+    }
+
+    // Last resort: wrap raw text
+    return { response: responseText };
   }
 
   private async _executeAgentAsync(

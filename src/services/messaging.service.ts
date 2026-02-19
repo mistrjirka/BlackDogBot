@@ -1,8 +1,9 @@
-import { Bot } from "grammy";
+import { Bot, InputFile } from "grammy";
 
 import { LoggerService } from "./logger.service.js";
 import {
   type IOutgoingMessage,
+  type IOutgoingPhoto,
   type MessagePlatform,
 } from "../shared/types/messaging.types.js";
 
@@ -11,6 +12,8 @@ import {
 export interface IPlatformAdapter {
   platform: MessagePlatform;
   sendMessageAsync(message: IOutgoingMessage): Promise<string | null>;
+  sendPhotoAsync(photo: IOutgoingPhoto): Promise<string | null>;
+  sendChatActionAsync(userId: string, action: string): Promise<void>;
 }
 
 //#endregion Interfaces
@@ -69,6 +72,35 @@ export class MessagingService {
     return messageId;
   }
 
+  public async sendPhotoAsync(photo: IOutgoingPhoto): Promise<string | null> {
+    const adapter: IPlatformAdapter | undefined = this._adapters.get(photo.platform);
+
+    if (!adapter) {
+      this._logger.error("No adapter registered for platform", { platform: photo.platform });
+      throw new Error(`No messaging adapter registered for platform: ${photo.platform}`);
+    }
+
+    const messageId: string | null = await adapter.sendPhotoAsync(photo);
+
+    this._logger.debug("Photo sent via adapter", {
+      platform: photo.platform,
+      userId: photo.userId,
+      messageId,
+    });
+
+    return messageId;
+  }
+
+  public async sendChatActionAsync(platform: MessagePlatform, userId: string, action: string): Promise<void> {
+    const adapter: IPlatformAdapter | undefined = this._adapters.get(platform);
+
+    if (!adapter) {
+      return;
+    }
+
+    await adapter.sendChatActionAsync(userId, action);
+  }
+
   public createSenderForChat(platform: MessagePlatform, userId: string): (message: string) => Promise<string | null> {
     return async (message: string): Promise<string | null> => {
       const outgoing: IOutgoingMessage = {
@@ -79,6 +111,22 @@ export class MessagingService {
       };
 
       return this.sendMessageAsync(outgoing);
+    };
+  }
+
+  public createPhotoSenderForChat(
+    platform: MessagePlatform,
+    userId: string,
+  ): (imageBuffer: Buffer, caption: string | null) => Promise<string | null> {
+    return async (imageBuffer: Buffer, caption: string | null): Promise<string | null> => {
+      const outgoing: IOutgoingPhoto = {
+        imageBuffer,
+        caption,
+        platform,
+        userId,
+      };
+
+      return this.sendPhotoAsync(outgoing);
     };
   }
 
@@ -116,6 +164,24 @@ export class TelegramAdapter implements IPlatformAdapter {
     });
 
     return String(sentMessage.message_id);
+  }
+
+  public async sendPhotoAsync(photo: IOutgoingPhoto): Promise<string | null> {
+    const chatId: string = photo.userId;
+
+    const sentMessage = await this._bot.api.sendPhoto(
+      chatId,
+      new InputFile(photo.imageBuffer, "graph.png"),
+      {
+        caption: photo.caption ?? undefined,
+      },
+    );
+
+    return String(sentMessage.message_id);
+  }
+
+  public async sendChatActionAsync(userId: string, action: string): Promise<void> {
+    await this._bot.api.sendChatAction(userId, action as "typing");
   }
 
   //#endregion Public methods

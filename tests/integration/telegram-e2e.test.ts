@@ -140,6 +140,10 @@ describe("Telegram E2E", () => {
         mockSentMessages.push({ text: message.text, userId: message.userId });
         return "mock-msg-id";
       },
+      sendPhotoAsync: async () => {
+        return "mock-photo-id";
+      },
+      sendChatActionAsync: async () => {},
     });
 
     // Call handleMessageAsync — this goes through the full pipeline:

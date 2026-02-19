@@ -19,6 +19,13 @@ export interface IOutgoingMessage {
   replyToMessageId: string | null;
 }
 
+export interface IOutgoingPhoto {
+  imageBuffer: Buffer;
+  caption: string | null;
+  platform: MessagePlatform;
+  userId: string;
+}
+
 export interface IMessageHandler {
   handleMessageAsync(message: IIncomingMessage): Promise<void>;
 }

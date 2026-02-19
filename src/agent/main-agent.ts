@@ -30,7 +30,9 @@ import {
   addCronTool,
   removeCronTool,
   listCronsTool,
+  createRenderGraphTool,
   type MessageSender,
+  type PhotoSender,
 } from "../tools/index.js";
 
 //#region Interfaces
@@ -71,7 +73,7 @@ export class MainAgent extends BaseAgentBase {
     return MainAgent._instance;
   }
 
-  public async initializeForChatAsync(chatId: string, messageSender: MessageSender): Promise<void> {
+  public async initializeForChatAsync(chatId: string, messageSender: MessageSender, photoSender: PhotoSender): Promise<void> {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model: LanguageModel = aiProviderService.getModel();
     const instructions: string = await buildMainAgentPromptAsync();
@@ -103,6 +105,7 @@ export class MainAgent extends BaseAgentBase {
       add_cron: addCronTool,
       remove_cron: removeCronTool,
       list_crons: listCronsTool,
+      render_graph: createRenderGraphTool(photoSender),
     };
 
     this._buildAgent(model, instructions, tools);
