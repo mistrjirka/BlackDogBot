@@ -17,10 +17,10 @@ import {
   editJobTool,
   removeJobTool,
   getJobsTool,
-  runJobTool,
+  createRunJobTool,
   finishJobTool,
-  addNodeTool,
-  editNodeTool,
+  createAddNodeTool,
+  createEditNodeTool,
   removeNodeTool,
   connectNodesTool,
   setEntrypointTool,
@@ -36,7 +36,10 @@ import {
   createWriteFileTool,
   appendFileTool,
   editFileTool,
+  fetchRssTool,
+  createDoneTool,
   FileReadTracker,
+  JobActivityTracker,
   type MessageSender,
   type PhotoSender,
 } from "../tools/index.js";
@@ -92,6 +95,7 @@ export class MainAgent extends BaseAgentBase {
     const instructions: string = await buildMainAgentPromptAsync();
 
     const readTracker: FileReadTracker = new FileReadTracker();
+    const jobTracker: JobActivityTracker = new JobActivityTracker();
 
     const tools: ToolSet = {
       think: thinkTool,
@@ -110,10 +114,10 @@ export class MainAgent extends BaseAgentBase {
       edit_job: editJobTool,
       remove_job: removeJobTool,
       get_jobs: getJobsTool,
-      run_job: runJobTool,
+      run_job: createRunJobTool(jobTracker),
       finish_job: finishJobTool,
-      add_node: addNodeTool,
-      edit_node: editNodeTool,
+      add_node: createAddNodeTool(jobTracker),
+      edit_node: createEditNodeTool(jobTracker),
       remove_node: removeNodeTool,
       connect_nodes: connectNodesTool,
       set_entrypoint: setEntrypointTool,
@@ -125,9 +129,12 @@ export class MainAgent extends BaseAgentBase {
       remove_cron: removeCronTool,
       list_crons: listCronsTool,
       render_graph: createRenderGraphTool(photoSender),
+      fetch_rss: fetchRssTool,
     };
 
-    this._buildAgent(model, instructions, tools, onStepAsync);
+    const trackedDoneTool = createDoneTool(jobTracker);
+
+    this._buildAgent(model, instructions, tools, onStepAsync, trackedDoneTool);
 
     // Create session for this chat if it doesn't exist
     if (!this._sessions.has(chatId)) {

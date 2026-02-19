@@ -21,7 +21,7 @@ let originalHome: string;
  * Concrete subclass of BaseAgentBase for e2e testing.
  */
 class TestAgent extends BaseAgentBase {
-  constructor(options?: { maxSteps?: number; compactionThreshold?: number }) {
+  constructor(options?: { maxSteps?: number; compactionTokenThreshold?: number }) {
     super(options);
   }
 

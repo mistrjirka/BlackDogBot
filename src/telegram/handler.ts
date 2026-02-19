@@ -4,7 +4,7 @@ import { LoggerService } from "../services/logger.service.js";
 import { MessagingService } from "../services/messaging.service.js";
 import { MainAgent } from "../agent/main-agent.js";
 import { type IAgentResult } from "../agent/base-agent.js";
-import { type OnStepCallback } from "../agent/base-agent.js";
+import { type OnStepCallback, type IToolCallSummary } from "../agent/base-agent.js";
 import { type IIncomingMessage } from "../shared/types/messaging.types.js";
 import { generateId } from "../utils/id.js";
 import {
@@ -13,6 +13,41 @@ import {
   formatAiErrorForUser,
   type IAiErrorDetails,
 } from "../utils/ai-error.js";
+
+//#region Constants
+
+const TOOL_PRIMARY_KEY: Record<string, string> = {
+  run_cmd: "command",
+  fetch_rss: "url",
+  search_knowledge: "query",
+  add_knowledge: "knowledge",
+  edit_knowledge: "id",
+  add_job: "name",
+  edit_job: "jobId",
+  remove_job: "jobId",
+  run_job: "jobId",
+  finish_job: "jobId",
+  add_node: "name",
+  edit_node: "nodeId",
+  remove_node: "nodeId",
+  connect_nodes: "fromNodeId",
+  set_entrypoint: "nodeId",
+  call_skill: "skillName",
+  get_skill_file: "skillName",
+  modify_prompt: "promptName",
+  send_message: "message",
+  read_file: "filePath",
+  write_file: "filePath",
+  append_file: "filePath",
+  edit_file: "filePath",
+  render_graph: "jobId",
+  add_cron: "name",
+  remove_cron: "taskId",
+  think: "thought",
+  done: "summary",
+};
+
+//#endregion Constants
 
 //#region TelegramHandler
 
@@ -107,9 +142,12 @@ export class TelegramHandler {
       }
 
       const onStepAsync: OnStepCallback | undefined = progressMsgId !== null
-        ? async (stepNumber: number, toolNames: string[]): Promise<void> => {
-            if (toolNames.length > 0) {
-              stepLogs.push(`Step ${stepNumber}: ${toolNames.join(", ")}`);
+        ? async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
+            if (toolCalls.length > 0) {
+              const formatted: string = toolCalls
+                .map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input))
+                .join(", ");
+              stepLogs.push(`Step ${stepNumber}: ${formatted}`);
             }
 
             try {
@@ -218,3 +256,21 @@ export class TelegramHandler {
 }
 
 //#endregion TelegramHandler
+
+//#region Private functions
+
+function _formatToolCall(name: string, input: Record<string, unknown>): string {
+  const key: string | undefined = TOOL_PRIMARY_KEY[name];
+
+  if (!key || !(key in input)) {
+    return name;
+  }
+
+  const val: string = String(input[key] ?? "");
+  // Truncation here is intentional: this is UI progress display only, not data
+  const truncated: string = val.length > 60 ? val.slice(0, 60) + "…" : val;
+
+  return `${name}(${truncated})`;
+}
+
+//#endregion Private functions

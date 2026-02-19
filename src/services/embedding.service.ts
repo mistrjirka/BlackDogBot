@@ -7,6 +7,7 @@ import {
   DEFAULT_EMBEDDING_MODEL,
   EMBEDDING_DIMENSION,
 } from "../shared/constants.js";
+import { LoggerService } from "./logger.service.js";
 
 export class EmbeddingService {
   //#region Data members
@@ -41,8 +42,43 @@ export class EmbeddingService {
   public async initializeAsync(modelPath?: string): Promise<void> {
     this._modelPath = modelPath ?? DEFAULT_EMBEDDING_MODEL;
 
+    const logger: LoggerService = LoggerService.getInstance();
+    logger.info("Loading embedding model...", { modelPath: this._modelPath });
+
+    const seenFiles: Set<string> = new Set<string>();
+    let lastLoggedPercent: number = -1;
+
     this._pipeline = (await pipeline("feature-extraction", this._modelPath, {
       dtype: "fp32",
+      progress_callback: (info: unknown): void => {
+        const progress = info as {
+          status: string;
+          file?: string;
+          progress?: number;
+          loaded?: number;
+          total?: number;
+        };
+
+        if (progress.status === "initiate" && progress.file) {
+          if (!seenFiles.has(progress.file)) {
+            seenFiles.add(progress.file);
+            logger.info("Loading model file...", { file: progress.file });
+          }
+        } else if (progress.status === "download" && progress.file && progress.progress !== undefined) {
+          const percent: number = Math.floor(progress.progress);
+          const milestone: number = Math.floor(percent / 25) * 25;
+
+          if (milestone > lastLoggedPercent && milestone > 0) {
+            lastLoggedPercent = milestone;
+            logger.info("Downloading model file...", {
+              file: progress.file,
+              percent: `${milestone}%`,
+            });
+          }
+        } else if (progress.status === "ready") {
+          logger.info("Embedding model ready.", { modelPath: this._modelPath });
+        }
+      },
     })) as FeatureExtractionPipeline;
 
     this._initialized = true;

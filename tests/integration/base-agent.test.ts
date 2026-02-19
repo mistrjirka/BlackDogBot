@@ -20,7 +20,7 @@ let originalHome: string;
  * Exposes protected members publicly.
  */
 class TestAgent extends BaseAgentBase {
-  constructor(options?: { maxSteps?: number; compactionThreshold?: number }) {
+  constructor(options?: { maxSteps?: number; compactionTokenThreshold?: number }) {
     super(options);
   }
 
@@ -94,26 +94,26 @@ describe("BaseAgentBase", () => {
     expect(agent.initialized).toBe(true);
   });
 
-  it("should use default maxSteps and compactionThreshold", () => {
+  it("should use default maxSteps and compactionTokenThreshold", () => {
     const agent: TestAgent = new TestAgent();
 
     expect(
       (agent as unknown as { _maxSteps: number })._maxSteps,
     ).toBe(150);
     expect(
-      (agent as unknown as { _compactionThreshold: number })._compactionThreshold,
-    ).toBe(40);
+      (agent as unknown as { _compactionTokenThreshold: number })._compactionTokenThreshold,
+    ).toBe(80_000);
   });
 
-  it("should accept custom maxSteps and compactionThreshold", () => {
-    const agent: TestAgent = new TestAgent({ maxSteps: 5, compactionThreshold: 10 });
+  it("should accept custom maxSteps and compactionTokenThreshold", () => {
+    const agent: TestAgent = new TestAgent({ maxSteps: 5, compactionTokenThreshold: 50_000 });
 
     expect(
       (agent as unknown as { _maxSteps: number })._maxSteps,
     ).toBe(5);
     expect(
-      (agent as unknown as { _compactionThreshold: number })._compactionThreshold,
-    ).toBe(10);
+      (agent as unknown as { _compactionTokenThreshold: number })._compactionTokenThreshold,
+    ).toBe(50_000);
   });
 });
 

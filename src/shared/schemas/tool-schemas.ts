@@ -547,7 +547,40 @@ export const editFileToolOutputSchema = z.object({
 
 //#endregion File Tools
 
-//#region Prompt Tools
+//#region Fetch RSS Tool
+
+export const fetchRssToolInputSchema = z.object({
+  url: z.string()
+    .min(1)
+    .describe("URL of the RSS or Atom feed to fetch"),
+  maxItems: z.number()
+    .int()
+    .positive()
+    .default(20)
+    .describe("Maximum number of items to return"),
+  mode: z.enum(["latest", "unseen"])
+    .default("latest")
+    .describe("'latest' returns the most recent items; 'unseen' returns only items not seen before (state persisted per URL)"),
+});
+
+export const fetchRssToolOutputSchema = z.object({
+  title: z.string()
+    .optional(),
+  description: z.string()
+    .optional(),
+  link: z.string()
+    .optional(),
+  items: z.record(z.string(), z.unknown())
+    .array(),
+  totalItems: z.number(),
+  feedUrl: z.string(),
+  mode: z.string(),
+  unseenCount: z.number()
+    .optional(),
+});
+
+//#endregion Fetch RSS Tool
+
 
 export const modifyPromptToolInputSchema = z.object({
   promptName: z.string()

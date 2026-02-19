@@ -4,16 +4,28 @@ import {
   LanguageModel,
   hasToolCall,
   type ModelMessage,
+  type Tool,
 } from "ai";
 
 import { doneTool } from "../tools/done.tool.js";
 import { LoggerService } from "../services/logger.service.js";
 import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
+import { encodingForModel } from "js-tiktoken";
 
 //#region Constants
 
-const DEFAULT_COMPACTION_THRESHOLD: number = 40;
+/**
+ * Default token threshold for compaction. When the total token count of the
+ * message history exceeds this value, older messages are summarized.
+ * Using 80k as the default — leaves room for the model's output and system prompt
+ * on a typical 128k context window.
+ */
+const DEFAULT_COMPACTION_TOKEN_THRESHOLD: number = 80_000;
+
+/**
+ * Number of recent messages to always keep verbatim during compaction.
+ */
 const COMPACTION_KEEP_RECENT: number = 6;
 
 //#endregion Constants
@@ -25,11 +37,16 @@ export interface IAgentResult {
   stepsCount: number;
 }
 
-export type OnStepCallback = (stepNumber: number, toolNames: string[]) => Promise<void>;
+export interface IToolCallSummary {
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export type OnStepCallback = (stepNumber: number, toolCalls: IToolCallSummary[]) => Promise<void>;
 
 export interface IBaseAgentOptions {
   maxSteps?: number;
-  compactionThreshold?: number;
+  compactionTokenThreshold?: number;
 }
 
 //#endregion Interfaces
@@ -43,7 +60,7 @@ export abstract class BaseAgentBase {
   protected _logger: LoggerService;
   protected _initialized: boolean;
   protected _maxSteps: number;
-  protected _compactionThreshold: number;
+  protected _compactionTokenThreshold: number;
 
   //#endregion Data members
 
@@ -54,7 +71,7 @@ export abstract class BaseAgentBase {
     this._logger = LoggerService.getInstance();
     this._initialized = false;
     this._maxSteps = options?.maxSteps ?? DEFAULT_AGENT_MAX_STEPS;
-    this._compactionThreshold = options?.compactionThreshold ?? DEFAULT_COMPACTION_THRESHOLD;
+    this._compactionTokenThreshold = options?.compactionTokenThreshold ?? DEFAULT_COMPACTION_TOKEN_THRESHOLD;
   }
 
   //#endregion Constructors
@@ -87,15 +104,16 @@ export abstract class BaseAgentBase {
     instructions: string,
     tools: ToolSet,
     onStepAsync?: OnStepCallback,
+    customDoneTool?: Tool,
   ): void {
     const maxSteps: number = this._maxSteps;
-    const compactionThreshold: number = this._compactionThreshold;
+    const compactionTokenThreshold: number = this._compactionTokenThreshold;
     const logger: LoggerService = this._logger;
     const compactionModel: LanguageModel = model;
 
     const allTools: ToolSet = {
       ...tools,
-      done: doneTool,
+      done: customDoneTool ?? doneTool,
     };
 
     this._agent = new ToolLoopAgent({
@@ -108,10 +126,10 @@ export abstract class BaseAgentBase {
       prepareStep: async ({ stepNumber, messages }) => {
         // Notify about completed previous step before doing anything else
         if (stepNumber > 0 && onStepAsync) {
-          const toolNames: string[] = _extractLastAssistantToolNames(messages);
+          const toolCalls: IToolCallSummary[] = _extractLastAssistantToolCalls(messages);
 
           try {
-            await onStepAsync(stepNumber, toolNames);
+            await onStepAsync(stepNumber, toolCalls);
           } catch {
             // Ignore step callback errors — never let UI failures affect agent execution
           }
@@ -130,11 +148,14 @@ export abstract class BaseAgentBase {
           };
         }
 
-        // History compaction: summarize old messages when threshold exceeded
-        if (messages.length > compactionThreshold) {
+        // Token-based history compaction: summarize old messages when token count is too high
+        const tokenCount: number = _countTokens(messages);
+
+        if (tokenCount > compactionTokenThreshold) {
           logger.info("Compacting agent history", {
+            tokenCount,
+            threshold: compactionTokenThreshold,
             messageCount: messages.length,
-            threshold: compactionThreshold,
           });
 
           const compactedMessages: ModelMessage[] = await _compactMessagesAsync(
@@ -165,6 +186,23 @@ export abstract class BaseAgentBase {
 //#endregion BaseAgent
 
 //#region Private functions
+
+/**
+ * Count tokens across all messages using cl100k_base encoding (GPT-4/Claude compatible).
+ * This provides a reasonable approximation for most LLM providers.
+ */
+function _countTokens(messages: ModelMessage[]): number {
+  const enc = encodingForModel("gpt-4o");
+  let totalTokens: number = 0;
+
+  for (const msg of messages) {
+    const text: string = _extractTextContent(msg);
+
+    totalTokens += enc.encode(text).length;
+  }
+
+  return totalTokens;
+}
 
 async function _compactMessagesAsync(
   messages: ModelMessage[],
@@ -204,13 +242,8 @@ async function _compactMessagesAsync(
 
   const summaryText: string = summaryResult.text || "No summary available.";
 
-  logger.debug("History compaction complete", {
-    originalCount: messages.length,
-    compactedCount: 2 + recentMessages.length,
-    summaryLength: summaryText.length,
-  });
-
-  const summaryMessage: ModelMessage = {
+  const tokensBefore: number = _countTokens(messages);
+  const compactedResult: ModelMessage[] = [firstMessage, {
     role: "user",
     content: [
       {
@@ -218,9 +251,19 @@ async function _compactMessagesAsync(
         text: `[CONVERSATION SUMMARY - Earlier messages were compacted]\n\n${summaryText}\n\n[END OF SUMMARY - Recent conversation follows]`,
       },
     ],
-  };
+  }, ...recentMessages];
 
-  return [firstMessage, summaryMessage, ...recentMessages];
+  const tokensAfter: number = _countTokens(compactedResult);
+
+  logger.debug("History compaction complete", {
+    originalMessages: messages.length,
+    compactedMessages: compactedResult.length,
+    tokensBefore,
+    tokensAfter,
+    summaryLength: summaryText.length,
+  });
+
+  return compactedResult;
 }
 
 function _extractTextContent(message: ModelMessage): string {
@@ -245,12 +288,12 @@ function _extractTextContent(message: ModelMessage): string {
   return "";
 }
 
-function _extractLastAssistantToolNames(messages: ModelMessage[]): string[] {
+function _extractLastAssistantToolCalls(messages: ModelMessage[]): IToolCallSummary[] {
   for (let i: number = messages.length - 1; i >= 0; i--) {
     const msg: ModelMessage = messages[i];
 
     if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      const toolNames: string[] = [];
+      const calls: IToolCallSummary[] = [];
 
       for (const part of msg.content) {
         if (
@@ -261,12 +304,15 @@ function _extractLastAssistantToolNames(messages: ModelMessage[]): string[] {
           "toolName" in part &&
           typeof (part as { toolName: unknown }).toolName === "string"
         ) {
-          toolNames.push((part as { toolName: string }).toolName);
+          calls.push({
+            name: (part as { toolName: string }).toolName,
+            input: ((part as { input: unknown }).input ?? {}) as Record<string, unknown>,
+          });
         }
       }
 
-      if (toolNames.length > 0) {
-        return toolNames;
+      if (calls.length > 0) {
+        return calls;
       }
     }
   }

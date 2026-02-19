@@ -16,7 +16,7 @@ import {
   createSendMessageTool,
   callSkillTool,
   getSkillFileTool,
-  runJobTool,
+  createRunJobTool,
   getJobsTool,
   listCronsTool,
   createReadFileTool,
@@ -24,6 +24,7 @@ import {
   appendFileTool,
   editFileTool,
   FileReadTracker,
+  JobActivityTracker,
 } from "../tools/index.js";
 import type { MessageSender } from "../tools/index.js";
 
@@ -86,6 +87,7 @@ export class CronAgent extends BaseAgentBase {
     messageSender: MessageSender,
   ): ToolSet {
     const readTracker: FileReadTracker = new FileReadTracker();
+    const jobTracker: JobActivityTracker = new JobActivityTracker();
 
     const availableTools: Record<string, Tool> = {
       think: thinkTool,
@@ -100,7 +102,7 @@ export class CronAgent extends BaseAgentBase {
       edit_file: editFileTool,
       call_skill: callSkillTool,
       get_skill_file: getSkillFileTool,
-      run_job: runJobTool,
+      run_job: createRunJobTool(jobTracker),
       get_jobs: getJobsTool,
       list_crons: listCronsTool,
     };
