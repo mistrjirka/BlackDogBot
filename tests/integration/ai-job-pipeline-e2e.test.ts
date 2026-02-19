@@ -17,7 +17,15 @@ import { SkillLoaderService } from "../../src/services/skill-loader.service.js";
 import { SkillStateService } from "../../src/services/skill-state.service.js";
 import { RssStateService } from "../../src/services/rss-state.service.js";
 import { MainAgent, type IAgentResult } from "../../src/agent/main-agent.js";
-import type { IJob, INode } from "../../src/shared/types/index.js";
+import type {
+  IJob,
+  INode,
+  IJobExecutionResult,
+  INodeTestCase,
+  INodeTestResult,
+  IRssFetcherConfig,
+  IAgentNodeConfig,
+} from "../../src/shared/types/index.js";
 import type { MessageSender, PhotoSender } from "../../src/tools/index.js";
 
 //#region Helpers
@@ -149,11 +157,18 @@ Then call done.`;
 
     const result: IAgentResult = await mainAgent.processMessageForChatAsync("test-chat", prompt);
 
+    // ── Agent response ──
+    console.log("\n========== AGENT RESPONSE ==========");
+    console.log("Steps count:", result.stepsCount);
+    console.log("Agent text:", result.text);
+    console.log("====================================\n");
+
     expect(result).toBeDefined();
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
 
-    // Verify the job was created, finished, and run
+    // ── Job inspection ──
     const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
     const jobs: IJob[] = await storageService.listJobsAsync();
 
     const digestJob: IJob | undefined = jobs.find(
@@ -162,11 +177,17 @@ Then call done.`;
 
     expect(digestJob).toBeDefined();
 
-    // After run_job, the status should be back to "ready" (run_job sets to running then completed or back to ready)
-    // The key point is it should NOT be "creating" — finish_job + run_job should have moved it forward
+    console.log("\n========== JOB STATE ==========");
+    console.log("Job ID:", digestJob!.jobId);
+    console.log("Job name:", digestJob!.name);
+    console.log("Job description:", digestJob!.description);
+    console.log("Job status:", digestJob!.status);
+    console.log("Entrypoint node ID:", digestJob!.entrypointNodeId);
+    console.log("================================\n");
+
     expect(digestJob!.status).not.toBe("creating");
 
-    // Verify nodes exist
+    // ── Node inspection ──
     const nodes: INode[] = await storageService.listNodesAsync(digestJob!.jobId);
 
     expect(nodes.length).toBe(2);
@@ -177,11 +198,127 @@ Then call done.`;
     expect(rssNode).toBeDefined();
     expect(agentNode).toBeDefined();
 
-    // Verify the pipeline is wired: rss -> agent
-    expect(rssNode!.connections).toContain(agentNode!.nodeId);
+    const rssConfig: IRssFetcherConfig = rssNode!.config as IRssFetcherConfig;
+    const agentConfig: IAgentNodeConfig = agentNode!.config as IAgentNodeConfig;
 
-    // Verify entrypoint is the RSS node
+    console.log("\n========== RSS NODE ==========");
+    console.log("Node ID:", rssNode!.nodeId);
+    console.log("Name:", rssNode!.name);
+    console.log("Type:", rssNode!.type);
+    console.log("Connections (outgoing):", JSON.stringify(rssNode!.connections));
+    console.log("Input schema:", JSON.stringify(rssNode!.inputSchema));
+    console.log("Output schema:", JSON.stringify(rssNode!.outputSchema));
+    console.log("Config URL:", rssConfig.url);
+    console.log("Config maxItems:", rssConfig.maxItems);
+    console.log("Config mode:", rssConfig.mode);
+    console.log("===============================\n");
+
+    console.log("\n========== AGENT NODE ==========");
+    console.log("Node ID:", agentNode!.nodeId);
+    console.log("Name:", agentNode!.name);
+    console.log("Type:", agentNode!.type);
+    console.log("Connections (outgoing):", JSON.stringify(agentNode!.connections));
+    console.log("Input schema:", JSON.stringify(agentNode!.inputSchema));
+    console.log("Output schema:", JSON.stringify(agentNode!.outputSchema));
+    console.log("Config systemPrompt:", agentConfig.systemPrompt);
+    console.log("Config selectedTools:", JSON.stringify(agentConfig.selectedTools));
+    console.log("Config model:", agentConfig.model);
+    console.log("Config maxSteps:", agentConfig.maxSteps);
+    console.log("================================\n");
+
+    // ── Graph wiring assertions ──
+    expect(rssNode!.connections).toContain(agentNode!.nodeId);
+    expect(agentNode!.connections).toEqual([]);
     expect(digestJob!.entrypointNodeId).toBe(rssNode!.nodeId);
+
+    // ── Test case inspection ──
+    const rssTestCases: INodeTestCase[] = await storageService.getTestCasesAsync(digestJob!.jobId, rssNode!.nodeId);
+    const agentTestCases: INodeTestCase[] = await storageService.getTestCasesAsync(digestJob!.jobId, agentNode!.nodeId);
+
+    console.log("\n========== TEST CASES ==========");
+    console.log("RSS node test cases:", rssTestCases.length);
+    for (const tc of rssTestCases) {
+      console.log(`  - "${tc.name}" inputData:`, JSON.stringify(tc.inputData));
+    }
+    console.log("Agent node test cases:", agentTestCases.length);
+    for (const tc of agentTestCases) {
+      console.log(`  - "${tc.name}" inputData:`, JSON.stringify(tc.inputData));
+    }
+    console.log("================================\n");
+
+    expect(rssTestCases.length).toBeGreaterThanOrEqual(1);
+    expect(agentTestCases.length).toBeGreaterThanOrEqual(1);
+
+    // ── Re-run node tests to see actual outputs ──
+    const rssTestResults: { results: INodeTestResult[]; allPassed: boolean } =
+      await executorService.runNodeTestsAsync(digestJob!.jobId, rssNode!.nodeId);
+
+    console.log("\n========== RSS NODE TEST RESULTS ==========");
+    console.log("All passed:", rssTestResults.allPassed);
+    for (const tr of rssTestResults.results) {
+      console.log(`  Test ${tr.testId}: passed=${tr.passed}, time=${tr.executionTimeMs}ms`);
+      console.log("    Output:", JSON.stringify(tr.output, null, 2));
+      if (tr.error) console.log("    Error:", tr.error);
+      if (tr.validationErrors.length > 0) console.log("    Validation errors:", tr.validationErrors);
+    }
+    console.log("============================================\n");
+
+    expect(rssTestResults.allPassed).toBe(true);
+
+    const agentTestResults: { results: INodeTestResult[]; allPassed: boolean } =
+      await executorService.runNodeTestsAsync(digestJob!.jobId, agentNode!.nodeId);
+
+    console.log("\n========== AGENT NODE TEST RESULTS ==========");
+    console.log("All passed:", agentTestResults.allPassed);
+    for (const tr of agentTestResults.results) {
+      console.log(`  Test ${tr.testId}: passed=${tr.passed}, time=${tr.executionTimeMs}ms`);
+      console.log("    Output:", JSON.stringify(tr.output, null, 2));
+      if (tr.error) console.log("    Error:", tr.error);
+      if (tr.validationErrors.length > 0) console.log("    Validation errors:", tr.validationErrors);
+    }
+    console.log("==============================================\n");
+
+    expect(agentTestResults.allPassed).toBe(true);
+
+    // ── Re-run full pipeline to see end-to-end output ──
+    // Reset status back to ready since the AI's run_job left it as "completed"
+    await storageService.updateJobAsync(digestJob!.jobId, { status: "ready" });
+
+    const pipelineResult: IJobExecutionResult = await executorService.executeJobAsync(digestJob!.jobId, {});
+
+    console.log("\n========== FULL PIPELINE EXECUTION ==========");
+    console.log("Success:", pipelineResult.success);
+    console.log("Nodes executed:", pipelineResult.nodesExecuted);
+    console.log("Error:", pipelineResult.error);
+    console.log("Failed node ID:", pipelineResult.failedNodeId);
+    console.log("Failed node name:", pipelineResult.failedNodeName);
+    console.log("Pipeline output:", JSON.stringify(pipelineResult.output, null, 2));
+    console.log("==============================================\n");
+
+    expect(pipelineResult.success).toBe(true);
+    expect(pipelineResult.nodesExecuted).toBe(2);
+    expect(pipelineResult.output).toBeDefined();
+
+    // The agent node should have produced titles
+    const pipelineOutput: Record<string, unknown> = pipelineResult.output as Record<string, unknown>;
+
+    expect(pipelineOutput).toHaveProperty("titles");
+    expect(Array.isArray(pipelineOutput.titles)).toBe(true);
+    expect((pipelineOutput.titles as string[]).length).toBeGreaterThanOrEqual(1);
+
+    // Each title should be a non-empty string
+    for (const title of pipelineOutput.titles as string[]) {
+      expect(typeof title).toBe("string");
+      expect(title.length).toBeGreaterThan(0);
+    }
+
+    // ── Messages sent via mockMessageSender ──
+    console.log("\n========== SENT MESSAGES ==========");
+    console.log("Total messages sent:", sentMessages.length);
+    for (let i: number = 0; i < sentMessages.length; i++) {
+      console.log(`  [${i}]: ${sentMessages[i]}`);
+    }
+    console.log("====================================\n");
   }, 300_000);
 });
 
