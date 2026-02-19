@@ -1,0 +1,51 @@
+{
+  "name": "better-claw",
+  "version": "0.1.0",
+  "description": "Proactive AI assistant with jobs, skills, and scheduled tasks",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "GPL-2.0",
+  "dependencies": {
+    "@ai-sdk/openai": "^2.0.0",
+    "@huggingface/transformers": "^3.4.0",
+    "@lancedb/lancedb": "^0.17.0",
+    "@openrouter/ai-sdk-provider": "^2.2.3",
+    "ai": "^6.0.0",
+    "ajv": "^8.17.0",
+    "bottleneck": "^2.19.0",
+    "grammy": "^1.35.0",
+    "gray-matter": "^4.0.0",
+    "nanoid": "^5.1.0",
+    "node-cron": "^3.0.0",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.0",
+    "zod-to-json-schema": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "onnxruntime-node",
+      "protobufjs",
+      "sharp"
+    ]
+  }
+}
