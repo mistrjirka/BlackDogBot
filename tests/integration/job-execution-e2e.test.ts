@@ -10,7 +10,7 @@ import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
 import { JobStorageService } from "../../src/services/job-storage.service.js";
 import { JobExecutorService } from "../../src/services/job-executor.service.js";
 import { RssStateService } from "../../src/services/rss-state.service.js";
-import type { IJob, INode } from "../../src/shared/types/index.js";
+import type { IJob, INode, IJobExecutionResult } from "../../src/shared/types/index.js";
 
 //#region Helpers
 
@@ -1182,6 +1182,71 @@ describe("Job Execution E2E", () => {
     expect(output.sum).toBe(150);
     expect(output.average).toBe(30);
     expect(output.count).toBe(5);
+  }, 120000);
+
+  it("should execute an agent node with file tools (read_file, write_file) in selectedTools", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+
+    const job: IJob = await storageService.createJobAsync(
+      "Agent File Tools Job",
+      "An agent node that uses file tools to write and read a file",
+    );
+
+    const inputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        content: { type: "string" },
+      },
+      required: ["content"],
+    };
+    const outputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        written: { type: "boolean" },
+        readBack: { type: "string" },
+      },
+      required: ["written", "readBack"],
+    };
+
+    const node: INode = await storageService.addNodeAsync(
+      job.jobId,
+      "agent",
+      "File IO Agent",
+      "Writes a file and reads it back",
+      inputSchema,
+      outputSchema,
+      {
+        systemPrompt: [
+          "You have file tools available. Your task:",
+          "1. Use write_file to write the input content to a file named 'agent-test-output.txt'.",
+          "2. Use read_file to read 'agent-test-output.txt' back.",
+          "3. Call the done tool with { \"result\": { \"written\": true, \"readBack\": \"<the content you read>\" } }.",
+        ].join("\n"),
+        selectedTools: ["read_file", "write_file"],
+        model: null,
+        reasoningEffort: null,
+        maxSteps: 10,
+      },
+    );
+
+    await storageService.updateJobAsync(job.jobId, {
+      entrypointNodeId: node.nodeId,
+      status: "ready",
+    });
+
+    const result: IJobExecutionResult = await executorService.executeJobAsync(job.jobId, {
+      content: "hello from agent file tools test",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.error).toBeNull();
+    expect(result.nodesExecuted).toBe(1);
+
+    const output: Record<string, unknown> = result.output as Record<string, unknown>;
+    expect(output.written).toBe(true);
+    expect(typeof output.readBack).toBe("string");
+    expect((output.readBack as string)).toContain("hello from agent file tools test");
   }, 120000);
 
   //#endregion agent Node Tests

@@ -11,6 +11,7 @@ import { doneTool } from "../tools/done.tool.js";
 import { LoggerService } from "../services/logger.service.js";
 import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
+import { getForceThinkDirective } from "../utils/prepare-step.js";
 import { encodingForModel } from "js-tiktoken";
 
 //#region Constants
@@ -133,6 +134,13 @@ export abstract class BaseAgentBase {
           } catch {
             // Ignore step callback errors — never let UI failures affect agent execution
           }
+        }
+
+        // Force think tool every N steps to ensure the agent reflects periodically
+        const forceThink = getForceThinkDirective(stepNumber, messages);
+
+        if (forceThink) {
+          return forceThink;
         }
 
         // Force done tool on last step

@@ -105,18 +105,33 @@ almost always better to allow more steps than too few.
 
 ## Tool Selection
 
-When creating an agent node, select from these available tools:
-- `curl_fetcher` — fetch URLs via curl
-- `crawl4ai` — crawl web pages with AI-powered extraction
-- `searxng` — search the web via SearXNG
-- `add_knowledge` — add information to the knowledge base
-- `edit_knowledge` — edit existing knowledge entries
-- `search_knowledge` — search the knowledge base
-- `think_tool` — reason through complex decisions
-- `send_message` — send a message to the user
-- `run_cmd` — run shell commands
+When creating an agent node, populate `selectedTools` with names from this
+list. These are the **only** tools available inside agent nodes — they are
+not the same as node types.
 
-Choose only the tools the agent actually needs. Fewer tools = more focused behavior.
+| Tool name | Description |
+|---|---|
+| `think` | Internal reasoning / scratchpad — always injected automatically |
+| `run_cmd` | Run shell commands |
+| `search_knowledge` | Search the knowledge base |
+| `add_knowledge` | Add information to the knowledge base |
+| `edit_knowledge` | Edit existing knowledge entries |
+| `send_message` | Send a message to the user |
+| `read_file` | Read a file from the workspace |
+| `write_file` | Write a file to the workspace |
+| `append_file` | Append content to a file |
+| `edit_file` | Edit a file in place |
+
+**Notes:**
+- `think` and `done` are always injected automatically — you do not need
+  to include them in `selectedTools`, but listing `think` is harmless.
+- `done` is the tool the agent calls when it has finished its task. It is
+  always available.
+- Choose only the tools the agent actually needs. Fewer tools = more
+  focused behavior.
+- **Do not confuse these with node types** (`curl_fetcher`, `crawl4ai`,
+  `searxng`, etc.). Node types are separate nodes in the graph. The tools
+  listed here are what an agent node can use *internally* during execution.
 
 ## Complete Example
 

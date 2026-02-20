@@ -33,6 +33,7 @@ import { getExecutionOrder } from "../jobs/graph.js";
 import { validateDataAgainstSchema } from "../jobs/schema-compat.js";
 import { ISchemaCompatResult } from "../jobs/schema-compat.js";
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
+import { getForceThinkDirective } from "../utils/prepare-step.js";
 import { parseRssFeed } from "../utils/rss-parser.js";
 import {
   thinkTool,
@@ -41,6 +42,11 @@ import {
   addKnowledgeTool,
   editKnowledgeTool,
   createSendMessageTool,
+  createReadFileTool,
+  createWriteFileTool,
+  appendFileTool,
+  editFileTool,
+  FileReadTracker,
 } from "../tools/index.js";
 
 const _execAsync: typeof exec.__promisify__ = promisify(exec);
@@ -689,6 +695,11 @@ export class JobExecutorService {
       }
     }
 
+    // Always ensure think is available for the agent, regardless of selectedTools config
+    if (!selectedTools.think) {
+      selectedTools.think = thinkTool;
+    }
+
     // Add the done tool
     const doneTool = tool({
       description: "Call this when the task is complete. Return the final result as JSON.",
@@ -714,6 +725,15 @@ export class JobExecutorService {
       stopWhen: [
         hasToolCall("done"),
       ],
+      prepareStep: async ({ stepNumber, messages }) => {
+        const forceThink = getForceThinkDirective(stepNumber, messages);
+
+        if (forceThink) {
+          return forceThink;
+        }
+
+        return {};
+      },
     });
 
     const agentResult = await agent.generate({ prompt: "Begin the task." });
@@ -754,6 +774,8 @@ export class JobExecutorService {
       return null;
     };
 
+    const readTracker: FileReadTracker = new FileReadTracker();
+
     return {
       think: thinkTool,
       run_cmd: runCmdTool,
@@ -761,6 +783,10 @@ export class JobExecutorService {
       add_knowledge: addKnowledgeTool,
       edit_knowledge: editKnowledgeTool,
       send_message: createSendMessageTool(logSender),
+      read_file: createReadFileTool(readTracker),
+      write_file: createWriteFileTool(readTracker),
+      append_file: appendFileTool,
+      edit_file: editFileTool,
     };
   }
 
