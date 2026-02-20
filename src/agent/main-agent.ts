@@ -210,6 +210,11 @@ export class MainAgent extends BaseAgentBase {
     this._logger.info("Chat history cleared.", { chatId });
   }
 
+  public clearAllChatHistory(): void {
+    this._sessions.clear();
+    this._logger.info("All chat history cleared.");
+  }
+
   //#endregion Public methods
 }
 

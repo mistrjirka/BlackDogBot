@@ -138,6 +138,14 @@ export class JobStorageService {
     this._logger.info("Job deleted", { jobId });
   }
 
+  public async deleteAllJobsAsync(): Promise<void> {
+    const jobsDir: string = getJobsDir();
+    await fs.rm(jobsDir, { recursive: true, force: true });
+    await ensureDirectoryExistsAsync(jobsDir);
+
+    this._logger.info("All jobs deleted");
+  }
+
   public async addNodeAsync(
     jobId: string,
     type: NodeType,

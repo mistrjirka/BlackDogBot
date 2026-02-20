@@ -2,6 +2,7 @@ import { Bot } from "grammy";
 
 import { LoggerService } from "../services/logger.service.js";
 import { PromptService } from "../services/prompt.service.js";
+import { factoryResetAsync, type IFactoryResetResult } from "../services/factory-reset.service.js";
 import { MessagingService, TelegramAdapter } from "../services/messaging.service.js";
 import { MainAgent } from "../agent/main-agent.js";
 import { TelegramHandler } from "./handler.js";
@@ -136,6 +137,26 @@ export class TelegramBot {
       this._logger.info("Chat history cleared via /clear command.", { chatId });
     });
 
+    // /factory_reset command — full nuclear reset to factory defaults
+    this._bot.command("factory_reset", async (ctx): Promise<void> => {
+      await ctx.reply("Starting factory reset — this will delete ALL data (jobs, knowledge, tasks, skills state, prompts, workspace, logs, chat history)...");
+
+      try {
+        const result: IFactoryResetResult = await factoryResetAsync();
+
+        if (result.success) {
+          await ctx.reply("Factory reset complete. All data has been wiped and prompts restored to defaults.");
+        } else {
+          const errorSummary: string = result.errors.join("\n");
+          await ctx.reply(`Factory reset completed with errors:\n${errorSummary}`);
+        }
+      } catch (error: unknown) {
+        const errorMessage: string = error instanceof Error ? error.message : String(error);
+        await ctx.reply(`Factory reset failed: ${errorMessage}`);
+        this._logger.error("Factory reset failed.", { error: errorMessage });
+      }
+    });
+
     // /help command — lists available commands
     this._bot.command("help", async (ctx): Promise<void> => {
       const helpText: string = [
@@ -144,6 +165,7 @@ export class TelegramBot {
         "/help — Show this help message",
         "/clear — Clear conversation history for this chat",
         "/reset [name|all] — Reset prompt(s) to factory defaults",
+        "/factory_reset — Full nuclear reset: delete all jobs, knowledge, tasks, skills, prompts, workspace, logs, and chat history",
       ].join("\n");
 
       await ctx.reply(helpText);

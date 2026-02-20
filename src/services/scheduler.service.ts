@@ -121,6 +121,16 @@ export class SchedulerService {
     this._logger.info("Task removed", { taskId });
   }
 
+  public async removeAllTasksAsync(): Promise<void> {
+    const taskIds: string[] = Array.from(this._tasks.keys());
+
+    for (const taskId of taskIds) {
+      await this.removeTaskAsync(taskId);
+    }
+
+    this._logger.info("All scheduled tasks removed");
+  }
+
   public async getTaskAsync(
     taskId: string,
   ): Promise<IScheduledTask | undefined> {

@@ -20,3 +20,4 @@ export {
   TelegramAdapter,
   type IPlatformAdapter,
 } from "./messaging.service.js";
+export { factoryResetAsync, type IFactoryResetResult } from "./factory-reset.service.js";
