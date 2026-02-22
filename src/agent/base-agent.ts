@@ -18,12 +18,15 @@ import { encodingForModel } from "js-tiktoken";
 //#region Constants
 
 /**
- * Default token threshold for compaction. When the total token count of the
- * message history exceeds this value, older messages are summarized.
- * Using 80k as the default — leaves room for the model's output and system prompt
- * on a typical 128k context window.
+ * Default context window size for modern models (tokens).
  */
-const DEFAULT_COMPACTION_TOKEN_THRESHOLD: number = 80_000;
+const DEFAULT_CONTEXT_WINDOW: number = 128_000;
+
+/**
+ * Percentage of context window to use as compaction threshold.
+ * When token count exceeds this percentage, older messages are summarized.
+ */
+const COMPACTION_THRESHOLD_PERCENTAGE: number = 0.75;
 
 /**
  * Number of recent messages to always keep verbatim during compaction.
@@ -51,7 +54,7 @@ export type OnStepCallback = (stepNumber: number, toolCalls: IToolCallSummary[])
 
 export interface IBaseAgentOptions {
   maxSteps?: number;
-  compactionTokenThreshold?: number;
+  contextWindow?: number;  // Optional, defaults to DEFAULT_CONTEXT_WINDOW
 }
 
 //#endregion Interfaces
@@ -65,7 +68,9 @@ export abstract class BaseAgentBase {
   protected _logger: LoggerService;
   protected _initialized: boolean;
   protected _maxSteps: number;
+  protected _contextWindow: number;
   protected _compactionTokenThreshold: number;
+  protected _totalInputTokens: number = 0;
 
   //#endregion Data members
 
@@ -76,7 +81,8 @@ export abstract class BaseAgentBase {
     this._logger = LoggerService.getInstance();
     this._initialized = false;
     this._maxSteps = options?.maxSteps ?? DEFAULT_AGENT_MAX_STEPS;
-    this._compactionTokenThreshold = options?.compactionTokenThreshold ?? DEFAULT_COMPACTION_TOKEN_THRESHOLD;
+    this._contextWindow = options?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+    this._compactionTokenThreshold = Math.floor(this._contextWindow * COMPACTION_THRESHOLD_PERCENTAGE);
   }
 
   //#endregion Constructors
