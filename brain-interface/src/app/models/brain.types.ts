@@ -317,7 +317,8 @@ export interface IStatusState {
   startedAt: number;
   inputTokens?: number;
   contextTokens?: number;
-  compactionThreshold?: number;
+  contextWindow?: number;      // Full context window from model
+  compactionThreshold?: number; // 75% of context window
   contextPercentage?: number;
 }
 

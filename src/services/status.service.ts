@@ -21,7 +21,8 @@ export interface IStatusState {
   startedAt: number;
   inputTokens?: number;
   contextTokens?: number;
-  compactionThreshold?: number;
+  contextWindow?: number;        // Full context window from model
+  compactionThreshold?: number;  // 75% of context window
   contextPercentage?: number;
 }
 
@@ -134,9 +135,9 @@ export class StatusService {
 
   /**
    * Update context tokens with threshold and percentage calculation.
-   * Also includes the compaction threshold for display purposes.
+   * Also includes the compaction threshold and full context window for display purposes.
    */
-  public setContextTokensWithThreshold(count: number, threshold: number): void {
+  public setContextTokensWithThreshold(count: number, threshold: number, contextWindow?: number): void {
     this._contextTokens = count;
     const percentage: number = Math.round((count / threshold) * 100);
 
@@ -145,6 +146,9 @@ export class StatusService {
       this._currentState.contextTokens = count;
       this._currentState.compactionThreshold = threshold;
       this._currentState.contextPercentage = percentage;
+      if (contextWindow !== undefined) {
+        this._currentState.contextWindow = contextWindow;
+      }
       this.events.emit("status_update", {
         previous: this._currentState,
         current: this._currentState,

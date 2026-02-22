@@ -217,7 +217,7 @@ export abstract class BaseAgentBase {
 
         // Update status service with context info (including percentage for UI display)
         const statusService: StatusService = StatusService.getInstance();
-        statusService.setContextTokensWithThreshold(tokenCount, compactionTokenThreshold);
+        statusService.setContextTokensWithThreshold(tokenCount, compactionTokenThreshold, self._contextWindow);
 
         if (tokenCount > compactionTokenThreshold) {
           logger.info("Compacting agent history", {

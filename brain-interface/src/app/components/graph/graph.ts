@@ -57,6 +57,12 @@ export class GraphComponent implements OnDestroy {
     return s?.compactionThreshold ?? 80000; // Default fallback
   });
 
+  // Extract full context window from status
+  protected readonly contextWindow = computed((): number => {
+    const s = this.status();
+    return s?.contextWindow ?? 128000; // Default fallback
+  });
+
   // Calculate context percentage (0-100)
   protected readonly contextPercentage = computed((): number => {
     const s = this.status();
