@@ -1,7 +1,7 @@
-import { generateObject } from "ai";
 import { z } from "zod";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { LoggerService } from "../services/logger.service.js";
+import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 
 const SYSTEM_PROMPT: string = `You are a JSON Schema expert. Your ONLY job is to generate valid JSON Schemas based on user descriptions.
 
@@ -117,8 +117,8 @@ export function createCreateOutputSchemaTool() {
           ? `Context: ${context}\n\nGenerate a JSON Schema for output that: ${description}`
           : `Generate a JSON Schema for output that: ${description}`;
 
-        // Use generateObject with Zod schema to enforce valid JSON output
-        const result = await generateObject({
+        // Use generateObjectWithRetryAsync for retry logic and rate limiting
+        const result = await generateObjectWithRetryAsync({
           model,
           system: SYSTEM_PROMPT,
           prompt: userPrompt,
