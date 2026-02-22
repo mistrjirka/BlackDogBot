@@ -102,6 +102,11 @@ export abstract class BaseAgentBase {
 
       const result = await this._agent!.generate({ prompt: userMessage });
 
+      // Track API-reported token usage
+      if (result.usage?.inputTokens) {
+        this._totalInputTokens += result.usage.inputTokens;
+      }
+
       const stepsCount: number = result.steps?.length ?? 1;
 
       this._logger.debug("Agent response generated", { stepsCount });
@@ -130,6 +135,7 @@ export abstract class BaseAgentBase {
     getPausePromise?: () => Promise<void> | null,
     getCreationModePrompt?: () => string | null,
   ): void {
+    const self = this; // Capture this for use in callbacks
     const maxSteps: number = this._maxSteps;
     const compactionTokenThreshold: number = this._compactionTokenThreshold;
     const logger: LoggerService = this._logger;
@@ -203,8 +209,11 @@ export abstract class BaseAgentBase {
           };
         }
 
-        // Token-based history compaction: summarize old messages when token count is too high
-        const tokenCount: number = _countTokens(messages);
+        // Token-based history compaction: use API-reported token count when available,
+        // fall back to tiktoken estimation for initial call or if API doesn't report usage
+        const tokenCount: number = self._totalInputTokens > 0 
+          ? self._totalInputTokens 
+          : _countTokens(messages);
 
         // Update status service with context info (including percentage for UI display)
         const statusService: StatusService = StatusService.getInstance();

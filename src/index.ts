@@ -59,9 +59,12 @@ async function mainAsync(): Promise<void> {
   // 4. Initialize AI provider
   const aiProviderService: AiProviderService = AiProviderService.getInstance();
 
-  aiProviderService.initialize(config.ai);
+  await aiProviderService.initializeAsync(config.ai);
 
-  logger.info("AI provider initialized.", { provider: config.ai.provider });
+  logger.info("AI provider initialized.", { 
+    provider: config.ai.provider,
+    contextWindow: aiProviderService.getContextWindow(),
+  });
 
   // 5. Initialize embeddings and vector store
   const embeddingService: EmbeddingService = EmbeddingService.getInstance();

@@ -1,0 +1,173 @@
+import { LoggerService } from "./logger.service.js";
+
+//#region Interfaces
+
+interface IOpenRouterModel {
+  id: string;
+  context_length?: number;
+}
+
+interface IOpenRouterModelsResponse {
+  data: IOpenRouterModel[];
+}
+
+//#endregion Interfaces
+
+//#region ModelInfoService
+
+/**
+ * Service for fetching model information from OpenRouter API.
+ * Caches results to avoid repeated API calls.
+ */
+export class ModelInfoService {
+  //#region Data members
+
+  private static _instance: ModelInfoService | null;
+  private _logger: LoggerService;
+  private _contextWindowCache: Map<string, number>;
+  private _modelsFetched: boolean;
+  private _fetchPromise: Promise<void> | null;
+
+  //#endregion Data members
+
+  //#region Constructors
+
+  private constructor() {
+    this._logger = LoggerService.getInstance();
+    this._contextWindowCache = new Map<string, number>();
+    this._modelsFetched = false;
+    this._fetchPromise = null;
+  }
+
+  //#endregion Constructors
+
+  //#region Public methods
+
+  public static getInstance(): ModelInfoService {
+    if (!ModelInfoService._instance) {
+      ModelInfoService._instance = new ModelInfoService();
+    }
+
+    return ModelInfoService._instance;
+  }
+
+  /**
+   * Fetches the context window for a model from OpenRouter API.
+   * Results are cached to avoid repeated API calls.
+   * 
+   * @param modelId - The model ID (e.g., "anthropic/claude-sonnet-4")
+   * @returns The context window size in tokens, defaults to 128000 if not found
+   */
+  public async fetchContextWindowAsync(modelId: string): Promise<number> {
+    // Check cache first
+    const cached: number | undefined = this._contextWindowCache.get(modelId);
+
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    // If models haven't been fetched yet, fetch them
+    if (!this._modelsFetched) {
+      await this._ensureModelsFetchedAsync();
+    }
+
+    // Check cache again after fetch
+    const cachedAfterFetch: number | undefined = this._contextWindowCache.get(modelId);
+
+    if (cachedAfterFetch !== undefined) {
+      return cachedAfterFetch;
+    }
+
+    // Model not found in API response, use default
+    this._logger.warn("Model not found in OpenRouter API, using default context window", {
+      modelId,
+      defaultWindow: 128_000,
+    });
+
+    return 128_000;
+  }
+
+  /**
+   * Gets cached context window without making API calls.
+   * Returns undefined if not cached.
+   */
+  public getCachedContextWindow(modelId: string): number | undefined {
+    return this._contextWindowCache.get(modelId);
+  }
+
+  /**
+   * Clears the model info cache.
+   */
+  public clearCache(): void {
+    this._contextWindowCache.clear();
+    this._modelsFetched = false;
+    this._fetchPromise = null;
+  }
+
+  //#endregion Public methods
+
+  //#region Private methods
+
+  private async _ensureModelsFetchedAsync(): Promise<void> {
+    // If a fetch is already in progress, wait for it
+    if (this._fetchPromise) {
+      return this._fetchPromise;
+    }
+
+    // Start a new fetch
+    this._fetchPromise = this._fetchModelsAsync();
+
+    try {
+      await this._fetchPromise;
+    } finally {
+      this._fetchPromise = null;
+    }
+  }
+
+  private async _fetchModelsAsync(): Promise<void> {
+    try {
+      this._logger.debug("Fetching model info from OpenRouter API");
+
+      const response: Response = await fetch("https://openrouter.ai/api/v1/models", {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        this._logger.warn("Failed to fetch models from OpenRouter API", {
+          status: response.status,
+          statusText: response.statusText,
+        });
+        return;
+      }
+
+      const data: IOpenRouterModelsResponse = await response.json() as IOpenRouterModelsResponse;
+
+      if (!data.data || !Array.isArray(data.data)) {
+        this._logger.warn("Invalid response format from OpenRouter API");
+        return;
+      }
+
+      // Populate cache with context lengths
+      for (const model of data.data) {
+        if (model.id && model.context_length !== undefined) {
+          this._contextWindowCache.set(model.id, model.context_length);
+        }
+      }
+
+      this._modelsFetched = true;
+      this._logger.debug("Fetched model info from OpenRouter API", {
+        modelCount: this._contextWindowCache.size,
+      });
+    } catch (error: unknown) {
+      this._logger.error("Error fetching models from OpenRouter API", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  //#endregion Private methods
+}
+
+//#endregion ModelInfoService

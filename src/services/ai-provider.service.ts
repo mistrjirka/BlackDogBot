@@ -11,6 +11,7 @@ import {
   IOpenAiCompatibleConfig,
 } from "../shared/types/index.js";
 import { RateLimiterService } from "./rate-limiter.service.js";
+import { ModelInfoService } from "./model-info.service.js";
 
 export class AiProviderService {
   //#region Data members
@@ -18,7 +19,9 @@ export class AiProviderService {
   private static _instance: AiProviderService | null;
   private _aiConfig: IAiConfig | null;
   private _rateLimiterService: RateLimiterService;
+  private _modelInfoService: ModelInfoService;
   private _defaultModel: LanguageModel | null;
+  private _contextWindow: number;
 
   //#endregion Data members
 
@@ -27,7 +30,9 @@ export class AiProviderService {
   private constructor() {
     this._aiConfig = null;
     this._rateLimiterService = RateLimiterService.getInstance();
+    this._modelInfoService = ModelInfoService.getInstance();
     this._defaultModel = null;
+    this._contextWindow = 128000; // Default context window
   }
 
   //#endregion Constructors
@@ -42,7 +47,7 @@ export class AiProviderService {
     return AiProviderService._instance;
   }
 
-  public initialize(aiConfig: IAiConfig): void {
+  public async initializeAsync(aiConfig: IAiConfig): Promise<void> {
     this._aiConfig = aiConfig;
 
     const providerKey: string = aiConfig.provider;
@@ -53,6 +58,37 @@ export class AiProviderService {
 
     const defaultModelId: string = this._getActiveModelId();
     this._defaultModel = this._createModel(defaultModelId);
+
+    // Fetch context window from OpenRouter API if available
+    if (providerKey === "openrouter") {
+      try {
+        this._contextWindow = await this._modelInfoService.fetchContextWindowAsync(defaultModelId);
+      } catch {
+        // Keep default if fetch fails
+      }
+    } else if (activeConfig.contextWindow) {
+      this._contextWindow = activeConfig.contextWindow;
+    }
+  }
+
+  public initialize(aiConfig: IAiConfig): void {
+    // Sync wrapper - does not fetch context window from API
+    // Use initializeAsync() for full initialization
+    this._aiConfig = aiConfig;
+
+    const providerKey: string = aiConfig.provider;
+    const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig =
+      this._getActiveProviderConfig();
+
+    this._rateLimiterService.createLimiter(providerKey, activeConfig.rateLimits);
+
+    const defaultModelId: string = this._getActiveModelId();
+    this._defaultModel = this._createModel(defaultModelId);
+
+    // Use config value if provided, otherwise keep default
+    if (activeConfig.contextWindow) {
+      this._contextWindow = activeConfig.contextWindow;
+    }
   }
 
   public getDefaultModel(): LanguageModel {
@@ -99,6 +135,10 @@ export class AiProviderService {
     }
 
     return limiter;
+  }
+
+  public getContextWindow(): number {
+    return this._contextWindow;
   }
 
   //#endregion Public methods
