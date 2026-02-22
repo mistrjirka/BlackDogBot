@@ -1,0 +1,139 @@
+<div class="node-detail-overlay" (click)="onClose()">
+  <div class="node-detail-panel" (click)="$event.stopPropagation()">
+    <div class="node-detail__header">
+      <div class="node-detail__title-row">
+        <h3 class="node-detail__name">{{ node().name }}</h3>
+        <span class="node-detail__type">{{ node().type }}</span>
+      </div>
+      <button class="node-detail__close" (click)="onClose()">×</button>
+    </div>
+
+    <div class="node-detail__content">
+      <!-- Description -->
+      @if (node().description) {
+        <div class="node-detail__section">
+          <h4 class="node-detail__section-title">Description</h4>
+          <p class="node-detail__description">{{ node().description }}</p>
+        </div>
+      }
+
+      <!-- Config Parameters -->
+      @if (getConfigEntries(node().config).length > 0) {
+        <div class="node-detail__section">
+          <h4 class="node-detail__section-title">Configuration</h4>
+          <div class="node-detail__config">
+            @for (entry of getConfigEntries(node().config); track entry.key) {
+              <div class="config-item">
+                <span class="config-item__key">{{ entry.key }}</span>
+                <span class="config-item__value">{{ formatConfigValue(entry.value) }}</span>
+              </div>
+            }
+          </div>
+        </div>
+      }
+
+      <!-- Input Schema -->
+      <div class="node-detail__section">
+        <h4 class="node-detail__section-title">Input Schema</h4>
+        <pre class="node-detail__code">{{ formatJson(node().inputSchema) }}</pre>
+      </div>
+
+      <!-- Output Schema -->
+      <div class="node-detail__section">
+        <h4 class="node-detail__section-title">Output Schema</h4>
+        <pre class="node-detail__code">{{ formatJson(node().outputSchema) }}</pre>
+      </div>
+
+      <!-- Connections -->
+      @if (node().connections.length > 0) {
+        <div class="node-detail__section">
+          <h4 class="node-detail__section-title">Connections ({{ node().connections.length }})</h4>
+          <div class="node-detail__connections">
+            @for (connId of node().connections; track connId) {
+              <span class="connection-chip">{{ connId }}</span>
+            }
+          </div>
+        </div>
+      }
+
+      <!-- Test Cases -->
+      <div class="node-detail__section">
+        <h4 class="node-detail__section-title">
+          Test Cases
+          <span class="node-detail__badge">{{ testCases().length }}</span>
+        </h4>
+        @if (testCases().length === 0) {
+          <p class="node-detail__empty">No test cases defined for this node.</p>
+        } @else {
+          <div class="node-detail__tests">
+            @for (test of testCases(); track test.testId) {
+              <div class="test-case">
+                <div class="test-case__header">
+                  <span class="test-case__name">{{ test.name }}</span>
+                  @if (getTestResult(test.testId); as result) {
+                    <span class="test-case__status" [class.passed]="result.passed" [class.failed]="!result.passed">
+                      {{ result.passed ? '✓ Passed' : '✗ Failed' }}
+                    </span>
+                  }
+                </div>
+                @if (test.description) {
+                  <p class="test-case__description">{{ test.description }}</p>
+                }
+                <div class="test-case__input">
+                  <strong>Input:</strong>
+                  <pre class="node-detail__code">{{ formatJson(test.inputData) }}</pre>
+                </div>
+                @if (getTestResult(test.testId); as result) {
+                  <div class="test-case__result">
+                    <strong>Result ({{ result.executionTimeMs }}ms):</strong>
+                    @if (result.error) {
+                      <div class="test-case__error">{{ result.error }}</div>
+                    }
+                    @if (result.output) {
+                      <pre class="node-detail__code">{{ formatJson(result.output) }}</pre>
+                    }
+                  </div>
+                }
+                <button
+                  class="test-case__run-btn"
+                  [disabled]="isRunningTest() === test.testId"
+                  (click)="onRunTest(test)"
+                >
+                  @if (isRunningTest() === test.testId) {
+                    <span class="run-job-btn__spinner"></span>
+                    Running...
+                  } @else {
+                    ▶ Run Test
+                  }
+                </button>
+              </div>
+            }
+          </div>
+        }
+      </div>
+
+      <!-- Metadata -->
+      <div class="node-detail__section">
+        <h4 class="node-detail__section-title">Metadata</h4>
+        <div class="node-detail__metadata">
+          <div class="metadata-item">
+            <span class="metadata-item__label">Node ID</span>
+            <span class="metadata-item__value">{{ node().nodeId }}</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-item__label">Job ID</span>
+            <span class="metadata-item__value">{{ node().jobId }}</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-item__label">Created</span>
+            <span class="metadata-item__value">{{ node().createdAt | date:'medium' }}</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-item__label">Updated</span>
+            <span class="metadata-item__value">{{ node().updatedAt | date:'medium' }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -63,10 +63,12 @@
               class="graph-node"
               [class.entrypoint]="isEntrypoint(node, graphData)"
               [class.active]="isActive(node, graphData)"
+              [class.selected]="selectedNodeId() === node.nodeId"
               [ngClass]="getNodeStatusClass(node, graphData)"
               [attr.data-node-type]="node.type"
               [style.left.px]="getNodePos(node.nodeId).x"
               [style.top.px]="getNodePos(node.nodeId).y"
+              (click)="onNodeClick(node.nodeId)"
             >
               <div class="node-header">
                 <span class="node-name">{{ node.name }}</span>
@@ -189,4 +191,16 @@
       </div>
     </div>
   </div>
+}
+
+<!-- Node Detail Panel -->
+@if (showNodeDetail() && selectedNode(); as node) {
+  <app-node-detail
+    [node]="node"
+    [testCases]="selectedNodeTestList()"
+    [testResults]="testResults()"
+    [isRunningTest]="isRunningTest()"
+    (closed)="closeNodeDetail()"
+    (runTest)="runTestAsync($event)"
+  />
 }

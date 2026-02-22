@@ -225,6 +225,13 @@
     border-left: 4px solid #81c784;
   }
 
+  cursor: pointer;
+
+  &.selected {
+    border-color: #e94560;
+    box-shadow: 0 0 30px rgba(233, 69, 96, 0.5);
+  }
+
   &:hover {
     border-color: #e94560;
   }

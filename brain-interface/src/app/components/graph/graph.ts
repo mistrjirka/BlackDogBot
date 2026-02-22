@@ -11,11 +11,12 @@ import { CommonModule } from "@angular/common";
 import { FormsModule } from "@angular/forms";
 import type { GraphUpdatedEvent, INode, INodeTestCase, INodeTestResult, IStatusState } from "../../models/brain.types";
 import { BrainSocketService } from "../../services/brain-socket.service";
+import { NodeDetailComponent } from "../node-detail/node-detail";
 
 @Component({
   selector: "app-graph",
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, NodeDetailComponent],
   templateUrl: "./graph.html",
   styleUrl: "./graph.scss",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -54,6 +55,29 @@ export class GraphComponent implements OnDestroy {
   protected readonly testResults = signal<Map<string, INodeTestResult>>(new Map());
   protected readonly isRunningTest = signal<string | null>(null);
   protected readonly showTestPanel = signal(false);
+
+  // Node detail panel signals
+  protected readonly selectedNodeId = signal<string | null>(null);
+  protected readonly showNodeDetail = signal(false);
+
+  protected readonly selectedNode = computed((): INode | null => {
+    const nodeId = this.selectedNodeId();
+    const graphData = this.graph();
+
+    if (!nodeId || !graphData) {
+      return null;
+    }
+
+    return graphData.nodes.find((n: INode): boolean => n.nodeId === nodeId) ?? null;
+  });
+
+  protected readonly selectedNodeTestList = computed((): INodeTestCase[] => {
+    const nodeId = this.selectedNodeId();
+    if (!nodeId) {
+      return [];
+    }
+    return this.nodeTests().get(nodeId) ?? [];
+  });
 
   protected readonly nodePositions = computed((): Map<string, { x: number; y: number }> => {
     const graphData = this.graph();
@@ -220,6 +244,16 @@ export class GraphComponent implements OnDestroy {
 
   protected getTestResult(testId: string): INodeTestResult | undefined {
     return this.testResults().get(testId);
+  }
+
+  protected onNodeClick(nodeId: string): void {
+    this.selectedNodeId.set(nodeId);
+    this.showNodeDetail.set(true);
+  }
+
+  protected closeNodeDetail(): void {
+    this.showNodeDetail.set(false);
+    this.selectedNodeId.set(null);
   }
 
   protected formatSchema(schema: Record<string, unknown> | string): string {
