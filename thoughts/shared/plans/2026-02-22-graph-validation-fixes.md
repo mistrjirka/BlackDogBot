@@ -15,46 +15,183 @@ AI created a graph where LITESQL node received inputs from two different parents
 ## Phase 1: Schema Enforcement for LITESQL Nodes
 
 ### Goal
-LITESQL nodes must derive their `inputSchema` from the target table's actual column structure.
+LITESQL nodes must have proper `inputSchema` derived from table structure. The AI must see the schema when creating tables and nodes.
+
+### Key Insight
+The AI creates the table AND the node. It needs schema visibility at both steps:
+1. **`create_table`** → returns JSON Schema representation (not just column names)
+2. **`add_litesql_node`** → uses schema from existing table OR accepts schema hint for future tables
 
 ### Tasks
 
-#### 1.1 Create `deriveLiteSqlInputSchema` utility
+#### 1.1 Create `columnsToJsonSchema` utility
 **File**: `src/utils/litesql-schema-helper.ts`
 
 ```typescript
-// Derives JSON Schema from SQLite table schema
-// - Gets table columns via LiteSqlService.getTableSchemaAsync()
-// - Maps SQL types to JSON Schema types
-// - Marks NOT NULL columns as required
-// - Returns proper inputSchema object
+// Converts SQLite column definitions to JSON Schema
+export function columnsToJsonSchema(columns: IColumnInfo[]): IJsonSchema {
+  // Map SQL types to JSON Schema types:
+  // INTEGER → { type: "integer" }
+  // TEXT → { type: "string" }
+  // REAL → { type: "number" }
+  // BLOB → { type: "string", format: "binary" } (base64)
+  
+  // NOT NULL columns → add to "required" array
+  // Primary key → optional (auto-generated)
+  
+  return {
+    type: "object",
+    properties: { ... },
+    required: [...]
+  };
+}
+
+// Also export: deriveInputSchemaFromTable(databaseName, tableName) for existing tables
 ```
 
-**Logic**:
-- Call `getTableSchemaAsync(databaseName, tableName)`
-- Map: `INTEGER` → `type: "integer"`, `TEXT` → `type: "string"`, `REAL` → `type: "number"`
-- `NOT NULL` columns → add to `required` array
-- Primary key columns → optional in input (auto-generated)
+#### 1.2 Update `create-table.tool.ts` - RETURN JSON SCHEMA
+**Critical change**: The tool must return the JSON Schema so AI can use it for downstream nodes.
 
-#### 1.2 Update `add-litesql-node.tool.ts`
-- After creating node, call `deriveLiteSqlInputSchema`
-- Update node's `inputSchema` with derived schema
-- If table doesn't exist yet, keep `inputSchema: {}` but flag as `schemaPending: true`
+```typescript
+// Current return:
+{ success, databaseName, tableName, columns: string[], message }
 
-#### 1.3 Create `refresh-litesql-schema.tool.ts`
-- Tool for agent to refresh a LITESQL node's inputSchema after table creation
-- Useful when table is created dynamically
+// New return:
+{
+  success,
+  databaseName,
+  tableName,
+  columns: IColumnInfo[],  // Full column info with types
+  inputSchema: IJsonSchema, // JSON Schema for INSERT operations
+  message: string          // Includes schema hint for AI
+}
+```
 
-#### 1.4 Update schema compatibility check
+The `message` should include a hint like:
+```
+Table 'news' created. For LITESQL nodes inserting into this table, use this inputSchema:
+{ "type": "object", "properties": { "title": { "type": "string" }, ... }, "required": [...] }
+```
+
+#### 1.3 Update `add-litesql-node.tool.ts` - ENFORCE SCHEMA AWARENESS
+**Critical enforcement**: AI MUST know the table schema before creating a LITESQL node.
+
+Two scenarios:
+1. **Table exists**: AI must call `get_table_schema` first (we track this)
+2. **Table doesn't exist yet**: AI must provide `inputSchemaHint` from `create_table` return
+
+```typescript
+inputSchema: z.object({
+  // ... existing fields ...
+  inputSchemaHint: z.object({}).passthrough().optional()
+    .describe("JSON Schema for table input. REQUIRED if table doesn't exist yet. Get this from create_table output or get_table_schema."),
+})
+
+// Enforcement logic:
+// 1. If table exists AND inputSchemaHint provided → validate hint matches table schema (warn if mismatch)
+// 2. If table exists AND no hint → derive schema from table automatically
+// 3. If table doesn't exist AND inputSchemaHint provided → use hint, mark schemaPending
+// 4. If table doesn't exist AND no hint → ERROR: "Table 'X' doesn't exist. Create it first with create_table, then provide inputSchemaHint from its output."
+```
+
+**Key change**: The tool returns a clear error if table doesn't exist AND no schema hint provided. This forces the AI to either:
+- Create the table first (which returns the schema)
+- Or call `get_table_schema` if table already exists
+
+#### 1.4 Create `refresh-litesql-schema.tool.ts`
+For updating schema when table is created after node:
+```typescript
+// Refreshes a LITESQL node's inputSchema from the actual table
+// Returns the new schema for AI visibility
+```
+
+#### 1.5 Update schema compatibility check
 **File**: `src/jobs/schema-compat.ts`
 
 - Add stricter type checking for nested objects
 - Add `strictMode` flag that fails on missing `type` properties
 - Return detailed error messages with field paths
+- Handle array types properly (items schema)
 
 ### Tests
-- `tests/unit/litesql-schema-helper.test.ts` - Schema derivation logic
+- `tests/unit/litesql-schema-helper.test.ts` - Schema conversion logic
 - `tests/integration/litesql-schema-e2e.test.ts` - End-to-end with real tables
+- `tests/integration/create-table-schema-return.test.ts` - Verify create_table returns usable schema
+- **`tests/integration/litesql-node-schema-enforcement.test.ts`** - CRITICAL enforcement test:
+
+```typescript
+describe("LITESQL node schema enforcement", () => {
+  it("FAILS if table doesn't exist and no inputSchemaHint provided", async () => {
+    // Try to add LITESQL node for non-existent table
+    const result = await addLitesqlNodeTool.execute({
+      jobId,
+      databaseName: "mydb",
+      tableName: "nonexistent_table",
+      // NO inputSchemaHint
+    });
+    
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Table 'nonexistent_table' doesn't exist");
+    expect(result.error).toContain("Create it first with create_table");
+  });
+
+  it("PASSES if table doesn't exist but inputSchemaHint provided", async () => {
+    // Create table first, get schema
+    const createResult = await createTableTool.execute({...});
+    const schema = createResult.inputSchema;
+    
+    // Now add node with schema hint (table exists now)
+    const result = await addLitesqlNodeTool.execute({
+      jobId,
+      databaseName: "mydb", 
+      tableName: "mytable",
+      inputSchemaHint: schema,  // Schema from create_table
+    });
+    
+    expect(result.success).toBe(true);
+    expect(result.node.inputSchema).toMatchObject(schema);
+  });
+
+  it("PASSES if table exists and derives schema automatically", async () => {
+    // Create table first
+    await createTableTool.execute({...});
+    
+    // Add node WITHOUT hint - should auto-derive
+    const result = await addLitesqlNodeTool.execute({
+      jobId,
+      databaseName: "mydb",
+      tableName: "mytable",
+      // No inputSchemaHint - table exists so should auto-derive
+    });
+    
+    expect(result.success).toBe(true);
+    expect(result.node.inputSchema.properties).toBeDefined();
+    expect(result.node.inputSchema.required).toContain("title");
+  });
+
+  it("Validates inputSchemaHint matches actual table schema", async () => {
+    // Create table with columns: title (TEXT NOT NULL), url (TEXT)
+    await createTableTool.execute({...});
+    
+    // Provide WRONG schema hint
+    const result = await addLitesqlNodeTool.execute({
+      jobId,
+      databaseName: "mydb",
+      tableName: "mytable",
+      inputSchemaHint: { 
+        type: "object", 
+        properties: { wrong_column: { type: "string" } },
+        required: ["wrong_column"]
+      },
+    });
+    
+    // Should succeed but warn about mismatch
+    expect(result.success).toBe(true);
+    expect(result.warning).toContain("Schema mismatch");
+    expect(result.warning).toContain("Missing required columns: title");
+  });
+});
+```
 
 ---
 
@@ -258,13 +395,14 @@ z.object({
 
 ## Files to Modify
 
-1. `src/tools/add-litesql-node.tool.ts` - Derive inputSchema
-2. `src/jobs/schema-compat.ts` - Stricter validation
-3. `src/tools/connect-nodes.tool.ts` - Block on incompatibility, cycle detection
-4. `src/tools/finish-job-creation.tool.ts` - Add LLM audit step
-5. `src/agent/main-agent.ts` - Register new tools
-6. `src/services/job-executor.service.ts` - Completion events
-7. `brain-interface/src/app/services/brain-socket.service.ts` - Handle completion
+1. `src/tools/create-table.tool.ts` - Return JSON Schema for table
+2. `src/tools/add-litesql-node.tool.ts` - Accept schema hint, derive from table
+3. `src/jobs/schema-compat.ts` - Stricter validation
+4. `src/tools/connect-nodes.tool.ts` - Block on incompatibility, cycle detection
+5. `src/tools/finish-job-creation.tool.ts` - Add LLM audit step
+6. `src/agent/main-agent.ts` - Register new tools
+7. `src/services/job-executor.service.ts` - Completion events
+8. `brain-interface/src/app/services/brain-socket.service.ts` - Handle completion
 
 ---
 
