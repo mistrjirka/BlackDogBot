@@ -22,7 +22,6 @@ import {
   createRunJobTool,
   finishJobTool,
   type NodeProgressEmitter,
-  createAddNodeTool,
   createEditNodeTool,
   removeNodeTool,
   connectNodesTool,
@@ -80,7 +79,6 @@ import type { IToolCallSummary } from "./base-agent.js";
 
 /** Tools that mutate the job graph — after these complete, a graph_updated event is emitted. */
 const _GraphMutatingTools: Set<string> = new Set([
-  "add_node",
   "edit_node",
   "remove_node",
   "connect_nodes",
@@ -225,7 +223,6 @@ export class MainAgent extends BaseAgentBase {
       get_jobs: getJobsTool,
       run_job: createRunJobTool(jobTracker, nodeProgressEmitter),
       finish_job: finishJobTool,
-      add_node: createAddNodeTool(jobTracker),
       edit_node: createEditNodeTool(jobTracker),
       remove_node: removeNodeTool,
       connect_nodes: connectNodesTool,

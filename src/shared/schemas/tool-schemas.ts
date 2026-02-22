@@ -264,28 +264,6 @@ export const finishJobToolOutputSchema = z.object({
 
 //#region Node Tools
 
-export const addNodeToolInputSchema = z.object({
-  jobId: z.string()
-    .min(1),
-  type: z.enum(["start", "curl_fetcher", "crawl4ai", "searxng", "rss_fetcher", "python_code", "output_to_ai", "agent", "litesql"]),
-  name: z.string()
-    .min(1),
-  description: z.string()
-    .default(""),
-  inputSchema: z.record(z.string(), z.unknown())
-    .describe("JSON Schema for node input"),
-  outputSchema: z.record(z.string(), z.unknown())
-    .describe("JSON Schema for node output"),
-  config: z.record(z.string(), z.unknown())
-    .default({})
-    .describe("Node-type-specific configuration"),
-});
-
-export const addNodeToolOutputSchema = z.object({
-  nodeId: z.string(),
-  success: z.boolean(),
-});
-
 export const editNodeToolInputSchema = z.object({
   jobId: z.string()
     .min(1),

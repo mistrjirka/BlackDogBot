@@ -284,6 +284,35 @@ export class JobStorageService {
     }
 
     this._logger.info("Node deleted", { jobId, nodeId });
+
+    try {
+      const remainingNodes: INode[] = await this.listNodesAsync(jobId);
+
+      for (const node of remainingNodes) {
+        if (node.connections.includes(nodeId)) {
+          const updatedConnections: string[] = node.connections.filter(
+            (connectionId: string): boolean => connectionId !== nodeId,
+          );
+
+          await this.updateNodeAsync(jobId, node.nodeId, {
+            connections: updatedConnections,
+          });
+        }
+      }
+
+      const job: IJob | null = await this.getJobAsync(jobId);
+
+      if (job && job.entrypointNodeId === nodeId) {
+        await this.updateJobAsync(jobId, { entrypointNodeId: null });
+      }
+    } catch (error: unknown) {
+      this._logger.warn("Node deletion cleanup failed", {
+        jobId,
+        nodeId,
+        error: (error as Error).message,
+      });
+    }
+
     this.events.emit("graph_changed", { jobId });
   }
 

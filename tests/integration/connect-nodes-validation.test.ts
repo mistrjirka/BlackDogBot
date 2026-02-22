@@ -54,7 +54,7 @@ async function createTestJobWithNodes(
   // Node A: outputs a string
   const nodeA: INode = await storageService.addNodeAsync(
     job.jobId,
-    "start",
+    "curl_fetcher",
     "Node A",
     "Outputs a string value",
     {},
@@ -70,7 +70,7 @@ async function createTestJobWithNodes(
   // Node B: expects a number (incompatible with Node A)
   const nodeB: INode = await storageService.addNodeAsync(
     job.jobId,
-    "start",
+    "curl_fetcher",
     "Node B",
     "Expects a number value",
     {
@@ -87,7 +87,7 @@ async function createTestJobWithNodes(
   // Node C: compatible with both (no strict schema)
   const nodeC: INode = await storageService.addNodeAsync(
     job.jobId,
-    "start",
+    "curl_fetcher",
     "Node C",
     "Flexible input node",
     {},
@@ -202,7 +202,7 @@ describe("connect_nodes tool validation", () => {
       // Create three nodes with flexible schemas
       const node1: INode = await storageService.addNodeAsync(
         job2.jobId,
-        "start",
+        "curl_fetcher",
         "Node 1",
         "First node",
         {},
@@ -212,7 +212,7 @@ describe("connect_nodes tool validation", () => {
 
       const node2: INode = await storageService.addNodeAsync(
         job2.jobId,
-        "start",
+        "curl_fetcher",
         "Node 2",
         "Second node",
         {},
@@ -222,7 +222,7 @@ describe("connect_nodes tool validation", () => {
 
       const node3: INode = await storageService.addNodeAsync(
         job2.jobId,
-        "start",
+        "curl_fetcher",
         "Node 3",
         "Third node",
         {},
@@ -290,6 +290,34 @@ describe("connect_nodes tool validation", () => {
       expect(result.message).toContain("not found");
 
       // Cleanup
+      await storageService.deleteJobAsync(job.jobId);
+    });
+  });
+
+  describe("start node validation", () => {
+    it("should reject connection to a start node", async () => {
+      const storageService: JobStorageService = JobStorageService.getInstance();
+      const { job, nodeA } = await createTestJobWithNodes(storageService);
+
+      const startNode: INode = await storageService.addNodeAsync(
+        job.jobId,
+        "start",
+        "Start Node",
+        "Start node for validation",
+        {},
+        {},
+        { scheduledTaskId: null },
+      );
+
+      const result = await execConnectNodesTool({
+        jobId: job.jobId,
+        fromNodeId: nodeA.nodeId,
+        toNodeId: startNode.nodeId,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("start node");
+
       await storageService.deleteJobAsync(job.jobId);
     });
   });

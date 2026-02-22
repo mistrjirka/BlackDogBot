@@ -820,6 +820,10 @@ export class JobExecutorService {
     const model: LanguageModel = aiProviderService.getModel(config.model ?? undefined);
     const maxSteps: number = config.maxSteps || DEFAULT_AGENT_MAX_STEPS;
 
+    if (!Array.isArray(config.selectedTools) || config.selectedTools.length === 0) {
+      throw new Error(`Agent node "${node.nodeId}" must specify at least one selected tool.`);
+    }
+
     // Build the tool set from selected tools
     const toolPool: Record<string, ToolSet[string]> = createAgentNodeToolPool(this._logger);
     const selectedTools: ToolSet = {};

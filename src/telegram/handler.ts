@@ -7,6 +7,7 @@ import { type IAgentResult } from "../agent/base-agent.js";
 import { type OnStepCallback, type IToolCallSummary } from "../agent/base-agent.js";
 import { type IIncomingMessage } from "../shared/types/messaging.types.js";
 import { generateId } from "../utils/id.js";
+import { splitTelegramMessage } from "../utils/telegram-message.js";
 import {
   extractAiErrorDetails,
   formatAiErrorForLog,
@@ -27,7 +28,6 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
   remove_job: "jobId",
   run_job: "jobId",
   finish_job: "jobId",
-  add_node: "name",
   edit_node: "nodeId",
   remove_node: "nodeId",
   connect_nodes: "fromNodeId",
@@ -198,9 +198,13 @@ export class TelegramHandler {
         // If the agent produced text output and hasn't already sent it via send_message tool,
         // send it as a final response
         if (result.text) {
-          await ctx.reply(result.text, {
-            reply_parameters: { message_id: message.message_id },
-          });
+          const chunks: string[] = splitTelegramMessage(result.text);
+          for (let i: number = 0; i < chunks.length; i++) {
+            const options: Record<string, unknown> = i === 0
+              ? { reply_parameters: { message_id: message.message_id } }
+              : {};
+            await ctx.reply(chunks[i], options);
+          }
         }
 
         this._logger.info("Telegram message processed", {

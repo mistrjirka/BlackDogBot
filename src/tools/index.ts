@@ -15,7 +15,6 @@ export { getNodesTool } from "./get-nodes.tool.js";
 export { clearJobGraphTool } from "./clear-job-graph.tool.js";
 export { createRunJobTool, type NodeProgressEmitter } from "./run-job.tool.js";
 export { finishJobTool } from "./finish-job.tool.js";
-export { createAddNodeTool } from "./add-node.tool.js";
 export { createEditNodeTool } from "./edit-node.tool.js";
 export { removeNodeTool } from "./remove-node.tool.js";
 export { connectNodesTool } from "./connect-nodes.tool.js";

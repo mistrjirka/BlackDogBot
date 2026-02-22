@@ -584,4 +584,9 @@ set_job_schedule(jobId, { type: "cron", expression: "0 8 * * *" })
 because it links the schedule to the job's start node, making it easy to
 update or remove later. Use `add_cron` only for general-purpose scheduled
 tasks that are not tied to a specific job.
+
+**Important:** Each job can have only one schedule at a time. Calling
+`set_job_schedule` replaces any existing schedule for that job. If the user
+needs different schedules (e.g., every 30 minutes AND every 12 hours), create
+SEPARATE jobs — one for each schedule.
 </job_scheduling>

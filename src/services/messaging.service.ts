@@ -1,6 +1,7 @@
 import { Bot, InputFile } from "grammy";
 
 import { LoggerService } from "./logger.service.js";
+import { splitTelegramMessage } from "../utils/telegram-message.js";
 import {
   type IOutgoingMessage,
   type IOutgoingPhoto,
@@ -158,12 +159,15 @@ export class TelegramAdapter implements IPlatformAdapter {
 
   public async sendMessageAsync(message: IOutgoingMessage): Promise<string | null> {
     const chatId: string = message.userId;
-
-    const sentMessage = await this._bot.api.sendMessage(chatId, message.text, {
-      parse_mode: "Markdown",
-    });
-
-    return String(sentMessage.message_id);
+    const chunks: string[] = splitTelegramMessage(message.text);
+    let lastMessageId: string | null = null;
+    for (const chunk of chunks) {
+      const sentMessage = await this._bot.api.sendMessage(chatId, chunk, {
+        parse_mode: "Markdown",
+      });
+      lastMessageId = String(sentMessage.message_id);
+    }
+    return lastMessageId;
   }
 
   public async sendPhotoAsync(photo: IOutgoingPhoto): Promise<string | null> {

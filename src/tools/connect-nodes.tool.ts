@@ -77,6 +77,15 @@ export const connectNodesTool = tool({
         return { success: false, message: `Target node "${toNodeId}" not found.`, schemaCompatible: false };
       }
 
+      if (toNode.type === "start") {
+        return {
+          success: false,
+          schemaCompatible: false,
+          message:
+            "Cannot connect to a start node — start nodes are entry points and receive no input from other nodes.",
+        };
+      }
+
       // Cycle detection
       const allNodes: INode[] = await storageService.listNodesAsync(jobId);
 
