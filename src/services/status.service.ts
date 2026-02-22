@@ -21,6 +21,8 @@ export interface IStatusState {
   startedAt: number;
   inputTokens?: number;
   contextTokens?: number;
+  compactionThreshold?: number;
+  contextPercentage?: number;
 }
 
 export interface IStatusUpdateEvent {
@@ -123,6 +125,26 @@ export class StatusService {
     // Emit update if we have an active status
     if (this._currentState) {
       this._currentState.contextTokens = count;
+      this.events.emit("status_update", {
+        previous: this._currentState,
+        current: this._currentState,
+      });
+    }
+  }
+
+  /**
+   * Update context tokens with threshold and percentage calculation.
+   * Also includes the compaction threshold for display purposes.
+   */
+  public setContextTokensWithThreshold(count: number, threshold: number): void {
+    this._contextTokens = count;
+    const percentage: number = Math.round((count / threshold) * 100);
+
+    // Emit update if we have an active status
+    if (this._currentState) {
+      this._currentState.contextTokens = count;
+      this._currentState.compactionThreshold = threshold;
+      this._currentState.contextPercentage = percentage;
       this.events.emit("status_update", {
         previous: this._currentState,
         current: this._currentState,

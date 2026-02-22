@@ -317,6 +317,8 @@ export interface IStatusState {
   startedAt: number;
   inputTokens?: number;
   contextTokens?: number;
+  compactionThreshold?: number;
+  contextPercentage?: number;
 }
 
 //#endregion Status Types

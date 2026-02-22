@@ -22,6 +22,7 @@ import {
   IOutputToAiConfig,
   IAgentNodeConfig,
   ILiteSqlConfig,
+  IAgentToolCall,
   NodeType,
   OnNodeProgressCallback,
 } from "../shared/types/index.js";
@@ -99,6 +100,7 @@ export class JobExecutorService {
   private _logger: LoggerService;
   private _storageService: JobStorageService;
   private _runningJobs: Set<string> = new Set<string>();
+  private _lastToolCallHistory: IAgentToolCall[] = [];
 
   //#endregion Data members
 
@@ -396,6 +398,7 @@ export class JobExecutorService {
           error: null,
           validationErrors: outputValidation.errors,
           executionTimeMs,
+          toolCallHistory: this._lastToolCallHistory.length > 0 ? [...this._lastToolCallHistory] : undefined,
         };
 
         results.push(result);
@@ -410,6 +413,7 @@ export class JobExecutorService {
           error: errorMessage,
           validationErrors: [],
           executionTimeMs,
+          toolCallHistory: this._lastToolCallHistory.length > 0 ? [...this._lastToolCallHistory] : undefined,
         };
 
         results.push(result);
@@ -812,6 +816,9 @@ export class JobExecutorService {
     node: INode,
     input: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
+    // Clear tool call history at the start of each execution
+    this._lastToolCallHistory = [];
+
     const config: IAgentNodeConfig = node.config as IAgentNodeConfig;
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model: LanguageModel = aiProviderService.getModel(config.model ?? undefined);
@@ -896,6 +903,39 @@ export class JobExecutorService {
             if (toolCall.toolName === "done" && toolCall.input) {
               const inputData: Record<string, unknown> = toolCall.input as Record<string, unknown>;
               output = (inputData.result ?? inputData) as Record<string, unknown>;
+            }
+          }
+        }
+      }
+    }
+
+    // Build tool call history (excluding 'done' tool)
+    if (agentResult.steps) {
+      for (const step of agentResult.steps) {
+        if (step.toolCalls) {
+          for (let i = 0; i < step.toolCalls.length; i++) {
+            const toolCall = step.toolCalls[i];
+            if (toolCall.toolName !== "done") {
+              // Get the corresponding step result if available
+              const toolResult = step.toolResults?.[i];
+              let stepResult: unknown = null;
+              if (toolResult && typeof toolResult === "object") {
+                const tr = toolResult as Record<string, unknown>;
+                // Handle LanguageModelV3ToolResultOutput format
+                if (tr.output !== undefined) {
+                  const outputObj = tr.output as Record<string, unknown>;
+                  if (outputObj && typeof outputObj === "object" && outputObj.value !== undefined) {
+                    stepResult = outputObj.value;
+                  } else {
+                    stepResult = tr.output;
+                  }
+                }
+              }
+              this._lastToolCallHistory.push({
+                toolName: toolCall.toolName,
+                input: toolCall.input as Record<string, unknown>,
+                output: stepResult,
+              });
             }
           }
         }

@@ -26,6 +26,9 @@ export class GraphComponent implements OnDestroy {
 
   private _socket = inject(BrainSocketService);
 
+  // Expose Math for template
+  protected readonly Math = Math;
+
   private readonly _NodeWidth = 280;
   private readonly _NodeHeight = 150;
   private readonly _HGap = 80;
@@ -46,6 +49,32 @@ export class GraphComponent implements OnDestroy {
   protected readonly contextTokens = computed((): number => {
     const s = this.status();
     return s?.contextTokens ?? 0;
+  });
+
+  // Extract compaction threshold from status
+  protected readonly compactionThreshold = computed((): number => {
+    const s = this.status();
+    return s?.compactionThreshold ?? 80000; // Default fallback
+  });
+
+  // Calculate context percentage (0-100)
+  protected readonly contextPercentage = computed((): number => {
+    const s = this.status();
+    if (s?.contextPercentage !== undefined) {
+      return s.contextPercentage;
+    }
+    // Fallback calculation
+    const tokens = this.contextTokens();
+    const threshold = this.compactionThreshold();
+    return threshold > 0 ? Math.round((tokens / threshold) * 100) : 0;
+  });
+
+  // Determine color class based on percentage
+  protected readonly contextColorClass = computed((): string => {
+    const pct = this.contextPercentage();
+    if (pct >= 75) return "context--danger";
+    if (pct >= 50) return "context--warning";
+    return "context--ok";
   });
 
   // Test-related signals

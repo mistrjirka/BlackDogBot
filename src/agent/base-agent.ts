@@ -200,6 +200,10 @@ export abstract class BaseAgentBase {
         // Token-based history compaction: summarize old messages when token count is too high
         const tokenCount: number = _countTokens(messages);
 
+        // Update status service with context info (including percentage for UI display)
+        const statusService: StatusService = StatusService.getInstance();
+        statusService.setContextTokensWithThreshold(tokenCount, compactionTokenThreshold);
+
         if (tokenCount > compactionTokenThreshold) {
           logger.info("Compacting agent history", {
             tokenCount,

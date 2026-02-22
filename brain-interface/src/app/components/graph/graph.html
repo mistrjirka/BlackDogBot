@@ -7,7 +7,14 @@
       <span class="status-bar__idle">💤 Idle</span>
     }
     @if (contextTokens() > 0) {
-      <span class="status-bar__context">📊 {{ contextTokens().toLocaleString() }} context tokens</span>
+      <span class="status-bar__context" [ngClass]="contextColorClass()">
+        <span class="context-info">
+          📊 {{ contextTokens().toLocaleString() }} / {{ compactionThreshold().toLocaleString() }} tokens ({{ contextPercentage() }}%)
+        </span>
+        <span class="context-progress">
+          <span class="context-progress__fill" [style.width.%]="Math.min(contextPercentage(), 100)"></span>
+        </span>
+      </span>
     }
   </div>
 

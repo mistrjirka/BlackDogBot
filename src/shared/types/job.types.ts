@@ -150,6 +150,12 @@ export interface INodeTestCase {
   createdAt: string;
 }
 
+export interface IAgentToolCall {
+  toolName: string;
+  input: Record<string, unknown>;
+  output: unknown;
+}
+
 export interface INodeTestResult {
   testId: string;
   passed: boolean;
@@ -157,6 +163,7 @@ export interface INodeTestResult {
   error: string | null;
   validationErrors: string[];
   executionTimeMs: number;
+  toolCallHistory?: IAgentToolCall[];
 }
 
 //#endregion Job Types
