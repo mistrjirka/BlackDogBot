@@ -35,13 +35,31 @@
       <!-- Input Schema -->
       <div class="node-detail__section">
         <h4 class="node-detail__section-title">Input Schema</h4>
-        <pre class="node-detail__code">{{ formatJson(node().inputSchema) }}</pre>
+        <pre class="node-detail__code" [class.node-detail__code--expanded]="isSectionExpanded('inputSchema')">{{ formatJson(node().inputSchema) }}</pre>
+        @if (true) {
+          <button class="expand-btn" (click)="toggleSection('inputSchema')">
+            @if (isSectionExpanded('inputSchema')) {
+              ▲ Show less
+            } @else {
+              ▼ Show more
+            }
+          </button>
+        }
       </div>
 
       <!-- Output Schema -->
       <div class="node-detail__section">
         <h4 class="node-detail__section-title">Output Schema</h4>
-        <pre class="node-detail__code">{{ formatJson(node().outputSchema) }}</pre>
+        <pre class="node-detail__code" [class.node-detail__code--expanded]="isSectionExpanded('outputSchema')">{{ formatJson(node().outputSchema) }}</pre>
+        @if (true) {
+          <button class="expand-btn" (click)="toggleSection('outputSchema')">
+            @if (isSectionExpanded('outputSchema')) {
+              ▲ Show less
+            } @else {
+              ▼ Show more
+            }
+          </button>
+        }
       </div>
 
       <!-- Connections -->
@@ -80,8 +98,17 @@
                   <p class="test-case__description">{{ test.description }}</p>
                 }
                 <div class="test-case__input">
-                  <strong>Input:</strong>
-                  <pre class="node-detail__code">{{ formatJson(test.inputData) }}</pre>
+                   <strong>Input:</strong>
+                   <pre class="node-detail__code" [class.node-detail__code--expanded]="isSectionExpanded('testInput-' + test.testId)">{{ formatJson(test.inputData) }}</pre>
+                   @if (true) {
+                     <button class="expand-btn" (click)="toggleSection('testInput-' + test.testId)">
+                       @if (isSectionExpanded('testInput-' + test.testId)) {
+                         ▲ Show less
+                       } @else {
+                         ▼ Show more
+                       }
+                     </button>
+                   }
                 </div>
                 @if (getTestResult(test.testId); as result) {
                   <div class="test-case__result">
@@ -90,7 +117,16 @@
                       <div class="test-case__error">{{ result.error }}</div>
                     }
                     @if (result.output) {
-                      <pre class="node-detail__code">{{ formatJson(result.output) }}</pre>
+                       <pre class="node-detail__code" [class.node-detail__code--expanded]="isSectionExpanded('testOutput-' + test.testId)">{{ formatJson(result.output) }}</pre>
+                       @if (true) {
+                         <button class="expand-btn" (click)="toggleSection('testOutput-' + test.testId)">
+                           @if (isSectionExpanded('testOutput-' + test.testId)) {
+                             ▲ Show less
+                           } @else {
+                             ▼ Show more
+                           }
+                         </button>
+                       }
                     }
                   </div>
                 }
