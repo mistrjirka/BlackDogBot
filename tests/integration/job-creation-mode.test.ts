@@ -38,13 +38,18 @@ function makeCreationModeTracker(): IJobCreationModeTracker & { _mode: IJobCreat
   const tracker = {
     _mode: null as IJobCreationMode | null,
     setMode(jobId: string, startNodeId: string): void {
-      tracker._mode = { jobId, startNodeId };
+      tracker._mode = { jobId, startNodeId, auditAttempted: false };
     },
     clearMode(): void {
       tracker._mode = null;
     },
     getMode(): IJobCreationMode | null {
       return tracker._mode;
+    },
+    markAuditAttempted(): void {
+      if (tracker._mode) {
+        tracker._mode.auditAttempted = true;
+      }
     },
   };
 
@@ -161,6 +166,79 @@ describe("job creation mode tools (unit)", () => {
     // Assert — must reject the mismatched jobId
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/active creation mode is for job/i);
+  });
+
+  it("finish_job_creation should IGNORE skipAudit on first call (audit is mandatory)", async () => {
+    // Arrange — create a job with a start node and set creation mode
+    const tracker = makeCreationModeTracker();
+    const storage: JobStorageService = JobStorageService.getInstance();
+    const job = await storage.createJobAsync("Audit Test Job", "Testing mandatory audit");
+    const startNode = await storage.addNodeAsync(
+      job.jobId,
+      "start",
+      "Start",
+      "Entry point",
+      {},
+      { type: "object", properties: { input: { type: "string" } } },
+      { scheduledTaskId: null },
+    );
+    await storage.updateJobAsync(job.jobId, { entrypointNodeId: startNode.nodeId });
+    tracker.setMode(job.jobId, startNode.nodeId);
+
+    const finishTool = createFinishJobCreationTool(tracker);
+
+    // Act — call with skipAudit=true on FIRST attempt
+    const result = await execTool<{ success: boolean; message: string; validationErrors: string[]; suggestions?: string[] }>(
+      finishTool,
+      { jobId: job.jobId, skipAudit: true },
+    );
+
+    // Assert — audit should have been run anyway (not skipped)
+    // The result depends on whether the LLM audit passes or fails
+    // But the key is that auditAttempted should be true after the call
+    expect(tracker.getMode()?.auditAttempted).toBe(true);
+
+    // If audit failed, we should get issues
+    // If audit passed, success should be true
+    // Either way, the audit was NOT skipped
+    if (!result.success) {
+      // Audit was run and found issues
+      expect(result.validationErrors.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("finish_job_creation should RESPECT skipAudit on second call after first audit failed", async () => {
+    // Arrange — create a job and simulate first audit attempt
+    const tracker = makeCreationModeTracker();
+    const storage: JobStorageService = JobStorageService.getInstance();
+    const job = await storage.createJobAsync("Skip Audit Test Job", "Testing skipAudit after first attempt");
+    const startNode = await storage.addNodeAsync(
+      job.jobId,
+      "start",
+      "Start",
+      "Entry point",
+      {},
+      { type: "object", properties: { input: { type: "string" } } },
+      { scheduledTaskId: null },
+    );
+    await storage.updateJobAsync(job.jobId, { entrypointNodeId: startNode.nodeId });
+    tracker.setMode(job.jobId, startNode.nodeId);
+
+    // Mark that an audit was already attempted
+    tracker.markAuditAttempted();
+
+    const finishTool = createFinishJobCreationTool(tracker);
+
+    // Act — call with skipAudit=true AFTER first audit attempt
+    const result = await execTool<{ success: boolean; message: string; validationErrors: string[] }>(
+      finishTool,
+      { jobId: job.jobId, skipAudit: true },
+    );
+
+    // Assert — should succeed without running audit
+    // (assuming all other validations pass)
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("ready for execution");
   });
 });
 

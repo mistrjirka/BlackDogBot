@@ -1,6 +1,7 @@
 import { ToolSet, LanguageModel, type ModelMessage } from "ai";
 
 import { AiProviderService } from "../services/ai-provider.service.js";
+import { StatusService } from "../services/status.service.js";
 import { buildMainAgentPromptAsync } from "./system-prompt.js";
 import { BaseAgentBase, type IAgentResult, type OnStepCallback } from "./base-agent.js";
 import { DEFAULT_AGENT_MAX_STEPS, PROMPT_JOB_CREATION_GUIDE } from "../shared/constants.js";
@@ -182,12 +183,17 @@ export class MainAgent extends BaseAgentBase {
     // Per-chat job creation mode tracker — closes over this chat's session object
     const creationModeTracker: IJobCreationModeTracker = {
       setMode: (jobId: string, startNodeId: string): void => {
-        session.jobCreationMode = { jobId, startNodeId };
+        session.jobCreationMode = { jobId, startNodeId, auditAttempted: false };
       },
       clearMode: (): void => {
         session.jobCreationMode = null;
       },
       getMode: (): IJobCreationMode | null => session.jobCreationMode,
+      markAuditAttempted: (): void => {
+        if (session.jobCreationMode) {
+          session.jobCreationMode.auditAttempted = true;
+        }
+      },
     };
 
     const nodeProgressEmitter: NodeProgressEmitter = async (
@@ -265,6 +271,11 @@ export class MainAgent extends BaseAgentBase {
 
     const combinedOnStepAsync = async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
       await brainInterface.emitStepStartedAsync(chatId, stepNumber);
+
+      // Update status to show tool execution progress
+      const statusService: StatusService = StatusService.getInstance();
+      const toolNames: string = toolCalls.map((tc: IToolCallSummary): string => tc.name).join(", ");
+      statusService.setStatus("tool_execution", `Step ${stepNumber}: ${toolNames}`, { chatId, stepNumber, tools: toolNames });
 
       for (const toolCall of toolCalls) {
         await brainInterface.emitToolCalledAsync(
@@ -360,7 +371,12 @@ export class MainAgent extends BaseAgentBase {
 
     let result: IAgentResult;
 
+    const statusService: StatusService = StatusService.getInstance();
+
     try {
+      // Set status to show AI is thinking
+      statusService.setStatus("llm_request", "Thinking...", { chatId });
+
       const generateResult = await this._agent!.generate({
         messages: messagesForCall,
         abortSignal: abortController.signal,
@@ -415,6 +431,7 @@ export class MainAgent extends BaseAgentBase {
       }
       throw error;
     } finally {
+      statusService.clearStatus();
       session.abortController = null;
       session.paused = false;
       session.resumeResolve = null;

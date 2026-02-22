@@ -9,6 +9,7 @@ import {
 
 import { doneTool } from "../tools/done.tool.js";
 import { LoggerService } from "../services/logger.service.js";
+import { StatusService } from "../services/status.service.js";
 import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
 import { getForceThinkDirective } from "../utils/prepare-step.js";
@@ -87,16 +88,25 @@ export abstract class BaseAgentBase {
 
     this._logger.debug("Processing user message", { messageLength: userMessage.length });
 
-    const result = await this._agent!.generate({ prompt: userMessage });
+    const statusService: StatusService = StatusService.getInstance();
 
-    const stepsCount: number = result.steps?.length ?? 1;
+    try {
+      // Set status to show AI is thinking
+      statusService.setStatus("llm_request", "Thinking...", {});
 
-    this._logger.debug("Agent response generated", { stepsCount });
+      const result = await this._agent!.generate({ prompt: userMessage });
 
-    return {
-      text: result.text ?? "",
-      stepsCount,
-    };
+      const stepsCount: number = result.steps?.length ?? 1;
+
+      this._logger.debug("Agent response generated", { stepsCount });
+
+      return {
+        text: result.text ?? "",
+        stepsCount,
+      };
+    } finally {
+      statusService.clearStatus();
+    }
   }
 
   //#endregion Public methods

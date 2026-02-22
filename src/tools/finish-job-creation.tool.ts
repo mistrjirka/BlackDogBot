@@ -203,8 +203,17 @@ export function createFinishJobCreationTool(creationModeTracker: IJobCreationMod
           };
         }
 
-        // 5. LLM-based graph audit (unless skipped)
-        if (!skipAudit) {
+        // 5. LLM-based graph audit
+        // On first call, audit is MANDATORY - skipAudit is ignored
+        // After first audit attempt, skipAudit can be used to bypass subsequent audits
+        const mode = creationModeTracker.getMode();
+        const isFirstAuditAttempt = mode && !mode.auditAttempted;
+        const shouldRunAudit = !skipAudit || isFirstAuditAttempt;
+
+        if (shouldRunAudit) {
+          // Mark that an audit has been attempted
+          creationModeTracker.markAuditAttempted();
+
           const graphDescription: string = renderGraphForAudit(job, nodes);
           const jobContext: IJobContext = {
             jobName: job.name,
@@ -216,7 +225,7 @@ export function createFinishJobCreationTool(creationModeTracker: IJobCreationMod
           if (!auditResult.approved) {
             return {
               success: false,
-              message: "Graph audit failed. The LLM identified issues with the job graph.",
+              message: "Graph audit failed. The LLM identified issues with the job graph. Fix the issues and try again, or use skipAudit=true after the first audit attempt.",
               validationErrors: auditResult.issues,
               suggestions: auditResult.suggestions,
             };
