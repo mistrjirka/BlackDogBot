@@ -99,7 +99,7 @@ describe("BaseAgentBase", () => {
 
     expect(
       (agent as unknown as { _maxSteps: number })._maxSteps,
-    ).toBe(40);
+    ).toBe(150);
     expect(
       (agent as unknown as { _contextWindow: number })._contextWindow,
     ).toBe(128_000);

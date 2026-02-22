@@ -72,9 +72,16 @@ const SYSTEM_PROMPT: string = `You are a JSON Schema expert. Your ONLY job is to
 - Always add descriptions - they help LLMs produce correct output`;
 
 // Zod schema for the output - this enforces the structure
+// Using z.custom() instead of z.record() to avoid additionalProperties: {}
+// which OpenAI strict mode rejects. z.record() produces:
+// { type: "object", additionalProperties: {} } - strict mode hates this.
+// z.custom() with a validation function produces just { type: "object" }
 const OutputSchemaZod = z.object({
   type: z.literal("object"),
-  properties: z.record(z.string(), z.unknown()),
+  properties: z.custom<Record<string, unknown>>(
+    (val) => typeof val === "object" && val !== null && !Array.isArray(val),
+    "properties must be an object"
+  ),
   required: z.array(z.string()).optional(),
 });
 

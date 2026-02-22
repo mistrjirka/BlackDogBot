@@ -287,8 +287,8 @@ Start Node --> Process Data --> Output Result
     expect(typeof result.approved).toBe("boolean");
     expect(Array.isArray(result.issues)).toBe(true);
     result.issues.forEach((issue) => {
-      const issueRecord = issue as unknown as Record<string, unknown>;
-      expect(typeof issueRecord.description).toBe("string");
+      // Issues are strings, not objects (per GraphAuditResultSchema)
+      expect(typeof issue).toBe("string");
     });
     expect(Array.isArray(result.suggestions)).toBe(true);
   }, 60000);

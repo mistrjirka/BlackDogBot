@@ -223,6 +223,12 @@ Provide your audit results in the specified JSON format.`;
     system: systemPrompt,
   });
 
+  // Ensure rejected graphs always have at least one issue
+  // (LLM can return { approved: false, issues: [] } which is inconsistent)
+  if (!result.object.approved && result.object.issues.length === 0) {
+    result.object.issues.push("Graph was not approved but no specific issues were provided");
+  }
+
   return result.object;
 }
 
