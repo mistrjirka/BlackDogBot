@@ -1,5 +1,11 @@
 //#region Config Types
 
+export type EmbeddingDtype = "fp32" | "fp16" | "q8" | "q4" | "q4f16";
+// Note: @huggingface/transformers ONNX backend only supports "cuda" (NVIDIA) and "cpu".
+// AMD ROCm is not exposed as a separate device — ROCm users can try "cuda" if their
+// ROCm install provides a CUDA-compatible onnxruntime build.
+export type EmbeddingDevice = "auto" | "cpu" | "cuda";
+
 export interface IRateLimitConfig {
   rpm: number;
   tpm: number;
@@ -37,6 +43,8 @@ export interface ISchedulerConfig {
 
 export interface IKnowledgeConfig {
   embeddingModelPath: string;
+  embeddingDtype: EmbeddingDtype;
+  embeddingDevice: EmbeddingDevice;
   lancedbPath: string;
 }
 

@@ -121,6 +121,28 @@ export class SchedulerService {
     this._logger.info("Task removed", { taskId });
   }
 
+  public async setTaskEnabledAsync(taskId: string, enabled: boolean): Promise<boolean> {
+    const task: IScheduledTask | undefined = this._tasks.get(taskId);
+
+    if (!task) {
+      return false;
+    }
+
+    task.enabled = enabled;
+    task.updatedAt = new Date().toISOString();
+    this._tasks.set(taskId, task);
+    await this._saveTaskAsync(task);
+
+    if (enabled) {
+      this._scheduleTask(task);
+    } else {
+      this._unscheduleTask(taskId);
+    }
+
+    this._logger.info("Task enabled state changed", { taskId, enabled });
+    return true;
+  }
+
   public async removeAllTasksAsync(): Promise<void> {
     const taskIds: string[] = Array.from(this._tasks.keys());
 

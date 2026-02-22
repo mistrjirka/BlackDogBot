@@ -1,0 +1,20 @@
+<div class="logs-container">
+  <div class="logs-toolbar">
+    <h2>Live Logs</h2>
+    <span class="logs-count">{{ logs().length }} entries</span>
+  </div>
+
+  <div class="logs-output">
+    @if (logs().length === 0) {
+      <p class="empty-state">No log entries yet. Waiting for events…</p>
+    } @else {
+      @for (entry of logs(); track trackByTimestamp(0, entry)) {
+        <div class="log-line" [class]="'log-level-' + entry.level">
+          <span class="log-timestamp">{{ entry.timestamp }}</span>
+          <span class="log-level">{{ entry.level.toUpperCase() }}</span>
+          <span class="log-message">{{ entry.message }}</span>
+        </div>
+      }
+    }
+  </div>
+</div>

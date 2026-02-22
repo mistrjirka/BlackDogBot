@@ -29,6 +29,8 @@ export const DEFAULTS_DIR: string = "defaults";
 //#region Defaults
 
 export const DEFAULT_EMBEDDING_MODEL: string = "Xenova/bge-m3";
+export const DEFAULT_EMBEDDING_DTYPE: string = "q8";
+export const DEFAULT_EMBEDDING_DEVICE: string = "auto";
 export const EMBEDDING_DIMENSION: number = 1024;
 export const DEFAULT_KNOWLEDGE_COLLECTION: string = "default";
 export const DEFAULT_MAX_SEARCH_RESULTS: number = 10;
@@ -36,7 +38,7 @@ export const DEFAULT_MAX_SEARCH_RESULTS: number = 10;
 export const DEFAULT_RPM: number = 60;
 export const DEFAULT_TPM: number = 100000;
 
-export const DEFAULT_AGENT_MAX_STEPS: number = 150;
+export const DEFAULT_AGENT_MAX_STEPS: number = 40;
 export const FORCE_THINK_INTERVAL: number = 5;
 export const DEFAULT_CMD_TIMEOUT_MS: number = 30000;
 export const DEFAULT_PYTHON_TIMEOUT_MS: number = 30000;

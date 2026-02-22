@@ -1,4 +1,6 @@
 import "./env.js";
+import { createServer } from "node:http";
+import { Server as SocketIOServer } from "socket.io";
 import { ConfigService } from "./services/config.service.js";
 import { LoggerService } from "./services/logger.service.js";
 import { AiProviderService } from "./services/ai-provider.service.js";
@@ -9,9 +11,14 @@ import { KnowledgeService } from "./services/knowledge.service.js";
 import { SkillLoaderService } from "./services/skill-loader.service.js";
 import { SchedulerService } from "./services/scheduler.service.js";
 import { MessagingService } from "./services/messaging.service.js";
+import { JobStorageService } from "./services/job-storage.service.js";
 import { CronAgent } from "./agent/cron-agent.js";
 import { TelegramBot } from "./telegram/bot.js";
+import { BrainInterfaceService } from "./brain-interface/service.js";
+import { StatusService } from "./services/status.service.js";
 import type { IConfig, IScheduledTask } from "./shared/types/index.js";
+
+const BRAIN_INTERFACE_PORT: number = parseInt(process.env.BRAIN_INTERFACE_PORT ?? "3001", 10);
 
 //#region Main
 
@@ -28,7 +35,19 @@ async function mainAsync(): Promise<void> {
 
   await logger.initializeAsync(config.logging.level);
 
+  // Enable CLI status output (spinner/status line)
+  const statusService: StatusService = StatusService.getInstance();
+  statusService.enableCliOutput(true);
+
   logger.info("BetterClaw daemon starting...");
+
+  // 2.5. Clean up orphaned jobs in "creating" status (from interrupted job creation)
+  const jobStorageService: JobStorageService = JobStorageService.getInstance();
+  const orphanedCount: number = await jobStorageService.cleanupOrphanedCreatingJobsAsync();
+
+  if (orphanedCount > 0) {
+    logger.info("Cleaned up orphaned jobs in 'creating' status", { count: orphanedCount });
+  }
 
   // 3. Initialize prompt service
   const promptService: PromptService = PromptService.getInstance();
@@ -47,7 +66,11 @@ async function mainAsync(): Promise<void> {
   // 5. Initialize embeddings and vector store
   const embeddingService: EmbeddingService = EmbeddingService.getInstance();
 
-  await embeddingService.initializeAsync(config.knowledge.embeddingModelPath);
+  await embeddingService.initializeAsync(
+    config.knowledge.embeddingModelPath,
+    config.knowledge.embeddingDtype,
+    config.knowledge.embeddingDevice,
+  );
 
   logger.info("Embedding service initialized.");
 
@@ -128,9 +151,29 @@ async function mainAsync(): Promise<void> {
     await telegramBot.startAsync();
   }
 
+  // 11. Initialize BrainInterface (WebSocket server for debug UI)
+  const httpServer = createServer();
+  const io: SocketIOServer = new SocketIOServer(httpServer, {
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"],
+    },
+  });
+
+  const brainInterface: BrainInterfaceService = BrainInterfaceService.getInstance();
+  brainInterface.initialize(io);
+
+  await new Promise<void>((resolve): void => {
+    httpServer.listen(BRAIN_INTERFACE_PORT, (): void => {
+      resolve();
+    });
+  });
+
+  logger.info("BrainInterface WebSocket server started.", { port: BRAIN_INTERFACE_PORT });
+
   logger.info("BetterClaw daemon is running.");
 
-  // 11. Graceful shutdown
+  // 12. Graceful shutdown
   const shutdownAsync = async (): Promise<void> => {
     logger.info("Shutdown signal received. Stopping BetterClaw...");
 
@@ -141,6 +184,12 @@ async function mainAsync(): Promise<void> {
     if (config.scheduler.enabled) {
       await schedulerService.stopAsync();
     }
+
+    await new Promise<void>((resolve): void => {
+      io.close((): void => {
+        resolve();
+      });
+    });
 
     logger.info("BetterClaw stopped. Goodbye.");
     process.exit(0);

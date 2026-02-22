@@ -14,6 +14,7 @@ interface INodeStyle {
 }
 
 const NODE_TYPE_STYLES: Record<string, INodeStyle> = {
+  start: { fillcolor: "#e8eaf6", color: "#3949ab", fontcolor: "#1a237e" },
   manual: { fillcolor: "#e8f5e9", color: "#43a047", fontcolor: "#1b5e20" },
   curl_fetcher: { fillcolor: "#e3f2fd", color: "#1e88e5", fontcolor: "#0d47a1" },
   rss_fetcher: { fillcolor: "#e3f2fd", color: "#1e88e5", fontcolor: "#0d47a1" },
@@ -22,6 +23,7 @@ const NODE_TYPE_STYLES: Record<string, INodeStyle> = {
   python_code: { fillcolor: "#fff3e0", color: "#fb8c00", fontcolor: "#e65100" },
   output_to_ai: { fillcolor: "#f3e5f5", color: "#8e24aa", fontcolor: "#4a148c" },
   agent: { fillcolor: "#fce4ec", color: "#e53935", fontcolor: "#b71c1c" },
+  litesql: { fillcolor: "#ffebee", color: "#c62828", fontcolor: "#b71c1c" },
 };
 
 const DEFAULT_NODE_STYLE: INodeStyle = {

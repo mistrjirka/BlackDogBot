@@ -11,7 +11,6 @@ export const jobStatusSchema = z.enum([
 ]);
 
 export const nodeTypeSchema = z.enum([
-  "manual",
   "curl_fetcher",
   "crawl4ai",
   "searxng",
@@ -19,6 +18,7 @@ export const nodeTypeSchema = z.enum([
   "python_code",
   "output_to_ai",
   "agent",
+  "litesql",
 ]);
 
 export const agentNodeConfigSchema = z.object({
@@ -129,6 +129,22 @@ export const outputToAiConfigSchema = z.object({
     .describe("Optional model override"),
 });
 
+export const liteSqlConfigSchema = z.object({
+  databaseName: z.string()
+    .min(1)
+    .describe("Name of the database (stored in ~/.betterclaw/databases/<name>.db)"),
+  tableName: z.string()
+    .min(1)
+    .describe("Name of the table to insert into"),
+});
+
+export const startNodeConfigSchema = z.object({
+  scheduledTaskId: z.string()
+    .nullable()
+    .default(null)
+    .describe("ID of the auto-created ScheduledTask linked to this job (null = manual-only)"),
+});
+
 export const nodeConfigSchema = z.union([
   agentNodeConfigSchema,
   curlFetcherConfigSchema,
@@ -137,6 +153,8 @@ export const nodeConfigSchema = z.union([
   rssFetcherConfigSchema,
   pythonCodeConfigSchema,
   outputToAiConfigSchema,
+  liteSqlConfigSchema,
+  startNodeConfigSchema,
   z.object({}).strict(),
 ]);
 

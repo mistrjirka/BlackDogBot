@@ -99,7 +99,7 @@ describe("BaseAgentBase", () => {
 
     expect(
       (agent as unknown as { _maxSteps: number })._maxSteps,
-    ).toBe(150);
+    ).toBe(40);
     expect(
       (agent as unknown as { _compactionTokenThreshold: number })._compactionTokenThreshold,
     ).toBe(80_000);

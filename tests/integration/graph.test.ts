@@ -13,7 +13,7 @@ function createNode(
   return {
     nodeId,
     jobId,
-    type: "manual",
+    type: "start",
     name: `Node ${nodeId}`,
     description: `Test node ${nodeId}`,
     inputSchema: {},

@@ -3,33 +3,36 @@
 When creating a job, follow this structured process:
 
 <task>
-1. **Plan the job graph** — think through what nodes are needed,
-   their types, and how they connect. Use the think tool to plan
-   the full graph before calling any creation tools.
+## Guided workflow (recommended for new jobs)
 
-2. **Create the job** — use add_job to create the job with a clear
-   name and description. The job starts in "creating" status.
+1. **Plan the job graph** — use `think` to plan all nodes, their types,
+   and how they connect before calling any tools.
 
-3. **Define nodes** — for each node in the graph:
-   - Choose the appropriate node type (see `<node_types>` below).
-   - Define the input JSON Schema (what data the node receives).
-   - Define the output JSON Schema (what data the node produces).
-   - Configure node-specific settings (code, URL, agent prompt, etc.).
-   - For **agent** nodes: set `maxSteps` to at least **15**. If the agent
-     has many tools (5+), set it to at least **50**. When in doubt, **50
-     is a safe and recommended default** — it is better to allow more
-     steps than to have the agent stop before completing its task.
+2. **Start job creation** — call `start_job_creation` with the job name,
+   description, and a description of what triggers the job. This creates
+   the job and its Start node, sets the Start node as entrypoint, and
+   activates job creation mode which unlocks typed node-creation tools.
 
-4. **Connect nodes** — use connect_node_to_node to wire the graph.
-   IMPORTANT: The output schema of node A must be compatible with
-   the input schema of node B when connecting A -> B.
+3. **Add nodes** — for each node in the planned graph, call the appropriate
+   `add_<type>_node` tool (e.g. `add_curl_fetcher_node`, `add_rss_fetcher_node`,
+   `add_output_to_ai_node`). Always specify `parentNodeId` to auto-connect
+   the node to its parent. The node's output schema should describe exactly
+   what the node produces. For **agent** nodes: set `maxSteps` to at least
+   **15**; if the agent has many tools (5+), use at least **50** — when in
+   doubt, **50 is the safe default**.
 
-5. **Set entrypoint** — designate which node starts the execution.
+4. **Add tests** — for each node **except `start` nodes** (which are passthroughs with no logic), add at least one test with `add_node_test` and run it with `run_node_test` to verify behavior.
 
-6. **Add tests** — create at least one test per node with valid
-   input data. Run node tests to verify behavior.
+5. **Finish** — call `finish_job_creation`. This validates the graph, checks
+   all `{{nodeId.outputKey}}` template references, confirms all tests pass,
+   marks the job as ready, and exits job creation mode.
 
-7. **Finish the job** — use finish_job to mark it as ready.
+## Manual / editing flow (for modifying existing jobs)
+
+Use these tools to edit jobs that already exist or were created with the
+legacy flow:
+- `add_job` + `add_node` + `set_entrypoint` + `finish_job`
+- `edit_job`, `edit_node`, `add_node`, `remove_node`, `connect_nodes`
 </task>
 
 <design_principles>
@@ -56,32 +59,248 @@ When creating a job, follow this structured process:
   sorting arrays, encoding/decoding, or structured data transformations where
   the exact logic can be written as code.
 
-- Use `output_to_ai` for **single-pass LLM processing**: give it data and a
-  prompt, get structured JSON back. No tools, no multi-step reasoning.
-
-- Use `agent` for **multi-step, tool-using tasks**: when the node needs to
-  search the knowledge base, run commands, read/write files, send messages,
-  or make multiple decisions.
-
-- The `manual` node is a pass-through — it does nothing to the data. Use it
-  as an entrypoint to accept external input into the graph.
+- > **NEVER use `python_code` to interact with databases.**
+  > Database persistence is handled exclusively by the `litesql` node and by
+  > `agent` nodes with `write_to_database` / `read_from_database` tools.
+  > Writing Python that opens a `sqlite3` connection, runs INSERT statements,
+  > or manages `.db` files is **always wrong** — no exceptions. Use the
+  > purpose-built `litesql` node and the `create_table` / `write_to_database` /
+  > `read_from_database` tools instead.
 
 - Every URL, query, and body field in fetcher nodes supports `{{key}}`
   template substitution, where `key` is replaced by the matching property
   from the node's input data.
 </design_principles>
 
+<graph_topology>
+## How to structure the node graph
+
+The job graph is a **data pipeline** — each node takes the output of the
+previous node as input and passes its output to the next. Think of it as
+an assembly line where data flows through stages.
+
+### The pipeline pattern (default — use this most of the time)
+
+The most common pattern is a **sequential chain**. When adding nodes,
+set each node's `parentNodeId` to the **node you just created**, NOT
+the Start node. Each node receives the output of the node before it.
+
+**Example: "Fetch RSS news, filter with AI, store in database"**
+```
+start_job_creation           → startNodeId "s1"
+add_rss_fetcher_node(parentNodeId = "s1")    → nodeId "n1"
+add_output_to_ai_node(parentNodeId = "n1")   → nodeId "n2"
+add_litesql_node(parentNodeId = "n2")        → nodeId "n3"
+```
+Result: `Start → RSS Fetcher → AI Filter → Database`
+
+Data flows: Start outputs trigger input → RSS fetches feed items → AI
+filters/summarizes the feed items → DB stores the AI's output.
+
+**Example: "Search the web, crawl top results, summarize findings"**
+```
+start_job_creation           → startNodeId "s1"
+add_searxng_node(parentNodeId = "s1")        → nodeId "n1"
+add_crawl4ai_node(parentNodeId = "n1")       → nodeId "n2"
+add_output_to_ai_node(parentNodeId = "n2")   → nodeId "n3"
+```
+Result: `Start → Search → Crawl Pages → Summarize`
+
+**Example: "Monitor RSS feed, analyze each article with AI agent"**
+```
+start_job_creation           → startNodeId "s1"
+add_rss_fetcher_node(parentNodeId = "s1")    → nodeId "n1"
+add_agent_node(parentNodeId = "n1")          → nodeId "n2"
+```
+Result: `Start → RSS Fetcher → Agent`
+
+### CRITICAL anti-pattern: star topology (DO NOT DO THIS)
+
+**WRONG** — connecting all nodes to the Start node:
+```
+Start → RSS Fetcher
+Start → AI Filter      ← BROKEN: AI receives Start's input, NOT the RSS data!
+Start → Database        ← BROKEN: DB receives Start's input, NOT the AI output!
+```
+This breaks data flow entirely. The AI filter never sees the RSS data
+because it receives the Start node's raw trigger input instead of the
+RSS fetcher's output. Each node must chain to the node whose output it
+needs, NOT back to Start.
+
+### Fan-out pattern (parallel independent branches)
+
+Connect multiple nodes to the **same parent** only when they perform
+independent work on the same data:
+```
+Start → RSS Fetcher → AI Summarizer    (branch 1: summarize)
+                    → LiteSQL           (branch 2: store raw feed)
+```
+Both the AI summarizer and the DB receive the RSS fetcher's output
+independently. Use this when two downstream nodes need the same input
+but do different things with it.
+
+### Rule of thumb
+
+Ask yourself: "Does node B need the output of node A to do its work?"
+If yes, then A must be B's parent (`parentNodeId = A's nodeId`).
+
+Build the chain by always setting `parentNodeId` to the node whose
+output the new node needs as input. In the vast majority of cases,
+this means chaining each new node to the previously created node.
+</graph_topology>
+
+<storage_patterns>
+## How to persist data — use litesql or agent DB tools, never Python
+
+> **NEVER write Python code that opens a SQLite connection.**
+> Any `python_code` node containing `import sqlite3`, `conn.execute(...)`, or
+> similar is always wrong. Use the `litesql` node and the `create_table` /
+> `write_to_database` / `read_from_database` tools.
+
+### When to use litesql vs agent with DB tools
+
+| Situation | Use |
+|---|---|
+| Every input record should be inserted as-is, no logic needed | `litesql` node |
+| Need to read from the DB before deciding what to write | `agent` node with `read_from_database` + `write_to_database` |
+| Need conditional writes (e.g. skip duplicates, filter by rule) | `agent` node with DB tools |
+| Need to query data for summaries / reports | `agent` node with `read_from_database` |
+| Simple end-of-pipeline persistence (insert and done) | `litesql` node |
+
+**`litesql` is insert-only** — it takes every record the upstream node produces
+and inserts it directly into the table. It has no query support and no
+conditional logic. Use it only when the upstream node (e.g. `output_to_ai`)
+has already done all filtering/transforming, and you just need to persist the result.
+
+**`agent` with DB tools** is for any situation where the node must reason about
+the database — reading existing rows, checking before writing, building summaries,
+or doing conditional inserts.
+
+### Database tools: job creation vs pipeline nodes
+
+During **job creation** (before `finish_job_creation`), the main agent can call
+these tools directly to set up the schema:
+- `create_database` — creates a new database file
+- `create_table` — creates a table (also creates the database if needed)
+- `list_databases` — lists existing databases
+- `list_tables` — lists tables in a database
+- `get_table_schema` — inspects a table's columns
+
+At **pipeline runtime**, `agent` nodes can use these tools via `selectedTools`:
+- `write_to_database` — inserts or updates rows
+- `read_from_database` — queries rows
+- `create_table` — creates a table if needed
+- `list_databases` / `list_tables` / `get_table_schema` — introspection
+
+### Step-by-step: adding a litesql node to a pipeline
+
+**Before adding the node, set up the schema (tool calls, not pipeline nodes):**
+
+1. **Call `list_databases`** — check what databases already exist.
+
+2. **Call `list_tables`** (if a relevant database exists) — check what tables
+   it has.
+
+3. **If the table doesn't exist, call `create_table`** — specify the database
+   name, table name, and columns. This creates both the database file and the
+   table. Do this **before** calling `add_litesql_node`. Example columns:
+   - `id INTEGER PRIMARY KEY AUTOINCREMENT`
+   - `title TEXT NOT NULL`
+   - `link TEXT`
+   - `summary TEXT`
+   - `is_interesting INTEGER`
+   - `stored_at TEXT`
+
+**Then add the node:**
+
+4. **Call `add_litesql_node`** with:
+   - `databaseName`: same name as used in `create_table`
+   - `tableName`: same table name
+
+5. **Make the upstream node's output schema field names match the table column
+   names exactly.** The `litesql` node inserts by using the input JSON's keys
+   as column names — there is no separate query field or mapping config. If the
+   upstream node outputs `{ "headline": "..." }` but the table has a `title`
+   column, the insert will fail. Field names must match.
+
+### Agent nodes that need database access
+
+If an `agent` node must read from or write to a database (e.g. an agent that
+checks existing records before deciding what to store), add these tools to its
+`selectedTools`:
+- `write_to_database` — inserts or updates rows
+- `read_from_database` — queries rows
+- `create_table` — creates a table if needed
+- `list_databases` / `list_tables` / `get_table_schema` — introspection
+
+The agent calls these tools itself at runtime; you do not need a `litesql` node
+when the agent handles storage directly.
+
+### Concrete example: "Fetch RSS, filter interesting items with agent, store to DB"
+
+**Task:** every 6 AM / 8 PM fetch a feed, use an agent to decide which items
+are interesting, store the interesting ones to SQLite.
+
+**Step 1 — create the table first (tool call, not a pipeline node):**
+```
+create_table(
+  database = "news",
+  table    = "interesting_items",
+  columns  = [
+    "id INTEGER PRIMARY KEY AUTOINCREMENT",
+    "title TEXT NOT NULL",
+    "link TEXT",
+    "summary TEXT",
+    "stored_at TEXT"
+  ]
+)
+```
+
+**Step 2 — build the pipeline:**
+```
+start_job_creation                                          → startNodeId "s1"
+add_rss_fetcher_node(parentNodeId = "s1", mode = "unseen") → nodeId "n1"
+add_agent_node(                                             → nodeId "n2"
+  parentNodeId  = "n1",
+  selectedTools = ["write_to_database", "read_from_database",
+                   "list_databases", "list_tables"],
+  systemPrompt  = "You receive RSS feed items. For each item, decide if it is
+                   interesting. Store interesting items using write_to_database
+                   (database=news, table=interesting_items). Include title,
+                   link, summary, and stored_at (ISO timestamp)."
+)
+```
+
+Or, if the filtering is stateless (no DB reads needed during filtering), use
+`output_to_ai` to filter and `litesql` to store. In this case the `output_to_ai`
+node's output schema **must use the same field names as the table columns**:
+
+```
+create_table("news", "interesting_items", [...])             ← tool call first
+add_rss_fetcher_node(parentNodeId = "s1", mode = "unseen")  → nodeId "n1"
+add_output_to_ai_node(                                       → nodeId "n2"
+  parentNodeId  = "n1",
+  outputSchema  = {                  ← field names must match table columns!
+    items: [{ title, link, summary, stored_at }]
+  }
+)
+add_litesql_node(parentNodeId = "n2",                        → nodeId "n3"
+  databaseName = "news", tableName = "interesting_items")
+```
+
+### WRONG pattern — never do this
+
+```python
+# WRONG: python_code node with sqlite3
+add_python_code_node(parentNodeId = "n2",
+  code = "import sqlite3; conn = sqlite3.connect('news.db'); ...")
+```
+
+Python nodes cannot reliably manage database files, handle concurrency, or
+integrate with the rest of the system's database tooling.
+</storage_patterns>
+
 <node_types>
-
-## manual
-A pure pass-through node. Returns its input unchanged. Use as the graph
-entrypoint to accept external data that triggers the job.
-
-**Config:** None (empty object `{}`).
-
-**Output:** Identical to input.
-
----
 
 ## curl_fetcher
 Fetches a URL using HTTP and returns the response. Supports all HTTP methods,
@@ -241,9 +460,60 @@ reasons, and eventually calls the `done` tool with its final result.
 | `reasoningEffort` | `"low" \| "medium" \| "high" \| null` | Reasoning effort level |
 | `maxSteps` | `number` | Maximum agentic loop iterations (recommended: **50**) |
 
+> **Note:** `think` and `done` are always injected automatically — do NOT include them in `selectedTools`.
+
 **When to use:** When the task requires multi-step reasoning, tool use
 (searching knowledge, running commands, reading/writing files), or complex
 decision-making that cannot be done in a single LLM pass.
+
+---
+
+## litesql
+An **insert-only output node** that inserts data into a SQLite database table.
+The node receives JSON input from the previous node and inserts it as a row
+(or rows) into the specified table. It performs **no queries, no conditional
+logic, and no reads** — every record it receives is inserted directly. Use it
+only when the upstream node has already done all filtering and transforming.
+This is typically used at the **end of a pipeline** to persist data.
+
+> **If you need to read from the database, check for duplicates, or apply
+> conditional logic before writing — use an `agent` node with `selectedTools`
+> including `write_to_database` and `read_from_database` instead.**
+
+**Important:** Before using this node, you MUST:
+1. Use `list_databases` to see existing databases
+2. Use `list_tables` to see tables in a database
+3. If the table doesn't exist, use `create_table` to create it
+4. Use `get_table_schema` to understand the table's column structure
+
+**Config (`ILiteSqlConfig`):**
+| Property | Type | Description |
+|---|---|---|
+| `databaseName` | `string` | Name of the database (stored in `~/.betterclaw/databases/<name>.db`); supports `{{key}}` substitution |
+| `tableName` | `string` | Target table name; supports `{{key}}` substitution |
+
+**Input:** The node expects JSON matching the table's columns. For example,
+if the table has columns `id`, `name`, `email`, the input should be:
+```json
+{ "id": 1, "name": "John", "email": "john@example.com" }
+```
+
+**Output:**
+```json
+{
+  "insertedCount": 1,
+  "lastRowId": 5
+}
+```
+
+**Error handling:**
+- If the database doesn't exist: Lists available databases
+- If the table doesn't exist: Lists available tables in the database
+- If schema doesn't match: Shows actual table columns and what was provided
+- If primary key duplicate: Error with suggestion to fix
+
+**When to use:** At the end of a pipeline to persist transformed data to a
+SQLite database. The database files are stored in `~/.betterclaw/databases/`.
 
 </node_types>
 
@@ -268,6 +538,9 @@ Available editing tools:
 - `set_entrypoint` — change which node starts execution
 - `finish_job` — mark job as ready (transitions status from "creating"
   to "ready"); call this once all nodes are defined and tested
+- `finish_job_creation` — finish a job that was started with `start_job_creation`
+  (validates graph + `{{nodeId.outputKey}}` template references + all tests,
+  marks job as ready, and exits job creation mode)
 
 When to use edit tools:
 - A node test fails → use `edit_node` to fix the config, code, or schema
@@ -279,3 +552,36 @@ Note: There is no `disconnect_nodes` tool. If a connection is wrong,
 use `remove_node` on the problematic node and re-add it, or restructure
 the graph by adding the corrected connection with `connect_nodes`.
 </editing_after_creation>
+
+<job_scheduling>
+## Scheduling jobs to run automatically
+
+After creating a job, you can attach a schedule so it runs automatically:
+
+1. **Set a schedule** — call `set_job_schedule` with the `jobId` and a `schedule`
+   object. This creates a ScheduledTask that will run the job automatically.
+   The schedule format is the same as `add_cron`:
+   - `{ type: "cron", expression: "0 9 * * *" }` — daily at 09:00
+   - `{ type: "interval", intervalMs: 3600000 }` — every hour
+   - `{ type: "once", runAt: "2026-03-01T00:00:00Z" }` — one-time
+
+2. **Update a schedule** — call `set_job_schedule` again with a new schedule.
+   The old ScheduledTask is automatically removed and replaced.
+
+3. **Remove a schedule** — call `remove_job_schedule` with the `jobId` to
+   stop automatic execution. The job can still be run manually with `run_job`.
+
+**Example workflow:**
+```
+start_job_creation(name="Daily RSS Digest", ...)
+add_rss_fetcher_node(...)
+add_output_to_ai_node(...)
+finish_job_creation(jobId)
+set_job_schedule(jobId, { type: "cron", expression: "0 8 * * *" })
+```
+
+**Note:** `set_job_schedule` is preferred over `add_cron` for job scheduling
+because it links the schedule to the job's start node, making it easy to
+update or remove later. Use `add_cron` only for general-purpose scheduled
+tasks that are not tied to a specific job.
+</job_scheduling>

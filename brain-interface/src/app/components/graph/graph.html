@@ -1,0 +1,192 @@
+<div class="graph-container">
+  <div class="status-bar" [class.status-bar--active]="!!status()">
+    @if (status(); as statusData) {
+      <span class="status-bar__spinner"></span>
+      <span class="status-bar__message">{{ formatStatus(statusData) }}</span>
+    } @else {
+      <span class="status-bar__idle">💤 Idle</span>
+    }
+    @if (contextTokens() > 0) {
+      <span class="status-bar__context">📊 {{ contextTokens().toLocaleString() }} context tokens</span>
+    }
+  </div>
+
+  <div class="graph-header">
+    <span class="header-title">Job Graph</span>
+    <select
+      class="job-selector"
+      [ngModel]="selectedJobId()"
+      (ngModelChange)="onSelectJobAsync($event)"
+    >
+      <option value="">Select a job...</option>
+      @for (job of jobs(); track job.jobId) {
+        <option [value]="job.jobId">{{ job.name }} ({{ job.nodeCount }} nodes)</option>
+      }
+    </select>
+    <button
+      class="run-job-btn"
+      [disabled]="!currentJobId() || isExecuting()"
+      (click)="runCurrentJobAsync()"
+    >
+      @if (isExecuting()) {
+        <span class="run-job-btn__spinner"></span>
+        Running...
+      } @else {
+        ▶ Run Job
+      }
+    </button>
+  </div>
+
+  <div class="graph-canvas">
+    @if (graph(); as graphData) {
+      @if (graphData.nodes.length > 0) {
+        <div class="graph-content" [style.width.px]="canvasWidth()" [style.height.px]="canvasHeight()">
+          <svg
+            class="connections-layer"
+            [attr.width]="canvasWidth()"
+            [attr.height]="canvasHeight()"
+          >
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="8" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L8,3 z" fill="#e94560" />
+              </marker>
+            </defs>
+            @for (node of graphData.nodes; track node.nodeId) {
+              @for (targetId of node.connections; track targetId) {
+                <path class="connection-line" [attr.d]="getArrowPath(node.nodeId, targetId)" />
+              }
+            }
+          </svg>
+
+          @for (node of graphData.nodes; track node.nodeId) {
+            <div
+              class="graph-node"
+              [class.entrypoint]="isEntrypoint(node, graphData)"
+              [class.active]="isActive(node, graphData)"
+              [ngClass]="getNodeStatusClass(node, graphData)"
+              [attr.data-node-type]="node.type"
+              [style.left.px]="getNodePos(node.nodeId).x"
+              [style.top.px]="getNodePos(node.nodeId).y"
+            >
+              <div class="node-header">
+                <span class="node-name">{{ node.name }}</span>
+                <span class="node-type">{{ node.type }}</span>
+              </div>
+              <div class="node-content">
+                <div class="schema-section input">
+                  <div class="schema-label">INPUT</div>
+                  <div class="schema-value">{{ formatSchema(node.inputSchema) }}</div>
+                </div>
+                <div class="schema-section output">
+                  <div class="schema-label">OUTPUT</div>
+                  <div class="schema-value">{{ formatSchema(node.outputSchema) }}</div>
+                </div>
+              </div>
+              @if (isEntrypoint(node, graphData)) {
+                <div class="entrypoint-badge">⬥ ENTRY</div>
+              }
+              @if (hasTests(node.nodeId)) {
+                <button
+                  class="test-badge"
+                  [attr.title]="'Has ' + getTestCount(node.nodeId) + ' test(s)'"
+                  (click)="openTestPanelAsync(node)"
+                >
+                  <span class="test-badge__icon">🧪</span>
+                  <span class="test-badge__count">{{ getTestCount(node.nodeId) }}</span>
+                </button>
+              }
+            </div>
+          }
+        </div>
+      } @else {
+        <div class="no-graph">
+          <p>No nodes in this job.</p>
+          <p>Start a conversation to see the graph being built.</p>
+        </div>
+      }
+    } @else {
+      <div class="no-graph">
+        <p>No graph loaded.</p>
+        <p>Select a job from the dropdown or start a conversation.</p>
+      </div>
+    }
+  </div>
+</div>
+
+<!-- Test Panel Modal -->
+@if (showTestPanel()) {
+  <div class="test-panel-overlay" (click)="closeTestPanel()">
+    <div class="test-panel" (click)="$event.stopPropagation()">
+      <div class="test-panel__header">
+        <h3>Tests for: {{ selectedNodeForTests()?.name }}</h3>
+        <button class="test-panel__close" (click)="closeTestPanel()">×</button>
+      </div>
+
+      <div class="test-panel__content">
+        @if (selectedNodeTests().length === 0) {
+          <p class="test-panel__empty">No tests defined for this node.</p>
+        } @else {
+          @for (test of selectedNodeTests(); track test.testId) {
+            <div class="test-item">
+              <div class="test-item__header">
+                <span class="test-item__name">{{ test.name }}</span>
+                @if (getTestResult(test.testId); as result) {
+                  <span class="test-item__status" [class.passed]="result.passed" [class.failed]="!result.passed">
+                    {{ result.passed ? '✓ Passed' : '✗ Failed' }}
+                  </span>
+                }
+              </div>
+              <p class="test-item__description">{{ test.description }}</p>
+
+              <div class="test-item__details">
+                <div class="test-item__section">
+                  <strong>Input Data:</strong>
+                  <pre class="test-item__code">{{ formatJson(test.inputData) }}</pre>
+                </div>
+
+                @if (test.expectedOutputSchema) {
+                  <div class="test-item__section">
+                    <strong>Expected Output Schema:</strong>
+                    <pre class="test-item__code">{{ formatJson(test.expectedOutputSchema) }}</pre>
+                  </div>
+                }
+
+                @if (getTestResult(test.testId); as result) {
+                  <div class="test-item__section">
+                    <strong>Result ({{ result.executionTimeMs }}ms):</strong>
+                    @if (result.error) {
+                      <div class="test-item__error">{{ result.error }}</div>
+                    }
+                    @if (result.validationErrors.length > 0) {
+                      <div class="test-item__validation-errors">
+                        @for (err of result.validationErrors; track err) {
+                          <div>• {{ err }}</div>
+                        }
+                      </div>
+                    }
+                    @if (result.output) {
+                      <pre class="test-item__code">{{ formatJson(result.output) }}</pre>
+                    }
+                  </div>
+                }
+              </div>
+
+              <button
+                class="test-item__run-btn"
+                [disabled]="isRunningTest() === test.testId"
+                (click)="runTestAsync(test)"
+              >
+                @if (isRunningTest() === test.testId) {
+                  <span class="run-job-btn__spinner"></span>
+                  Running...
+                } @else {
+                  ▶ Run Test
+                }
+              </button>
+            </div>
+          }
+        }
+      </div>
+    </div>
+  </div>
+}

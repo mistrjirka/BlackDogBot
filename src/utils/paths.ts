@@ -104,6 +104,18 @@ export function getRssStateFilePath(feedUrl: string): string {
   return path.join(getRssStateDir(), `${hash}.json`);
 }
 
+export function getDatabasesDir(): string {
+  return path.join(getBaseDir(), "databases");
+}
+
+export function getModelsDir(): string {
+  return path.join(getBaseDir(), "models");
+}
+
+export function getDatabasePath(databaseName: string): string {
+  return path.join(getDatabasesDir(), `${databaseName}.db`);
+}
+
 export async function ensureDirectoryExistsAsync(dirPath: string): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });
 }
@@ -121,6 +133,8 @@ export async function ensureAllDirectoriesAsync(): Promise<void> {
     getRssStateDir(),
     getPromptsDir(),
     getPromptFragmentsDir(),
+    getDatabasesDir(),
+    getModelsDir(),
   ];
 
   for (const dir of directories) {

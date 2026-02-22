@@ -267,7 +267,7 @@ export const finishJobToolOutputSchema = z.object({
 export const addNodeToolInputSchema = z.object({
   jobId: z.string()
     .min(1),
-  type: z.enum(["manual", "curl_fetcher", "crawl4ai", "searxng", "rss_fetcher", "python_code", "output_to_ai", "agent"]),
+  type: z.enum(["start", "curl_fetcher", "crawl4ai", "searxng", "rss_fetcher", "python_code", "output_to_ai", "agent", "litesql"]),
   name: z.string()
     .min(1),
   description: z.string()
@@ -393,6 +393,33 @@ export const runNodeTestToolOutputSchema = z.object({
 
 //#region Graph Tools
 
+export const getNodesToolInputSchema = z.object({
+  jobId: z.string()
+    .min(1)
+    .describe("Job ID to list nodes for"),
+});
+
+export const getNodesToolOutputSchema = z.object({
+  jobId: z.string(),
+  jobName: z.string(),
+  entrypointNodeId: z.string()
+    .nullable(),
+  nodeCount: z.number(),
+  nodes: z.object({
+    nodeId: z.string(),
+    name: z.string(),
+    type: z.string(),
+    description: z.string(),
+    inputSchema: z.record(z.string(), z.unknown()),
+    outputSchema: z.record(z.string(), z.unknown()),
+    connections: z.string().array(),
+    config: z.record(z.string(), z.unknown()),
+    isEntrypoint: z.boolean(),
+  }).array(),
+  asciiGraph: z.string()
+    .describe("ASCII art DAG visualization of the graph"),
+});
+
 export const renderGraphToolInputSchema = z.object({
   jobId: z.string()
     .min(1)
@@ -478,6 +505,40 @@ export const listCronsToolOutputSchema = z.object({
       .nullable(),
   })
     .array(),
+});
+
+export const setJobScheduleToolInputSchema = z.object({
+  jobId: z.string()
+    .min(1)
+    .describe("ID of the job to schedule"),
+  schedule: z.object({
+    type: z.enum(["once", "interval", "cron"]),
+    runAt: z.string()
+      .optional(),
+    intervalMs: z.number()
+      .optional(),
+    expression: z.string()
+      .optional(),
+  })
+    .describe("Schedule configuration (same format as add_cron)"),
+});
+
+export const setJobScheduleToolOutputSchema = z.object({
+  success: z.boolean(),
+  scheduledTaskId: z.string()
+    .describe("ID of the created/updated ScheduledTask"),
+  message: z.string(),
+});
+
+export const removeJobScheduleToolInputSchema = z.object({
+  jobId: z.string()
+    .min(1)
+    .describe("ID of the job whose schedule to remove"),
+});
+
+export const removeJobScheduleToolOutputSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
 });
 
 //#endregion Cron Tools
@@ -580,6 +641,244 @@ export const fetchRssToolOutputSchema = z.object({
 });
 
 //#endregion Fetch RSS Tool
+
+//#region Phase 2 Job Creation Tools
+
+const _commonNodeCreationFields = {
+  jobId: z.string()
+    .min(1)
+    .describe("Job ID to add the node to"),
+  parentNodeId: z.string()
+    .optional()
+    .describe("If set, automatically connects parent node → this new node after creation"),
+  name: z.string()
+    .min(1)
+    .describe("Node name"),
+  description: z.string()
+    .default("")
+    .describe("Node description"),
+  outputSchema: z.record(z.string(), z.unknown())
+    .describe("JSON Schema describing what this node produces"),
+};
+
+export const startJobCreationToolInputSchema = z.object({
+  name: z.string()
+    .min(1)
+    .describe("Job name"),
+  description: z.string()
+    .default("")
+    .describe("Job description"),
+  startNodeDescription: z.string()
+    .default("")
+    .describe("Description of what triggers or starts this job"),
+});
+
+export const startJobCreationToolOutputSchema = z.object({
+  jobId: z.string(),
+  startNodeId: z.string(),
+  message: z.string(),
+});
+
+export const addCurlFetcherNodeToolInputSchema = z.object({
+  ..._commonNodeCreationFields,
+  url: z.string()
+    .min(1)
+    .describe("URL to fetch"),
+  method: z.string()
+    .default("GET")
+    .describe("HTTP method"),
+  headers: z.record(z.string(), z.string())
+    .default({})
+    .describe("HTTP headers"),
+  body: z.string()
+    .nullable()
+    .default(null)
+    .describe("Request body (null for GET)"),
+});
+
+export const addCurlFetcherNodeToolOutputSchema = z.object({
+  nodeId: z.string(),
+  success: z.boolean(),
+  message: z.string(),
+});
+
+export const addRssFetcherNodeToolInputSchema = z.object({
+  ..._commonNodeCreationFields,
+  url: z.string()
+    .min(1)
+    .describe("RSS feed URL"),
+  mode: z.enum(["latest", "unseen"])
+    .default("latest")
+    .describe("'latest' returns most recent items; 'unseen' returns only new items"),
+  maxItems: z.number()
+    .int()
+    .positive()
+    .default(20)
+    .describe("Maximum number of feed items to return"),
+});
+
+export const addRssFetcherNodeToolOutputSchema = z.object({
+  nodeId: z.string(),
+  success: z.boolean(),
+  message: z.string(),
+});
+
+export const addCrawl4aiNodeToolInputSchema = z.object({
+  ..._commonNodeCreationFields,
+  url: z.string()
+    .min(1)
+    .describe("URL to crawl"),
+  extractionPrompt: z.string()
+    .nullable()
+    .default(null)
+    .describe("Optional LLM extraction prompt for structured data"),
+  selector: z.string()
+    .nullable()
+    .default(null)
+    .describe("Optional CSS selector to restrict extraction"),
+});
+
+export const addCrawl4aiNodeToolOutputSchema = z.object({
+  nodeId: z.string(),
+  success: z.boolean(),
+  message: z.string(),
+});
+
+export const addSearxngNodeToolInputSchema = z.object({
+  ..._commonNodeCreationFields,
+  query: z.string()
+    .min(1)
+    .describe("Search query (may contain {{nodeId.outputKey}} templates)"),
+  categories: z.string()
+    .array()
+    .default([])
+    .describe("SearXNG search categories (e.g. ['general', 'news'])"),
+  maxResults: z.number()
+    .int()
+    .positive()
+    .default(10)
+    .describe("Maximum number of search results"),
+});
+
+export const addSearxngNodeToolOutputSchema = z.object({
+  nodeId: z.string(),
+  success: z.boolean(),
+  message: z.string(),
+});
+
+export const addPythonCodeNodeToolInputSchema = z.object({
+  ..._commonNodeCreationFields,
+  code: z.string()
+    .min(1)
+    .describe("Python source code to execute"),
+  pythonPath: z.string()
+    .default("python3")
+    .describe("Path to the Python interpreter"),
+  timeout: z.number()
+    .int()
+    .positive()
+    .default(30000)
+    .describe("Execution timeout in milliseconds"),
+});
+
+export const addPythonCodeNodeToolOutputSchema = z.object({
+  nodeId: z.string(),
+  success: z.boolean(),
+  message: z.string(),
+});
+
+export const addOutputToAiNodeToolInputSchema = z.object({
+  ..._commonNodeCreationFields,
+  prompt: z.string()
+    .min(1)
+    .describe("Prompt template sent to the AI model (may reference {{nodeId.outputKey}})"),
+  model: z.string()
+    .nullable()
+    .default(null)
+    .describe("Model override (null = use default model)"),
+});
+
+export const addOutputToAiNodeToolOutputSchema = z.object({
+  nodeId: z.string(),
+  success: z.boolean(),
+  message: z.string(),
+});
+
+export const addAgentNodeToolInputSchema = z.object({
+  ..._commonNodeCreationFields,
+  systemPrompt: z.string()
+    .min(1)
+    .describe("System prompt for the agent"),
+  selectedTools: z.string()
+    .array()
+    .describe("List of tool names available to the agent"),
+  model: z.string()
+    .nullable()
+    .default(null)
+    .describe("Model override (null = use default)"),
+  reasoningEffort: z.enum(["low", "medium", "high"])
+    .nullable()
+    .default(null)
+    .describe("Reasoning effort level (null = model default)"),
+  maxSteps: z.number()
+    .int()
+    .positive()
+    .default(50)
+    .describe("Maximum agent steps"),
+});
+
+export const addAgentNodeToolOutputSchema = z.object({
+  nodeId: z.string(),
+  success: z.boolean(),
+  message: z.string(),
+});
+
+export const addLitesqlNodeToolInputSchema = z.object({
+  ..._commonNodeCreationFields,
+  outputSchema: z.record(z.string(), z.unknown())
+    .optional()
+    .describe("JSON Schema describing what this node produces. Defaults to { insertedCount: number, lastRowId: number } if not provided."),
+  databaseName: z.string()
+    .min(1)
+    .describe("LiteSQL database name"),
+  tableName: z.string()
+    .min(1)
+    .describe("Table name to write to"),
+  inputSchemaHint: z.object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "JSON Schema for table input. REQUIRED if the table does not exist yet. " +
+      "Get this from create_table output (inputSchema field) or get_table_schema.",
+    ),
+});
+
+export const addLitesqlNodeToolOutputSchema = z.object({
+  nodeId: z.string(),
+  success: z.boolean(),
+  message: z.string(),
+});
+
+export const finishJobCreationToolInputSchema = z.object({
+  jobId: z.string()
+    .min(1),
+  skipAudit: z.boolean()
+    .default(false)
+    .describe("Skip the LLM-based graph audit. Use only for testing or when you're certain the graph is correct."),
+});
+
+export const finishJobCreationToolOutputSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  validationErrors: z.string()
+    .array(),
+  suggestions: z.string()
+    .array()
+    .optional()
+    .describe("Suggestions for improvement from the LLM audit"),
+});
+
+//#endregion Phase 2 Job Creation Tools
 
 
 export const modifyPromptToolInputSchema = z.object({

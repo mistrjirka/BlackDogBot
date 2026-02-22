@@ -36,6 +36,10 @@ export const finishJobTool = tool({
       const nodesWithoutTests: string[] = [];
 
       for (const node of nodes) {
+        if (node.type === "start") {
+          continue; // Start nodes cannot have tests
+        }
+
         const testCases: INodeTestCase[] = await storageService.getTestCasesAsync(jobId, node.nodeId);
 
         if (testCases.length === 0) {
@@ -56,6 +60,10 @@ export const finishJobTool = tool({
       const failedNodes: string[] = [];
 
       for (const node of nodes) {
+        if (node.type === "start") {
+          continue; // Start nodes cannot have tests
+        }
+
         const testResult = await executorService.runNodeTestsAsync(jobId, node.nodeId);
 
         if (!testResult.allPassed) {

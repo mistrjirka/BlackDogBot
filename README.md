@@ -19,18 +19,61 @@ A proactive AI assistant daemon for Linux. It runs as a long-lived process, comm
 
 ## Quick Start
 
+### Option A: Interactive Install (Recommended)
+
+Run the interactive install script:
+
+```bash
+./install.sh
+```
+
+This will:
+1. Check and install dependencies (Node.js, pnpm)
+2. Prompt for AI provider configuration
+3. Optionally set up Docker services (SearXNG, Crawl4AI)
+4. Create the config file with all required settings
+5. Create required directories
+6. Copy default prompts
+
+### Option B: Manual Setup
+
 ### 1. Install dependencies
 
 ```bash
 pnpm install
 ```
 
-### 2. Start Docker services
+### 2. Start Docker services (optional)
 
-SearXNG (web search) and Crawl4AI (web crawling) run as Docker containers:
+SearXNG (web search) and Crawl4AI (web crawling) can run as Docker containers. Create `~/.betterclaw/docker-compose.yaml`:
+
+```yaml
+services:
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "18731:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:18731/
+      - SEARXNG_SECRET=<generate-with-openssl-rand-hex-32>
+    volumes:
+      - searxng-data:/etc/searxng
+    restart: unless-stopped
+
+  crawl4ai:
+    image: unclecode/crawl4ai:latest
+    ports:
+      - "18732:8000"
+    restart: unless-stopped
+
+volumes:
+  searxng-data:
+```
+
+Then start:
 
 ```bash
-docker compose up -d
+docker compose -f ~/.betterclaw/docker-compose.yaml up -d
 ```
 
 This starts:
@@ -67,6 +110,10 @@ skills:
 
 logging:
   level: info
+
+services:
+  searxngUrl: http://localhost:18731
+  crawl4aiUrl: http://localhost:18732
 ```
 
 You can also use an OpenAI-compatible provider (e.g. Ollama):

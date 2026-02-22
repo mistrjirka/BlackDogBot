@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
-import { ToolLoopAgent, ToolSet, LanguageModel, hasToolCall, tool } from "ai";
+import { ToolLoopAgent, ToolSet, LanguageModel, hasToolCall, stepCountIs, tool, ModelMessage } from "ai";
 import { z } from "zod";
 
 import {
@@ -21,7 +21,9 @@ import {
   IRssState,
   IOutputToAiConfig,
   IAgentNodeConfig,
+  ILiteSqlConfig,
   NodeType,
+  OnNodeProgressCallback,
 } from "../shared/types/index.js";
 import { DEFAULT_PYTHON_TIMEOUT_MS, DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import { LoggerService } from "./logger.service.js";
@@ -29,12 +31,14 @@ import { JobStorageService } from "./job-storage.service.js";
 import { RssStateService } from "./rss-state.service.js";
 import { ConfigService } from "./config.service.js";
 import { AiProviderService } from "./ai-provider.service.js";
+import { LiteSqlService } from "./litesql.service.js";
+import { StatusService } from "./status.service.js";
 import { getExecutionOrder } from "../jobs/graph.js";
-import { validateDataAgainstSchema } from "../jobs/schema-compat.js";
-import { ISchemaCompatResult } from "../jobs/schema-compat.js";
-import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
+import { validateDataAgainstSchema, ISchemaCompatResult } from "../jobs/schema-compat.js";
+import { generateTextWithRetryAsync, generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { getForceThinkDirective } from "../utils/prepare-step.js";
 import { parseRssFeed } from "../utils/rss-parser.js";
+import { createOutputZodSchema } from "../utils/json-schema-to-zod.js";
 import {
   thinkTool,
   runCmdTool,
@@ -47,7 +51,44 @@ import {
   appendFileTool,
   editFileTool,
   FileReadTracker,
+  writeToDatabaseTool,
+  readFromDatabaseTool,
+  listDatabasesTool,
+  listTablesTool,
+  getTableSchemaTool,
+  createTableTool,
 } from "../tools/index.js";
+
+// Default timeout for HTTP requests in node execution (30 seconds)
+const DEFAULT_FETCH_TIMEOUT_MS: number = 30000;
+
+/**
+ * Fetch with timeout using AbortController.
+ * Throws a timeout error if the request takes longer than timeoutMs.
+ */
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller: AbortController = new AbortController();
+  const timeoutId: NodeJS.Timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response: Response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return response;
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Request timed out after ${timeoutMs}ms: ${url}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 const _execAsync: typeof exec.__promisify__ = promisify(exec);
 
@@ -57,6 +98,7 @@ export class JobExecutorService {
   private static _instance: JobExecutorService | null;
   private _logger: LoggerService;
   private _storageService: JobStorageService;
+  private _runningJobs: Set<string> = new Set<string>();
 
   //#endregion Data members
 
@@ -82,7 +124,20 @@ export class JobExecutorService {
   public async executeJobAsync(
     jobId: string,
     input: Record<string, unknown>,
+    onNodeProgressAsync?: OnNodeProgressCallback,
   ): Promise<IJobExecutionResult> {
+    // Check if job is already running (in-memory lock to prevent concurrent execution)
+    if (this._runningJobs.has(jobId)) {
+      throw new Error(`Job "${jobId}" is already running. Concurrent execution is not allowed.`);
+    }
+
+    // Acquire lock
+    this._runningJobs.add(jobId);
+
+    const statusService: StatusService = StatusService.getInstance();
+    const startTime: number = Date.now();
+    const nodeResults: { nodeId: string; nodeName: string; duration: number }[] = [];
+
     try {
       const job: IJob | null = await this._storageService.getJobAsync(jobId);
 
@@ -95,6 +150,8 @@ export class JobExecutorService {
       }
 
       await this._storageService.updateJobAsync(jobId, { status: "running" });
+
+      statusService.setStatus("job_execution", `Running job: ${job.name}`, { jobId });
 
       this._logger.info("Job execution started", { jobId });
 
@@ -116,6 +173,14 @@ export class JobExecutorService {
         if (!node) {
           throw new Error(`Node "${nodeId}" not found during execution`);
         }
+
+        // Update status for current node
+        statusService.setStatus("job_execution", `Executing: ${node.name}`, {
+          jobId,
+          nodeId,
+          nodeType: node.type,
+          progress: `${nodesExecuted + 1}/${executionOrder.length}`,
+        });
 
         let nodeInput: Record<string, unknown>;
 
@@ -143,17 +208,57 @@ export class JobExecutorService {
           const errorMessage: string = `Input validation failed for node "${node.name}" (${nodeId}): ${inputValidation.errors.join(", ")}`;
 
           this._logger.error(errorMessage, { jobId, nodeId, nodeType: node.type });
+          statusService.clearStatus();
 
-          return { success: false, output: null, error: errorMessage, nodesExecuted, failedNodeId: nodeId, failedNodeName: node.name };
+          return {
+            success: false,
+            output: null,
+            error: errorMessage,
+            nodesExecuted,
+            failedNodeId: nodeId,
+            failedNodeName: node.name,
+            timing: {
+              startedAt: startTime,
+              completedAt: Date.now(),
+              durationMs: Date.now() - startTime,
+            },
+            nodeResults: nodeResults,
+          };
         }
 
         this._logger.debug(`Executing node "${node.name}"`, { jobId, nodeId, type: node.type });
 
         let nodeOutput: Record<string, unknown>;
+        const nodeStartTime: number = Date.now();
 
         try {
+          try {
+            await onNodeProgressAsync?.({ jobId, nodeId, nodeName: node.name, status: "executing" });
+          } catch {
+            // Progress errors must never affect execution
+          }
+
           nodeOutput = await this._executeNodeAsync(node, nodeInput);
+
+          const nodeEndTime: number = Date.now();
+          nodeResults.push({
+            nodeId: node.nodeId,
+            nodeName: node.name,
+            duration: nodeEndTime - nodeStartTime,
+          });
+
+          try {
+            await onNodeProgressAsync?.({ jobId, nodeId, nodeName: node.name, status: "completed" });
+          } catch {
+            // Progress errors must never affect execution
+          }
         } catch (nodeError: unknown) {
+          try {
+            await onNodeProgressAsync?.({ jobId, nodeId, nodeName: node.name, status: "failed" });
+          } catch {
+            // Progress errors must never affect execution
+          }
+
           const rawMessage: string = nodeError instanceof Error ? nodeError.message : String(nodeError);
           const errorMessage: string = `Node "${node.name}" (${nodeId}, type: ${node.type}) failed: ${rawMessage}`;
 
@@ -161,7 +266,20 @@ export class JobExecutorService {
 
           await this._storageService.updateJobAsync(jobId, { status: "failed" });
 
-          return { success: false, output: null, error: errorMessage, nodesExecuted, failedNodeId: nodeId, failedNodeName: node.name };
+          return {
+            success: false,
+            output: null,
+            error: errorMessage,
+            nodesExecuted,
+            failedNodeId: nodeId,
+            failedNodeName: node.name,
+            timing: {
+              startedAt: startTime,
+              completedAt: Date.now(),
+              durationMs: Date.now() - startTime,
+            },
+            nodeResults: nodeResults,
+          };
         }
 
         nodesExecuted++;
@@ -175,7 +293,20 @@ export class JobExecutorService {
 
           this._logger.error(errorMessage, { jobId, nodeId, nodeType: node.type });
 
-          return { success: false, output: null, error: errorMessage, nodesExecuted, failedNodeId: nodeId, failedNodeName: node.name };
+          return {
+            success: false,
+            output: null,
+            error: errorMessage,
+            nodesExecuted,
+            failedNodeId: nodeId,
+            failedNodeName: node.name,
+            timing: {
+              startedAt: startTime,
+              completedAt: Date.now(),
+              durationMs: Date.now() - startTime,
+            },
+            nodeResults: nodeResults,
+          };
         }
 
         nodeOutputs.set(nodeId, nodeOutput);
@@ -188,7 +319,20 @@ export class JobExecutorService {
 
       this._logger.info("Job execution completed", { jobId, nodesExecuted: executionOrder.length });
 
-      return { success: true, output: lastOutput ?? null, error: null, nodesExecuted: executionOrder.length, failedNodeId: null, failedNodeName: null };
+      return {
+        success: true,
+        output: lastOutput ?? null,
+        error: null,
+        nodesExecuted: executionOrder.length,
+        failedNodeId: null,
+        failedNodeName: null,
+        timing: {
+          startedAt: startTime,
+          completedAt: Date.now(),
+          durationMs: Date.now() - startTime,
+        },
+        nodeResults: nodeResults,
+      };
     } catch (error: unknown) {
       const errorMessage: string = error instanceof Error ? error.message : String(error);
 
@@ -200,7 +344,26 @@ export class JobExecutorService {
         // Ignore update errors during failure handling
       }
 
-      return { success: false, output: null, error: errorMessage, nodesExecuted: 0, failedNodeId: null, failedNodeName: null };
+      return {
+        success: false,
+        output: null,
+        error: errorMessage,
+        nodesExecuted: 0,
+        failedNodeId: null,
+        failedNodeName: null,
+        timing: {
+          startedAt: startTime,
+          completedAt: Date.now(),
+          durationMs: Date.now() - startTime,
+        },
+        nodeResults: nodeResults,
+      };
+    } finally {
+      // Release lock
+      this._runningJobs.delete(jobId);
+
+      // Clear status
+      StatusService.getInstance().clearStatus();
     }
   }
 
@@ -269,7 +432,7 @@ export class JobExecutorService {
     const nodeType: NodeType = node.type;
 
     switch (nodeType) {
-      case "manual":
+      case "start":
         return input;
 
       case "python_code":
@@ -292,6 +455,9 @@ export class JobExecutorService {
 
       case "agent":
         return this._executeAgentAsync(node, input);
+
+      case "litesql":
+        return this._executeLiteSqlAsync(node, input);
 
       default:
         throw new Error(`Unsupported node type: ${nodeType}`);
@@ -372,7 +538,7 @@ export class JobExecutorService {
 
     this._logger.debug("Executing curl_fetcher node", { url, method: fetchOptions.method });
 
-    const response: Response = await fetch(url, fetchOptions);
+    const response: Response = await fetchWithTimeout(url, fetchOptions);
     const responseText: string = await response.text();
 
     if (!response.ok) {
@@ -421,11 +587,14 @@ export class JobExecutorService {
 
     this._logger.debug("Executing crawl4ai node", { url });
 
-    const response: Response = await fetch(`${servicesConfig.crawl4aiUrl}/crawl`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(crawlRequestBody),
-    });
+    const response: Response = await fetchWithTimeout(
+      `${servicesConfig.crawl4aiUrl}/crawl`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(crawlRequestBody),
+      },
+    );
 
     if (!response.ok) {
       const errorText: string = await response.text();
@@ -508,10 +677,13 @@ export class JobExecutorService {
 
     this._logger.debug("Executing searxng node", { query });
 
-    const response: Response = await fetch(`${servicesConfig.searxngUrl}/search?${params.toString()}`, {
-      method: "GET",
-      headers: { "Accept": "application/json" },
-    });
+    const response: Response = await fetchWithTimeout(
+      `${servicesConfig.searxngUrl}/search?${params.toString()}`,
+      {
+        method: "GET",
+        headers: { "Accept": "application/json" },
+      },
+    );
 
     if (!response.ok) {
       const errorText: string = await response.text();
@@ -545,13 +717,16 @@ export class JobExecutorService {
 
     this._logger.debug("Executing rss_fetcher node", { url, mode: config.mode });
 
-    const response: Response = await fetch(url, {
-      method: "GET",
-      headers: {
-        "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml",
-        "User-Agent": "BetterClaw/1.0",
+    const response: Response = await fetchWithTimeout(
+      url,
+      {
+        method: "GET",
+        headers: {
+          "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml",
+          "User-Agent": "BetterClaw/1.0",
+        },
       },
-    });
+    );
 
     if (!response.ok) {
       const errorText: string = await response.text();
@@ -612,66 +787,25 @@ export class JobExecutorService {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model: LanguageModel = aiProviderService.getModel(config.model ?? undefined);
 
-    const outputSchemaStr: string = JSON.stringify(node.outputSchema, null, 2);
     const fullPrompt: string = [
       config.prompt,
       "",
       "Input data:",
       JSON.stringify(input, null, 2),
-      "",
-      "Required output JSON schema:",
-      outputSchemaStr,
-      "",
-      "IMPORTANT: Respond with ONLY raw JSON matching the schema above. Do NOT wrap it in markdown code fences. Do NOT include any text before or after the JSON.",
     ].join("\n");
 
     this._logger.debug("Executing output_to_ai node", { promptLength: fullPrompt.length });
 
-    const result = await generateTextWithRetryAsync({
+    // Convert JSON Schema to Zod schema for guaranteed valid output
+    const zodSchema = createOutputZodSchema(node.outputSchema);
+
+    const result = await generateObjectWithRetryAsync({
       model,
       prompt: fullPrompt,
+      schema: zodSchema,
     });
 
-    const responseText: string = result.text ?? "";
-    const parsed: Record<string, unknown> = this._extractJsonFromResponse(responseText);
-
-    return parsed;
-  }
-
-  private _extractJsonFromResponse(responseText: string): Record<string, unknown> {
-    const trimmed: string = responseText.trim();
-
-    // Try direct parse first
-    try {
-      return JSON.parse(trimmed) as Record<string, unknown>;
-    } catch {
-      // Continue to fallback strategies
-    }
-
-    // Try extracting from markdown code fences: ```json ... ``` or ``` ... ```
-    const fenceMatch: RegExpMatchArray | null = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-
-    if (fenceMatch) {
-      try {
-        return JSON.parse(fenceMatch[1].trim()) as Record<string, unknown>;
-      } catch {
-        // Continue to next fallback
-      }
-    }
-
-    // Try extracting the first JSON object from the response
-    const objectMatch: RegExpMatchArray | null = trimmed.match(/\{[\s\S]*\}/);
-
-    if (objectMatch) {
-      try {
-        return JSON.parse(objectMatch[0]) as Record<string, unknown>;
-      } catch {
-        // Fall through
-      }
-    }
-
-    // Last resort: wrap raw text
-    return { response: responseText };
+    return result.object as Record<string, unknown>;
   }
 
   private async _executeAgentAsync(
@@ -688,6 +822,8 @@ export class JobExecutorService {
     const selectedTools: ToolSet = {};
 
     for (const toolName of config.selectedTools) {
+      if (toolName === 'done' || toolName === 'think') continue;
+
       if (toolPool[toolName]) {
         selectedTools[toolName] = toolPool[toolName];
       } else {
@@ -701,11 +837,14 @@ export class JobExecutorService {
     }
 
     // Add the done tool
+    // Create dynamic Zod schema from node's outputSchema for strong validation
+    const outputZodSchema: z.ZodType<Record<string, unknown>> = createOutputZodSchema(node.outputSchema);
+
     const doneTool = tool({
-      description: "Call this when the task is complete. Return the final result as JSON.",
+      description: "Call this when the task is complete. Return the final result as JSON matching the expected output schema.",
       inputSchema: z.object({
-        result: z.record(z.string(), z.unknown())
-          .describe("The final output of this agent node as a JSON object"),
+        result: outputZodSchema
+          .describe("The final output of this agent node. Must match the expected output schema."),
       }),
       execute: async (_input: { result: Record<string, unknown> }): Promise<{ finished: boolean }> => {
         return { finished: true };
@@ -714,9 +853,16 @@ export class JobExecutorService {
 
     selectedTools.done = doneTool;
 
-    const instructions: string = `${config.systemPrompt}\n\nYou have been given the following input data:\n${JSON.stringify(input, null, 2)}\n\nWhen you are done, call the "done" tool with your final result as a JSON object matching the expected output schema.`;
+    // Build instructions with output schema if provided
+    let outputSchemaInstructions: string = "";
 
-    this._logger.debug("Executing agent node", { nodeId: node.nodeId, toolCount: Object.keys(selectedTools).length, maxSteps });
+    if (node.outputSchema) {
+      outputSchemaInstructions = `\n\n## Expected Output Schema\nYour output must match this JSON schema:\n\`\`\`json\n${JSON.stringify(node.outputSchema, null, 2)}\n\`\`\`\n\nMake sure your "done" tool call returns a result object that conforms to this schema.`;
+    }
+
+    const instructions: string = `${config.systemPrompt}${outputSchemaInstructions}\n\n## Input Data\nYou have been given the following input data:\n${JSON.stringify(input, null, 2)}\n\nWhen you are done, call the "done" tool with your final result as a JSON object.`;
+
+    this._logger.debug("Executing agent node", { nodeId: node.nodeId, toolCount: Object.keys(selectedTools).length, maxSteps, reasoningEffort: config.reasoningEffort });
 
     const agent: ToolLoopAgent = new ToolLoopAgent({
       model,
@@ -724,8 +870,9 @@ export class JobExecutorService {
       tools: selectedTools,
       stopWhen: [
         hasToolCall("done"),
+        stepCountIs(maxSteps),
       ],
-      prepareStep: async ({ stepNumber, messages }) => {
+      prepareStep: async ({ stepNumber, messages }: { stepNumber: number; messages: ModelMessage[] }) => {
         const forceThink = getForceThinkDirective(stepNumber, messages);
 
         if (forceThink) {
@@ -734,6 +881,7 @@ export class JobExecutorService {
 
         return {};
       },
+      maxRetries: config.reasoningEffort === "high" ? 3 : config.reasoningEffort === "medium" ? 2 : 1,
     });
 
     const agentResult = await agent.generate({ prompt: "Begin the task." });
@@ -787,7 +935,155 @@ export class JobExecutorService {
       write_file: createWriteFileTool(readTracker),
       append_file: appendFileTool,
       edit_file: editFileTool,
+      write_to_database: writeToDatabaseTool,
+      read_from_database: readFromDatabaseTool,
+      list_databases: listDatabasesTool,
+      list_tables: listTablesTool,
+      get_table_schema: getTableSchemaTool,
+      create_table: createTableTool,
     };
+  }
+
+  private async _executeLiteSqlAsync(
+    node: INode,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const config: ILiteSqlConfig = node.config as ILiteSqlConfig;
+
+    const databaseName: string = this._substituteTemplate(config.databaseName, input);
+    const tableName: string = this._substituteTemplate(config.tableName, input);
+
+    const liteSqlService: LiteSqlService = LiteSqlService.getInstance();
+
+    const dbExists: boolean = await liteSqlService.databaseExistsAsync(databaseName);
+    if (!dbExists) {
+      const allDbs = await liteSqlService.listDatabasesAsync();
+      const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+
+      throw new Error(
+        `Database "${databaseName}" does not exist.\n` +
+          `Available databases: ${available}\n` +
+          `Use create_database tool to create a new database.`,
+      );
+    }
+
+    const tableExists: boolean = await liteSqlService.tableExistsAsync(databaseName, tableName);
+    if (!tableExists) {
+      const tables = await liteSqlService.listTablesAsync(databaseName);
+      const available: string = tables.join(", ") || "(none)";
+
+      throw new Error(
+        `Table "${tableName}" does not exist in database "${databaseName}".\n` +
+          `Available tables: ${available}\n` +
+          `Use create_table tool to create a new table.`,
+      );
+    }
+
+    const schema = await liteSqlService.getTableSchemaAsync(databaseName, tableName);
+    const tableColumns: string[] = schema.columns.map((c) => c.name);
+
+    // Auto-unwrap if input is a wrapper object containing an array
+    // Handles patterns like: { items: [...] }, { data: [...] }, { results: [...] }
+    // Also handles: { items: [...], count: N } by finding the array key
+    const inputKeys: string[] = Object.keys(input);
+    let dataToInsert: Record<string, unknown> | Record<string, unknown>[] = input;
+    let itemsToValidate: Record<string, unknown>[] = [input];
+
+    // Common key names that typically contain arrays of items
+    const arrayKeyHints: string[] = ["items", "data", "results", "rows", "records", "entries"];
+
+    // Find the first key that contains an array
+    const arrayKey: string | undefined = inputKeys.find((key) => {
+      const value: unknown = input[key];
+      if (Array.isArray(value)) {
+        // If it's one of the hint keys, use it immediately
+        if (arrayKeyHints.includes(key)) {
+          return true;
+        }
+        // If there's only one key total, use it
+        if (inputKeys.length === 1) {
+          return true;
+        }
+        // If the array has at least one item that looks like a data row (object, not primitive)
+        const arr: unknown[] = value;
+        if (arr.length > 0 && typeof arr[0] === "object" && arr[0] !== null && !Array.isArray(arr[0])) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    if (arrayKey !== undefined) {
+      dataToInsert = input[arrayKey] as Record<string, unknown>[];
+      itemsToValidate = dataToInsert;
+    }
+
+    if (itemsToValidate.length === 0) {
+      return { insertedCount: 0, lastRowId: 0 };
+    }
+
+    for (const item of itemsToValidate) {
+      if (typeof item !== "object" || item === null || Array.isArray(item)) {
+        throw new Error(`Expected object to insert into "${tableName}", but got: ${JSON.stringify(item)}`);
+      }
+
+      const itemKeys: string[] = Object.keys(item);
+      const missingColumns: string[] = tableColumns.filter((col) => {
+        const colInfo = schema.columns.find((c) => c.name === col);
+        return colInfo && colInfo.notNull && !itemKeys.includes(col) && !colInfo.primaryKey;
+      });
+
+      if (missingColumns.length > 0) {
+        throw new Error(
+          `Schema mismatch for table "${tableName}":\n` +
+            `Table columns: ${schema.columns.map((c) => `${c.name} (${c.type}${c.primaryKey ? " PK" : ""})`).join(", ")}\n` +
+            `Input provided: ${JSON.stringify(item)}\n\n` +
+            `Missing required columns: ${missingColumns.join(", ")}\n\n` +
+            `Option 1: Edit the previous node to output the required columns.\n` +
+            `Option 2: Create/modify table with create_table.`,
+        );
+      }
+
+      const extraKeys: string[] = itemKeys.filter((key) => !tableColumns.includes(key));
+      if (extraKeys.length > 0 && tableColumns.length > 0) {
+        this._logger.warn("Input contains extra columns not in table", {
+          table: tableName,
+          extraColumns: extraKeys,
+          tableColumns,
+        });
+      }
+    }
+
+    try {
+      const result = await liteSqlService.insertIntoTableAsync(databaseName, tableName, dataToInsert);
+
+      return {
+        insertedCount: result.insertedCount,
+        lastRowId: result.lastRowId,
+      };
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+
+      if (errorMessage.includes("UNIQUE constraint failed") || errorMessage.includes("duplicate key")) {
+        throw new Error(
+          `Insert failed: duplicate key violates unique constraint in table "${tableName}".\n` +
+            `Input: ${JSON.stringify(input)}\n\n` +
+            `Edit the previous node to generate a unique primary key or use a different primary key strategy.`,
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  private _substituteTemplate(template: string, input: Record<string, unknown>): string {
+    let result: string = template;
+
+    for (const [key, value] of Object.entries(input)) {
+      result = result.replaceAll(`{{${key}}}`, String(value));
+    }
+
+    return result;
   }
 
   //#endregion Private methods

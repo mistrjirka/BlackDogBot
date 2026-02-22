@@ -41,6 +41,9 @@ export interface IAgentResult {
 export interface IToolCallSummary {
   name: string;
   input: Record<string, unknown>;
+  toolCallId?: string;
+  result?: unknown;
+  isError?: boolean;
 }
 
 export type OnStepCallback = (stepNumber: number, toolCalls: IToolCallSummary[]) => Promise<void>;
@@ -106,6 +109,10 @@ export abstract class BaseAgentBase {
     tools: ToolSet,
     onStepAsync?: OnStepCallback,
     customDoneTool?: Tool,
+    getExtraTools?: () => ToolSet | null,
+    extraTools?: ToolSet,
+    getPausePromise?: () => Promise<void> | null,
+    getCreationModePrompt?: () => string | null,
   ): void {
     const maxSteps: number = this._maxSteps;
     const compactionTokenThreshold: number = this._compactionTokenThreshold;
@@ -114,8 +121,14 @@ export abstract class BaseAgentBase {
 
     const allTools: ToolSet = {
       ...tools,
+      ...(extraTools ?? {}),
       done: customDoneTool ?? doneTool,
     };
+
+    /** Names of the base tools (always visible). */
+    const baseToolNames: string[] = Object.keys({ ...tools, done: customDoneTool ?? doneTool });
+    /** Names of extra (mode-gated) tools — registered but hidden by default. */
+    const extraToolNames: string[] = Object.keys(extraTools ?? {});
 
     this._agent = new ToolLoopAgent({
       model,
@@ -125,6 +138,15 @@ export abstract class BaseAgentBase {
         hasToolCall("done"),
       ],
       prepareStep: async ({ stepNumber, messages }) => {
+        // Determine whether extra tools should be active this step
+        const activeExtraTools: ToolSet | null = getExtraTools ? getExtraTools() : null;
+        const useExtraTools: boolean = activeExtraTools !== null && extraToolNames.length > 0;
+
+        // Compute the active tool name list for this step
+        const activeToolNames: (keyof typeof allTools)[] = useExtraTools
+          ? (Object.keys(allTools) as (keyof typeof allTools)[])
+          : (baseToolNames as (keyof typeof allTools)[]);
+
         // Notify about completed previous step before doing anything else
         if (stepNumber > 0 && onStepAsync) {
           const toolCalls: IToolCallSummary[] = _extractLastAssistantToolCalls(messages);
@@ -138,6 +160,15 @@ export abstract class BaseAgentBase {
 
         // Force think tool every N steps to ensure the agent reflects periodically
         const forceThink = getForceThinkDirective(stepNumber, messages);
+
+        // Check for pause — await the promise if the agent has been paused
+        const pausePromise: Promise<void> | null = getPausePromise ? getPausePromise() : null;
+
+        if (pausePromise) {
+          logger.info("Agent paused, waiting for resume...");
+          await pausePromise;
+          logger.info("Agent resumed.");
+        }
 
         if (forceThink) {
           return forceThink;
@@ -172,7 +203,22 @@ export abstract class BaseAgentBase {
             logger,
           );
 
-          return { messages: compactedMessages };
+          return { messages: compactedMessages, activeTools: activeToolNames };
+        }
+
+        // When extra tools are active, inject the creation mode guide into the system prompt
+        // and return activeTools so the LLM can see them; when not in creation mode and
+        // there are no extra tools, return {} (no restriction).
+        if (extraToolNames.length > 0) {
+          if (useExtraTools && getCreationModePrompt) {
+            const creationPrompt: string | null = getCreationModePrompt();
+
+            if (creationPrompt) {
+              return { system: `${instructions}\n\n${creationPrompt}`, activeTools: activeToolNames };
+            }
+          }
+
+          return { activeTools: activeToolNames };
         }
 
         return {};
@@ -313,13 +359,56 @@ function _extractLastAssistantToolCalls(messages: ModelMessage[]): IToolCallSumm
           typeof (part as { toolName: unknown }).toolName === "string"
         ) {
           calls.push({
+            toolCallId: (part as { toolCallId?: string }).toolCallId,
             name: (part as { toolName: string }).toolName,
-            input: ((part as { input: unknown }).input ?? {}) as Record<string, unknown>,
+            input: ((part as { args?: unknown }).args ?? (part as { input?: unknown }).input ?? {}) as Record<string, unknown>,
           });
         }
       }
 
       if (calls.length > 0) {
+        // Look ahead for tool results
+        for (let j = i + 1; j < messages.length; j++) {
+          const nextMsg = messages[j];
+          if (nextMsg.role === "tool" && Array.isArray(nextMsg.content)) {
+            for (const nextPart of nextMsg.content) {
+              if (
+                typeof nextPart === "object" &&
+                nextPart !== null &&
+                "type" in nextPart &&
+                (nextPart as { type: string }).type === "tool-result"
+              ) {
+                const resPart = nextPart as { toolCallId?: string; result?: unknown; output?: unknown; isError?: boolean };
+                const matchedCall = calls.find(c => c.toolCallId === resPart.toolCallId);
+                
+                // Extract actual result value
+                let actualResult = resPart.result;
+                if (actualResult === undefined && resPart.output !== undefined) {
+                  // Handle LanguageModelV3ToolResultOutput format used by internal ModelMessage
+                  const outObj = resPart.output as { type?: string; value?: unknown };
+                  if (outObj && typeof outObj === "object" && outObj.value !== undefined) {
+                    actualResult = outObj.value;
+                  } else {
+                    actualResult = resPart.output;
+                  }
+                }
+
+                if (matchedCall) {
+                  matchedCall.result = actualResult ?? null; 
+                  matchedCall.isError = resPart.isError;
+                } else {
+                  // Fallback: if no toolCallId matched or wasn't provided, try matching by name
+                  const toolName = (resPart as { toolName?: string }).toolName;
+                  const matchedByName = calls.find(c => c.name === toolName && c.result === undefined);
+                  if (matchedByName) {
+                    matchedByName.result = actualResult ?? null;
+                    matchedByName.isError = resPart.isError;
+                  }
+                }
+              }
+            }
+          }
+        }
         return calls;
       }
     }

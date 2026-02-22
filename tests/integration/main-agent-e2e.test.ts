@@ -14,6 +14,7 @@ import { KnowledgeService } from "../../src/services/knowledge.service.js";
 import { JobStorageService } from "../../src/services/job-storage.service.js";
 import { JobExecutorService } from "../../src/services/job-executor.service.js";
 import { SkillLoaderService } from "../../src/services/skill-loader.service.js";
+import { LiteSqlService } from "../../src/services/litesql.service.js";
 import { MainAgent, type IAgentResult } from "../../src/agent/main-agent.js";
 import type { MessageSender, PhotoSender } from "../../src/tools/index.js";
 
@@ -35,6 +36,7 @@ function resetSingletons(): void {
   (JobStorageService as unknown as { _instance: null })._instance = null;
   (JobExecutorService as unknown as { _instance: null })._instance = null;
   (SkillLoaderService as unknown as { _instance: null })._instance = null;
+  (LiteSqlService as unknown as { _instance: null })._instance = null;
   (MainAgent as unknown as { _instance: null })._instance = null;
 }
 

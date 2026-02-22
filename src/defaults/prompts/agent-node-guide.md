@@ -121,6 +121,12 @@ not the same as node types.
 | `write_file` | Write a file to the workspace |
 | `append_file` | Append content to a file |
 | `edit_file` | Edit a file in place |
+| `write_to_database` | Insert a row into a database table. Requires databaseName, tableName, and data (key-value pairs matching column names). |
+| `read_from_database` | Query rows from a database table with optional WHERE, ORDER BY, LIMIT, and column selection. |
+| `list_databases` | List all available databases. |
+| `list_tables` | List all tables in a specific database. |
+| `get_table_schema` | Get the schema (columns, types) of a specific table. |
+| `create_table` | Create a new table in a database with specified columns and types. |
 
 **Notes:**
 - `think` and `done` are always injected automatically — you do not need

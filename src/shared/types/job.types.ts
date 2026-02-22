@@ -3,14 +3,15 @@
 export type JobStatus = "creating" | "ready" | "running" | "completed" | "failed";
 
 export type NodeType =
-  | "manual"
+  | "start"
   | "curl_fetcher"
   | "crawl4ai"
   | "searxng"
   | "rss_fetcher"
   | "python_code"
   | "output_to_ai"
-  | "agent";
+  | "agent"
+  | "litesql";
 
 export interface IJob {
   jobId: string;
@@ -74,6 +75,15 @@ export interface IOutputToAiConfig {
   model: string | null;
 }
 
+export interface ILiteSqlConfig {
+  databaseName: string;
+  tableName: string;
+}
+
+export interface IStartNodeConfig {
+  scheduledTaskId: string | null;
+}
+
 export type NodeConfig =
   | IAgentNodeConfig
   | ICurlFetcherConfig
@@ -82,6 +92,8 @@ export type NodeConfig =
   | IRssFetcherConfig
   | IPythonCodeConfig
   | IOutputToAiConfig
+  | ILiteSqlConfig
+  | IStartNodeConfig
   | Record<string, never>;
 
 export interface INode {
@@ -105,7 +117,28 @@ export interface IJobExecutionResult {
   nodesExecuted: number;
   failedNodeId: string | null;
   failedNodeName: string | null;
+  timing?: {
+    startedAt: number;
+    completedAt: number;
+    durationMs: number;
+  };
+  nodeResults?: {
+    nodeId: string;
+    nodeName: string;
+    duration: number;
+  }[];
 }
+
+export type NodeExecutionStatus = "executing" | "completed" | "failed" | "skipped";
+
+export interface INodeProgressEvent {
+  jobId: string;
+  nodeId: string;
+  nodeName: string;
+  status: NodeExecutionStatus;
+}
+
+export type OnNodeProgressCallback = (event: INodeProgressEvent) => Promise<void>;
 
 export interface INodeTestCase {
   testId: string;

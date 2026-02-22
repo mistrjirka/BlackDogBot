@@ -1,0 +1,76 @@
+<div class="terminal-container">
+  <div class="terminal-header">
+    <span class="status-indicator" [class.connected]="connected()" [class.disconnected]="!connected()"></span>
+    <span class="header-title">Brain Interface Terminal</span>
+    @if (currentChatId()) {
+      <span class="chat-id">Chat: {{ currentChatId() }}</span>
+    }
+  </div>
+
+  <div class="terminal-events" #eventsContainer>
+    @for (entry of events(); track entry.id) {
+      <div class="event-row" [class]="getEventClass(entry.type)">
+        <span class="event-icon">{{ getEventIcon(entry.type) }}</span>
+        <span class="event-time">{{ formatTimestamp(entry.timestamp) }}</span>
+        <span class="event-content">
+          @switch (entry.type) {
+            @case ("step_started") {
+              Step {{ entry.data.stepNumber }} started
+            }
+            @case ("tool_called") {
+              <span class="tool-name">{{ entry.data.toolName }}</span>
+              <pre class="tool-input">{{ formatData(entry.data.input) }}</pre>
+            }
+            @case ("tool_result") {
+              <details class="tool-result-details">
+                <summary>
+                  <span class="tool-name">{{ entry.data.toolName }} result</span>
+                  @if (entry.data.error) {
+                    <span class="error-badge">Failed</span>
+                  }
+                </summary>
+                <div class="tool-result-content">
+                  <pre class="tool-output">{{ formatData(entry.data.output) }}</pre>
+                  @if (entry.data.error) {
+                    <span class="error-text">{{ entry.data.error }}</span>
+                  }
+                </div>
+              </details>
+            }
+            @case ("model_output") {
+              <span class="model-text">{{ entry.data.text }}</span>
+            }
+            @case ("graph_updated") {
+              Graph updated: {{ entry.data.nodes.length }} nodes
+            }
+            @case ("conversation_started") {
+              Conversation started
+            }
+            @case ("conversation_ended") {
+              Conversation ended ({{ entry.data.stepsCount }} steps)
+            }
+            @case ("error") {
+              <span class="error-text">{{ entry.data.error }}</span>
+            }
+          }
+        </span>
+      </div>
+    } @empty {
+      <div class="no-events">No events yet. Start a conversation to see activity.</div>
+    }
+  </div>
+
+  <div class="terminal-input">
+    <input
+      type="text"
+      placeholder="Send message to agent..."
+      [disabled]="!connected()"
+      [ngModel]="messageText()"
+      (ngModelChange)="messageText.set($event)"
+      (keydown)="onKeyDown($event)"
+    />
+    <button [disabled]="!connected() || !messageText().trim()" (click)="onSendMessage()">
+      Send
+    </button>
+  </div>
+</div>

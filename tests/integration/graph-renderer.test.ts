@@ -9,7 +9,7 @@ function makeNode(overrides: Partial<INode> = {}): INode {
   return {
     nodeId: "default-id",
     jobId: "test-job",
-    type: "manual",
+    type: "start",
     name: "Default Node",
     description: "A default test node",
     inputSchema: {},
@@ -30,8 +30,8 @@ describe("graph-renderer", () => {
   //#region buildDotDiagram
 
   describe("buildDotDiagram", () => {
-    it("single manual node, is entrypoint", () => {
-      const node: INode = makeNode({ nodeId: "abc123", type: "manual", name: "My Manual Node" });
+    it("single start node, is entrypoint", () => {
+      const node: INode = makeNode({ nodeId: "abc123", type: "start", name: "My Start Node" });
       const nodes: INode[] = [node];
 
       const result: string = buildDotDiagram(nodes, "abc123", "test-job");
@@ -40,16 +40,16 @@ describe("graph-renderer", () => {
       expect(result).toContain("rankdir=TD");
       expect(result).toContain("n_abc123");
       expect(result).toContain("⬥");
-      expect(result).toContain("manual");
-      expect(result).toContain('fillcolor="#e8f5e9"');
-      expect(result).toContain('color="#43a047"');
-      expect(result).toContain('fontcolor="#1b5e20"');
+      expect(result).toContain("start");
+      expect(result).toContain('fillcolor="#e8eaf6"');
+      expect(result).toContain('color="#3949ab"');
+      expect(result).toContain('fontcolor="#1a237e"');
     });
 
     it("two connected nodes", () => {
       const nodeA: INode = makeNode({
         nodeId: "nodeA",
-        type: "manual",
+        type: "start",
         name: "Node A",
         connections: ["nodeB"],
       });
@@ -66,7 +66,7 @@ describe("graph-renderer", () => {
       expect(result).toContain("n_nodeA");
       expect(result).toContain("n_nodeB");
       expect(result).toContain("n_nodeA -> n_nodeB;");
-      expect(result).toContain('fillcolor="#e8f5e9"');
+      expect(result).toContain('fillcolor="#e8eaf6"');
       expect(result).toContain('fillcolor="#fff3e0"');
     });
 

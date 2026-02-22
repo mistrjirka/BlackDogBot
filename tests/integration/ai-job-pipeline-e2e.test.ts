@@ -16,6 +16,7 @@ import { JobExecutorService } from "../../src/services/job-executor.service.js";
 import { SkillLoaderService } from "../../src/services/skill-loader.service.js";
 import { SkillStateService } from "../../src/services/skill-state.service.js";
 import { RssStateService } from "../../src/services/rss-state.service.js";
+import { LiteSqlService } from "../../src/services/litesql.service.js";
 import { MainAgent, type IAgentResult } from "../../src/agent/main-agent.js";
 import type {
   IJob,
@@ -48,6 +49,7 @@ function resetSingletons(): void {
   (SkillLoaderService as unknown as { _instance: null })._instance = null;
   (SkillStateService as unknown as { _instance: null })._instance = null;
   (RssStateService as unknown as { _instance: null })._instance = null;
+  (LiteSqlService as unknown as { _instance: null })._instance = null;
   (MainAgent as unknown as { _instance: null })._instance = null;
 }
 
@@ -190,16 +192,25 @@ Then call done.`;
     // ── Node inspection ──
     const nodes: INode[] = await storageService.listNodesAsync(digestJob!.jobId);
 
-    expect(nodes.length).toBe(2);
+    expect(nodes.length).toBe(3);
 
+    const startNode: INode | undefined = nodes.find((n: INode) => n.type === "start");
     const rssNode: INode | undefined = nodes.find((n: INode) => n.type === "rss_fetcher");
     const agentNode: INode | undefined = nodes.find((n: INode) => n.type === "agent");
 
+    expect(startNode).toBeDefined();
     expect(rssNode).toBeDefined();
     expect(agentNode).toBeDefined();
 
     const rssConfig: IRssFetcherConfig = rssNode!.config as IRssFetcherConfig;
     const agentConfig: IAgentNodeConfig = agentNode!.config as IAgentNodeConfig;
+
+    console.log("\n========== START NODE ==========");
+    console.log("Node ID:", startNode!.nodeId);
+    console.log("Name:", startNode!.name);
+    console.log("Type:", startNode!.type);
+    console.log("Connections (outgoing):", JSON.stringify(startNode!.connections));
+    console.log("================================\n");
 
     console.log("\n========== RSS NODE ==========");
     console.log("Node ID:", rssNode!.nodeId);
@@ -227,9 +238,10 @@ Then call done.`;
     console.log("================================\n");
 
     // ── Graph wiring assertions ──
+    expect(startNode!.connections).toContain(rssNode!.nodeId);
     expect(rssNode!.connections).toContain(agentNode!.nodeId);
     expect(agentNode!.connections).toEqual([]);
-    expect(digestJob!.entrypointNodeId).toBe(rssNode!.nodeId);
+    expect(digestJob!.entrypointNodeId).toBe(startNode!.nodeId);
 
     // ── Test case inspection ──
     const rssTestCases: INodeTestCase[] = await storageService.getTestCasesAsync(digestJob!.jobId, rssNode!.nodeId);
@@ -296,7 +308,7 @@ Then call done.`;
     console.log("==============================================\n");
 
     expect(pipelineResult.success).toBe(true);
-    expect(pipelineResult.nodesExecuted).toBe(2);
+    expect(pipelineResult.nodesExecuted).toBe(3);
     expect(pipelineResult.output).toBeDefined();
 
     // The agent node should have produced titles

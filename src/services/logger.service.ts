@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { EventEmitter } from "node:events";
 
 import { LogLevel } from "../shared/types/index.js";
 import { getLogsDir } from "../utils/paths.js";
@@ -21,6 +22,7 @@ export class LoggerService {
   private static _instance: LoggerService | null;
   private _logLevel: LogLevel;
   private _logFilePath: string | null;
+  public readonly events: EventEmitter = new EventEmitter();
 
   //#endregion Data members
 
@@ -108,6 +110,8 @@ export class LoggerService {
     }
 
     void this._writeToFileAsync(line);
+
+    this.events.emit("log", { level, message, context, timestamp: new Date().toISOString() });
   }
 
   private async _writeToFileAsync(line: string): Promise<void> {

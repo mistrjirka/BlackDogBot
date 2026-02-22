@@ -1,0 +1,137 @@
+<div class="dashboard">
+  <header class="dashboard-header">
+    <h1>🧠 Brain Interface</h1>
+    <div class="header-actions">
+      <span class="connection-status" [class.connected]="connected()" [class.disconnected]="!connected()">
+        {{ connected() ? 'Connected' : 'Disconnected' }}
+      </span>
+      @if (currentChatId()) {
+        <button class="pause-btn" (click)="onPauseAsync()">Pause</button>
+        <button class="resume-btn" (click)="onResumeAsync()">Resume</button>
+        <button class="stop-btn" (click)="onStopAsync()">Stop</button>
+        <button class="clear-btn" (click)="clearEvents()">Clear</button>
+      }
+    </div>
+  </header>
+
+  <nav class="tab-bar">
+    <button class="tab-btn" [class.active]="activeTab === 'chat'" (click)="onTabChange('chat')">
+      💬 Chat
+    </button>
+    <button class="tab-btn" [class.active]="activeTab === 'schedules'" (click)="onTabChange('schedules')">
+      🕐 Schedules
+    </button>
+    <button class="tab-btn" [class.active]="activeTab === 'logs'" (click)="onTabChange('logs')">
+      📋 Logs
+    </button>
+  </nav>
+
+  @if (activeTab === 'chat') {
+    <main class="dashboard-main">
+      <section class="terminal-section">
+        <app-terminal
+          [connected]="connected()"
+          (messageSend)="onSendMessage($event)"
+        />
+      </section>
+
+      <section class="graph-section">
+        <app-graph />
+      </section>
+    </main>
+  }
+
+  @if (activeTab === 'schedules') {
+    <main class="schedules-main">
+      <div class="schedules-toolbar">
+        <h2>Scheduled Tasks</h2>
+        <button class="refresh-btn" (click)="loadSchedulesAsync()">↻ Refresh</button>
+      </div>
+
+      @if (schedules().length === 0) {
+        <p class="empty-state">No scheduled tasks found.</p>
+      } @else {
+        <div class="table-wrapper">
+          <table class="schedules-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Schedule</th>
+                <th>Enabled</th>
+                <th>Last Run</th>
+                <th>Status</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (task of schedules(); track task.taskId) {
+                <tr [class.row-disabled]="!task.enabled">
+                  <td class="cell-id" [title]="task.taskId">{{ task.taskId }}</td>
+                  <td>{{ task.name }}</td>
+                  <td><span class="badge badge-type">{{ task.schedule.type }}</span></td>
+                  <td class="cell-mono">
+                    @if (task.schedule.type === 'cron') {
+                      {{ task.schedule.expression }}
+                    } @else if (task.schedule.type === 'interval') {
+                      {{ task.schedule.intervalMs }}ms
+                    } @else {
+                      {{ task.schedule.runAt }}
+                    }
+                  </td>
+                  <td>
+                    <button
+                      class="toggle-btn"
+                      [class.toggle-enabled]="task.enabled"
+                      [class.toggle-disabled]="!task.enabled"
+                      (click)="toggleScheduleAsync(task)"
+                    >
+                      {{ task.enabled ? 'Enabled' : 'Disabled' }}
+                    </button>
+                  </td>
+                  <td class="cell-mono">{{ task.lastRunAt ?? '—' }}</td>
+                  <td>
+                    @if (task.lastRunStatus === 'success') {
+                      <span class="badge badge-success">success</span>
+                    } @else if (task.lastRunStatus === 'failure') {
+                      <span class="badge badge-failure">failure</span>
+                    } @else {
+                      <span class="badge badge-none">—</span>
+                    }
+                  </td>
+                  <td class="cell-error">{{ task.lastRunError ?? '' }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </main>
+  }
+
+  @if (activeTab === 'logs') {
+    <main class="logs-main">
+      <app-logs />
+    </main>
+  }
+
+  @if (showStartDialog()) {
+    <div class="dialog-overlay" (click)="showStartDialog.set(false)">
+      <div class="dialog" (click)="$event.stopPropagation()">
+        <h2>Start New Conversation</h2>
+        <p>Enter a chat ID or leave empty to generate one:</p>
+        <input
+          type="text"
+          placeholder="Chat ID (optional)"
+          [ngModel]="chatIdInput()"
+          (ngModelChange)="chatIdInput.set($event)"
+        />
+        <div class="dialog-actions">
+          <button class="cancel-btn" (click)="showStartDialog.set(false)">Cancel</button>
+          <button class="start-btn" (click)="onStartConversation()">Start</button>
+        </div>
+      </div>
+    </div>
+  }
+</div>

@@ -10,6 +10,7 @@ import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
 import { JobStorageService } from "../../src/services/job-storage.service.js";
 import { JobExecutorService } from "../../src/services/job-executor.service.js";
 import { RssStateService } from "../../src/services/rss-state.service.js";
+import { LiteSqlService } from "../../src/services/litesql.service.js";
 import type { IJob, INode, IJobExecutionResult } from "../../src/shared/types/index.js";
 
 //#region Helpers
@@ -25,6 +26,7 @@ function resetSingletons(): void {
   (JobStorageService as unknown as { _instance: null })._instance = null;
   (JobExecutorService as unknown as { _instance: null })._instance = null;
   (RssStateService as unknown as { _instance: null })._instance = null;
+  (LiteSqlService as unknown as { _instance: null })._instance = null;
 }
 
 async function writeConfigAsync(configPath: string, content: string): Promise<void> {
@@ -52,9 +54,15 @@ describe("Job Execution E2E", () => {
     await fs.mkdir(tempConfigDir, { recursive: true });
 
     const realConfigContent: string = await fs.readFile(realConfigPath, "utf-8");
-    const servicesSection: string = `\nservices:\n  searxngUrl: http://localhost:18731\n  crawl4aiUrl: http://localhost:18732\n`;
+    
+    let configWithServices: string = realConfigContent;
+    
+    if (!realConfigContent.includes("services:")) {
+      const servicesSection: string = `\nservices:\n  searxngUrl: http://localhost:18731\n  crawl4aiUrl: http://localhost:18732\n`;
+      configWithServices = realConfigContent + servicesSection;
+    }
 
-    await writeConfigAsync(configPath, realConfigContent + servicesSection);
+    await writeConfigAsync(configPath, configWithServices);
 
     // Initialize all required services
     const loggerService: LoggerService = LoggerService.getInstance();
@@ -100,7 +108,7 @@ describe("Job Execution E2E", () => {
 
     const node: INode = await storageService.addNodeAsync(
       job.jobId,
-      "manual",
+      "start",
       "Passthrough Node",
       "Passes input to output",
       inputSchema,
@@ -139,11 +147,11 @@ describe("Job Execution E2E", () => {
     };
 
     const nodeA: INode = await storageService.addNodeAsync(
-      job.jobId, "manual", "Node A", "First node", schema, schema, {},
+      job.jobId, "start", "Node A", "First node", schema, schema, {},
     );
 
     const nodeB: INode = await storageService.addNodeAsync(
-      job.jobId, "manual", "Node B", "Second node", schema, schema, {},
+      job.jobId, "start", "Node B", "Second node", schema, schema, {},
     );
 
     await storageService.updateNodeAsync(job.jobId, nodeA.nodeId, {
@@ -253,7 +261,7 @@ describe("Job Execution E2E", () => {
     };
 
     const manualNode: INode = await storageService.addNodeAsync(
-      job.jobId, "manual", "Input Node", "Passes input through",
+      job.jobId, "start", "Input Node", "Passes input through",
       manualSchema, manualSchema, {},
     );
 
@@ -317,7 +325,7 @@ describe("Job Execution E2E", () => {
     };
 
     const node: INode = await storageService.addNodeAsync(
-      job.jobId, "manual", "Strict Node", "Requires a number",
+      job.jobId, "start", "Strict Node", "Requires a number",
       inputSchema, inputSchema, {},
     );
 
@@ -1273,7 +1281,7 @@ describe("Job Execution E2E", () => {
     };
 
     const manualNode: INode = await storageService.addNodeAsync(
-      job.jobId, "manual", "Input Node", "Passes input through",
+      job.jobId, "start", "Input Node", "Passes input through",
       manualSchema, manualSchema, {},
     );
 
@@ -1425,7 +1433,7 @@ describe("Job Execution E2E", () => {
 
     const nodeA: INode = await storageService.addNodeAsync(
       job.jobId,
-      "manual",
+      "start",
       "Passthrough Entry",
       "Passes input through",
       emptySchema,
@@ -1485,7 +1493,7 @@ describe("Job Execution E2E", () => {
 
     const node: INode = await storageService.addNodeAsync(
       job.jobId,
-      "manual",
+      "start",
       "Simple Node",
       "A simple passthrough node",
       schema,

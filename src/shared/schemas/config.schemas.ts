@@ -67,6 +67,12 @@ const knowledgeConfigSchema = z.object({
   embeddingModelPath: z.string()
     .default("Xenova/bge-m3")
     .describe("HuggingFace model identifier for embeddings"),
+  embeddingDtype: z.enum(["fp32", "fp16", "q8", "q4", "q4f16"])
+    .default("q8")
+    .describe("Model quantization dtype. q8 is recommended for CPU (3x faster, ~95-98% quality). fp16 is recommended for GPU."),
+  embeddingDevice: z.enum(["auto", "cpu", "cuda"])
+    .default("auto")
+    .describe("Compute device: auto (detect best available), cpu, cuda (NVIDIA). AMD ROCm users may try cuda if using a ROCm-built onnxruntime."),
   lancedbPath: z.string()
     .default("~/.betterclaw/knowledge/lancedb")
     .describe("Path to the LanceDB data directory"),

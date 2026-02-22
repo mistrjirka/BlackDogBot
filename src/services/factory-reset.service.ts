@@ -11,6 +11,7 @@ import {
   getSkillsDir,
   getLogsDir,
   getWorkspaceDir,
+  getDatabasesDir,
   ensureDirectoryExistsAsync,
 } from "../utils/paths.js";
 
@@ -80,6 +81,11 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
   // 9. Wipe logs
   await _safeStepAsync("Wipe logs", errors, async (): Promise<void> => {
     await _wipeDirAsync(getLogsDir());
+  });
+
+  // 10. Wipe user databases
+  await _safeStepAsync("Wipe databases", errors, async (): Promise<void> => {
+    await _wipeDirAsync(getDatabasesDir());
   });
 
   const success: boolean = errors.length === 0;

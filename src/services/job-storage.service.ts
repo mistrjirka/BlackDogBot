@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 
 import { IJob, INode, INodeTestCase, JobStatus, NodeConfig, NodeType } from "../shared/types/index.js";
@@ -16,6 +17,7 @@ import {
 export class JobStorageService {
   //#region Data members
 
+  public readonly events = new EventEmitter();
   private static _instance: JobStorageService | null;
   private _logger: LoggerService;
 
@@ -61,6 +63,7 @@ export class JobStorageService {
     await this._writeJsonAsync(jobFilePath, job);
 
     this._logger.info("Job created", { jobId, name });
+    this.events.emit("graph_changed", { jobId });
 
     return job;
   }
@@ -127,6 +130,7 @@ export class JobStorageService {
     await this._writeJsonAsync(jobFilePath, updatedJob);
 
     this._logger.info("Job updated", { jobId });
+    this.events.emit("graph_changed", { jobId });
 
     return updatedJob;
   }
@@ -136,6 +140,7 @@ export class JobStorageService {
     await fs.rm(dir, { recursive: true, force: true });
 
     this._logger.info("Job deleted", { jobId });
+    this.events.emit("graph_changed", { jobId });
   }
 
   public async deleteAllJobsAsync(): Promise<void> {
@@ -144,6 +149,30 @@ export class JobStorageService {
     await ensureDirectoryExistsAsync(jobsDir);
 
     this._logger.info("All jobs deleted");
+  }
+
+  /**
+   * Clean up orphaned jobs that are stuck in "creating" status.
+   * This can happen if the job creation process was interrupted.
+   * Should be called on startup.
+   */
+  public async cleanupOrphanedCreatingJobsAsync(): Promise<number> {
+    const creatingJobs: IJob[] = await this.listJobsAsync("creating");
+
+    if (creatingJobs.length === 0) {
+      return 0;
+    }
+
+    this._logger.warn("Found orphaned jobs in 'creating' status, cleaning up", {
+      count: creatingJobs.length,
+      jobIds: creatingJobs.map((j) => j.jobId),
+    });
+
+    for (const job of creatingJobs) {
+      await this.deleteJobAsync(job.jobId);
+    }
+
+    return creatingJobs.length;
   }
 
   public async addNodeAsync(
@@ -178,6 +207,7 @@ export class JobStorageService {
     await this._writeJsonAsync(nodeFilePath, node);
 
     this._logger.info("Node added", { jobId, nodeId, type });
+    this.events.emit("graph_changed", { jobId });
 
     return node;
   }
@@ -254,6 +284,7 @@ export class JobStorageService {
     }
 
     this._logger.info("Node deleted", { jobId, nodeId });
+    this.events.emit("graph_changed", { jobId });
   }
 
   public async addTestCaseAsync(
@@ -262,6 +293,12 @@ export class JobStorageService {
     name: string,
     inputData: Record<string, unknown>,
   ): Promise<INodeTestCase> {
+    const node: INode | null = await this.getNodeAsync(jobId, nodeId);
+
+    if (node && node.type === "start") {
+      throw new Error("Test cases cannot be created for start nodes — they are passthroughs with no logic to test.");
+    }
+
     const testId: string = generateId();
     const now: string = new Date().toISOString();
 
@@ -278,7 +315,14 @@ export class JobStorageService {
     const testFilePath: string = getNodeTestFilePath(jobId, nodeId);
     const existingTests: INodeTestCase[] = await this.getTestCasesAsync(jobId, nodeId);
 
-    existingTests.push(testCase);
+    const existingIndex = existingTests.findIndex((t) => t.name === name);
+    if (existingIndex !== -1) {
+      testCase.testId = existingTests[existingIndex].testId;
+      testCase.createdAt = existingTests[existingIndex].createdAt;
+      existingTests[existingIndex] = testCase;
+    } else {
+      existingTests.push(testCase);
+    }
 
     await ensureDirectoryExistsAsync(getJobTestsDir(jobId));
     await this._writeJsonAsync(testFilePath, existingTests);
