@@ -29,7 +29,6 @@ async function execConnectNodesTool(args: {
   jobId: string;
   fromNodeId: string;
   toNodeId: string;
-  force: boolean;
 }): Promise<IConnectNodesResult> {
   if (!connectNodesTool.execute) {
     throw new Error("Tool has no execute function");
@@ -134,37 +133,34 @@ describe("connect_nodes tool validation", () => {
         jobId: job.jobId,
         fromNodeId: nodeA.nodeId,
         toNodeId: nodeB.nodeId,
-        force: false,
       });
 
       expect(result.success).toBe(false);
       expect(result.schemaCompatible).toBe(false);
       expect(result.message).toContain("Schema incompatibility");
-      expect(result.message).toContain("force=true");
 
       // Cleanup
       await storageService.deleteJobAsync(job.jobId);
     });
 
-    it("should return success: true with force=true when schemas are incompatible", async () => {
+    it("should return success: true when connecting nodes with compatible schemas", async () => {
       const storageService: JobStorageService = JobStorageService.getInstance();
-      const { job, nodeA, nodeB } = await createTestJobWithNodes(storageService);
+      const { job, nodeA, nodeC } = await createTestJobWithNodes(storageService);
 
-      // Execute with force=true - should bypass schema check
+      // Execute with compatible nodes - nodeA outputs to nodeC (flexible schema)
       const result = await execConnectNodesTool({
         jobId: job.jobId,
         fromNodeId: nodeA.nodeId,
-        toNodeId: nodeB.nodeId,
-        force: true,
+        toNodeId: nodeC.nodeId,
       });
 
       expect(result.success).toBe(true);
-      expect(result.schemaCompatible).toBe(false);
-      expect(result.message).toContain("forced");
+      expect(result.schemaCompatible).toBe(true);
+      expect(result.message).toContain("connected successfully");
 
       // Verify connection was actually made
       const updatedNodeA = await storageService.getNodeAsync(job.jobId, nodeA.nodeId);
-      expect(updatedNodeA?.connections).toContain(nodeB.nodeId);
+      expect(updatedNodeA?.connections).toContain(nodeC.nodeId);
 
       // Cleanup
       await storageService.deleteJobAsync(job.jobId);
@@ -176,72 +172,89 @@ describe("connect_nodes tool validation", () => {
       const storageService: JobStorageService = JobStorageService.getInstance();
       const { job, nodeA, nodeB, nodeC } = await createTestJobWithNodes(storageService);
 
-      // Create chain: A -> B -> C
+      // Create chain: A -> B -> C (using compatible connections)
       await execConnectNodesTool({
         jobId: job.jobId,
         fromNodeId: nodeA.nodeId,
-        toNodeId: nodeB.nodeId,
-        force: true,
+        toNodeId: nodeC.nodeId,
       });
 
       await execConnectNodesTool({
         jobId: job.jobId,
         fromNodeId: nodeB.nodeId,
         toNodeId: nodeC.nodeId,
-        force: true,
       });
 
       // Try to create cycle: C -> A (should be blocked)
+      // Note: This would only work if schemas were compatible, but we test cycle detection
+      // First connect A -> C, then try C -> A
+      // Actually, let's create a proper chain with compatible nodes
+
+      // Cleanup and create a proper test
+      await storageService.deleteJobAsync(job.jobId);
+
+      // Create new job with compatible nodes for cycle test
+      const job2: IJob = await storageService.createJobAsync(
+        "Cycle Test Job",
+        "Testing cycle detection",
+      );
+
+      // Create three nodes with flexible schemas
+      const node1: INode = await storageService.addNodeAsync(
+        job2.jobId,
+        "start",
+        "Node 1",
+        "First node",
+        {},
+        {},
+        { scheduledTaskId: null },
+      );
+
+      const node2: INode = await storageService.addNodeAsync(
+        job2.jobId,
+        "start",
+        "Node 2",
+        "Second node",
+        {},
+        {},
+        { scheduledTaskId: null },
+      );
+
+      const node3: INode = await storageService.addNodeAsync(
+        job2.jobId,
+        "start",
+        "Node 3",
+        "Third node",
+        {},
+        {},
+        { scheduledTaskId: null },
+      );
+
+      // Create chain: 1 -> 2 -> 3
+      await execConnectNodesTool({
+        jobId: job2.jobId,
+        fromNodeId: node1.nodeId,
+        toNodeId: node2.nodeId,
+      });
+
+      await execConnectNodesTool({
+        jobId: job2.jobId,
+        fromNodeId: node2.nodeId,
+        toNodeId: node3.nodeId,
+      });
+
+      // Try to create cycle: 3 -> 1 (should be blocked)
       const result = await execConnectNodesTool({
-        jobId: job.jobId,
-        fromNodeId: nodeC.nodeId,
-        toNodeId: nodeA.nodeId,
-        force: false,
+        jobId: job2.jobId,
+        fromNodeId: node3.nodeId,
+        toNodeId: node1.nodeId,
       });
 
       expect(result.success).toBe(false);
       expect(result.message).toContain("cycle");
 
       // Cleanup
-      await storageService.deleteJobAsync(job.jobId);
-    });
-
-    it("should NOT allow force=true to bypass cycle detection", async () => {
-      const storageService: JobStorageService = JobStorageService.getInstance();
-      const { job, nodeA, nodeB, nodeC } = await createTestJobWithNodes(storageService);
-
-      // Create chain: A -> B -> C
-      await execConnectNodesTool({
-        jobId: job.jobId,
-        fromNodeId: nodeA.nodeId,
-        toNodeId: nodeB.nodeId,
-        force: true,
-      });
-
-      await execConnectNodesTool({
-        jobId: job.jobId,
-        fromNodeId: nodeB.nodeId,
-        toNodeId: nodeC.nodeId,
-        force: true,
-      });
-
-      // Try to create cycle with force=true (should still be blocked)
-      const result = await execConnectNodesTool({
-        jobId: job.jobId,
-        fromNodeId: nodeC.nodeId,
-        toNodeId: nodeA.nodeId,
-        force: true,
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.message).toContain("cycle");
-
-      // Verify no connection was made
-      const nodeCUpdated = await storageService.getNodeAsync(job.jobId, nodeC.nodeId);
-      expect(nodeCUpdated?.connections).not.toContain(nodeA.nodeId);
-
-      // Cleanup
-      await storageService.deleteJobAsync(job.jobId);
+      await storageService.deleteJobAsync(job2.jobId);
     });
   });
 
@@ -254,7 +267,6 @@ describe("connect_nodes tool validation", () => {
         jobId: job.jobId,
         fromNodeId: "nonexistent-node",
         toNodeId: nodeB.nodeId,
-        force: false,
       });
 
       expect(result.success).toBe(false);
@@ -272,7 +284,6 @@ describe("connect_nodes tool validation", () => {
         jobId: job.jobId,
         fromNodeId: nodeA.nodeId,
         toNodeId: "nonexistent-node",
-        force: false,
       });
 
       expect(result.success).toBe(false);

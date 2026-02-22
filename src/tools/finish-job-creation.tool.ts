@@ -146,12 +146,14 @@ export function createFinishJobCreationTool(creationModeTracker: IJobCreationMod
           };
         }
 
-        // 3. Enforce: every node must have at least one test case
+        // 3. Enforce: every node must have at least one test case (except start and litesql)
         const nodesWithoutTests: string[] = [];
 
         for (const node of nodes) {
-          if (node.type === "start") {
-            continue; // Start nodes cannot have tests
+          // Start nodes cannot have tests (no input)
+          // LITESQL nodes are storage operations - testing requires actual DB state
+          if (node.type === "start" || node.type === "litesql") {
+            continue;
           }
 
           const testCases: INodeTestCase[] = await storageService.getTestCasesAsync(jobId, node.nodeId);
@@ -171,13 +173,15 @@ export function createFinishJobCreationTool(creationModeTracker: IJobCreationMod
           };
         }
 
-        // 4. Enforce: all node tests must pass
+        // 4. Enforce: all node tests must pass (except start and litesql)
         const executorService: JobExecutorService = JobExecutorService.getInstance();
         const failedNodes: string[] = [];
 
         for (const node of nodes) {
-          if (node.type === "start") {
-            continue; // Start nodes cannot have tests
+          // Start nodes cannot have tests (no input)
+          // LITESQL nodes are storage operations - testing requires actual DB state
+          if (node.type === "start" || node.type === "litesql") {
+            continue;
           }
 
           const testResult = await executorService.runNodeTestsAsync(jobId, node.nodeId);

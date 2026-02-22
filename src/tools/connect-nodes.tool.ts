@@ -1,19 +1,8 @@
 import { tool } from "ai";
-import { z } from "zod";
 import { connectNodesToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { INode } from "../shared/types/index.js";
 import { checkSchemaCompatibility, ISchemaCompatResult } from "../jobs/schema-compat.js";
-
-//#region Schema
-
-const _connectNodesInputSchema = connectNodesToolInputSchema.extend({
-  force: z.boolean()
-    .default(false)
-    .describe("If true, bypasses schema compatibility check (for expert use). Cycle detection always runs."),
-});
-
-//#endregion Schema
 
 //#region Private functions
 
@@ -62,17 +51,15 @@ function _isReachable(nodes: INode[], startId: string, targetId: string): boolea
 
 export const connectNodesTool = tool({
   description: "Connect two nodes in a job. The output of the source node will feed into the target node. Connection is blocked if schemas are incompatible or if it would create a cycle.",
-  inputSchema: _connectNodesInputSchema,
+  inputSchema: connectNodesToolInputSchema,
   execute: async ({
     jobId,
     fromNodeId,
     toNodeId,
-    force,
   }: {
     jobId: string;
     fromNodeId: string;
     toNodeId: string;
-    force: boolean;
   }): Promise<{ success: boolean; message: string; schemaCompatible: boolean }> => {
     try {
       const storageService: JobStorageService = JobStorageService.getInstance();
@@ -89,7 +76,7 @@ export const connectNodesTool = tool({
         return { success: false, message: `Target node "${toNodeId}" not found.`, schemaCompatible: false };
       }
 
-      // Cycle detection — always runs, even when force=true
+      // Cycle detection
       const allNodes: INode[] = await storageService.listNodesAsync(jobId);
 
       if (_isReachable(allNodes, toNodeId, fromNodeId)) {
@@ -100,13 +87,13 @@ export const connectNodesTool = tool({
         };
       }
 
-      // Schema compatibility check
+      // Schema compatibility check - blocks on incompatibility
       const compatResult: ISchemaCompatResult = checkSchemaCompatibility(fromNode.outputSchema, toNode.inputSchema);
 
-      if (!compatResult.compatible && !force) {
+      if (!compatResult.compatible) {
         return {
           success: false,
-          message: `Schema incompatibility prevents connection: ${compatResult.errors.join("; ")}. Use force=true to override.`,
+          message: `Schema incompatibility prevents connection: ${compatResult.errors.join("; ")}`,
           schemaCompatible: false,
         };
       }
@@ -120,11 +107,7 @@ export const connectNodesTool = tool({
 
       await storageService.updateNodeAsync(jobId, fromNodeId, { connections: updatedConnections });
 
-      const message: string = compatResult.compatible
-        ? "Nodes connected successfully. Schemas are compatible."
-        : `Nodes connected (forced). Schema warnings: ${compatResult.errors.join("; ")}")`;
-
-      return { success: true, message, schemaCompatible: compatResult.compatible };
+      return { success: true, message: "Nodes connected successfully. Schemas are compatible.", schemaCompatible: true };
     } catch (error: unknown) {
       return { success: false, message: (error as Error).message, schemaCompatible: false };
     }
