@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { generateObject } from "ai";
+import { generateText } from "ai";
 import { z } from "zod";
 
 import { ConfigService } from "../../src/services/config.service.js";
@@ -80,93 +80,163 @@ describe("create_output_schema tool (e2e)", () => {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model = aiProviderService.getDefaultModel();
 
-    // Use generateObject with Zod schema - guarantees valid JSON output
-    const result = await generateObject({
+    // Use generateText for broader model compatibility (no json_schema required)
+    const result = await generateText({
       model,
       system: SYSTEM_PROMPT,
-      prompt: "Generate a JSON Schema for: An object with a title string and a count number.",
-      schema: JsonSchemaZod,
+      prompt: "Generate a JSON Schema for: An object with a title string and a count number. Return ONLY the JSON schema, no markdown.",
     });
 
-    expect(result.object).toBeDefined();
-    expect(result.object.type).toBe("object");
-    expect(result.object.properties).toBeDefined();
+    // Parse and validate the response
+    const text: string = result.text.trim();
+    let parsed: unknown;
+    
+    try {
+      // Try to extract JSON from markdown code blocks if present
+      let jsonText: string = text;
+      const jsonMatch: RegExpMatchArray | null = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch && jsonMatch[1]) {
+        jsonText = jsonMatch[1].trim();
+      }
+      parsed = JSON.parse(jsonText);
+    } catch {
+      // If parsing fails, the test should fail
+      expect.fail(`Failed to parse LLM response as JSON: ${text}`);
+    }
+
+    const validationResult = JsonSchemaZod.safeParse(parsed);
+    expect(validationResult.success).toBe(true);
+    
+    if (validationResult.success) {
+      expect(validationResult.data.type).toBe("object");
+      expect(validationResult.data.properties).toBeDefined();
+    }
   }, 60000);
 
   it("should create a valid schema for array output", async () => {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model = aiProviderService.getDefaultModel();
 
-    const result = await generateObject({
+    const result = await generateText({
       model,
       system: SYSTEM_PROMPT,
-      prompt: "Generate a JSON Schema for: An array of news items, each with title (string), link (string), and is_verified (boolean).",
-      schema: JsonSchemaZod,
+      prompt: "Generate a JSON Schema for: An array of news items, each with title (string), link (string), and is_verified (boolean). Return ONLY the JSON schema, no markdown.",
     });
 
-    expect(result.object).toBeDefined();
-    expect(result.object.type).toBe("object");
+    const text: string = result.text.trim();
+    let parsed: unknown;
+    
+    try {
+      let jsonText: string = text;
+      const jsonMatch: RegExpMatchArray | null = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch && jsonMatch[1]) {
+        jsonText = jsonMatch[1].trim();
+      }
+      parsed = JSON.parse(jsonText);
+    } catch {
+      expect.fail(`Failed to parse LLM response as JSON: ${text}`);
+    }
 
-    // Should have an array property
-    const properties = result.object.properties as Record<string, unknown>;
-    const arrayKey = Object.keys(properties).find(
-      (key) => (properties[key] as Record<string, unknown>)?.type === "array",
-    );
-    expect(arrayKey).toBeDefined();
+    const validationResult = JsonSchemaZod.safeParse(parsed);
+    expect(validationResult.success).toBe(true);
 
-    // Array should have items defined
-    const arrayProperty = properties[arrayKey!] as Record<string, unknown>;
-    expect(arrayProperty.items).toBeDefined();
+    if (validationResult.success) {
+      expect(validationResult.data.type).toBe("object");
+
+      // Should have an array property
+      const properties = validationResult.data.properties as Record<string, unknown>;
+      const arrayKey = Object.keys(properties).find(
+        (key) => (properties[key] as Record<string, unknown>)?.type === "array",
+      );
+      expect(arrayKey).toBeDefined();
+
+      // Array should have items defined
+      const arrayProperty = properties[arrayKey!] as Record<string, unknown>;
+      expect(arrayProperty.items).toBeDefined();
+    }
   }, 60000);
 
   it("should create schema with required fields when specified", async () => {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model = aiProviderService.getDefaultModel();
 
-    const result = await generateObject({
+    const result = await generateText({
       model,
       system: SYSTEM_PROMPT,
-      prompt: "Generate a JSON Schema for: An object with required 'id' string and optional 'name' string.",
-      schema: JsonSchemaZod,
+      prompt: "Generate a JSON Schema for: An object with required 'id' string and optional 'name' string. Return ONLY the JSON schema, no markdown.",
     });
 
-    expect(result.object).toBeDefined();
+    const text: string = result.text.trim();
+    let parsed: unknown;
+    
+    try {
+      let jsonText: string = text;
+      const jsonMatch: RegExpMatchArray | null = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch && jsonMatch[1]) {
+        jsonText = jsonMatch[1].trim();
+      }
+      parsed = JSON.parse(jsonText);
+    } catch {
+      expect.fail(`Failed to parse LLM response as JSON: ${text}`);
+    }
 
-    // Should have a required array
-    const required = result.object.required as string[] | undefined;
-    expect(required).toBeDefined();
-    expect(required).toContain("id");
+    const validationResult = JsonSchemaZod.safeParse(parsed);
+    expect(validationResult.success).toBe(true);
+
+    if (validationResult.success) {
+      // Should have a required array
+      const required = validationResult.data.required as string[] | undefined;
+      expect(required).toBeDefined();
+      expect(required).toContain("id");
+    }
   }, 60000);
 
   it("should handle complex nested schema request", async () => {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model = aiProviderService.getDefaultModel();
 
-    const result = await generateObject({
+    const result = await generateText({
       model,
       system: SYSTEM_PROMPT,
       prompt: `Generate a JSON Schema for: An object containing 'items' array where each item has: 
         id (string, required), title (string, required), metadata (object with created_at string and updated_at string), 
-        and tags (array of strings).`,
-      schema: JsonSchemaZod,
+        and tags (array of strings). Return ONLY the JSON schema, no markdown.`,
     });
 
-    expect(result.object).toBeDefined();
-    const properties = result.object.properties as Record<string, unknown>;
-    expect(properties.items).toBeDefined();
+    const text: string = result.text.trim();
+    let parsed: unknown;
+    
+    try {
+      let jsonText: string = text;
+      const jsonMatch: RegExpMatchArray | null = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch && jsonMatch[1]) {
+        jsonText = jsonMatch[1].trim();
+      }
+      parsed = JSON.parse(jsonText);
+    } catch {
+      expect.fail(`Failed to parse LLM response as JSON: ${text}`);
+    }
 
-    const itemsSchema = properties.items as Record<string, unknown>;
-    expect(itemsSchema.type).toBe("array");
-    expect(itemsSchema.items).toBeDefined();
+    const validationResult = JsonSchemaZod.safeParse(parsed);
+    expect(validationResult.success).toBe(true);
 
-    const itemSchema = itemsSchema.items as Record<string, unknown>;
-    expect(itemSchema.properties).toBeDefined();
+    if (validationResult.success) {
+      const properties = validationResult.data.properties as Record<string, unknown>;
+      expect(properties.items).toBeDefined();
 
-    const itemProperties = itemSchema.properties as Record<string, unknown>;
-    expect(itemProperties.id).toBeDefined();
-    expect(itemProperties.title).toBeDefined();
-    expect(itemProperties.metadata).toBeDefined();
-    expect(itemProperties.tags).toBeDefined();
+      const itemsSchema = properties.items as Record<string, unknown>;
+      expect(itemsSchema.type).toBe("array");
+      expect(itemsSchema.items).toBeDefined();
+
+      const itemSchema = itemsSchema.items as Record<string, unknown>;
+      expect(itemSchema.properties).toBeDefined();
+
+      const itemProperties = itemSchema.properties as Record<string, unknown>;
+      expect(itemProperties.id).toBeDefined();
+      expect(itemProperties.title).toBeDefined();
+      expect(itemProperties.metadata).toBeDefined();
+      expect(itemProperties.tags).toBeDefined();
+    }
   }, 60000);
 });
 

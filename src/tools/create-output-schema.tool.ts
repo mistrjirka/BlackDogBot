@@ -1,7 +1,8 @@
+import { generateText } from "ai";
 import { z } from "zod";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
+import { StatusService } from "../services/status.service.js";
 
 const SYSTEM_PROMPT: string = `You are a JSON Schema expert. Your ONLY job is to generate valid JSON Schemas based on user descriptions.
 
@@ -108,6 +109,7 @@ export function createCreateOutputSchemaTool() {
       error?: string;
     }> => {
       const logger: LoggerService = LoggerService.getInstance();
+      const statusService: StatusService = StatusService.getInstance();
 
       try {
         const aiProvider: AiProviderService = AiProviderService.getInstance();
@@ -117,15 +119,59 @@ export function createCreateOutputSchemaTool() {
           ? `Context: ${context}\n\nGenerate a JSON Schema for output that: ${description}`
           : `Generate a JSON Schema for output that: ${description}`;
 
-        // Use generateObjectWithRetryAsync for retry logic and rate limiting
-        const result = await generateObjectWithRetryAsync({
+        // Use generateText with json_object mode for broader model compatibility
+        // Many models don't support json_schema response format, but do support json_object
+        statusService.beginInFlight("llm_request", "Generating output schema...", {});
+
+        const result = await generateText({
           model,
           system: SYSTEM_PROMPT,
           prompt: userPrompt,
-          schema: OutputSchemaZod,
         });
 
-        const schema: Record<string, unknown> = result.object as Record<string, unknown>;
+        statusService.endInFlight();
+
+        // Parse the JSON response
+        const text: string = result.text.trim();
+        let parsed: unknown;
+
+        try {
+          // Try to extract JSON from the response (handle markdown code blocks)
+          let jsonText: string = text;
+          const jsonMatch: RegExpMatchArray | null = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (jsonMatch && jsonMatch[1]) {
+            jsonText = jsonMatch[1].trim();
+          }
+
+          parsed = JSON.parse(jsonText);
+        } catch (parseError: unknown) {
+          const parseMsg: string = parseError instanceof Error ? parseError.message : String(parseError);
+          logger.error("Failed to parse schema JSON", { text, error: parseMsg });
+
+          return {
+            success: false,
+            schema: null,
+            error: `Failed to parse LLM response as JSON: ${parseMsg}`,
+          };
+        }
+
+        // Validate against our Zod schema
+        const validationResult = OutputSchemaZod.safeParse(parsed);
+
+        if (!validationResult.success) {
+          logger.error("Schema validation failed", {
+            error: validationResult.error.message,
+            parsed,
+          });
+
+          return {
+            success: false,
+            schema: null,
+            error: `Generated schema is invalid: ${validationResult.error.message}`,
+          };
+        }
+
+        const schema: Record<string, unknown> = validationResult.data as Record<string, unknown>;
 
         logger.info("Created output schema", { schema });
 
@@ -134,6 +180,7 @@ export function createCreateOutputSchemaTool() {
           schema,
         };
       } catch (error: unknown) {
+        statusService.endInFlight();
         const errorMessage: string = error instanceof Error ? error.message : String(error);
 
         logger.error("Failed to create output schema", { error: errorMessage });
