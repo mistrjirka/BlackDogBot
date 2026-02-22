@@ -16,7 +16,8 @@ export type BrainCommandType =
   | "subscribe_logs"
   | "unsubscribe_logs"
   | "get_node_tests"
-  | "run_node_test";
+  | "run_node_test"
+  | "query_database";
 
 export interface IBrainCommand {
   type: string;
@@ -46,9 +47,20 @@ export interface IRunNodeTestCommand extends IBrainCommand {
   nodeId: string;
 }
 
+export interface IQueryDatabaseCommand extends IBrainCommand {
+  type: "query_database";
+  action: "list_databases" | "list_tables" | "query_table" | "show_schema";
+  databaseName?: string;
+  tableName?: string;
+  where?: string;
+  orderBy?: string;
+  limit?: number;
+  columns?: string[];
+}
+
 export type BrainCommand =
   | {
-      type: Exclude<BrainCommandType, "run_job" | "toggle_schedule" | "get_node_tests" | "run_node_test">;
+      type: Exclude<BrainCommandType, "run_job" | "toggle_schedule" | "get_node_tests" | "run_node_test" | "query_database">;
       chatId?: string;
       message?: string;
       jobId?: string;
@@ -56,7 +68,8 @@ export type BrainCommand =
   | IRunJobCommand
   | IToggleScheduleCommand
   | IGetNodeTestsCommand
-  | IRunNodeTestCommand;
+  | IRunNodeTestCommand
+  | IQueryDatabaseCommand;
 
 export interface BrainCommandResponse {
   success: boolean;

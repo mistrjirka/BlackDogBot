@@ -24,6 +24,9 @@
     <button class="tab-btn" [class.active]="activeTab === 'logs'" (click)="onTabChange('logs')">
       📋 Logs
     </button>
+    <button class="tab-btn" [class.active]="activeTab === 'database'" (click)="onTabChange('database')">
+      🗄️ Database
+    </button>
   </nav>
 
   @if (activeTab === 'chat') {
@@ -113,6 +116,12 @@
   @if (activeTab === 'logs') {
     <main class="logs-main">
       <app-logs />
+    </main>
+  }
+
+  @if (activeTab === 'database') {
+    <main class="database-main">
+      <app-database />
     </main>
   }
 

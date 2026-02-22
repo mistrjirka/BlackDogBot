@@ -14,6 +14,8 @@ import type {
   INodeTestCase,
   INodeTestResult,
   IStatusState,
+  IQueryDatabaseCommand,
+  IQueryDatabaseResult,
 } from "../models/brain.types";
 
 @Injectable({
@@ -195,6 +197,38 @@ export class BrainSocketService implements OnDestroy {
     });
 
     return res.success ? (res.data as INodeTestResult) : null;
+  }
+
+  public async queryDatabaseAsync(
+    action: IQueryDatabaseCommand["action"],
+    databaseName?: string,
+    tableName?: string,
+    options?: {
+      where?: string;
+      orderBy?: string;
+      limit?: number;
+      columns?: string[];
+    },
+  ): Promise<IQueryDatabaseResult> {
+    const command: IQueryDatabaseCommand = {
+      type: "query_database",
+      action,
+      databaseName,
+      tableName,
+      ...options,
+    };
+
+    const res: BrainCommandResponse = await this.sendCommandAsync(command);
+
+    if (res.success && res.data) {
+      return res.data as IQueryDatabaseResult;
+    }
+
+    return {
+      success: false,
+      action,
+      error: res.error ?? "Unknown error",
+    };
   }
 
   public clearEvents(): void {

@@ -1,0 +1,132 @@
+<div class="database-viewer">
+  <div class="database-toolbar">
+    <h2>Database Viewer</h2>
+    <button class="refresh-btn" (click)="onRefreshAsync()" [disabled]="!connected() || isLoading()">
+      ↻ Refresh
+    </button>
+  </div>
+
+  @if (!connected()) {
+    <p class="empty-state">Not connected to server.</p>
+  } @else if (isLoading()) {
+    <p class="loading-state">Loading...</p>
+  } @else {
+    <div class="database-controls">
+      <div class="control-group">
+        <label for="database-select">Database:</label>
+        <select
+          id="database-select"
+          [ngModel]="selectedDatabase()"
+          (ngModelChange)="onSelectDatabaseAsync($event)"
+          class="select-input"
+        >
+          <option [ngValue]="null">-- Select Database --</option>
+          @for (db of databases(); track db.name) {
+            <option [ngValue]="db.name">{{ db.name }} ({{ db.tableCount }} tables, {{ formatBytes(db.sizeBytes) }})</option>
+          }
+        </select>
+      </div>
+
+      @if (selectedDatabase()) {
+        <div class="control-group">
+          <label for="table-select">Table:</label>
+          <select
+            id="table-select"
+            [ngModel]="selectedTable()"
+            (ngModelChange)="onSelectTableAsync($event)"
+            class="select-input"
+          >
+            <option [ngValue]="null">-- Select Table --</option>
+            @for (table of tables(); track table) {
+              <option [ngValue]="table">{{ table }}</option>
+            }
+          </select>
+        </div>
+      }
+
+      @if (selectedTable()) {
+        <div class="query-options">
+          <div class="control-group">
+            <label for="where-input">WHERE:</label>
+            <input
+              id="where-input"
+              type="text"
+              [ngModel]="whereClause()"
+              (ngModelChange)="whereClause.set($event)"
+              placeholder="e.g., id = 1"
+              class="text-input"
+            />
+          </div>
+
+          <div class="control-group">
+            <label for="order-input">ORDER BY:</label>
+            <input
+              id="order-input"
+              type="text"
+              [ngModel]="orderByClause()"
+              (ngModelChange)="orderByClause.set($event)"
+              placeholder="e.g., created_at DESC"
+              class="text-input"
+            />
+          </div>
+
+          <div class="control-group">
+            <label for="limit-input">Limit:</label>
+            <input
+              id="limit-input"
+              type="number"
+              [ngModel]="limitValue()"
+              (ngModelChange)="limitValue.set($event)"
+              min="1"
+              max="1000"
+              class="number-input"
+            />
+          </div>
+
+          <button class="query-btn" (click)="onQueryAsync()" [disabled]="isLoading()">
+            Query
+          </button>
+        </div>
+      }
+    </div>
+
+    @if (error()) {
+      <div class="error-message">
+        {{ error() }}
+      </div>
+    }
+
+    @if (hasData()) {
+      <div class="results-info">
+        Showing {{ returnedCount() }} of {{ totalCount() }} rows
+      </div>
+
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              @for (col of columnList(); track col) {
+                <th>{{ col }}</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of rows(); track row; let i = $index) {
+              <tr>
+                @for (col of columnList(); track col) {
+                  <td [class.cell-null]="row[col] === null">{{ formatValue(row[col]) }}</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    } @else if (selectedTable() && !isLoading() && !error()) {
+      <p class="empty-state">No data found.</p>
+    }
+
+    @if (databases().length === 0 && !isLoading() && !error()) {
+      <p class="empty-state">No databases found.</p>
+    }
+  }
+</div>

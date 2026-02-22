@@ -14,8 +14,10 @@ import { JobStorageService } from "../services/job-storage.service.js";
 import { JobExecutorService } from "../services/job-executor.service.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { StatusService, type IStatusState } from "../services/status.service.js";
+import { LiteSqlService, type IQueryResult } from "../services/litesql.service.js";
 import type { IJob, INode } from "../shared/types/index.js";
 import type { INodeProgressEvent, INodeTestCase, INodeTestResult } from "../shared/types/job.types.js";
+import type { IQueryDatabaseCommand } from "./types.js";
 
 export class BrainInterfaceService {
   private static _instance: BrainInterfaceService | null = null;
@@ -455,6 +457,172 @@ export class BrainInterfaceService {
           } catch (err: unknown) {
             const errorMessage: string = err instanceof Error ? err.message : String(err);
             response.error = errorMessage;
+          }
+          break;
+        }
+
+        case "query_database": {
+          const dbCommand: IQueryDatabaseCommand = command as IQueryDatabaseCommand;
+          const service: LiteSqlService = LiteSqlService.getInstance();
+
+          try {
+            let result: unknown;
+
+            switch (dbCommand.action) {
+              case "list_databases": {
+                const databases = await service.listDatabasesAsync();
+                result = {
+                  success: true,
+                  action: "list_databases",
+                  databases: databases.map((db) => ({
+                    name: db.name,
+                    tableCount: db.tableCount,
+                    sizeBytes: db.sizeBytes,
+                    createdAt: db.createdAt,
+                  })),
+                };
+                break;
+              }
+
+              case "list_tables": {
+                if (!dbCommand.databaseName) {
+                  const allDbs = await service.listDatabasesAsync();
+                  const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+                  result = {
+                    success: false,
+                    action: "list_tables",
+                    error: `databaseName is required. Available databases: ${available}`,
+                  };
+                  break;
+                }
+
+                const exists: boolean = await service.databaseExistsAsync(dbCommand.databaseName);
+                if (!exists) {
+                  const allDbs = await service.listDatabasesAsync();
+                  const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+                  result = {
+                    success: false,
+                    action: "list_tables",
+                    error: `Database "${dbCommand.databaseName}" does not exist. Available databases: ${available}`,
+                  };
+                  break;
+                }
+
+                const tables: string[] = await service.listTablesAsync(dbCommand.databaseName);
+                result = {
+                  success: true,
+                  action: "list_tables",
+                  databaseName: dbCommand.databaseName,
+                  tables,
+                };
+                break;
+              }
+
+              case "query_table": {
+                if (!dbCommand.databaseName || !dbCommand.tableName) {
+                  result = {
+                    success: false,
+                    action: "query_table",
+                    error: "databaseName and tableName are required",
+                  };
+                  break;
+                }
+
+                const dbExists: boolean = await service.databaseExistsAsync(dbCommand.databaseName);
+                if (!dbExists) {
+                  result = {
+                    success: false,
+                    action: "query_table",
+                    error: `Database "${dbCommand.databaseName}" does not exist`,
+                  };
+                  break;
+                }
+
+                const tableExists: boolean = await service.tableExistsAsync(dbCommand.databaseName, dbCommand.tableName);
+                if (!tableExists) {
+                  result = {
+                    success: false,
+                    action: "query_table",
+                    error: `Table "${dbCommand.tableName}" does not exist`,
+                  };
+                  break;
+                }
+
+                const queryResult: IQueryResult = await service.queryTableAsync(
+                  dbCommand.databaseName,
+                  dbCommand.tableName,
+                  {
+                    where: dbCommand.where,
+                    orderBy: dbCommand.orderBy,
+                    limit: dbCommand.limit ?? 100,
+                    columns: dbCommand.columns,
+                  },
+                );
+
+                result = {
+                  success: true,
+                  action: "query_table",
+                  databaseName: dbCommand.databaseName,
+                  tableName: dbCommand.tableName,
+                  rows: queryResult.rows,
+                  totalCount: queryResult.totalCount,
+                  returnedCount: queryResult.rows.length,
+                };
+                break;
+              }
+
+              case "show_schema": {
+                if (!dbCommand.databaseName || !dbCommand.tableName) {
+                  result = {
+                    success: false,
+                    action: "show_schema",
+                    error: "databaseName and tableName are required",
+                  };
+                  break;
+                }
+
+                const dbExists: boolean = await service.databaseExistsAsync(dbCommand.databaseName);
+                if (!dbExists) {
+                  result = {
+                    success: false,
+                    action: "show_schema",
+                    error: `Database "${dbCommand.databaseName}" does not exist`,
+                  };
+                  break;
+                }
+
+                const schema = await service.getTableSchemaAsync(dbCommand.databaseName, dbCommand.tableName);
+                result = {
+                  success: true,
+                  action: "show_schema",
+                  databaseName: dbCommand.databaseName,
+                  tableName: dbCommand.tableName,
+                  schema: {
+                    name: schema.name,
+                    columns: schema.columns,
+                  },
+                };
+                break;
+              }
+
+              default:
+                result = {
+                  success: false,
+                  action: dbCommand.action,
+                  error: `Unknown action: ${dbCommand.action}`,
+                };
+            }
+
+            response.success = true;
+            response.data = result;
+          } catch (err: unknown) {
+            const errorMessage: string = err instanceof Error ? err.message : String(err);
+            response.success = true;
+            response.data = {
+              success: false,
+              action: dbCommand.action,
+              error: errorMessage,
+            };
           }
           break;
         }

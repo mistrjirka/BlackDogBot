@@ -4,13 +4,14 @@ import { FormsModule } from "@angular/forms";
 import { TerminalComponent } from "../terminal/terminal";
 import { GraphComponent } from "../graph/graph";
 import { LogsComponent } from "../logs/logs";
+import { DatabaseComponent } from "../database/database";
 import { BrainSocketService } from "../../services/brain-socket.service";
 import type { IScheduleTask } from "../../models/brain.types";
 
 @Component({
   selector: "app-dashboard",
   standalone: true,
-  imports: [CommonModule, FormsModule, TerminalComponent, GraphComponent, LogsComponent],
+  imports: [CommonModule, FormsModule, TerminalComponent, GraphComponent, LogsComponent, DatabaseComponent],
   templateUrl: "./dashboard.html",
   styleUrl: "./dashboard.scss",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -23,7 +24,7 @@ export class DashboardComponent implements OnInit {
 
   protected chatIdInput = signal("");
   protected showStartDialog = signal(false);
-  protected activeTab: "chat" | "schedules" | "logs" = "chat";
+  protected activeTab: "chat" | "schedules" | "logs" | "database" = "chat";
   protected schedules = signal<IScheduleTask[]>([]);
 
   public ngOnInit(): void {
@@ -71,7 +72,7 @@ export class DashboardComponent implements OnInit {
     await this.loadSchedulesAsync();
   }
 
-  protected onTabChange(tab: "chat" | "schedules" | "logs"): void {
+  protected onTabChange(tab: "chat" | "schedules" | "logs" | "database"): void {
     this.activeTab = tab;
     if (tab === "schedules") {
       this.loadSchedulesAsync();

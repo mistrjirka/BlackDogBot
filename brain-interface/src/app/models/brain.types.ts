@@ -31,7 +31,8 @@ export type BrainCommandType =
   | "subscribe_logs"
   | "unsubscribe_logs"
   | "get_node_tests"
-  | "run_node_test";
+  | "run_node_test"
+  | "query_database";
 
 export interface IBrainEvent {
   type: string;
@@ -220,6 +221,57 @@ export interface IRunNodeTestCommand extends IBrainCommand {
   nodeId: string;
 }
 
+//#region Database Types
+
+export type DatabaseQueryAction = "list_databases" | "list_tables" | "query_table" | "show_schema";
+
+export interface IQueryDatabaseCommand extends IBrainCommand {
+  type: "query_database";
+  action: DatabaseQueryAction;
+  databaseName?: string;
+  tableName?: string;
+  where?: string;
+  orderBy?: string;
+  limit?: number;
+  columns?: string[];
+}
+
+export interface IDatabaseInfo {
+  name: string;
+  tableCount: number;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface ITableColumnInfo {
+  name: string;
+  type: string;
+  notNull: boolean;
+  primaryKey: boolean;
+  defaultValue: string | null;
+}
+
+export interface ITableSchema {
+  name: string;
+  columns: ITableColumnInfo[];
+}
+
+export interface IQueryDatabaseResult {
+  success: boolean;
+  action: DatabaseQueryAction;
+  databases?: IDatabaseInfo[];
+  databaseName?: string;
+  tables?: string[];
+  tableName?: string;
+  rows?: Record<string, unknown>[];
+  totalCount?: number;
+  returnedCount?: number;
+  schema?: ITableSchema;
+  error?: string;
+}
+
+//#endregion Database Types
+
 //#region Test Types
 
 export interface INodeTestCase {
@@ -273,7 +325,7 @@ export type BrainCommand =
   | {
       type: Exclude<
         BrainCommandType,
-        "run_job" | "toggle_schedule" | "subscribe_logs" | "unsubscribe_logs" | "get_node_tests" | "run_node_test"
+        "run_job" | "toggle_schedule" | "subscribe_logs" | "unsubscribe_logs" | "get_node_tests" | "run_node_test" | "query_database"
       >;
       chatId?: string;
       message?: string;
@@ -284,7 +336,8 @@ export type BrainCommand =
   | { type: "subscribe_logs" }
   | { type: "unsubscribe_logs" }
   | IGetNodeTestsCommand
-  | IRunNodeTestCommand;
+  | IRunNodeTestCommand
+  | IQueryDatabaseCommand;
 
 export interface BrainCommandResponse {
   success: boolean;
