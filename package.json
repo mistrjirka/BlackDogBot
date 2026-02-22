@@ -19,6 +19,7 @@
   "license": "GPL-2.0",
   "dependencies": {
     "@ai-sdk/openai": "^2.0.0",
+    "@ai-sdk/provider": "^3.0.8",
     "@huggingface/transformers": "^3.4.0",
     "@lancedb/lancedb": "^0.17.0",
     "@openrouter/ai-sdk-provider": "^2.2.3",

@@ -1,5 +1,6 @@
 import Bottleneck from "bottleneck";
 import { LanguageModel } from "ai";
+import { LanguageModelV3 } from "@ai-sdk/provider";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpenAI } from "@ai-sdk/openai";
 
@@ -104,6 +105,26 @@ export class AiProviderService {
 
   //#region Private methods
 
+  private _wrapModelWithRateLimiter(model: LanguageModel, providerKey: string): LanguageModel {
+    const originalModel: LanguageModelV3 = model as unknown as LanguageModelV3;
+
+    const wrappedModel: LanguageModelV3 = {
+      ...originalModel,
+      doGenerate: async (options) => {
+        return this._rateLimiterService.scheduleAsync(providerKey, async () =>
+          Promise.resolve(originalModel.doGenerate(options))
+        );
+      },
+      doStream: async (options) => {
+        return this._rateLimiterService.scheduleAsync(providerKey, async () =>
+          Promise.resolve(originalModel.doStream(options))
+        );
+      },
+    };
+
+    return wrappedModel as unknown as LanguageModel;
+  }
+
   private _createModel(modelId: string): LanguageModel {
     if (!this._aiConfig) {
       throw new Error("AiProviderService not initialized");
@@ -119,8 +140,8 @@ export class AiProviderService {
       }
 
       const config: IOpenRouterConfig = this._aiConfig.openrouter;
-
-      return createOpenRouter({ apiKey: config.apiKey }).chat(modelId);
+      const rawModel = createOpenRouter({ apiKey: config.apiKey }).chat(modelId);
+      return this._wrapModelWithRateLimiter(rawModel, provider);
     }
 
     if (provider === "openai-compatible") {
@@ -131,11 +152,11 @@ export class AiProviderService {
       }
 
       const config: IOpenAiCompatibleConfig = this._aiConfig.openaiCompatible;
-
-      return createOpenAI({
+      const rawModel = createOpenAI({
         baseURL: config.baseUrl,
         apiKey: config.apiKey,
       }).chat(modelId);
+      return this._wrapModelWithRateLimiter(rawModel, provider);
     }
 
     throw new Error(`Unsupported provider: ${provider as string}`);
