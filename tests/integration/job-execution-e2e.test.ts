@@ -1025,7 +1025,12 @@ describe("Job Execution E2E", () => {
         success: { type: "boolean" },
         markdown: { type: "string" },
         html: { type: "string" },
-        extracted: {},
+        extracted: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+          },
+        },
       },
       required: ["url", "success", "markdown", "html"],
     };
@@ -1058,7 +1063,9 @@ describe("Job Execution E2E", () => {
 
     expect(output.url).toBe("https://example.com");
     expect(output.success).toBe(true);
-    expect(output.extracted).toBeDefined();
+    expect(typeof output.extracted).toBe("object");
+    expect(output.extracted).toHaveProperty("title");
+    expect(typeof (output.extracted as Record<string, unknown>).title).toBe("string");
   }, 120000);
 
   //#endregion crawl4ai Node Tests

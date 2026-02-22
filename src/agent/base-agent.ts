@@ -102,6 +102,43 @@ export abstract class BaseAgentBase {
 
       const result = await this._agent!.generate({ prompt: userMessage });
 
+      let text: string = result.text ?? "";
+
+      if (text.trim().length === 0) {
+        const steps = result.steps;
+
+        if (Array.isArray(steps)) {
+          for (let i: number = steps.length - 1; i >= 0; i--) {
+            const step = steps[i] as { toolCalls?: unknown };
+            const toolCalls = step.toolCalls;
+
+            if (Array.isArray(toolCalls)) {
+              for (let j: number = toolCalls.length - 1; j >= 0; j--) {
+                const toolCall = toolCalls[j] as { toolName?: unknown; name?: unknown; args?: unknown; input?: unknown };
+                const toolName: string | undefined =
+                  typeof toolCall.toolName === "string"
+                    ? toolCall.toolName
+                    : (typeof toolCall.name === "string" ? toolCall.name : undefined);
+
+                if (toolName === "done") {
+                  const args = (toolCall.args ?? toolCall.input) as { summary?: unknown } | undefined;
+                  const summary: string = typeof args?.summary === "string" ? args.summary : "";
+
+                  if (summary.trim().length > 0) {
+                    text = summary;
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (text.trim().length > 0) {
+              break;
+            }
+          }
+        }
+      }
+
       // Track API-reported token usage
       // Use totalUsage for multi-step agents (accumulates across all tool call steps)
       // Fall back to usage for single-step calls
@@ -119,7 +156,7 @@ export abstract class BaseAgentBase {
       this._logger.debug("Agent response generated", { stepsCount });
 
       return {
-        text: result.text ?? "",
+        text,
         stepsCount,
       };
     } finally {

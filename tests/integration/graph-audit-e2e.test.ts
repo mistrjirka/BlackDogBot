@@ -282,15 +282,15 @@ Start Node --> Process Data --> Output Result
 
     const result = await auditGraphWithLLM(graphDescription, jobContext);
 
-    // Verify result structure is correct
     expect(result).toBeDefined();
+    // We validate structure, not LLM judgment. The problematic graph test validates rejection behavior.
     expect(typeof result.approved).toBe("boolean");
     expect(Array.isArray(result.issues)).toBe(true);
+    result.issues.forEach((issue) => {
+      const issueRecord = issue as unknown as Record<string, unknown>;
+      expect(typeof issueRecord.description).toBe("string");
+    });
     expect(Array.isArray(result.suggestions)).toBe(true);
-
-    // For a simple valid graph, it should either be approved or have minor suggestions
-    // We don't assert on approved being true since LLM behavior varies
-    // Just verify the structure is correct
   }, 60000);
 
   it("should audit a problematic graph and return issues", async () => {
@@ -356,16 +356,10 @@ Start Node --> Branch A --> Merge
 
     const result = await auditGraphWithLLM(graphDescription, jobContext);
 
-    // Verify result structure
     expect(result).toBeDefined();
-    expect(typeof result.approved).toBe("boolean");
-    expect(Array.isArray(result.issues)).toBe(true);
+    expect(result.approved).toBe(false);
+    expect(result.issues.length).toBeGreaterThan(0);
     expect(Array.isArray(result.suggestions)).toBe(true);
-
-    // For a problematic graph, if not approved, issues should be non-empty
-    if (!result.approved) {
-      expect(result.issues.length).toBeGreaterThan(0);
-    }
   }, 60000);
 });
 

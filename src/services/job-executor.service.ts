@@ -620,20 +620,33 @@ export class JobExecutorService {
       const aiProviderService: AiProviderService = AiProviderService.getInstance();
       const model: LanguageModel = aiProviderService.getDefaultModel();
 
-      const extractionResult = await generateTextWithRetryAsync({
-        model,
-        prompt: `${config.extractionPrompt}\n\nContent:\n${markdown}`,
-      });
+      const outputSchema: Record<string, unknown> | undefined = node.outputSchema as Record<string, unknown> | undefined;
+      const outputProperties: Record<string, unknown> | undefined = outputSchema?.properties as Record<string, unknown> | undefined;
+      const extractedSchema: Record<string, unknown> | undefined = outputProperties?.extracted as Record<string, unknown> | undefined;
+      const extractedType: unknown = extractedSchema?.type;
+      const extractedProperties: unknown = extractedSchema?.properties;
+      const shouldUseStructuredExtraction: boolean =
+        !!extractedSchema &&
+        extractedType === "object" &&
+        typeof extractedProperties === "object" &&
+        extractedProperties !== null;
 
-      let extractedData: unknown;
+      if (shouldUseStructuredExtraction) {
+        const extractionResult = await generateObjectWithRetryAsync({
+          model,
+          prompt: `${config.extractionPrompt}\n\nContent:\n${markdown}`,
+          schema: createOutputZodSchema(extractedSchema),
+        });
 
-      try {
-        extractedData = JSON.parse(extractionResult.text.trim());
-      } catch {
-        extractedData = extractionResult.text;
+        output.extracted = extractionResult.object as Record<string, unknown>;
+      } else {
+        const extractionResult = await generateTextWithRetryAsync({
+          model,
+          prompt: `${config.extractionPrompt}\n\nContent:\n${markdown}`,
+        });
+
+        output.extracted = extractionResult.text;
       }
-
-      output.extracted = extractedData;
     }
 
     return output;
@@ -925,13 +938,11 @@ export class JobExecutorService {
       }
     }
 
-    // If no done tool result was found, try to parse the text output
-    if (Object.keys(output).length === 0 && agentResult.text) {
-      try {
-        output = JSON.parse(agentResult.text.trim()) as Record<string, unknown>;
-      } catch {
-        output = { response: agentResult.text };
-      }
+    if (Object.keys(output).length === 0) {
+      throw new Error(
+        `Agent node "${node.nodeId}" completed without calling the done tool. ` +
+        `Ensure the agent returns output via done with a result matching the output schema.`,
+      );
     }
 
     return output;

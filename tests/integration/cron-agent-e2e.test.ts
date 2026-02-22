@@ -119,6 +119,7 @@ describe("CronAgent E2E", () => {
 
     expect(result).toBeDefined();
     expect(typeof result.text).toBe("string");
+    expect(result.text).toContain('42');
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
   }, 60000);
 

@@ -121,9 +121,10 @@ describe("MainAgent E2E", () => {
       "Say exactly 'hello world' and nothing else. Then call the done tool.",
     );
 
-    expect(result).toBeDefined();
-    expect(typeof result.text).toBe("string");
-    expect(result.stepsCount).toBeGreaterThanOrEqual(1);
+  expect(result).toBeDefined();
+  expect(typeof result.text).toBe("string");
+  expect(result.text.length).toBeGreaterThan(0);
+  expect(result.stepsCount).toBeGreaterThanOrEqual(1);
   }, 60000);
 
   it("should use the think tool when asked to reason", async () => {

@@ -69,7 +69,7 @@ describe("llm-retry E2E — real LLM calls", () => {
 
     expect(result.text).toBeDefined();
     expect(typeof result.text).toBe("string");
-    expect(result.text.length).toBeGreaterThan(0);
+    expect(result.text.toLowerCase()).toContain("ok");
   }, 60000);
 
   it("should honour the system prompt when forwarding to the real LLM", async () => {
