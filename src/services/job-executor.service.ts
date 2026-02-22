@@ -40,25 +40,8 @@ import { generateTextWithRetryAsync, generateObjectWithRetryAsync } from "../uti
 import { getForceThinkDirective } from "../utils/prepare-step.js";
 import { parseRssFeed } from "../utils/rss-parser.js";
 import { createOutputZodSchema } from "../utils/json-schema-to-zod.js";
-import {
-  thinkTool,
-  runCmdTool,
-  searchKnowledgeTool,
-  addKnowledgeTool,
-  editKnowledgeTool,
-  createSendMessageTool,
-  createReadFileTool,
-  createWriteFileTool,
-  appendFileTool,
-  editFileTool,
-  FileReadTracker,
-  writeToDatabaseTool,
-  readFromDatabaseTool,
-  listDatabasesTool,
-  listTablesTool,
-  getTableSchemaTool,
-  createTableTool,
-} from "../tools/index.js";
+import { thinkTool } from "../tools/index.js";
+import { createAgentNodeToolPool } from "../utils/agent-node-tool-pool.js";
 
 // Default timeout for HTTP requests in node execution (30 seconds)
 const DEFAULT_FETCH_TIMEOUT_MS: number = 30000;
@@ -825,7 +808,7 @@ export class JobExecutorService {
     const maxSteps: number = config.maxSteps || DEFAULT_AGENT_MAX_STEPS;
 
     // Build the tool set from selected tools
-    const toolPool: Record<string, ToolSet[string]> = this._getAgentNodeToolPool();
+    const toolPool: Record<string, ToolSet[string]> = createAgentNodeToolPool(this._logger);
     const selectedTools: ToolSet = {};
 
     for (const toolName of config.selectedTools) {
@@ -954,35 +937,6 @@ export class JobExecutorService {
     return output;
   }
 
-  private _getAgentNodeToolPool(): Record<string, ToolSet[string]> {
-    // The agent node can use a subset of system tools.
-    // We create a simple message sender that logs rather than sends to a chat.
-    const logSender = async (message: string): Promise<string | null> => {
-      this._logger.info("Agent node message", { message });
-      return null;
-    };
-
-    const readTracker: FileReadTracker = new FileReadTracker();
-
-    return {
-      think: thinkTool,
-      run_cmd: runCmdTool,
-      search_knowledge: searchKnowledgeTool,
-      add_knowledge: addKnowledgeTool,
-      edit_knowledge: editKnowledgeTool,
-      send_message: createSendMessageTool(logSender),
-      read_file: createReadFileTool(readTracker),
-      write_file: createWriteFileTool(readTracker),
-      append_file: appendFileTool,
-      edit_file: editFileTool,
-      write_to_database: writeToDatabaseTool,
-      read_from_database: readFromDatabaseTool,
-      list_databases: listDatabasesTool,
-      list_tables: listTablesTool,
-      get_table_schema: getTableSchemaTool,
-      create_table: createTableTool,
-    };
-  }
 
   private async _executeLiteSqlAsync(
     node: INode,

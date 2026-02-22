@@ -12,6 +12,19 @@ ng serve
 
 Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
 
+## LM Studio (OpenAI-compatible)
+
+The backend supports LM Studio via the OpenAI-compatible provider. Example config:
+
+```yaml
+ai:
+  provider: openai-compatible
+  openaiCompatible:
+    baseUrl: http://localhost:1234/v1
+    apiKey: lm-studio
+    model: <your-model-name>
+```
+
 ## Code scaffolding
 
 Angular CLI includes powerful code scaffolding tools. To generate a new component, run:

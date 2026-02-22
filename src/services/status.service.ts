@@ -47,6 +47,7 @@ export class StatusService {
   private static _instance: StatusService | null = null;
   private _currentState: IStatusState | null = null;
   private _contextTokens: number = 0;
+  private _inFlightCount: number = 0;
   private _encoder: ReturnType<typeof getEncoding> | null = null;
   private _spinnerIndex: number = 0;
   private _spinnerInterval: NodeJS.Timeout | null = null;
@@ -189,7 +190,37 @@ export class StatusService {
     }
   }
 
-  public clearStatus(): void {
+  /**
+   * Mark a request as in-flight and update status.
+   * While in-flight, clearStatus() will not set status to idle.
+   */
+  public beginInFlight(
+    type: StatusType,
+    message: string,
+    details: Record<string, unknown> = {},
+  ): void {
+    this._inFlightCount += 1;
+    this.setStatus(type, message, details);
+  }
+
+  /**
+   * Mark a request as finished. When no requests remain,
+   * status will be cleared (idle).
+   */
+  public endInFlight(): void {
+    if (this._inFlightCount > 0) {
+      this._inFlightCount -= 1;
+    }
+
+    if (this._inFlightCount === 0) {
+      this.clearStatus(true);
+    }
+  }
+
+  public clearStatus(force: boolean = false): void {
+    if (!force && this._inFlightCount > 0) {
+      return;
+    }
     const previous: IStatusState | null = this._currentState;
 
     this._currentState = null;

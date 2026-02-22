@@ -2,9 +2,11 @@ import { tool } from "ai";
 import { addLitesqlNodeToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
-import { ILiteSqlConfig } from "../shared/types/index.js";
+import { ILiteSqlConfig, IJob, INode } from "../shared/types/index.js";
 import { LiteSqlService, ITableInfo } from "../services/litesql.service.js";
 import { deriveInputSchemaFromTable, validateSchemaHintAgainstTable, IJsonSchema } from "../utils/litesql-schema-helper.js";
+import { JobStorageService } from "../services/job-storage.service.js";
+import { buildAsciiGraph } from "../utils/ascii-graph.js";
 
 // Default output schema for litesql nodes - they return insert metadata, not the data itself
 const LITESQL_DEFAULT_OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -50,7 +52,7 @@ export function createAddLitesqlNodeTool(jobTracker: IJobActivityTracker) {
       databaseName: string;
       tableName: string;
       inputSchemaHint?: Record<string, unknown>;
-    }): Promise<ICreateNodeResult & { warning?: string }> => {
+    }): Promise<ICreateNodeResult & { warning?: string; graphAscii?: string }> => {
       try {
         const service: LiteSqlService = LiteSqlService.getInstance();
         let effectiveInputSchema: Record<string, unknown>;
@@ -104,8 +106,16 @@ export function createAddLitesqlNodeTool(jobTracker: IJobActivityTracker) {
           parentNodeId,
           jobTracker,
         );
+        if (!result.success) {
+          return { ...result, warning };
+        }
 
-        return { ...result, warning };
+        const storage: JobStorageService = JobStorageService.getInstance();
+        const updatedJob: IJob | null = await storage.getJobAsync(jobId);
+        const nodes: INode[] = await storage.listNodesAsync(jobId);
+        const graphAscii: string = buildAsciiGraph(nodes, updatedJob?.entrypointNodeId ?? null);
+
+        return { ...result, warning, graphAscii };
       } catch (error: unknown) {
         const errorMessage: string = error instanceof Error ? error.message : String(error);
 

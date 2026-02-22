@@ -3,6 +3,7 @@ import { connectNodesToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { INode } from "../shared/types/index.js";
 import { checkSchemaCompatibility, ISchemaCompatResult } from "../jobs/schema-compat.js";
+import { buildAsciiGraph } from "../utils/ascii-graph.js";
 
 //#region Private functions
 
@@ -60,7 +61,7 @@ export const connectNodesTool = tool({
     jobId: string;
     fromNodeId: string;
     toNodeId: string;
-  }): Promise<{ success: boolean; message: string; schemaCompatible: boolean }> => {
+  }): Promise<{ success: boolean; message: string; schemaCompatible: boolean; graphAscii?: string }> => {
     try {
       const storageService: JobStorageService = JobStorageService.getInstance();
 
@@ -107,7 +108,21 @@ export const connectNodesTool = tool({
 
       await storageService.updateNodeAsync(jobId, fromNodeId, { connections: updatedConnections });
 
-      return { success: true, message: "Nodes connected successfully. Schemas are compatible.", schemaCompatible: true };
+      const updatedJob = await storageService.getJobAsync(jobId);
+
+      if (!updatedJob) {
+        return { success: false, message: `Job not found: ${jobId}`, schemaCompatible: true };
+      }
+
+      const updatedNodes = await storageService.listNodesAsync(jobId);
+      const graphAscii: string = buildAsciiGraph(updatedNodes, updatedJob.entrypointNodeId);
+
+      return {
+        success: true,
+        message: "Nodes connected successfully. Schemas are compatible.",
+        schemaCompatible: true,
+        graphAscii,
+      };
     } catch (error: unknown) {
       return { success: false, message: (error as Error).message, schemaCompatible: false };
     }

@@ -97,8 +97,8 @@ export abstract class BaseAgentBase {
     const statusService: StatusService = StatusService.getInstance();
 
     try {
-      // Set status to show AI is thinking
-      statusService.setStatus("llm_request", "Thinking...", {});
+      // Set status to show AI is thinking (in-flight)
+      statusService.beginInFlight("llm_request", "Thinking...", {});
 
       const result = await this._agent!.generate({ prompt: userMessage });
 
@@ -106,8 +106,12 @@ export abstract class BaseAgentBase {
       // Use totalUsage for multi-step agents (accumulates across all tool call steps)
       // Fall back to usage for single-step calls
       const inputTokens = result.totalUsage?.inputTokens ?? result.usage?.inputTokens;
-      if (inputTokens) {
+      if (inputTokens !== undefined) {
         this._totalInputTokens = inputTokens; // Replace with total, not accumulate
+      } else {
+        // Fall back to tiktoken estimation in prepareStep when usage is missing
+        this._totalInputTokens = 0;
+        this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
       }
 
       const stepsCount: number = result.steps?.length ?? 1;
@@ -119,7 +123,7 @@ export abstract class BaseAgentBase {
         stepsCount,
       };
     } finally {
-      statusService.clearStatus();
+      statusService.endInFlight();
     }
   }
 

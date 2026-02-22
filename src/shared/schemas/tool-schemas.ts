@@ -703,7 +703,18 @@ export const addCurlFetcherNodeToolOutputSchema = z.object({
 });
 
 export const addRssFetcherNodeToolInputSchema = z.object({
-  ..._commonNodeCreationFields,
+  jobId: z.string()
+    .min(1)
+    .describe("Job ID to add the node to"),
+  parentNodeId: z.string()
+    .optional()
+    .describe("If set, automatically connects parent node → this new node after creation"),
+  name: z.string()
+    .min(1)
+    .describe("Node name"),
+  description: z.string()
+    .default("")
+    .describe("Node description"),
   url: z.string()
     .min(1)
     .describe("RSS feed URL"),

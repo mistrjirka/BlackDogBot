@@ -46,11 +46,12 @@ export async function generateTextWithRetryAsync(
   const inputTokens: number = statusService.countTokens(options.prompt) +
     (options.system ? statusService.countTokens(options.system) : 0);
 
-  // Set status
-  statusService.setStatus("llm_request", "Waiting for response", { inputTokens });
+  // Set status (in-flight)
+  statusService.beginInFlight("llm_request", "Waiting for response", { inputTokens });
 
-  for (let attempt: number = 1; attempt <= LLM_MAX_RETRIES; attempt++) {
-    try {
+  try {
+    for (let attempt: number = 1; attempt <= LLM_MAX_RETRIES; attempt++) {
+      try {
       const callFn = async (): Promise<{ text: string }> => {
         const result = await generateText({
           model: options.model,
@@ -69,27 +70,28 @@ export async function generateTextWithRetryAsync(
       const outputTokens: number = statusService.countTokens(result.text);
       rateLimiterService.recordTokenUsage(providerKey, inputTokens, outputTokens);
 
-      statusService.clearStatus();
-      return result;
-    } catch (error: unknown) {
-      lastError = error;
-      const errorMessage: string = formatAiErrorForLog(extractAiErrorDetails(error));
+        return result;
+      } catch (error: unknown) {
+        lastError = error;
+        const errorMessage: string = formatAiErrorForLog(extractAiErrorDetails(error));
 
-      logger.warn("LLM call failed, retrying", {
-        attempt,
-        maxRetries: LLM_MAX_RETRIES,
-        error: errorMessage,
-      });
+        logger.warn("LLM call failed, retrying", {
+          attempt,
+          maxRetries: LLM_MAX_RETRIES,
+          error: errorMessage,
+        });
 
-      // Update status with retry info
-      statusService.setStatus("llm_request", `Retrying (${attempt}/${LLM_MAX_RETRIES})`, {
-        inputTokens,
-        error: errorMessage,
-      });
+        // Update status with retry info
+        statusService.setStatus("llm_request", `Retrying (${attempt}/${LLM_MAX_RETRIES})`, {
+          inputTokens,
+          error: errorMessage,
+        });
+      }
     }
+  } finally {
+    statusService.endInFlight();
   }
 
-  statusService.clearStatus();
   throw lastError instanceof Error
     ? lastError
     : new Error(`LLM call failed after ${LLM_MAX_RETRIES} retries: ${String(lastError)}`);
@@ -113,11 +115,12 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
   const inputTokens: number = statusService.countTokens(options.prompt) +
     (options.system ? statusService.countTokens(options.system) : 0);
 
-  // Set status
-  statusService.setStatus("llm_request", "Waiting for structured response", { inputTokens });
+  // Set status (in-flight)
+  statusService.beginInFlight("llm_request", "Waiting for structured response", { inputTokens });
 
-  for (let attempt: number = 1; attempt <= LLM_MAX_RETRIES; attempt++) {
-    try {
+  try {
+    for (let attempt: number = 1; attempt <= LLM_MAX_RETRIES; attempt++) {
+      try {
       const callFn = async (): Promise<{ object: z.infer<T> }> => {
         const result = await generateObject({
           model: options.model,
@@ -137,27 +140,28 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
       const outputTokens: number = statusService.countTokens(JSON.stringify(result.object));
       rateLimiterService.recordTokenUsage(providerKey, inputTokens, outputTokens);
 
-      statusService.clearStatus();
-      return result;
-    } catch (error: unknown) {
-      lastError = error;
-      const errorMessage: string = formatAiErrorForLog(extractAiErrorDetails(error));
+        return result;
+      } catch (error: unknown) {
+        lastError = error;
+        const errorMessage: string = formatAiErrorForLog(extractAiErrorDetails(error));
 
-      logger.warn("LLM generateObject call failed, retrying", {
-        attempt,
-        maxRetries: LLM_MAX_RETRIES,
-        error: errorMessage,
-      });
+        logger.warn("LLM generateObject call failed, retrying", {
+          attempt,
+          maxRetries: LLM_MAX_RETRIES,
+          error: errorMessage,
+        });
 
-      // Update status with retry info
-      statusService.setStatus("llm_request", `Retrying (${attempt}/${LLM_MAX_RETRIES})`, {
-        inputTokens,
-        error: errorMessage,
-      });
+        // Update status with retry info
+        statusService.setStatus("llm_request", `Retrying (${attempt}/${LLM_MAX_RETRIES})`, {
+          inputTokens,
+          error: errorMessage,
+        });
+      }
     }
+  } finally {
+    statusService.endInFlight();
   }
 
-  statusService.clearStatus();
   throw lastError instanceof Error
     ? lastError
     : new Error(`LLM generateObject call failed after ${LLM_MAX_RETRIES} retries: ${String(lastError)}`);

@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { INode } from "../shared/types/index.js";
+import { buildAsciiGraph } from "../utils/ascii-graph.js";
 
 export const disconnectNodesTool = tool({
   description: "Remove a connection (edge) between two nodes in a job graph. Use this to break an erroneous link.",
@@ -18,7 +19,7 @@ export const disconnectNodesTool = tool({
     jobId: string;
     fromNodeId: string;
     toNodeId: string;
-  }): Promise<{ success: boolean; message: string }> => {
+  }): Promise<{ success: boolean; message: string; graphAscii?: string }> => {
     try {
       const storageService: JobStorageService = JobStorageService.getInstance();
 
@@ -47,9 +48,19 @@ export const disconnectNodesTool = tool({
 
       await storageService.updateNodeAsync(jobId, fromNodeId, { connections: updatedConnections });
 
+      const updatedJob = await storageService.getJobAsync(jobId);
+
+      if (!updatedJob) {
+        return { success: false, message: `Job not found: ${jobId}` };
+      }
+
+      const updatedNodes: INode[] = await storageService.listNodesAsync(jobId);
+      const graphAscii: string = buildAsciiGraph(updatedNodes, updatedJob.entrypointNodeId);
+
       return {
         success: true,
         message: `Connection from "${fromNode.name}" to "${toNode.name}" removed successfully.`,
+        graphAscii,
       };
     } catch (error: unknown) {
       return { success: false, message: (error as Error).message };

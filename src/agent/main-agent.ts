@@ -17,7 +17,7 @@ import {
   type MessageSender,
   addJobTool,
   editJobTool,
-  removeJobTool,
+  createRemoveJobTool,
   getJobsTool,
   createRunJobTool,
   finishJobTool,
@@ -31,6 +31,7 @@ import {
   addNodeTestTool,
   runNodeTestTool,
   getNodesTool,
+  clearJobGraphTool,
   callSkillTool,
   getSkillFileTool,
   addCronTool,
@@ -85,6 +86,7 @@ const _GraphMutatingTools: Set<string> = new Set([
   "connect_nodes",
   "disconnect_nodes",
   "set_entrypoint",
+  "clear_job_graph",
   "start_job_creation",
   "add_curl_fetcher_node",
   "add_rss_fetcher_node",
@@ -219,7 +221,7 @@ export class MainAgent extends BaseAgentBase {
       edit_file: editFileTool,
       add_job: addJobTool,
       edit_job: editJobTool,
-      remove_job: removeJobTool,
+      remove_job: createRemoveJobTool(creationModeTracker),
       get_jobs: getJobsTool,
       run_job: createRunJobTool(jobTracker, nodeProgressEmitter),
       finish_job: finishJobTool,
@@ -232,6 +234,7 @@ export class MainAgent extends BaseAgentBase {
       add_node_test: addNodeTestTool,
       run_node_test: runNodeTestTool,
       get_nodes: getNodesTool,
+      clear_job_graph: clearJobGraphTool,
       call_skill: callSkillTool,
       get_skill_file: getSkillFileTool,
       add_cron: addCronTool,
@@ -374,8 +377,8 @@ export class MainAgent extends BaseAgentBase {
     const statusService: StatusService = StatusService.getInstance();
 
     try {
-      // Set status to show AI is thinking
-      statusService.setStatus("llm_request", "Thinking...", { chatId });
+      // Set status to show AI is thinking (in-flight)
+      statusService.beginInFlight("llm_request", "Thinking...", { chatId });
 
       const generateResult = await this._agent!.generate({
         messages: messagesForCall,
@@ -383,6 +386,14 @@ export class MainAgent extends BaseAgentBase {
       });
 
       const stepsCount: number = generateResult.steps?.length ?? 1;
+
+      const inputTokens = generateResult.totalUsage?.inputTokens ?? generateResult.usage?.inputTokens;
+      if (inputTokens !== undefined) {
+        this._totalInputTokens = inputTokens;
+      } else {
+        this._totalInputTokens = 0;
+        this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
+      }
 
       const brainInterfaceForOutput: BrainInterfaceService = BrainInterfaceService.getInstance();
 
@@ -431,7 +442,7 @@ export class MainAgent extends BaseAgentBase {
       }
       throw error;
     } finally {
-      statusService.clearStatus();
+      statusService.endInFlight();
       session.abortController = null;
       session.paused = false;
       session.resumeResolve = null;

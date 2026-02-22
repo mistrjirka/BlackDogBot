@@ -1,8 +1,10 @@
 import { tool } from "ai";
 import { addPythonCodeNodeToolInputSchema } from "../shared/schemas/tool-schemas.js";
+import { JobStorageService } from "../services/job-storage.service.js";
+import { IPythonCodeConfig } from "../shared/types/index.js";
+import { buildAsciiGraph } from "../utils/ascii-graph.js";
 import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
-import { IPythonCodeConfig } from "../shared/types/index.js";
 
 export function createAddPythonCodeNodeTool(jobTracker: IJobActivityTracker) {
   return tool({
@@ -29,11 +31,20 @@ export function createAddPythonCodeNodeTool(jobTracker: IJobActivityTracker) {
       code: string;
       pythonPath: string;
       timeout: number;
-    }): Promise<ICreateNodeResult> => {
+    }): Promise<ICreateNodeResult & { graphAscii?: string }> => {
       try {
+        const sqliteImportPattern: RegExp = /(\bimport\s+sqlite\w*\b|\bfrom\s+sqlite\w*\s+import\b)/i;
+        const sqliteUsagePattern: RegExp = /\bsqlite\w*\s*\./i;
+
+        if (sqliteImportPattern.test(code) || sqliteUsagePattern.test(code)) {
+          throw new Error(
+            "Python sqlite libraries are not allowed. Use the database nodes instead: create_table, write_to_database, and query_database. If the task cannot be expressed with these nodes, tell the user which database node is missing.",
+          );
+        }
+
         const config: IPythonCodeConfig = { code, pythonPath, timeout };
 
-        return await createNodeAsync(
+        const result: ICreateNodeResult = await createNodeAsync(
           jobId,
           "python_code",
           name,
@@ -44,6 +55,17 @@ export function createAddPythonCodeNodeTool(jobTracker: IJobActivityTracker) {
           parentNodeId,
           jobTracker,
         );
+
+        if (!result.success) {
+          return result;
+        }
+
+        const storageService: JobStorageService = JobStorageService.getInstance();
+        const job = await storageService.getJobAsync(jobId);
+        const nodes = await storageService.listNodesAsync(jobId);
+        const graphAscii: string = buildAsciiGraph(nodes, job?.entrypointNodeId ?? null);
+
+        return { ...result, graphAscii };
       } catch (error: unknown) {
         const errorMessage: string = error instanceof Error ? error.message : String(error);
 

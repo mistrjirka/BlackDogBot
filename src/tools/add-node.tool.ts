@@ -4,6 +4,7 @@ import { JobStorageService } from "../services/job-storage.service.js";
 import { INode, IJob, NodeType, NodeConfig } from "../shared/types/index.js";
 import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { validateFetcherConfigAsync } from "../utils/node-validation.js";
+import { buildAsciiGraph } from "../utils/ascii-graph.js";
 
 //#region Constants
 
@@ -15,7 +16,7 @@ export function createAddNodeTool(tracker: IJobActivityTracker) {
   return tool({
     description: "Add a new node to a job. Define its type, schemas, and configuration. For fetcher nodes (curl_fetcher, rss_fetcher, crawl4ai, searxng), the URL/service is probed to verify reachability before the node is created.",
     inputSchema: addNodeToolInputSchema,
-    execute: async ({ jobId, type, name, description, inputSchema, outputSchema, config }: { jobId: string; type: string; name: string; description: string; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>; config: Record<string, unknown> }): Promise<{ nodeId: string; success: boolean; error?: string }> => {
+    execute: async ({ jobId, type, name, description, inputSchema, outputSchema, config }: { jobId: string; type: string; name: string; description: string; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>; config: Record<string, unknown> }): Promise<{ nodeId: string; success: boolean; graphAscii?: string; error?: string }> => {
       try {
         if (FETCHER_NODE_TYPES.has(type)) {
           const validation = await validateFetcherConfigAsync(type, config);
@@ -42,7 +43,10 @@ export function createAddNodeTool(tracker: IJobActivityTracker) {
 
         tracker.trackModified(jobId, trackedName);
 
-        return { nodeId: node.nodeId, success: true };
+        const nodes: INode[] = await storageService.listNodesAsync(jobId);
+        const graphAscii: string = buildAsciiGraph(nodes, job?.entrypointNodeId ?? null);
+
+        return { nodeId: node.nodeId, success: true, graphAscii };
       } catch (error: unknown) {
         const errorMessage: string = error instanceof Error ? error.message : String(error);
         return { nodeId: "", success: false, error: errorMessage };

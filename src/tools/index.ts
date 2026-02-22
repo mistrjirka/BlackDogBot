@@ -9,9 +9,10 @@ export { addKnowledgeTool } from "./add-knowledge.tool.js";
 export { editKnowledgeTool } from "./edit-knowledge.tool.js";
 export { addJobTool } from "./add-job.tool.js";
 export { editJobTool } from "./edit-job.tool.js";
-export { removeJobTool } from "./remove-job.tool.js";
+export { createRemoveJobTool } from "./remove-job.tool.js";
 export { getJobsTool } from "./get-jobs.tool.js";
 export { getNodesTool } from "./get-nodes.tool.js";
+export { clearJobGraphTool } from "./clear-job-graph.tool.js";
 export { createRunJobTool, type NodeProgressEmitter } from "./run-job.tool.js";
 export { finishJobTool } from "./finish-job.tool.js";
 export { createAddNodeTool } from "./add-node.tool.js";
@@ -60,4 +61,3 @@ export { createAddAgentNodeTool } from "./add-agent-node.tool.js";
 export { createAddLitesqlNodeTool } from "./add-litesql-node.tool.js";
 export { createFinishJobCreationTool } from "./finish-job-creation.tool.js";
 export { createCreateOutputSchemaTool } from "./create-output-schema.tool.js";
-

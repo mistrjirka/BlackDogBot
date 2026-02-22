@@ -125,6 +125,19 @@ ai:
     baseUrl: http://localhost:11434/v1
     apiKey: your-key
     model: llama3
+
+# LM Studio (OpenAI-compatible)
+
+LM Studio exposes an OpenAI-compatible API. Example config:
+
+```yaml
+ai:
+  provider: openai-compatible
+  openaiCompatible:
+    baseUrl: http://localhost:1234/v1
+    apiKey: lm-studio
+    model: <your-model-name>
+```
 ```
 
 ### 4. Start the daemon

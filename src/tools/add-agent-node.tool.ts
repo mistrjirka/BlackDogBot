@@ -1,8 +1,11 @@
 import { tool } from "ai";
 import { addAgentNodeToolInputSchema } from "../shared/schemas/tool-schemas.js";
+import { JobStorageService } from "../services/job-storage.service.js";
+import { IAgentNodeConfig, IJob, INode } from "../shared/types/index.js";
 import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
-import { IAgentNodeConfig } from "../shared/types/index.js";
+import { getAgentNodeToolNames } from "../utils/agent-node-tool-pool.js";
+import { buildAsciiGraph } from "../utils/ascii-graph.js";
 
 export function createAddAgentNodeTool(jobTracker: IJobActivityTracker) {
   return tool({
@@ -33,11 +36,19 @@ export function createAddAgentNodeTool(jobTracker: IJobActivityTracker) {
       model: string | null;
       reasoningEffort: "low" | "medium" | "high" | null;
       maxSteps: number;
-    }): Promise<ICreateNodeResult> => {
+    }): Promise<ICreateNodeResult & { graphAscii?: string }> => {
       try {
+        if (!Array.isArray(selectedTools) || selectedTools.length === 0) {
+          const availableTools: string[] = getAgentNodeToolNames();
+          throw new Error(
+            "The agent doesn't have any tools. Please select some from the available tools: " +
+              availableTools.join(", "),
+          );
+        }
+
         const config: IAgentNodeConfig = { systemPrompt, selectedTools, model, reasoningEffort, maxSteps };
 
-        return await createNodeAsync(
+        const result: ICreateNodeResult = await createNodeAsync(
           jobId,
           "agent",
           name,
@@ -48,6 +59,17 @@ export function createAddAgentNodeTool(jobTracker: IJobActivityTracker) {
           parentNodeId,
           jobTracker,
         );
+
+        if (!result.success) {
+          return result;
+        }
+
+        const storageService: JobStorageService = JobStorageService.getInstance();
+        const updatedJob: IJob | null = await storageService.getJobAsync(jobId);
+        const nodes: INode[] = await storageService.listNodesAsync(jobId);
+        const graphAscii: string = buildAsciiGraph(nodes, updatedJob ? updatedJob.entrypointNodeId : null);
+
+        return { ...result, graphAscii };
       } catch (error: unknown) {
         const errorMessage: string = error instanceof Error ? error.message : String(error);
 
