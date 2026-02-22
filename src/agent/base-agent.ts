@@ -103,8 +103,11 @@ export abstract class BaseAgentBase {
       const result = await this._agent!.generate({ prompt: userMessage });
 
       // Track API-reported token usage
-      if (result.usage?.inputTokens) {
-        this._totalInputTokens += result.usage.inputTokens;
+      // Use totalUsage for multi-step agents (accumulates across all tool call steps)
+      // Fall back to usage for single-step calls
+      const inputTokens = result.totalUsage?.inputTokens ?? result.usage?.inputTokens;
+      if (inputTokens) {
+        this._totalInputTokens = inputTokens; // Replace with total, not accumulate
       }
 
       const stepsCount: number = result.steps?.length ?? 1;
