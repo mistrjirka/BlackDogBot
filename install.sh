@@ -359,6 +359,14 @@ create_config() {
     fi
     
     echo ""
+    echo -e "${BLUE}Job Creation Feature${NC}"
+    if prompt_yesno "Enable Job Creation feature?" "y"; then
+        JOB_CREATION_ENABLED="true"
+    else
+        JOB_CREATION_ENABLED="false"
+    fi
+    
+    echo ""
     echo -e "${BLUE}Logging${NC}"
     echo "1) debug  2) info  3) warn  4) error"
     prompt_input "Log level" "2" log_level_choice
@@ -408,6 +416,9 @@ EOF
 scheduler:
   enabled: ${SCHEDULER_ENABLED}
   notificationChatId: ${NOTIFICATION_CHAT:-null}
+
+jobCreation:
+  enabled: ${JOB_CREATION_ENABLED}
 
 knowledge:
   embeddingModelPath: Xenova/bge-m3
