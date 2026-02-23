@@ -61,6 +61,22 @@
   }
 }
 
+.new-chat-btn {
+  background: rgba(106, 90, 205, 0.15);
+  border: 1px solid #6a5acd;
+  color: #b0a0ff;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s;
+
+  &:hover {
+    background: rgba(106, 90, 205, 0.3);
+  }
+}
+
 .pause-btn {
   background: transparent;
   border: 1px solid #f9a825;

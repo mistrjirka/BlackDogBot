@@ -626,6 +626,17 @@ export class BrainInterfaceService {
           break;
         }
 
+        case "factory_reset": {
+          const { factoryResetAsync } = await import("../services/factory-reset.service.js");
+          const result = await factoryResetAsync();
+          response.success = result.success;
+          response.data = result;
+          if (!result.success) {
+            response.error = result.errors.join("; ");
+          }
+          break;
+        }
+
         default:
           response.error = `Unknown command type: ${(command as BrainCommand).type}`;
       }

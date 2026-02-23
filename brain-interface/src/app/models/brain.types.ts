@@ -33,7 +33,8 @@ export type BrainCommandType =
   | "unsubscribe_logs"
   | "get_node_tests"
   | "run_node_test"
-  | "query_database";
+  | "query_database"
+  | "factory_reset";
 
 export interface IBrainEvent {
   type: string;
@@ -341,7 +342,8 @@ export type BrainCommand =
   | { type: "unsubscribe_logs" }
   | IGetNodeTestsCommand
   | IRunNodeTestCommand
-  | IQueryDatabaseCommand;
+  | IQueryDatabaseCommand
+  | { type: "factory_reset" };
 
 export interface BrainCommandResponse {
   success: boolean;

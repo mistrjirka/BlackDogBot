@@ -17,7 +17,8 @@ export type BrainCommandType =
   | "unsubscribe_logs"
   | "get_node_tests"
   | "run_node_test"
-  | "query_database";
+  | "query_database"
+  | "factory_reset";
 
 export interface IBrainCommand {
   type: string;
@@ -60,7 +61,7 @@ export interface IQueryDatabaseCommand extends IBrainCommand {
 
 export type BrainCommand =
   | {
-      type: Exclude<BrainCommandType, "run_job" | "toggle_schedule" | "get_node_tests" | "run_node_test" | "query_database">;
+      type: Exclude<BrainCommandType, "run_job" | "toggle_schedule" | "get_node_tests" | "run_node_test" | "query_database" | "factory_reset">;
       chatId?: string;
       message?: string;
       jobId?: string;
@@ -69,7 +70,8 @@ export type BrainCommand =
   | IToggleScheduleCommand
   | IGetNodeTestsCommand
   | IRunNodeTestCommand
-  | IQueryDatabaseCommand;
+  | IQueryDatabaseCommand
+  | { type: "factory_reset" };
 
 export interface BrainCommandResponse {
   success: boolean;

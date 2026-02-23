@@ -52,6 +52,10 @@ export class DashboardComponent implements OnInit {
     this._socket.clearEvents();
   }
 
+  protected async onFactoryResetAsync(): Promise<void> {
+    await this._socket.factoryResetAsync();
+  }
+
   protected async onPauseAsync(): Promise<void> {
     await this._socket.pauseAsync();
   }

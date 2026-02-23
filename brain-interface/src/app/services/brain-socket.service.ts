@@ -265,6 +265,24 @@ export class BrainSocketService implements OnDestroy {
     this._events.set([]);
   }
 
+  public async factoryResetAsync(): Promise<BrainCommandResponse> {
+    const res: BrainCommandResponse = await this.sendCommandAsync({ type: "factory_reset" });
+
+    // Clear local state regardless of result
+    const newId: string = crypto.randomUUID();
+    localStorage.setItem("betterclaw_chat_id", newId);
+    this._currentChatId.set(newId);
+    this._events.set([]);
+    this._graph.set(null);
+    this._jobs.set([]);
+    this._lastJobId.set(null);
+
+    // Start a fresh conversation
+    await this.sendCommandAsync({ type: "start_conversation", chatId: newId });
+
+    return res;
+  }
+
   public ngOnDestroy(): void {
     this.disconnect();
   }
