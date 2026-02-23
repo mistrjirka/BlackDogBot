@@ -1,1 +1,3 @@
-onlyBuiltDependencies: esbuild,onnxruntime-node,protobufjs,sharp
+packages:
+  - "."
+  - "brain-interface"
