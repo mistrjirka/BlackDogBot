@@ -5,6 +5,7 @@ import type {
   BrainCommand,
   BrainCommandResponse,
   TerminalEntry,
+  UserMessageEntry,
   GraphUpdatedEvent,
   StoredJobInfo,
   FullJobData,
@@ -26,12 +27,24 @@ export class BrainSocketService implements OnDestroy {
   private _connected = signal(false);
   private _events = signal<TerminalEntry[]>([]);
   private _graph = signal<GraphUpdatedEvent | null>(null);
-  private _currentChatId = signal<string | null>(null);
+  private _currentChatId = signal<string | null>(localStorage.getItem("betterclaw_chat_id") || null);
   private _jobs = signal<StoredJobInfo[]>([]);
   private _lastJobId = signal<string | null>(null);
   private _isExecuting = signal<boolean>(false);
   private _logs = signal<ILogEntryEvent[]>([]);
   private _status = signal<IStatusState | null>(null);
+  private _connectPromise: Promise<void> | null = null;
+  private _connectResolve: (() => void) | null = null;
+
+  public onConnectedAsync(): Promise<void> {
+    if (this._connected()) return Promise.resolve();
+    if (!this._connectPromise) {
+      this._connectPromise = new Promise<void>((resolve) => {
+        this._connectResolve = resolve;
+      });
+    }
+    return this._connectPromise;
+  }
 
   public readonly connected = this._connected.asReadonly();
   public readonly events = this._events.asReadonly();
@@ -54,6 +67,10 @@ export class BrainSocketService implements OnDestroy {
 
     this._socket.on("connect", async (): Promise<void> => {
       this._connected.set(true);
+      if (this._connectResolve) {
+        this._connectResolve();
+        this._connectResolve = null;
+      }
 
       // Reload job list on every (re)connect
       const freshJobs: StoredJobInfo[] = await this._fetchJobsAsync();
@@ -69,6 +86,8 @@ export class BrainSocketService implements OnDestroy {
 
     this._socket.on("disconnect", (): void => {
       this._connected.set(false);
+      this._connectPromise = null;
+      this._connectResolve = null;
     });
 
     this._socket.on("event", (event: BrainEvent): void => {
@@ -99,7 +118,18 @@ export class BrainSocketService implements OnDestroy {
 
   public async startConversationAsync(chatId: string): Promise<BrainCommandResponse> {
     this._currentChatId.set(chatId);
+    localStorage.setItem("betterclaw_chat_id", chatId);
     return this.sendCommandAsync({ type: "start_conversation", chatId });
+  }
+
+  public addUserMessage(message: string): void {
+    const entry: UserMessageEntry = {
+      type: "user_message",
+      id: crypto.randomUUID(),
+      timestamp: new Date(),
+      data: { message },
+    };
+    this._events.update((events: TerminalEntry[]) => [...events, entry]);
   }
 
   public async sendMessageAsync(message: string): Promise<BrainCommandResponse> {
@@ -294,14 +324,15 @@ export class BrainSocketService implements OnDestroy {
 
     if (event.type === "conversation_started") {
       this._currentChatId.set(event.data.chatId);
+      localStorage.setItem("betterclaw_chat_id", event.data.chatId);
     }
 
     if (event.type === "conversation_ended") {
-      this._currentChatId.set(null);
+      // Intentionally do not clear the chat ID here to allow multi-message sessions
     }
 
     if (event.type === "agent_stopped") {
-      this._currentChatId.set(null);
+      // Intentionally do not clear the chat ID to allow resuming or sending new messages
     }
 
     if (event.type === "job_execution_started") {
@@ -314,8 +345,8 @@ export class BrainSocketService implements OnDestroy {
       const duration = event.timing?.durationMs ?? 0;
       const nodesCount = event.nodesExecuted ?? 0;
       console.log(
-        `[BrainSocket] Job execution completed: ${event.jobId}`, 
-        `Duration: ${duration}ms, Nodes: ${nodesCount}`, 
+        `[BrainSocket] Job execution completed: ${event.jobId}`,
+        `Duration: ${duration}ms, Nodes: ${nodesCount}`,
         event.result
       );
     }
@@ -325,7 +356,7 @@ export class BrainSocketService implements OnDestroy {
       const duration = event.timing?.durationMs ?? 0;
       const nodesCount = event.nodesExecuted ?? 0;
       console.error(
-        `[BrainSocket] Job execution failed: ${event.jobId}`, 
+        `[BrainSocket] Job execution failed: ${event.jobId}`,
         `After ${duration}ms, ${nodesCount} nodes executed`,
         event.error
       );

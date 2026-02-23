@@ -245,7 +245,6 @@ export class BrainInterfaceService {
 
           const result = await mainAgent.processMessageForChatAsync(chatId, message);
 
-          await this.emitConversationEndedAsync(chatId, result.text, result.stepsCount);
           response.success = true;
           response.data = { text: result.text, stepsCount: result.stepsCount };
           break;

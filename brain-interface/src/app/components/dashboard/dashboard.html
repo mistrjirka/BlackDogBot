@@ -125,22 +125,4 @@
     </main>
   }
 
-  @if (showStartDialog()) {
-    <div class="dialog-overlay" (click)="showStartDialog.set(false)">
-      <div class="dialog" (click)="$event.stopPropagation()">
-        <h2>Start New Conversation</h2>
-        <p>Enter a chat ID or leave empty to generate one:</p>
-        <input
-          type="text"
-          placeholder="Chat ID (optional)"
-          [ngModel]="chatIdInput()"
-          (ngModelChange)="chatIdInput.set($event)"
-        />
-        <div class="dialog-actions">
-          <button class="cancel-btn" (click)="showStartDialog.set(false)">Cancel</button>
-          <button class="start-btn" (click)="onStartConversation()">Start</button>
-        </div>
-      </div>
-    </div>
-  }
 </div>

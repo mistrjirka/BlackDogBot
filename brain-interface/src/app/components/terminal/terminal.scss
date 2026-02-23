@@ -116,27 +116,33 @@
 }
 
 .event-step-started {
-  .event-icon { color: #4fc3f7; }
+  .event-icon {
+    color: #4fc3f7;
+  }
 }
 
 .event-tool-called {
-  .event-icon { color: #ffb74d; }
+  .event-icon {
+    color: #ffb74d;
+  }
 }
 
 .event-tool-result {
-  .event-icon { color: #81c784; }
+  .event-icon {
+    color: #81c784;
+  }
 }
 
 .tool-result-details {
   margin: 4px 0;
-  
+
   summary {
     cursor: pointer;
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 4px 0;
-    
+
     &:hover {
       opacity: 0.8;
     }
@@ -160,23 +166,49 @@
 }
 
 .event-model-output {
-  .event-icon { color: #ce93d8; }
+  .event-icon {
+    color: #ce93d8;
+  }
 }
 
 .event-graph-updated {
-  .event-icon { color: #90caf9; }
+  .event-icon {
+    color: #90caf9;
+  }
 }
 
 .event-conversation-started {
-  .event-icon { color: #66bb6a; }
+  .event-icon {
+    color: #66bb6a;
+  }
 }
 
 .event-conversation-ended {
-  .event-icon { color: #4caf50; }
+  .event-icon {
+    color: #4caf50;
+  }
 }
 
 .event-error {
-  .event-icon { color: #f44336; }
+  .event-icon {
+    color: #f44336;
+  }
+}
+
+.event-user-message {
+  background: rgba(86, 156, 214, 0.08);
+  border-radius: 4px;
+  padding: 6px 8px !important;
+  margin: 2px 0;
+  border-bottom: none !important;
+  .event-icon {
+    color: #569cd6;
+  }
+}
+
+.user-text {
+  color: #9cdcfe;
+  font-style: italic;
 }
 
 .no-events {

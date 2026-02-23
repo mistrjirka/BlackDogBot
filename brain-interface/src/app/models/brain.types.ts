@@ -14,7 +14,8 @@ export type BrainEventType =
   | "job_execution_completed"
   | "job_execution_failed"
   | "log_entry"
-  | "status_update";
+  | "status_update"
+  | "user_message";
 
 export type BrainCommandType =
   | "start_conversation"
@@ -406,7 +407,13 @@ export interface FullJobData {
   nodes: INode[];
 }
 
-export type TerminalEntry = Exclude<BrainEvent, ILogEntryEvent> & {
+export interface UserMessageEntry {
   id: string;
   timestamp: Date;
-};
+  type: "user_message";
+  data: { message: string };
+}
+
+export type TerminalEntry =
+  | (Exclude<BrainEvent, ILogEntryEvent> & { id: string; timestamp: Date })
+  | UserMessageEntry;

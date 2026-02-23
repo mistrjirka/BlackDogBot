@@ -24,8 +24,8 @@ export class TerminalComponent {
   protected messageText = signal("");
   protected autoScroll = signal(true);
 
-  protected getEventIcon(type: BrainEventType): string {
-    const icons: Record<BrainEventType, string> = {
+  protected getEventIcon(type: BrainEventType | "user_message"): string {
+    const icons: Record<string, string> = {
       step_started: "▶",
       tool_called: "🔧",
       tool_result: "📤",
@@ -42,6 +42,7 @@ export class TerminalComponent {
       job_execution_failed: "❌",
       log_entry: "📋",
       status_update: "🔄",
+      user_message: "🧑",
     };
     return icons[type] ?? "•";
   }
@@ -71,6 +72,7 @@ export class TerminalComponent {
       return;
     }
 
+    this._socket.addUserMessage(message);
     this.messageSend.emit(message);
     this.messageText.set("");
   }

@@ -29,6 +29,12 @@ export class DashboardComponent implements OnInit {
 
   public ngOnInit(): void {
     this._socket.connect("http://localhost:3001");
+    // Once connected, auto-start or re-use an existing chat session
+    this._socket.onConnectedAsync().then(async () => {
+      const existingId = this.currentChatId();
+      const chatId = existingId ?? crypto.randomUUID();
+      await this._socket.startConversationAsync(chatId);
+    });
   }
 
   protected onStartConversation(): void {
@@ -39,10 +45,6 @@ export class DashboardComponent implements OnInit {
   }
 
   protected async onSendMessage(message: string): Promise<void> {
-    if (!this.currentChatId()) {
-      this.showStartDialog.set(true);
-      return;
-    }
     await this._socket.sendMessageAsync(message);
   }
 
