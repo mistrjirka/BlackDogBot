@@ -22,6 +22,42 @@ export const disconnectNodesTool = tool({
   }): Promise<{ success: boolean; message: string; graphAscii?: string }> => {
     try {
       const storageService: JobStorageService = JobStorageService.getInstance();
+      const allNodes: INode[] = await storageService.listNodesAsync(jobId);
+      const existingNodeIds: string[] = allNodes.map((node: INode): string => node.nodeId);
+
+      if (existingNodeIds.length === 0) {
+        return { success: false, message: `No nodes found in job "${jobId}".` };
+      }
+
+      const existingNodeIdSchema = z.enum(existingNodeIds as [string, ...string[]]);
+      const runtimeSchema = z.object({
+        fromNodeId: existingNodeIdSchema,
+        toNodeId: existingNodeIdSchema,
+      }).refine(
+        (value): boolean => value.fromNodeId !== value.toNodeId,
+        {
+          message: "Source and target node IDs must be different.",
+          path: ["toNodeId"],
+        },
+      );
+
+      const parsed = runtimeSchema.safeParse({ fromNodeId, toNodeId });
+
+      if (!parsed.success) {
+        if (!existingNodeIds.includes(fromNodeId)) {
+          return { success: false, message: `Source node "${fromNodeId}" not found.` };
+        }
+
+        if (!existingNodeIds.includes(toNodeId)) {
+          return { success: false, message: `Target node "${toNodeId}" not found.` };
+        }
+
+        const reason: string = parsed.error.issues
+          .map((issue): string => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ");
+
+        return { success: false, message: `Invalid node IDs for job "${jobId}": ${reason}` };
+      }
 
       const fromNode: INode | null = await storageService.getNodeAsync(jobId, fromNodeId);
 

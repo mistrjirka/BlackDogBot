@@ -222,7 +222,7 @@ export class MainAgent extends BaseAgentBase {
       edit_job: editJobTool,
       remove_job: createRemoveJobTool(creationModeTracker),
       get_jobs: getJobsTool,
-      run_job: createRunJobTool(jobTracker, nodeProgressEmitter),
+      run_job: createRunJobTool(jobTracker, nodeProgressEmitter, messageSender),
       call_skill: callSkillTool,
       get_skill_file: getSkillFileTool,
       add_cron: addCronTool,

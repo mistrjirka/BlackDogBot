@@ -131,7 +131,7 @@ not the same as node types.
 | `search_knowledge` | Search the knowledge base |
 | `add_knowledge` | Add information to the knowledge base |
 | `edit_knowledge` | Edit existing knowledge entries |
-| `send_message` | Send a message to the user |
+| `send_message` | Send a message to the execution user/chat when messaging context is available. In headless runs, it falls back to internal logging. |
 | `read_file` | Read a file from the workspace |
 | `write_file` | Write a file to the workspace |
 | `append_file` | Append content to a file |
@@ -148,6 +148,9 @@ not the same as node types.
   to include them in `selectedTools`, but listing `think` is harmless.
 - `done` is the tool the agent calls when it has finished its task. It is
   always available.
+- `send_message` requires execution messaging context (for example when the job
+   is run from a chat). In headless runs (e.g., some scheduled/background
+   executions), messages are logged instead of being delivered to a user chat.
 - Choose only the tools the agent actually needs. Fewer tools = more
   focused behavior.
 - **Do not confuse these with node types** (`curl_fetcher`, `crawl4ai`,

@@ -102,7 +102,7 @@ export class CronAgent extends BaseAgentBase {
       edit_file: editFileTool,
       call_skill: callSkillTool,
       get_skill_file: getSkillFileTool,
-      run_job: createRunJobTool(jobTracker),
+      run_job: createRunJobTool(jobTracker, undefined, messageSender),
       get_jobs: getJobsTool,
       list_crons: listCronsTool,
     };

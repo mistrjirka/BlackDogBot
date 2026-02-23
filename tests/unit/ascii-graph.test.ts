@@ -38,7 +38,7 @@ describe("buildAsciiGraph", () => {
     const node: INode = makeNode({ nodeId: "n1", name: "Solo", type: "start" });
     const result: string = buildAsciiGraph([node], "n1");
 
-    expect(result).toContain("[ Solo ★ (start) ]");
+    expect(result).toContain("[ Solo ★ [n1] (start) ]");
     expect(result).toContain("Connections:");
     expect(result).toContain("(none)");
   });
@@ -70,9 +70,9 @@ describe("buildAsciiGraph", () => {
     const lines: string[] = result.split("\n");
 
     // All three node labels must appear
-    expect(result).toContain("[ A ★ (start) ]");
-    expect(result).toContain("[ B (start) ]");
-    expect(result).toContain("[ C (start) ]");
+    expect(result).toContain("[ A ★ [a] (start) ]");
+    expect(result).toContain("[ B [b] (start) ]");
+    expect(result).toContain("[ C [c] (start) ]");
 
     // A appears before B, B before C
     const idxA: number = lines.findIndex((l: string) => l.includes("[ A ★"));
@@ -86,8 +86,8 @@ describe("buildAsciiGraph", () => {
     expect(result).toContain("v");
 
     // Connection list
-    expect(result).toContain("A ──> B");
-    expect(result).toContain("B ──> C");
+    expect(result).toContain("A [a] ──> B [b]");
+    expect(result).toContain("B [b] ──> C [c]");
   });
 
   //#endregion Linear chain
@@ -110,8 +110,8 @@ describe("buildAsciiGraph", () => {
     expect(lines[fanOutLineIdx + 1]).toContain("v");
 
     // Target names appear in the fan-out annotation
-    expect(lines[fanOutLineIdx]).toContain("Fetch RSS");
-    expect(lines[fanOutLineIdx]).toContain("Fetch Web");
+    expect(lines[fanOutLineIdx]).toContain("Fetch RSS [b]");
+    expect(lines[fanOutLineIdx]).toContain("Fetch Web [c]");
 
     // Connections section
     expect(result).toContain("fan-out: 2 children");
@@ -137,7 +137,7 @@ describe("buildAsciiGraph", () => {
     expect(fanInLineIdx).toBeGreaterThanOrEqual(0);
     expect(lines[fanInLineIdx + 1]).toContain("v");
 
-    expect(result).toContain("Summarize has 2 parents = fan-in");
+    expect(result).toContain("Summarize [c] has 2 parents = fan-in");
   });
 
   //#endregion Fan-in
@@ -162,7 +162,7 @@ describe("buildAsciiGraph", () => {
     expect(lines[fanOutIdx + 1]).toContain("v");
 
     // End node appears at the bottom
-    const idxStart: number = lines.findIndex((l: string) => l.includes("[ Start ★"));
+    const idxStart: number = lines.findIndex((l: string) => l.includes("[ Start ★ [s]"));
     const idxMerge: number = lines.findIndex((l: string) => l.includes("[ Merge"));
     expect(idxStart).toBeLessThan(idxMerge);
   });
@@ -181,7 +181,7 @@ describe("buildAsciiGraph", () => {
     const lines: string[] = result.split("\n");
 
     // Orphan must NOT appear in layer 0 row (same line as Start)
-    const layer0Line: string = lines.find((l: string) => l.includes("[ Start ★")) ?? "";
+    const layer0Line: string = lines.find((l: string) => l.includes("[ Start ★ [s]")) ?? "";
     expect(layer0Line).not.toContain("Orphan");
 
     // Orphan must appear in the disconnected section
@@ -223,7 +223,7 @@ describe("buildAsciiGraph", () => {
     expect(result).toContain("Ghost Two");
 
     // Neither ghost should be mixed with the start node
-    const layer0Line: string = result.split("\n").find((l: string) => l.includes("[ Start ★")) ?? "";
+    const layer0Line: string = result.split("\n").find((l: string) => l.includes("[ Start ★ [s]")) ?? "";
     expect(layer0Line).not.toContain("Ghost");
   });
 
@@ -248,7 +248,7 @@ describe("buildAsciiGraph", () => {
 
     const result: string = buildAsciiGraph([a, b, c], "a");
 
-    expect(result).toContain("Gamma has 2 parents = fan-in");
+    expect(result).toContain("Gamma [c] has 2 parents = fan-in");
   });
 
   //#endregion Connections section

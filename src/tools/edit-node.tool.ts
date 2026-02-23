@@ -1,4 +1,5 @@
 import { tool } from "ai";
+import { z } from "zod";
 import { editNodeToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { IJob, NodeConfig } from "../shared/types/index.js";
@@ -13,6 +14,23 @@ export function createEditNodeTool(tracker: IJobActivityTracker) {
     execute: async ({ jobId, nodeId, name, description, inputSchema, outputSchema, config }: { jobId: string; nodeId: string; name?: string; description?: string; inputSchema?: Record<string, unknown>; outputSchema?: IOutputSchemaBlueprint; config?: Record<string, unknown> }): Promise<{ success: boolean; message: string }> => {
       try {
         const storageService: JobStorageService = JobStorageService.getInstance();
+        const allNodes = await storageService.listNodesAsync(jobId);
+        const existingNodeIds: string[] = allNodes.map((node): string => node.nodeId);
+
+        if (existingNodeIds.length === 0) {
+          return { success: false, message: `No nodes found in job \"${jobId}\".` };
+        }
+
+        const existingNodeIdSchema = z.enum(existingNodeIds as [string, ...string[]]);
+        const parsed = existingNodeIdSchema.safeParse(nodeId);
+
+        if (!parsed.success) {
+          return {
+            success: false,
+            message: `Invalid nodeId for job \"${jobId}\": ${parsed.error.issues[0]?.message ?? "Unknown validation error."}`,
+          };
+        }
+
         const updates: Record<string, unknown> = {};
 
         if (name !== undefined) updates.name = name;

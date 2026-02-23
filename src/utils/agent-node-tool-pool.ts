@@ -21,11 +21,16 @@ import {
   FileReadTracker,
 } from "../tools/index.js";
 
-export function createAgentNodeToolPool(logger: LoggerService): Record<string, ToolSet[string]> {
-  const logSender = async (message: string): Promise<string | null> => {
+export type AgentNodeMessageSender = (message: string) => Promise<string | null>;
+
+export function createAgentNodeToolPool(
+  logger: LoggerService,
+  messageSender?: AgentNodeMessageSender,
+): Record<string, ToolSet[string]> {
+  const effectiveSender: AgentNodeMessageSender = messageSender ?? (async (message: string): Promise<string | null> => {
     logger.info("Agent node message", { message });
     return null;
-  };
+  });
 
   const readTracker: FileReadTracker = new FileReadTracker();
 
@@ -35,7 +40,7 @@ export function createAgentNodeToolPool(logger: LoggerService): Record<string, T
     search_knowledge: searchKnowledgeTool,
     add_knowledge: addKnowledgeTool,
     edit_knowledge: editKnowledgeTool,
-    send_message: createSendMessageTool(logSender),
+    send_message: createSendMessageTool(effectiveSender),
     read_file: createReadFileTool(readTracker),
     write_file: createWriteFileTool(readTracker),
     append_file: appendFileTool,

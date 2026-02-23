@@ -1,4 +1,5 @@
 import { tool } from "ai";
+import { z } from "zod";
 import { connectNodesToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { INode } from "../shared/types/index.js";
@@ -64,6 +65,58 @@ export const connectNodesTool = tool({
   }): Promise<{ success: boolean; message: string; schemaCompatible: boolean; graphAscii?: string }> => {
     try {
       const storageService: JobStorageService = JobStorageService.getInstance();
+      const allNodes: INode[] = await storageService.listNodesAsync(jobId);
+      const existingNodeIds: string[] = allNodes.map((n: INode): string => n.nodeId);
+
+      if (existingNodeIds.length === 0) {
+        return {
+          success: false,
+          message: `No nodes found in job \"${jobId}\".`,
+          schemaCompatible: false,
+        };
+      }
+
+      const existingNodeIdSchema = z.enum(existingNodeIds as [string, ...string[]]);
+      const runtimeSchema = z.object({
+        fromNodeId: existingNodeIdSchema,
+        toNodeId: existingNodeIdSchema,
+      }).refine(
+        (value): boolean => value.fromNodeId !== value.toNodeId,
+        {
+          message: "Source and target node IDs must be different.",
+          path: ["toNodeId"],
+        },
+      );
+
+      const parsed = runtimeSchema.safeParse({ fromNodeId, toNodeId });
+
+      if (!parsed.success) {
+        if (!existingNodeIds.includes(fromNodeId)) {
+          return {
+            success: false,
+            message: `Source node "${fromNodeId}" not found.`,
+            schemaCompatible: false,
+          };
+        }
+
+        if (!existingNodeIds.includes(toNodeId)) {
+          return {
+            success: false,
+            message: `Target node "${toNodeId}" not found.`,
+            schemaCompatible: false,
+          };
+        }
+
+        const reason: string = parsed.error.issues
+          .map((issue): string => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ");
+
+        return {
+          success: false,
+          message: `Invalid node IDs for job \"${jobId}\": ${reason}`,
+          schemaCompatible: false,
+        };
+      }
 
       const fromNode: INode | null = await storageService.getNodeAsync(jobId, fromNodeId);
 
@@ -87,7 +140,6 @@ export const connectNodesTool = tool({
       }
 
       // Cycle detection
-      const allNodes: INode[] = await storageService.listNodesAsync(jobId);
 
       if (_isReachable(allNodes, toNodeId, fromNodeId)) {
         return {

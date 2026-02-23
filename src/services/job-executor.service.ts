@@ -42,7 +42,10 @@ import { getForceThinkDirective } from "../utils/prepare-step.js";
 import { parseRssFeed } from "../utils/rss-parser.js";
 import { createOutputZodSchema } from "../utils/json-schema-to-zod.js";
 import { thinkTool } from "../tools/index.js";
-import { createAgentNodeToolPool } from "../utils/agent-node-tool-pool.js";
+import {
+  createAgentNodeToolPool,
+  type AgentNodeMessageSender,
+} from "../utils/agent-node-tool-pool.js";
 
 // Default timeout for HTTP requests in node execution (30 seconds)
 const DEFAULT_FETCH_TIMEOUT_MS: number = 30000;
@@ -111,6 +114,7 @@ export class JobExecutorService {
     jobId: string,
     input: Record<string, unknown>,
     onNodeProgressAsync?: OnNodeProgressCallback,
+    options?: { agentNodeMessageSender?: AgentNodeMessageSender },
   ): Promise<IJobExecutionResult> {
     // Check if job is already running (in-memory lock to prevent concurrent execution)
     if (this._runningJobs.has(jobId)) {
@@ -224,7 +228,7 @@ export class JobExecutorService {
             // Progress errors must never affect execution
           }
 
-          nodeOutput = await this._executeNodeAsync(node, nodeInput);
+          nodeOutput = await this._executeNodeAsync(node, nodeInput, options);
 
           const nodeEndTime: number = Date.now();
           nodeResults.push({
@@ -416,6 +420,7 @@ export class JobExecutorService {
   private async _executeNodeAsync(
     node: INode,
     input: Record<string, unknown>,
+    options?: { agentNodeMessageSender?: AgentNodeMessageSender },
   ): Promise<Record<string, unknown>> {
     const nodeType: NodeType = node.type;
 
@@ -442,7 +447,7 @@ export class JobExecutorService {
         return this._executeOutputToAiAsync(node, input);
 
       case "agent":
-        return this._executeAgentAsync(node, input);
+        return this._executeAgentAsync(node, input, options);
 
       case "litesql":
         return this._executeLiteSqlAsync(node, input);
@@ -815,6 +820,7 @@ export class JobExecutorService {
   private async _executeAgentAsync(
     node: INode,
     input: Record<string, unknown>,
+    options?: { agentNodeMessageSender?: AgentNodeMessageSender },
   ): Promise<Record<string, unknown>> {
     // Clear tool call history at the start of each execution
     this._lastToolCallHistory = [];
@@ -829,7 +835,10 @@ export class JobExecutorService {
     }
 
     // Build the tool set from selected tools
-    const toolPool: Record<string, ToolSet[string]> = createAgentNodeToolPool(this._logger);
+    const toolPool: Record<string, ToolSet[string]> = createAgentNodeToolPool(
+      this._logger,
+      options?.agentNodeMessageSender,
+    );
     const selectedTools: ToolSet = {};
 
     for (const toolName of config.selectedTools) {

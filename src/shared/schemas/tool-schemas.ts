@@ -899,11 +899,25 @@ export const finishJobCreationToolOutputSchema = z.object({
 
 //#endregion Phase 2 Job Creation Tools
 
+const editablePromptNames = [
+  "main-agent",
+  "cron-agent",
+  "job-agent",
+  "agent-node-guide",
+  "job-creation-guide",
+  "tool-preambles",
+  "context-gathering",
+  "persistence",
+  "skill-setup",
+  "graph-audit",
+  "prompt-fragments/output-format",
+  "prompt-fragments/xml-tag-guide",
+  "prompt-fragments/safety-rules",
+] as const;
 
 export const modifyPromptToolInputSchema = z.object({
-  promptName: z.string()
-    .min(1)
-    .describe("Prompt file name without .md extension (e.g. 'main-agent', 'prompt-fragments/xml-tag-guide')"),
+  promptName: z.enum(editablePromptNames)
+    .describe("Prompt file name without .md extension"),
   action: z.enum(["read", "write", "append"])
     .describe("Action to perform"),
   content: z.string()

@@ -10,9 +10,12 @@ export type NodeProgressEmitter = (
   nodeStatuses: Record<string, string>,
 ) => Promise<void>;
 
+export type JobMessageSender = (message: string) => Promise<string | null>;
+
 export function createRunJobTool(
   tracker: IJobActivityTracker,
   emitProgressAsync?: NodeProgressEmitter,
+  messageSender?: JobMessageSender,
 ) {
   return tool({
     description:
@@ -34,7 +37,12 @@ export function createRunJobTool(
         }
       };
 
-      const result: IJobExecutionResult = await executorService.executeJobAsync(jobId, input, onNodeProgressAsync);
+      const result: IJobExecutionResult = await executorService.executeJobAsync(
+        jobId,
+        input,
+        onNodeProgressAsync,
+        { agentNodeMessageSender: messageSender },
+      );
 
       if (result.success) {
         tracker.trackRanSuccessfully(jobId);

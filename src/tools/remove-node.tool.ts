@@ -1,4 +1,5 @@
 import { tool } from "ai";
+import { z } from "zod";
 import { removeNodeToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { buildAsciiGraph } from "../utils/ascii-graph.js";
@@ -11,6 +12,23 @@ export const removeNodeTool = tool({
   ): Promise<{ success: boolean; message: string; graphAscii?: string }> => {
     try {
       const storageService: JobStorageService = JobStorageService.getInstance();
+      const allNodes = await storageService.listNodesAsync(jobId);
+      const existingNodeIds: string[] = allNodes.map((node): string => node.nodeId);
+
+      if (existingNodeIds.length === 0) {
+        return { success: false, message: `No nodes found in job \"${jobId}\".` };
+      }
+
+      const existingNodeIdSchema = z.enum(existingNodeIds as [string, ...string[]]);
+      const parsed = existingNodeIdSchema.safeParse(nodeId);
+
+      if (!parsed.success) {
+        return {
+          success: false,
+          message: `Invalid nodeId for job \"${jobId}\": ${parsed.error.issues[0]?.message ?? "Unknown validation error."}`,
+        };
+      }
+
       await storageService.deleteNodeAsync(jobId, nodeId);
 
       const updatedJob = await storageService.getJobAsync(jobId);

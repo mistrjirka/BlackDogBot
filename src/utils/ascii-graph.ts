@@ -156,7 +156,17 @@ export function buildAsciiGraph(nodes: INode[], entrypointNodeId: string | null)
 
     const entryMarker: string = nodeId === entrypointNodeId ? " ★" : "";
     const typeLabel: string = n.type.replace(/_/g, " ");
-    return `[ ${n.name}${entryMarker} (${typeLabel}) ]`;
+    return `[ ${n.name}${entryMarker} [${n.nodeId}] (${typeLabel}) ]`;
+  };
+
+  const nameWithId = (nodeId: string): string => {
+    const n: INode | undefined = nodeMap.get(nodeId);
+
+    if (!n) {
+      return nodeId;
+    }
+
+    return `${n.name} [${n.nodeId}]`;
   };
 
   const lines: string[] = [];
@@ -201,14 +211,14 @@ export function buildAsciiGraph(nodes: INode[], entrypointNodeId: string | null)
 
     if (isFanOut) {
       const targets: string[] = Array.from(uniqueDests).map(
-        (id: string) => nodeMap.get(id)?.name ?? id,
+        (id: string) => nameWithId(id),
       );
       lines.push(`         |`);
       lines.push(`         +── fan-out ──> ${targets.join(", ")}`);
       lines.push(`         v`);
     } else if (isFanIn) {
       const sources: string[] = Array.from(uniqueSources).map(
-        (id: string) => nodeMap.get(id)?.name ?? id,
+        (id: string) => nameWithId(id),
       );
       lines.push(`         +── fan-in (from: ${sources.join(", ")})`);
       lines.push(`         v`);
@@ -235,7 +245,7 @@ export function buildAsciiGraph(nodes: INode[], entrypointNodeId: string | null)
     hasAnyConnections = true;
 
     const childNames: string = n.connections
-      .map((targetId: string) => nodeMap.get(targetId)?.name ?? targetId)
+      .map((targetId: string) => nameWithId(targetId))
       .join(", ");
 
     const fanNote: string = n.connections.length > 1 ? ` (fan-out: ${n.connections.length} children)` : "";
@@ -243,13 +253,13 @@ export function buildAsciiGraph(nodes: INode[], entrypointNodeId: string | null)
       .map((targetId: string) => {
         const targetParentCount: number = (parents.get(targetId) ?? []).length;
         return targetParentCount > 1
-          ? ` [${nodeMap.get(targetId)?.name ?? targetId} has ${targetParentCount} parents = fan-in]`
+          ? ` [${nameWithId(targetId)} has ${targetParentCount} parents = fan-in]`
           : "";
       })
       .filter(Boolean)
       .join("");
 
-    lines.push(`  ${n.name} ──> ${childNames}${fanNote}${fanInNote}`);
+    lines.push(`  ${nameWithId(n.nodeId)} ──> ${childNames}${fanNote}${fanInNote}`);
   }
 
   if (!hasAnyConnections) {
