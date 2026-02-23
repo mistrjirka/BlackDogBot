@@ -258,7 +258,7 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
     console.log("==============================\n");
   }, 180000);
 
-  it("should handle complex nested schema and validate output", async () => {
+  it("should handle blueprint-compatible schema and validate output", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
     const executorService: JobExecutorService = JobExecutorService.getInstance();
 
@@ -267,8 +267,8 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
       schemaTool,
       { description: `An analysis result object containing:
         - summary: a string summary
-        - analysis: an object with score (number) and breakdown (object with positive number and negative number)
-        - items: an array of objects, each with id (string) and value (number)` },
+        - score: a number between 0 and 100
+        - tags: an array of strings` },
     );
 
     expect(schemaResult.success).toBe(true);
@@ -278,7 +278,7 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
     // Create job and node
     const job: IJob = await storageService.createJobAsync(
       "Complex Dynamic Schema Test",
-      "Test complex nested schema",
+      "Test blueprint-compatible schema",
     );
 
     const node: INode = await storageService.addNodeAsync(
@@ -293,8 +293,8 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
 
         You MUST call the 'done' tool with:
         - summary: a brief text summary
-        - analysis: { score: number 0-100, breakdown: { positive: number, negative: number } }
-        - items: array of { id: string, value: number }`,
+        - score: number 0-100
+        - tags: array of short string labels`,
         selectedTools: ["think"],
         model: null,
         reasoningEffort: "low",
@@ -325,8 +325,8 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
 
     const output = result.output as Record<string, unknown>;
     expect(output.summary).toBeDefined();
-    expect(output.analysis).toBeDefined();
-    expect(Array.isArray(output.items)).toBe(true);
+    expect(typeof output.score).toBe("number");
+    expect(Array.isArray(output.tags)).toBe(true);
   }, 180000);
 });
 

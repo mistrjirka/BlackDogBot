@@ -19,6 +19,7 @@ export const nodeTypeSchema = z.enum([
   "output_to_ai",
   "agent",
   "litesql",
+  "litesql_reader",
 ]);
 
 export const agentNodeConfigSchema = z.object({
@@ -138,6 +139,29 @@ export const liteSqlConfigSchema = z.object({
     .describe("Name of the table to insert into"),
 });
 
+export const liteSqlReaderConfigSchema = z.object({
+  databaseName: z.string()
+    .min(1)
+    .describe("Name of the database to read from"),
+  tableName: z.string()
+    .min(1)
+    .describe("Name of the table to query"),
+  where: z.string()
+    .nullable()
+    .default(null)
+    .describe("SQL WHERE clause (without the WHERE keyword); supports {{key}} template substitution"),
+  orderBy: z.string()
+    .nullable()
+    .default(null)
+    .describe("SQL ORDER BY clause (without the ORDER BY keywords)"),
+  limit: z.number()
+    .int()
+    .positive()
+    .nullable()
+    .default(null)
+    .describe("Maximum number of rows to return"),
+});
+
 export const startNodeConfigSchema = z.object({
   scheduledTaskId: z.string()
     .nullable()
@@ -154,6 +178,7 @@ export const nodeConfigSchema = z.union([
   pythonCodeConfigSchema,
   outputToAiConfigSchema,
   liteSqlConfigSchema,
+  liteSqlReaderConfigSchema,
   startNodeConfigSchema,
   z.object({}).strict(),
 ]);

@@ -21,6 +21,14 @@ When creating a job, follow this structured process:
    **15**; if the agent has many tools (5+), use at least **50** — when in
    doubt, **50 is the safe default**.
 
+  > **IMPORTANT: Agent nodes require an `outputSchema`.** Before calling
+  > `add_agent_node`, you MUST first call `create_output_schema` to generate
+  > a strict blueprint, then pass the returned `blueprint` object as the
+  > `outputSchema` parameter. The runtime converts this blueprint to JSON
+  > Schema internally. The `outputSchema` defines the shape of the `done()` tool —
+  > i.e., what the agent returns as its final result. Calling `add_agent_node`
+  > without `outputSchema` will fail.
+
 4. **Add tests** — for each node **except `start` nodes** (which are passthroughs with no logic), add at least one test with `add_node_test` and run it with `run_node_test` to verify behavior.
 
 5. **Finish** — call `finish_job_creation`. This validates the graph, checks
@@ -29,10 +37,16 @@ When creating a job, follow this structured process:
 
 ## Manual / editing flow (for modifying existing jobs)
 
-Use these tools to edit jobs that already exist or were created with the
-legacy flow:
-- `add_job` + `add_node` + `set_entrypoint` + `finish_job`
-- `edit_job`, `edit_node`, `add_node`, `remove_node`, `connect_nodes`
+To edit an existing job, first call `start_job_creation` with the job's ID to
+enter job creation mode, which unlocks the editing tools. Then use:
+- `edit_node`, `remove_node`, `connect_nodes`, `disconnect_nodes`,
+  `set_entrypoint`, `add_<type>_node`
+
+When done, call `finish_job_creation` to validate and save.
+
+Alternatively, for jobs not in creation mode:
+- `edit_job` — update the job name or description
+- `add_job` + `finish_job` — create a job via the legacy flow
 </task>
 
 <design_principles>
@@ -62,6 +76,8 @@ legacy flow:
 - > **NEVER use `python_code` to interact with databases.**
   > Database persistence is handled exclusively by the `litesql` node and by
   > `agent` nodes with `write_to_database` / `read_from_database` tools.
+  > Database reads are handled by the `litesql_reader` node or by `agent`
+  > nodes with `read_from_database`.
   > Writing Python that opens a `sqlite3` connection, runs INSERT statements,
   > or manages `.db` files is **always wrong** — no exceptions. Use the
   > purpose-built `litesql` node and the `create_table` / `write_to_database` /
@@ -157,11 +173,12 @@ this means chaining each new node to the previously created node.
 > similar is always wrong. Use the `litesql` node and the `create_table` /
 > `write_to_database` / `read_from_database` tools.
 
-### When to use litesql vs agent with DB tools
+### When to use litesql / litesql_reader vs agent with DB tools
 
 | Situation | Use |
 |---|---|
 | Every input record should be inserted as-is, no logic needed | `litesql` node |
+| Simple deterministic read (e.g. last N hours, all rows) | `litesql_reader` node |
 | Need to read from the DB before deciding what to write | `agent` node with `read_from_database` + `write_to_database` |
 | Need conditional writes (e.g. skip duplicates, filter by rule) | `agent` node with DB tools |
 | Need to query data for summaries / reports | `agent` node with `read_from_database` |
@@ -171,6 +188,10 @@ this means chaining each new node to the previously created node.
 and inserts it directly into the table. It has no query support and no
 conditional logic. Use it only when the upstream node (e.g. `output_to_ai`)
 has already done all filtering/transforming, and you just need to persist the result.
+
+**`litesql_reader` is read-only** — it fetches rows from a table with optional
+WHERE/ORDER BY/LIMIT and outputs them for downstream nodes. Use it when the
+query is simple and deterministic (no AI reasoning needed to decide what to read).
 
 **`agent` with DB tools** is for any situation where the node must reason about
 the database — reading existing rows, checking before writing, building summaries,
@@ -280,8 +301,14 @@ create_table("news", "interesting_items", [...])             ← tool call first
 add_rss_fetcher_node(parentNodeId = "s1", mode = "unseen")  → nodeId "n1"
 add_output_to_ai_node(                                       → nodeId "n2"
   parentNodeId  = "n1",
-  outputSchema  = {                  ← field names must match table columns!
-    items: [{ title, link, summary, stored_at }]
+  outputSchema  = {
+    type: "array",                  ← field names must match table columns!
+    fields: [
+      { name: "title", type: "string" },
+      { name: "link", type: "string" },
+      { name: "summary", type: "string" },
+      { name: "stored_at", type: "string" }
+    ]
   }
 )
 add_litesql_node(parentNodeId = "n2",                        → nodeId "n3"
@@ -462,6 +489,14 @@ reasons, and eventually calls the `done` tool with its final result.
 
 > **Note:** `think` and `done` are always injected automatically — do NOT include them in `selectedTools`.
 
+**Output schema (required):** The `outputSchema` defines the JSON format of
+the `done()` tool — i.e., what the agent returns as its final result. For
+typed node-creation tools, `outputSchema` must be a strict blueprint in this
+shape: `{ type: "object"|"array", fields: [{ name, type }] }` where
+`type` is one of `string | number | boolean | stringArray | numberArray`.
+Use `create_output_schema` to generate this blueprint and pass `blueprint`
+to `add_agent_node`.
+
 **When to use:** When the task requires multi-step reasoning, tool use
 (searching knowledge, running commands, reading/writing files), or complex
 decision-making that cannot be done in a single LLM pass.
@@ -515,10 +550,61 @@ if the table has columns `id`, `name`, `email`, the input should be:
 **When to use:** At the end of a pipeline to persist transformed data to a
 SQLite database. The database files are stored in `~/.betterclaw/databases/`.
 
+---
+
+## litesql_reader
+A **read-only data-source node** that fetches rows from a SQLite database table.
+It queries the specified table with optional WHERE, ORDER BY, and LIMIT clauses
+and outputs the result as `{ rows: [...], totalCount: number }`. Use it to feed
+previously stored data back into a pipeline — for example, fetching records from
+the last N hours for further processing.
+
+> The output schema is **automatically derived** from the table's columns when
+> you call `add_litesql_reader_node`. The tool response includes the
+> `derivedOutputSchema` so you can see exactly what shape the output will have.
+
+**Important:** Before using this node, the table MUST already exist. Use
+`list_databases`, `list_tables`, and `get_table_schema` to verify.
+
+**Config (`ILiteSqlReaderConfig`):**
+| Property | Type | Description |
+|---|---|---|
+| `databaseName` | `string` | Name of the database |
+| `tableName` | `string` | Target table name |
+| `where` | `string \| null` | SQL WHERE clause (without the keyword `WHERE`); supports `{{key}}` template substitution from input |
+| `orderBy` | `string \| null` | SQL ORDER BY clause (without the keyword `ORDER BY`), e.g. `"created_at DESC"` |
+| `limit` | `number \| null` | Maximum number of rows to return |
+
+**Template substitution:** The `where` clause supports `{{key}}` placeholders
+that are replaced at runtime with values from the node's input. For example,
+`where: "created_at > datetime('now', '-{{hours}} hours')"` with input
+`{ "hours": "24" }` becomes `WHERE created_at > datetime('now', '-24 hours')`.
+
+**Input:** Any JSON object. Properties are used only for `{{key}}` template
+substitution in the `where` clause. If the node has no upstream input or
+no templates, the input is ignored.
+
+**Output:**
+```json
+{
+  "rows": [
+    { "id": 1, "title": "...", "created_at": "2025-01-01" },
+    { "id": 2, "title": "...", "created_at": "2025-01-02" }
+  ],
+  "totalCount": 2
+}
+```
+
+**When to use:** At the start or middle of a pipeline when you need to read
+previously stored data from a SQLite database for further processing,
+filtering, or output. Prefer this over an `agent` node with
+`read_from_database` when the query is simple and deterministic.
+
 </node_types>
 
 <schema_rules>
-- All schemas are JSON Schema format.
+- Runtime node schemas are JSON Schema format.
+- For typed node-creation tools, `outputSchema` input is a strict blueprint and is converted to JSON Schema internally.
 - Connected nodes must have compatible schemas at their junction.
 - Use descriptive property names and include descriptions.
 - Keep schemas as simple as possible while capturing required structure.
@@ -528,29 +614,28 @@ SQLite database. The database files are stored in `~/.betterclaw/databases/`.
 Jobs and nodes are fully editable after creation. Do not recreate from
 scratch if a small fix will do — use the appropriate edit tool instead.
 
-Available editing tools:
-- `edit_job` — update the job name or description
+To edit nodes, you must be in job creation mode (call `start_job_creation`
+with the job's ID first). Available editing tools:
 - `edit_node` — update a node's name, description, input schema, output
   schema, or config (code, URL, system prompt, maxSteps, etc.)
-- `add_node` — add a new node to an existing job
 - `remove_node` — remove a node from the job
 - `connect_nodes` — add a connection between two nodes
+- `disconnect_nodes` — remove a connection between two nodes
 - `set_entrypoint` — change which node starts execution
-- `finish_job` — mark job as ready (transitions status from "creating"
-  to "ready"); call this once all nodes are defined and tested
-- `finish_job_creation` — finish a job that was started with `start_job_creation`
-  (validates graph + `{{nodeId.outputKey}}` template references + all tests,
-  marks job as ready, and exits job creation mode)
+- `add_<type>_node` — add a new typed node to the job
+- `finish_job_creation` — validate graph, run tests, mark job as ready,
+  and exit job creation mode
+
+Always-on (no job creation mode needed):
+- `edit_job` — update the job name or description
+- `finish_job` — mark a legacy job as ready
 
 When to use edit tools:
 - A node test fails → use `edit_node` to fix the config, code, or schema
 - The output schema doesn't match downstream expectations → `edit_node`
-- A new requirement means adding a step → `add_node` + `connect_nodes`
+- A new requirement means adding a step → `add_<type>_node` + `connect_nodes`
+- Wrong connection → `disconnect_nodes` + `connect_nodes`
 - Wrong entrypoint set → `set_entrypoint`
-
-Note: There is no `disconnect_nodes` tool. If a connection is wrong,
-use `remove_node` on the problematic node and re-add it, or restructure
-the graph by adding the corrected connection with `connect_nodes`.
 </editing_after_creation>
 
 <job_scheduling>

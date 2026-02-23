@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { outputSchemaBlueprintSchema } from "./output-schema-blueprint.schema.js";
 
 //#region Think Tool
 
@@ -275,7 +276,7 @@ export const editNodeToolInputSchema = z.object({
     .optional(),
   inputSchema: z.record(z.string(), z.unknown())
     .optional(),
-  outputSchema: z.record(z.string(), z.unknown())
+  outputSchema: outputSchemaBlueprintSchema
     .optional(),
   config: z.record(z.string(), z.unknown())
     .optional(),
@@ -635,8 +636,10 @@ const _commonNodeCreationFields = {
   description: z.string()
     .default("")
     .describe("Node description"),
-  outputSchema: z.record(z.string(), z.unknown())
-    .describe("JSON Schema describing what this node produces"),
+  outputSchema: outputSchemaBlueprintSchema
+    .describe(
+      "Strict output blueprint. Use { type: 'object'|'array', fields: [{ name, type }] } where type is one of: string, number, boolean, stringArray, numberArray.",
+    ),
 };
 
 export const startJobCreationToolInputSchema = z.object({
@@ -846,6 +849,33 @@ export const addLitesqlNodeToolOutputSchema = z.object({
   nodeId: z.string(),
   success: z.boolean(),
   message: z.string(),
+});
+
+export const addLitesqlReaderNodeToolInputSchema = z.object({
+  ..._commonNodeCreationFields,
+  outputSchema: z.record(z.string(), z.unknown())
+    .optional()
+    .describe("JSON Schema for output. Auto-derived from table columns if not provided."),
+  databaseName: z.string()
+    .min(1)
+    .describe("LiteSQL database name"),
+  tableName: z.string()
+    .min(1)
+    .describe("Table name to read from"),
+  where: z.string()
+    .nullable()
+    .default(null)
+    .describe("SQL WHERE clause (without the WHERE keyword); supports {{key}} template substitution from node input"),
+  orderBy: z.string()
+    .nullable()
+    .default(null)
+    .describe("SQL ORDER BY clause (without the ORDER BY keywords), e.g. 'created_at DESC'"),
+  limit: z.number()
+    .int()
+    .positive()
+    .nullable()
+    .default(null)
+    .describe("Maximum number of rows to return"),
 });
 
 export const finishJobCreationToolInputSchema = z.object({

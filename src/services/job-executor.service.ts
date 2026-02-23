@@ -22,6 +22,7 @@ import {
   IOutputToAiConfig,
   IAgentNodeConfig,
   ILiteSqlConfig,
+  ILiteSqlReaderConfig,
   IAgentToolCall,
   NodeType,
   OnNodeProgressCallback,
@@ -445,6 +446,9 @@ export class JobExecutorService {
 
       case "litesql":
         return this._executeLiteSqlAsync(node, input);
+
+      case "litesql_reader":
+        return this._executeLiteSqlReaderAsync(node, input);
 
       default:
         throw new Error(`Unsupported node type: ${nodeType}`);
@@ -1093,6 +1097,55 @@ export class JobExecutorService {
     }
 
     return result;
+  }
+
+  private async _executeLiteSqlReaderAsync(
+    node: INode,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const config: ILiteSqlReaderConfig = node.config as ILiteSqlReaderConfig;
+
+    const databaseName: string = this._substituteTemplate(config.databaseName, input);
+    const tableName: string = this._substituteTemplate(config.tableName, input);
+
+    const liteSqlService: LiteSqlService = LiteSqlService.getInstance();
+
+    const dbExists: boolean = await liteSqlService.databaseExistsAsync(databaseName);
+    if (!dbExists) {
+      const allDbs = await liteSqlService.listDatabasesAsync();
+      const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+
+      throw new Error(
+        `Database "${databaseName}" does not exist.\n` +
+          `Available databases: ${available}`,
+      );
+    }
+
+    const tableExists: boolean = await liteSqlService.tableExistsAsync(databaseName, tableName);
+    if (!tableExists) {
+      const tables = await liteSqlService.listTablesAsync(databaseName);
+      const available: string = tables.join(", ") || "(none)";
+
+      throw new Error(
+        `Table "${tableName}" does not exist in database "${databaseName}".\n` +
+          `Available tables: ${available}`,
+      );
+    }
+
+    const where: string | undefined = config.where
+      ? this._substituteTemplate(config.where, input)
+      : undefined;
+
+    const result = await liteSqlService.queryTableAsync(databaseName, tableName, {
+      where,
+      orderBy: config.orderBy ?? undefined,
+      limit: config.limit ?? undefined,
+    });
+
+    return {
+      rows: result.rows,
+      totalCount: result.totalCount,
+    };
   }
 
   //#endregion Private methods

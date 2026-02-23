@@ -3,6 +3,8 @@ import { addOutputToAiNodeToolInputSchema } from "../shared/schemas/tool-schemas
 import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
 import { IOutputToAiConfig } from "../shared/types/index.js";
+import { IOutputSchemaBlueprint } from "../shared/schemas/output-schema-blueprint.schema.js";
+import { convertOutputSchemaBlueprintToJsonSchema } from "../utils/output-schema-blueprint.js";
 
 export function createAddOutputToAiNodeTool(jobTracker: IJobActivityTracker) {
   return tool({
@@ -24,12 +26,13 @@ export function createAddOutputToAiNodeTool(jobTracker: IJobActivityTracker) {
       parentNodeId?: string;
       name: string;
       description: string;
-      outputSchema: Record<string, unknown>;
+      outputSchema: IOutputSchemaBlueprint;
       prompt: string;
       model: string | null;
     }): Promise<ICreateNodeResult> => {
       try {
         const config: IOutputToAiConfig = { prompt, model };
+        const outputJsonSchema: Record<string, unknown> = convertOutputSchemaBlueprintToJsonSchema(outputSchema);
 
         return await createNodeAsync(
           jobId,
@@ -37,7 +40,7 @@ export function createAddOutputToAiNodeTool(jobTracker: IJobActivityTracker) {
           name,
           description,
           {},
-          outputSchema,
+          outputJsonSchema,
           config,
           parentNodeId,
           jobTracker,

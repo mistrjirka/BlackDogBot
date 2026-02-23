@@ -59,6 +59,39 @@ export function deriveInputSchemaFromTable(tableInfo: ITableInfo): IJsonSchema {
 }
 
 /**
+ * Derives an output schema for reading rows from a table.
+ * Returns a JSON Schema shaped as { rows: [{ ...columns }], totalCount: number }.
+ * Unlike deriveInputSchemaFromTable, this includes ALL columns (including PKs)
+ * because query results contain every column.
+ */
+export function deriveOutputSchemaFromTable(tableInfo: ITableInfo): Record<string, unknown> {
+  const rowProperties: Record<string, IJsonSchemaProperty> = {};
+
+  for (const col of tableInfo.columns) {
+    rowProperties[col.name] = _sqlTypeToJsonSchemaProperty(col.type);
+  }
+
+  return {
+    type: "object",
+    properties: {
+      rows: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: rowProperties,
+          required: tableInfo.columns.map((c) => c.name),
+        },
+      },
+      totalCount: {
+        type: "integer",
+        description: "Total number of matching rows (before LIMIT)",
+      },
+    },
+    required: ["rows", "totalCount"],
+  };
+}
+
+/**
  * Validates that a provided inputSchemaHint is broadly compatible with the actual
  * table columns. Returns a list of warning strings (empty = no issues).
  *

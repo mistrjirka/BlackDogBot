@@ -11,7 +11,8 @@ export type NodeType =
   | "python_code"
   | "output_to_ai"
   | "agent"
-  | "litesql";
+  | "litesql"
+  | "litesql_reader";
 
 export interface IJob {
   jobId: string;
@@ -80,6 +81,14 @@ export interface ILiteSqlConfig {
   tableName: string;
 }
 
+export interface ILiteSqlReaderConfig {
+  databaseName: string;
+  tableName: string;
+  where: string | null;
+  orderBy: string | null;
+  limit: number | null;
+}
+
 export interface IStartNodeConfig {
   scheduledTaskId: string | null;
 }
@@ -93,6 +102,7 @@ export type NodeConfig =
   | IPythonCodeConfig
   | IOutputToAiConfig
   | ILiteSqlConfig
+  | ILiteSqlReaderConfig
   | IStartNodeConfig
   | Record<string, never>;
 

@@ -4,6 +4,8 @@ import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { validateFetcherConfigAsync } from "../utils/node-validation.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
 import { ICrawl4AiConfig } from "../shared/types/index.js";
+import { IOutputSchemaBlueprint } from "../shared/schemas/output-schema-blueprint.schema.js";
+import { convertOutputSchemaBlueprintToJsonSchema } from "../utils/output-schema-blueprint.js";
 
 export function createAddCrawl4aiNodeTool(jobTracker: IJobActivityTracker) {
   return tool({
@@ -26,13 +28,14 @@ export function createAddCrawl4aiNodeTool(jobTracker: IJobActivityTracker) {
       parentNodeId?: string;
       name: string;
       description: string;
-      outputSchema: Record<string, unknown>;
+      outputSchema: IOutputSchemaBlueprint;
       url: string;
       extractionPrompt: string | null;
       selector: string | null;
     }): Promise<ICreateNodeResult> => {
       try {
         const config: ICrawl4AiConfig = { url, extractionPrompt, selector };
+        const outputJsonSchema: Record<string, unknown> = convertOutputSchemaBlueprintToJsonSchema(outputSchema);
         const validation = await validateFetcherConfigAsync("crawl4ai", config as unknown as Record<string, unknown>);
 
         if (!validation.valid) {
@@ -45,7 +48,7 @@ export function createAddCrawl4aiNodeTool(jobTracker: IJobActivityTracker) {
           name,
           description,
           {},
-          outputSchema,
+          outputJsonSchema,
           config,
           parentNodeId,
           jobTracker,

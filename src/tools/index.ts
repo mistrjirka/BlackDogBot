@@ -58,5 +58,6 @@ export { createAddPythonCodeNodeTool } from "./add-python-code-node.tool.js";
 export { createAddOutputToAiNodeTool } from "./add-output-to-ai-node.tool.js";
 export { createAddAgentNodeTool } from "./add-agent-node.tool.js";
 export { createAddLitesqlNodeTool } from "./add-litesql-node.tool.js";
+export { createAddLitesqlReaderNodeTool } from "./add-litesql-reader-node.tool.js";
 export { createFinishJobCreationTool } from "./finish-job-creation.tool.js";
 export { createCreateOutputSchemaTool } from "./create-output-schema.tool.js";

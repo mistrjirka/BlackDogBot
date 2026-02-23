@@ -66,6 +66,7 @@ import {
   createAddOutputToAiNodeTool,
   createAddAgentNodeTool,
   createAddLitesqlNodeTool,
+  createAddLitesqlReaderNodeTool,
   setJobScheduleTool,
   removeJobScheduleTool,
 } from "../tools/index.js";
@@ -94,6 +95,7 @@ const _GraphMutatingTools: Set<string> = new Set([
   "add_output_to_ai_node",
   "add_agent_node",
   "add_litesql_node",
+  "add_litesql_reader_node",
   "finish_job_creation",
 ]);
 
@@ -217,21 +219,10 @@ export class MainAgent extends BaseAgentBase {
       write_file: createWriteFileTool(readTracker),
       append_file: appendFileTool,
       edit_file: editFileTool,
-      add_job: addJobTool,
       edit_job: editJobTool,
       remove_job: createRemoveJobTool(creationModeTracker),
       get_jobs: getJobsTool,
       run_job: createRunJobTool(jobTracker, nodeProgressEmitter),
-      finish_job: finishJobTool,
-      edit_node: createEditNodeTool(jobTracker),
-      remove_node: removeNodeTool,
-      connect_nodes: connectNodesTool,
-      disconnect_nodes: disconnectNodesTool,
-      set_entrypoint: setEntrypointTool,
-      add_node_test: addNodeTestTool,
-      run_node_test: runNodeTestTool,
-      get_nodes: getNodesTool,
-      clear_job_graph: clearJobGraphTool,
       call_skill: callSkillTool,
       get_skill_file: getSkillFileTool,
       add_cron: addCronTool,
@@ -255,6 +246,17 @@ export class MainAgent extends BaseAgentBase {
     // Node-creation tools are mode-gated: registered with the agent but only exposed
     // via activeTools when the chat session is in job creation mode.
     const nodeCreationTools: ToolSet = {
+      add_job: addJobTool,
+      finish_job: finishJobTool,
+      edit_node: createEditNodeTool(jobTracker),
+      remove_node: removeNodeTool,
+      connect_nodes: connectNodesTool,
+      disconnect_nodes: disconnectNodesTool,
+      set_entrypoint: setEntrypointTool,
+      add_node_test: addNodeTestTool,
+      run_node_test: runNodeTestTool,
+      get_nodes: getNodesTool,
+      clear_job_graph: clearJobGraphTool,
       add_curl_fetcher_node: createAddCurlFetcherNodeTool(jobTracker),
       add_rss_fetcher_node: createAddRssFetcherNodeTool(jobTracker),
       add_crawl4ai_node: createAddCrawl4aiNodeTool(jobTracker),
@@ -263,6 +265,7 @@ export class MainAgent extends BaseAgentBase {
       add_output_to_ai_node: createAddOutputToAiNodeTool(jobTracker),
       add_agent_node: createAddAgentNodeTool(jobTracker),
       add_litesql_node: createAddLitesqlNodeTool(jobTracker),
+      add_litesql_reader_node: createAddLitesqlReaderNodeTool(jobTracker),
       finish_job_creation: createFinishJobCreationTool(creationModeTracker),
       create_output_schema: createCreateOutputSchemaTool(),
     };

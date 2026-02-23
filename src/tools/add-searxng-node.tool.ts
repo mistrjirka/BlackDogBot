@@ -4,6 +4,8 @@ import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { validateFetcherConfigAsync } from "../utils/node-validation.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
 import { ISearxngConfig } from "../shared/types/index.js";
+import { IOutputSchemaBlueprint } from "../shared/schemas/output-schema-blueprint.schema.js";
+import { convertOutputSchemaBlueprintToJsonSchema } from "../utils/output-schema-blueprint.js";
 
 export function createAddSearxngNodeTool(jobTracker: IJobActivityTracker) {
   return tool({
@@ -26,13 +28,14 @@ export function createAddSearxngNodeTool(jobTracker: IJobActivityTracker) {
       parentNodeId?: string;
       name: string;
       description: string;
-      outputSchema: Record<string, unknown>;
+      outputSchema: IOutputSchemaBlueprint;
       query: string;
       categories: string[];
       maxResults: number;
     }): Promise<ICreateNodeResult> => {
       try {
         const config: ISearxngConfig = { query, categories, maxResults };
+        const outputJsonSchema: Record<string, unknown> = convertOutputSchemaBlueprintToJsonSchema(outputSchema);
         const validation = await validateFetcherConfigAsync("searxng", config as unknown as Record<string, unknown>);
 
         if (!validation.valid) {
@@ -45,7 +48,7 @@ export function createAddSearxngNodeTool(jobTracker: IJobActivityTracker) {
           name,
           description,
           {},
-          outputSchema,
+          outputJsonSchema,
           config,
           parentNodeId,
           jobTracker,

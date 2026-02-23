@@ -70,13 +70,22 @@ describe("create_output_schema tool (e2e)", () => {
 
   it("should create a valid schema for simple object output", async () => {
     const toolObj = createCreateOutputSchemaTool();
-    const result = await execTool<{ success: boolean; schema: Record<string, unknown> | null; error?: string }>(
+    const result = await execTool<{
+      success: boolean;
+      blueprint: Record<string, unknown> | null;
+      schema: Record<string, unknown> | null;
+      error?: string;
+    }>(
       toolObj,
       { description: "An object with a title string and a count number." },
     );
 
     expect(result.success).toBe(true);
+    const blueprint = result.blueprint as Record<string, unknown>;
     const schema = result.schema as Record<string, unknown>;
+    expect(blueprint.type).toBe("object");
+    expect(Array.isArray(blueprint.fields)).toBe(true);
+    expect((blueprint.fields as unknown[]).length).toBeGreaterThanOrEqual(2);
     expect(schema.type).toBe("object");
     expect(schema.properties).toBeDefined();
 
@@ -90,14 +99,21 @@ describe("create_output_schema tool (e2e)", () => {
 
   it("should create a valid schema for array output", async () => {
     const toolObj = createCreateOutputSchemaTool();
-    const result = await execTool<{ success: boolean; schema: Record<string, unknown> | null; error?: string }>(
+    const result = await execTool<{
+      success: boolean;
+      blueprint: Record<string, unknown> | null;
+      schema: Record<string, unknown> | null;
+      error?: string;
+    }>(
       toolObj,
       { description: "An array of news items, each with title (string), link (string), and is_verified (boolean)." },
     );
 
     expect(result.success).toBe(true);
+    const blueprint = result.blueprint as Record<string, unknown>;
     const schema = result.schema as Record<string, unknown>;
     expect(schema.type).toBe("object");
+    expect(blueprint.type).toBe("array");
 
     const properties = schema.properties as Record<string, unknown>;
 
@@ -123,64 +139,53 @@ describe("create_output_schema tool (e2e)", () => {
     expect(hasArraySchemaItems || !!arrayProperty).toBe(true);
   }, 120000);
 
-  it("should create schema with required fields when specified", async () => {
+  it("should produce non-empty blueprint fields", async () => {
     const toolObj = createCreateOutputSchemaTool();
-    const result = await execTool<{ success: boolean; schema: Record<string, unknown> | null; error?: string }>(
+    const result = await execTool<{
+      success: boolean;
+      blueprint: Record<string, unknown> | null;
+      schema: Record<string, unknown> | null;
+      error?: string;
+    }>(
       toolObj,
       { description: "An object with required 'id' string and optional 'name' string." },
     );
 
     expect(result.success).toBe(true);
-    const schema = result.schema as Record<string, unknown>;
-    expect(schema.type).toBe("object");
-
-    // Should have a required array
-    const required = schema.required as string[] | undefined;
-    expect(required).toBeDefined();
-    expect(required?.length).toBeGreaterThan(0);
-
-    const properties = schema.properties as Record<string, unknown>;
-    expect(required?.length).toBeGreaterThan(0);
+    const blueprint = result.blueprint as Record<string, unknown>;
+    const fields = blueprint.fields as Array<Record<string, unknown>>;
+    expect(Array.isArray(fields)).toBe(true);
+    expect(fields.length).toBeGreaterThan(0);
+    for (const field of fields) {
+      expect(typeof field.name).toBe("string");
+      expect(field.name).not.toBe("");
+      expect(["string", "number", "boolean", "stringArray", "numberArray"]).toContain(field.type);
+    }
   }, 120000);
 
-  it("should handle complex nested schema request", async () => {
+  it("should map array field types to array item schemas", async () => {
     const toolObj = createCreateOutputSchemaTool();
-    const result = await execTool<{ success: boolean; schema: Record<string, unknown> | null; error?: string }>(
+    const result = await execTool<{
+      success: boolean;
+      blueprint: Record<string, unknown> | null;
+      schema: Record<string, unknown> | null;
+      error?: string;
+    }>(
       toolObj,
       {
-        description: "An object containing 'items' array where each item has id (string, required), title (string, required), metadata (object with created_at string and updated_at string), and tags (array of strings).",
+        description: "An object containing titles as string array and scores as number array.",
       },
     );
 
     expect(result.success).toBe(true);
     const schema = result.schema as Record<string, unknown>;
     const properties = schema.properties as Record<string, unknown>;
-    expect(properties.items).toBeDefined();
-
-    const itemsSchema = properties.items as Record<string, unknown>;
-    expect(itemsSchema.type).toBe("array");
-    expect(itemsSchema.items).toBeDefined();
-
-    const itemSchema = itemsSchema.items as Record<string, unknown>;
-    expect(itemSchema.properties).toBeDefined();
-
-    const itemProperties = itemSchema.properties as Record<string, unknown>;
-    const nestedProperty = Object.values(itemProperties).find((property) => {
+    const arrayProperty = Object.values(properties).find((property) => {
       const propertyRecord = property as Record<string, unknown>;
-      const propertyType = propertyRecord.type;
-
-      if (propertyType === "object" || propertyType === "array") {
-        return true;
-      }
-
-      if (Array.isArray(propertyType)) {
-        return propertyType.includes("object") || propertyType.includes("array");
-      }
-
-      return false;
-    });
-
-    expect(nestedProperty).toBeDefined();
+      return propertyRecord.type === "array";
+    }) as Record<string, unknown> | undefined;
+    expect(arrayProperty).toBeDefined();
+    expect(arrayProperty?.items).toBeDefined();
   }, 120000);
 });
 

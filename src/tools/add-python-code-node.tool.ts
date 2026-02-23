@@ -5,6 +5,8 @@ import { IPythonCodeConfig } from "../shared/types/index.js";
 import { buildAsciiGraph } from "../utils/ascii-graph.js";
 import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
+import { IOutputSchemaBlueprint } from "../shared/schemas/output-schema-blueprint.schema.js";
+import { convertOutputSchemaBlueprintToJsonSchema } from "../utils/output-schema-blueprint.js";
 
 export function createAddPythonCodeNodeTool(jobTracker: IJobActivityTracker) {
   return tool({
@@ -27,7 +29,7 @@ export function createAddPythonCodeNodeTool(jobTracker: IJobActivityTracker) {
       parentNodeId?: string;
       name: string;
       description: string;
-      outputSchema: Record<string, unknown>;
+      outputSchema: IOutputSchemaBlueprint;
       code: string;
       pythonPath: string;
       timeout: number;
@@ -43,6 +45,7 @@ export function createAddPythonCodeNodeTool(jobTracker: IJobActivityTracker) {
         }
 
         const config: IPythonCodeConfig = { code, pythonPath, timeout };
+        const outputJsonSchema: Record<string, unknown> = convertOutputSchemaBlueprintToJsonSchema(outputSchema);
 
         const result: ICreateNodeResult = await createNodeAsync(
           jobId,
@@ -50,7 +53,7 @@ export function createAddPythonCodeNodeTool(jobTracker: IJobActivityTracker) {
           name,
           description,
           {},
-          outputSchema,
+          outputJsonSchema,
           config,
           parentNodeId,
           jobTracker,

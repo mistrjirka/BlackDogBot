@@ -77,7 +77,7 @@ describe("add_agent_node (unit)", () => {
         jobId: job.jobId,
         name: "Agent Without Tools",
         description: "No tools selected",
-        outputSchema: { type: "object", properties: { ok: { type: "boolean" } } },
+        outputSchema: { type: "object", fields: [{ name: "ok", type: "boolean" }] },
         systemPrompt: "Do something",
         selectedTools: [],
         model: null,

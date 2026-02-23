@@ -76,7 +76,7 @@ describe("add_python_code_node (unit)", () => {
         jobId: job.jobId,
         name: "Bad Python",
         description: "Uses sqlite",
-        outputSchema: { type: "object", properties: { ok: { type: "boolean" } } },
+        outputSchema: { type: "object", fields: [{ name: "ok", type: "boolean" }] },
         code: "import sqlite3\nconn = sqlite3.connect(':memory:')",
         pythonPath: "python3",
         timeout: 1000,

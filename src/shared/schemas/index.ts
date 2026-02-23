@@ -4,3 +4,4 @@ export * from "./skill.schemas.js";
 export * from "./knowledge.schemas.js";
 export * from "./cron.schemas.js";
 export * from "./tool-schemas.js";
+export * from "./output-schema-blueprint.schema.js";

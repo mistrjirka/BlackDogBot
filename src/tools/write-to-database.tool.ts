@@ -13,8 +13,8 @@ export const writeToDatabaseTool = tool({
     tableName: z.string()
       .min(1)
       .describe("Name of the table to write to"),
-    data: z.record(z.string(), z.unknown())
-      .describe("The row data to insert, where keys are column names and values are cell values"),
+    data: z.union([z.record(z.string(), z.unknown()), z.array(z.record(z.string(), z.unknown()))])
+      .describe("The row data to insert: either a single row object or an array of row objects"),
   }),
   execute: async ({
     databaseName,
@@ -23,7 +23,7 @@ export const writeToDatabaseTool = tool({
   }: {
     databaseName: string;
     tableName: string;
-    data: Record<string, unknown>;
+    data: Record<string, unknown> | Record<string, unknown>[];
   }): Promise<{
     success: boolean;
     databaseName: string;
@@ -58,7 +58,8 @@ export const writeToDatabaseTool = tool({
 
     const result: IInsertResult = await service.insertIntoTableAsync(databaseName, tableName, data);
 
-    const columns: string = Object.keys(data).join(", ");
+    const sampleRow: Record<string, unknown> = Array.isArray(data) ? (data[0] ?? {}) : data;
+    const columns: string = Object.keys(sampleRow).join(", ");
 
     return {
       success: true,
@@ -66,7 +67,7 @@ export const writeToDatabaseTool = tool({
       tableName,
       insertedCount: result.insertedCount,
       lastRowId: result.lastRowId,
-      message: `Inserted 1 row into "${tableName}" (columns: ${columns}). Row ID: ${result.lastRowId}`,
+      message: `Inserted ${result.insertedCount} row(s) into "${tableName}" (columns: ${columns}). Last Row ID: ${result.lastRowId}`,
     };
   },
 });

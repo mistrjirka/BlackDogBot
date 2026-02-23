@@ -93,7 +93,7 @@ export function createFinishJobCreationTool(creationModeTracker: IJobCreationMod
     inputSchema: finishJobCreationToolInputSchema,
     execute: async ({
       jobId,
-      skipAudit = false,
+      skipAudit: _skipAudit = false,
     }: {
       jobId: string;
       skipAudit?: boolean;
@@ -203,12 +203,12 @@ export function createFinishJobCreationTool(creationModeTracker: IJobCreationMod
           };
         }
 
-        // 5. LLM-based graph audit
-        // On first call, audit is MANDATORY - skipAudit is ignored
-        // After first audit attempt, skipAudit can be used to bypass subsequent audits
-        const mode = creationModeTracker.getMode();
-        const isFirstAuditAttempt = mode && !mode.auditAttempted;
-        const shouldRunAudit = !skipAudit || isFirstAuditAttempt;
+        // 5. LLM-based graph audit (currently disabled — too many false positives)
+        // TODO: Re-enable once audit prompt is improved
+        // const mode = creationModeTracker.getMode();
+        // const isFirstAuditAttempt = mode && !mode.auditAttempted;
+        // const shouldRunAudit = !skipAudit || isFirstAuditAttempt;
+        const shouldRunAudit = false;
 
         if (shouldRunAudit) {
           // Mark that an audit has been attempted

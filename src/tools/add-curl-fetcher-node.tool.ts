@@ -4,6 +4,8 @@ import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { validateFetcherConfigAsync } from "../utils/node-validation.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
 import { ICurlFetcherConfig } from "../shared/types/index.js";
+import { IOutputSchemaBlueprint } from "../shared/schemas/output-schema-blueprint.schema.js";
+import { convertOutputSchemaBlueprintToJsonSchema } from "../utils/output-schema-blueprint.js";
 
 export function createAddCurlFetcherNodeTool(jobTracker: IJobActivityTracker) {
   return tool({
@@ -26,7 +28,7 @@ export function createAddCurlFetcherNodeTool(jobTracker: IJobActivityTracker) {
       parentNodeId?: string;
       name: string;
       description: string;
-      outputSchema: Record<string, unknown>;
+      outputSchema: IOutputSchemaBlueprint;
       url: string;
       method: string;
       headers: Record<string, string>;
@@ -34,6 +36,7 @@ export function createAddCurlFetcherNodeTool(jobTracker: IJobActivityTracker) {
     }): Promise<ICreateNodeResult> => {
       try {
         const config: ICurlFetcherConfig = { url, method, headers, body };
+        const outputJsonSchema: Record<string, unknown> = convertOutputSchemaBlueprintToJsonSchema(outputSchema);
         const validation = await validateFetcherConfigAsync("curl_fetcher", config as unknown as Record<string, unknown>);
 
         if (!validation.valid) {
@@ -46,7 +49,7 @@ export function createAddCurlFetcherNodeTool(jobTracker: IJobActivityTracker) {
           name,
           description,
           {},
-          outputSchema,
+          outputJsonSchema,
           config,
           parentNodeId,
           jobTracker,

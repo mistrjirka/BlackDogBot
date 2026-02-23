@@ -6,6 +6,8 @@ import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
 import { getAgentNodeToolNames } from "../utils/agent-node-tool-pool.js";
 import { buildAsciiGraph } from "../utils/ascii-graph.js";
+import { IOutputSchemaBlueprint } from "../shared/schemas/output-schema-blueprint.schema.js";
+import { convertOutputSchemaBlueprintToJsonSchema } from "../utils/output-schema-blueprint.js";
 
 export function createAddAgentNodeTool(jobTracker: IJobActivityTracker) {
   return tool({
@@ -30,7 +32,7 @@ export function createAddAgentNodeTool(jobTracker: IJobActivityTracker) {
       parentNodeId?: string;
       name: string;
       description: string;
-      outputSchema: Record<string, unknown>;
+      outputSchema: IOutputSchemaBlueprint;
       systemPrompt: string;
       selectedTools: string[];
       model: string | null;
@@ -47,6 +49,7 @@ export function createAddAgentNodeTool(jobTracker: IJobActivityTracker) {
         }
 
         const config: IAgentNodeConfig = { systemPrompt, selectedTools, model, reasoningEffort, maxSteps };
+        const outputJsonSchema: Record<string, unknown> = convertOutputSchemaBlueprintToJsonSchema(outputSchema);
 
         const result: ICreateNodeResult = await createNodeAsync(
           jobId,
@@ -54,7 +57,7 @@ export function createAddAgentNodeTool(jobTracker: IJobActivityTracker) {
           name,
           description,
           {},
-          outputSchema,
+          outputJsonSchema,
           config,
           parentNodeId,
           jobTracker,

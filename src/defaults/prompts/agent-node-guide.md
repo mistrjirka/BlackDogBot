@@ -103,6 +103,21 @@ the default.
 source of incomplete results — the agent simply stops mid-task. It is
 almost always better to allow more steps than too few.
 
+## Output Schema (required)
+
+Every agent node **requires** an `outputSchema` — this defines the JSON format
+of the `done()` tool that the agent calls to return its final result. The
+workflow is:
+
+1. Call `create_output_schema` with a description of what the agent should
+   produce (e.g. "a list of filtered articles with title, link, and summary").
+2. The tool returns `{ success: true, blueprint: { ... }, schema: { ... } }`.
+3. Pass the `blueprint` object as `outputSchema` when calling `add_agent_node`
+   (the runtime converts it to JSON Schema internally).
+
+**Do NOT skip this step.** Calling `add_agent_node` without `outputSchema`
+will fail validation and the node will not be created.
+
 ## Tool Selection
 
 When creating an agent node, populate `selectedTools` with names from this

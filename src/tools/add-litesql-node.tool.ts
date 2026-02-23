@@ -52,7 +52,7 @@ export function createAddLitesqlNodeTool(jobTracker: IJobActivityTracker) {
       databaseName: string;
       tableName: string;
       inputSchemaHint?: Record<string, unknown>;
-    }): Promise<ICreateNodeResult & { warning?: string; graphAscii?: string }> => {
+    }): Promise<ICreateNodeResult & { warning?: string; derivedInputSchema?: Record<string, unknown>; graphAscii?: string }> => {
       try {
         const service: LiteSqlService = LiteSqlService.getInstance();
         let effectiveInputSchema: Record<string, unknown>;
@@ -115,7 +115,7 @@ export function createAddLitesqlNodeTool(jobTracker: IJobActivityTracker) {
         const nodes: INode[] = await storage.listNodesAsync(jobId);
         const graphAscii: string = buildAsciiGraph(nodes, updatedJob?.entrypointNodeId ?? null);
 
-        return { ...result, warning, graphAscii };
+        return { ...result, warning, derivedInputSchema: effectiveInputSchema, graphAscii };
       } catch (error: unknown) {
         const errorMessage: string = error instanceof Error ? error.message : String(error);
 
