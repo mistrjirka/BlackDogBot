@@ -33,6 +33,12 @@ const COMPACTION_THRESHOLD_PERCENTAGE: number = 0.75;
  */
 const COMPACTION_KEEP_RECENT: number = 6;
 
+/**
+ * How many times to retry the full agent generate call when the model
+ * returns a completely empty response (no text, no useful tool calls).
+ */
+export const AGENT_EMPTY_RESPONSE_RETRIES: number = 4 ;
+
 //#endregion Constants
 
 //#region Interfaces
@@ -100,70 +106,88 @@ export abstract class BaseAgentBase {
       // Set status to show AI is thinking (in-flight)
       statusService.beginInFlight("llm_request", "Thinking...", {});
 
-      const result = await this._agent!.generate({ prompt: userMessage });
+      for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
+        // Reset token count so prepareStep doesn't use stale values from a failed attempt
+        this._totalInputTokens = 0;
 
-      let text: string = result.text ?? "";
+        const result = await this._agent!.generate({ prompt: userMessage });
 
-      if (text.trim().length === 0) {
-        const steps = result.steps;
+        let text: string = result.text ?? "";
 
-        if (Array.isArray(steps)) {
-          for (let i: number = steps.length - 1; i >= 0; i--) {
-            const step = steps[i] as { toolCalls?: unknown };
-            const toolCalls = step.toolCalls;
+        if (text.trim().length === 0) {
+          const steps = result.steps;
 
-            if (Array.isArray(toolCalls)) {
-              for (let j: number = toolCalls.length - 1; j >= 0; j--) {
-                const toolCall = toolCalls[j] as { toolName?: unknown; name?: unknown; args?: unknown; input?: unknown };
-                const toolName: string | undefined =
-                  typeof toolCall.toolName === "string"
-                    ? toolCall.toolName
-                    : (typeof toolCall.name === "string" ? toolCall.name : undefined);
+          if (Array.isArray(steps)) {
+            for (let i: number = steps.length - 1; i >= 0; i--) {
+              const step = steps[i] as { toolCalls?: unknown };
+              const toolCalls = step.toolCalls;
 
-                if (toolName === "done") {
-                  const args = (toolCall.args ?? toolCall.input) as { summary?: unknown } | undefined;
-                  const summary: string = typeof args?.summary === "string" ? args.summary : "";
+              if (Array.isArray(toolCalls)) {
+                for (let j: number = toolCalls.length - 1; j >= 0; j--) {
+                  const toolCall = toolCalls[j] as { toolName?: unknown; name?: unknown; args?: unknown; input?: unknown };
+                  const toolName: string | undefined =
+                    typeof toolCall.toolName === "string"
+                      ? toolCall.toolName
+                      : (typeof toolCall.name === "string" ? toolCall.name : undefined);
 
-                  if (summary.trim().length > 0) {
-                    text = summary;
-                    break;
+                  if (toolName === "done") {
+                    const args = (toolCall.args ?? toolCall.input) as { summary?: unknown } | undefined;
+                    const summary: string = typeof args?.summary === "string" ? args.summary : "";
+
+                    if (summary.trim().length > 0) {
+                      text = summary;
+                      break;
+                    }
                   }
                 }
               }
-            }
 
-            if (text.trim().length > 0) {
-              break;
+              if (text.trim().length > 0) {
+                break;
+              }
             }
           }
         }
+
+        // Track API-reported token usage
+        const inputTokens = result.totalUsage?.inputTokens ?? result.usage?.inputTokens;
+        if (inputTokens !== undefined) {
+          this._totalInputTokens = inputTokens;
+        } else {
+          this._totalInputTokens = 0;
+          this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
+        }
+
+        const stepsCount: number = result.steps?.length ?? 1;
+
+        // If we got text, return immediately
+        if (text.trim()) {
+          this._logger.debug("Agent response generated", { stepsCount });
+          return { text, stepsCount };
+        }
+
+        // Empty response — retry if we have attempts left
+        if (attempt <= AGENT_EMPTY_RESPONSE_RETRIES) {
+          this._logger.warn("Model returned empty response, retrying agent generate", {
+            attempt,
+            maxRetries: AGENT_EMPTY_RESPONSE_RETRIES,
+          });
+          continue;
+        }
+
+        // All retries exhausted
+        this._logger.error("Model returned empty response after all retries", {
+          attempts: attempt,
+        });
+
+        return {
+          text: "I was unable to complete your request — the model returned empty responses after multiple retries. Please try again.",
+          stepsCount,
+        };
       }
 
-      // Track API-reported token usage
-      // Use totalUsage for multi-step agents (accumulates across all tool call steps)
-      // Fall back to usage for single-step calls
-      const inputTokens = result.totalUsage?.inputTokens ?? result.usage?.inputTokens;
-      if (inputTokens !== undefined) {
-        this._totalInputTokens = inputTokens; // Replace with total, not accumulate
-      } else {
-        // Fall back to tiktoken estimation in prepareStep when usage is missing
-        this._totalInputTokens = 0;
-        this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
-      }
-
-      const stepsCount: number = result.steps?.length ?? 1;
-
-      this._logger.debug("Agent response generated", { stepsCount });
-
-      // Final fallback: if we still have no text the model silently exited
-      if (!text.trim()) {
-        text = "I was unable to complete your request — the model stopped without providing a response. Please try again.";
-      }
-
-      return {
-        text,
-        stepsCount,
-      };
+      // Should not be reached, but satisfy TypeScript
+      return { text: "Unexpected error.", stepsCount: 0 };
     } finally {
       statusService.endInFlight();
     }

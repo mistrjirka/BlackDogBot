@@ -2,7 +2,7 @@ import Bottleneck from "bottleneck";
 import { LanguageModel } from "ai";
 import { LanguageModelV3 } from "@ai-sdk/provider";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
 import {
   IAiConfig,
@@ -192,10 +192,11 @@ export class AiProviderService {
       }
 
       const config: IOpenAiCompatibleConfig = this._aiConfig.openaiCompatible;
-      const rawModel = createOpenAI({
+      const rawModel = createOpenAICompatible({
+        name: "openai-compatible",
         baseURL: config.baseUrl,
         apiKey: config.apiKey,
-      }).chat(modelId);
+      }).chatModel(modelId);
       return this._wrapModelWithRateLimiter(rawModel, provider);
     }
 
