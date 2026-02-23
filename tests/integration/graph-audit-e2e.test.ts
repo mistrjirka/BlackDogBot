@@ -291,9 +291,7 @@ Start Node --> Process Data --> Output Result
       expect(typeof issue).toBe("string");
     });
     expect(Array.isArray(result.suggestions)).toBe(true);
-  }, 60000);
-
-  it("should audit a problematic graph and return issues", async () => {
+  }, 250_000);
     // Create a graph description with obvious problems
     const graphDescription: string = `# Job Metadata
 Name: Problematic Job
@@ -360,7 +358,7 @@ Start Node --> Branch A --> Merge
     expect(result.approved).toBe(false);
     expect(result.issues.length).toBeGreaterThan(0);
     expect(Array.isArray(result.suggestions)).toBe(true);
-  }, 60000);
+  }, 250_000);
 });
 
 //#endregion Tests

@@ -13,7 +13,14 @@ When creating a job, follow this structured process:
    the job and its Start node, sets the Start node as entrypoint, and
    activates job creation mode which unlocks typed node-creation tools.
 
-3. **Add nodes** — for each node in the planned graph, call the appropriate
+3. **Set up database tables** — if the pipeline will persist data (via
+   `litesql` nodes or agent DB tools), create the necessary databases and
+   tables **now**, before adding any pipeline nodes. Use `list_databases`,
+   `list_tables`, `create_table`, etc. Having the table schema defined
+   first ensures that downstream node schemas can be designed to match
+   the table columns exactly.
+
+4. **Add nodes** — for each node in the planned graph, call the appropriate
    `add_<type>_node` tool (e.g. `add_curl_fetcher_node`, `add_rss_fetcher_node`,
    `add_output_to_ai_node`). Always specify `parentNodeId` to auto-connect
    the node to its parent. The node's output schema should describe exactly
@@ -29,9 +36,9 @@ When creating a job, follow this structured process:
   > i.e., what the agent returns as its final result. Calling `add_agent_node`
   > without `outputSchema` will fail.
 
-4. **Add tests** — for each node **except `start` nodes** (which are passthroughs with no logic), add at least one test with `add_node_test` and run it with `run_node_test` to verify behavior.
+5. **Add tests** — for each node **except `start` nodes** (which are passthroughs with no logic), add at least one test with `add_node_test` and run it with `run_node_test` to verify behavior.
 
-5. **Finish** — call `finish_job_creation`. This validates the graph, checks
+6. **Finish** — call `finish_job_creation`. This validates the graph, checks
    all `{{nodeId.outputKey}}` template references, confirms all tests pass,
    marks the job as ready, and exits job creation mode.
 
@@ -243,6 +250,20 @@ At **pipeline runtime**, `agent` nodes can use these tools via `selectedTools`:
    as column names — there is no separate query field or mapping config. If the
    upstream node outputs `{ "headline": "..." }` but the table has a `title`
    column, the insert will fail. Field names must match.
+
+> **CRITICAL: When an agent node sits before a litesql node**, the agent's
+> `outputSchema` must include **all** fields that the litesql table requires —
+> including any pass-through fields from earlier nodes (e.g., `item_id`,
+> `pubDate`, `title`, `link`). The agent completely replaces upstream data;
+> fields not in the agent's output are lost. If the table needs fields from
+> both the RSS fetcher and the agent's analysis, the agent must output both
+> sets of fields. Alternatively, give the agent `write_to_database` in its
+> `selectedTools` and let it handle storage itself (preferred for complex
+> pipelines).
+>
+> Also ensure type alignment: if a table column is TEXT, the corresponding
+> output schema field must be `string`, not `stringArray`. Arrays must be
+> serialized to JSON strings before storage.
 
 ### Agent nodes that need database access
 

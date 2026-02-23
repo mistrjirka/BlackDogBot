@@ -27,20 +27,18 @@ function resetSingletons(): void {
 
 //#region Tests
 
-describe("Knowledge E2E", () => {
+describe("KnowledgeService", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-knowledge-e2e-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-knowledge-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
-    // Create config dir
     const tempConfigDir: string = path.join(tempDir, ".betterclaw");
 
     await fs.mkdir(tempConfigDir, { recursive: true });
 
-    // Initialize services
     const loggerService: LoggerService = LoggerService.getInstance();
 
     await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
@@ -80,7 +78,6 @@ describe("Knowledge E2E", () => {
     expect(doc.collection).toBe("test-collection");
     expect(doc.metadata.source).toBe("e2e-test");
 
-    // Search for the document
     const results: IKnowledgeSearchResult[] = await knowledgeService.searchAsync({
       query: "What is TypeScript?",
       collection: "test-collection",
@@ -114,7 +111,6 @@ describe("Knowledge E2E", () => {
       { source: "e2e-test" },
     );
 
-    // Search for programming language — should rank TS/Python/Rust higher than cake recipe
     const results: IKnowledgeSearchResult[] = await knowledgeService.searchAsync({
       query: "programming languages and type safety",
       collection: "test-collection",
@@ -124,7 +120,6 @@ describe("Knowledge E2E", () => {
 
     expect(results.length).toBeGreaterThanOrEqual(3);
 
-    // The cake recipe should not be in the top results (or at least have lower score)
     const cakeResult: IKnowledgeSearchResult | undefined = results.find(
       (r: IKnowledgeSearchResult) => r.content.includes("chocolate cake"),
     );
@@ -171,6 +166,38 @@ describe("Knowledge E2E", () => {
 
     // We added 4 documents to test-collection (1 TypeScript, 1 Python, 1 Rust, 1 cake)
     expect(count).toBe(4);
+  });
+
+  it("should delete a document and not find it in search", async () => {
+    const service: KnowledgeService = KnowledgeService.getInstance();
+
+    const doc = await service.addDocumentAsync(
+      "This document will be deleted shortly",
+      "delete-test",
+    );
+
+    expect(doc.id).toBeTruthy();
+
+    await service.deleteDocumentAsync(doc.id);
+
+    const results = await service.searchAsync({
+      query: "document will be deleted",
+      limit: 5,
+      collection: "delete-test",
+      filter: null,
+    });
+
+    const found = results.find((r) => r.id === doc.id);
+
+    expect(found).toBeUndefined();
+  });
+
+  it("should return 0 count for an empty collection", async () => {
+    const service: KnowledgeService = KnowledgeService.getInstance();
+
+    const count: number = await service.getDocumentCountAsync("nonexistent-collection-xyz");
+
+    expect(count).toBe(0);
   });
 });
 

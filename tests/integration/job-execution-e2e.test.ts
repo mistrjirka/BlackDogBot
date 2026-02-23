@@ -1372,6 +1372,231 @@ describe("Job Execution E2E", () => {
 
   //#endregion Pipeline Tests with New Node Types
 
+  //#region Fan-out & Fan-in Tests
+
+  it("should fan-out: both branches receive same parent output", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+
+    const job: IJob = await storageService.createJobAsync(
+      "Fan-out Job",
+      "Start node fans out to two python nodes",
+    );
+
+    const inputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: { value: { type: "number" } },
+      required: ["value"],
+    };
+
+    const startNode: INode = await storageService.addNodeAsync(
+      job.jobId, "start", "Start", "Passes value through",
+      inputSchema, inputSchema, {},
+    );
+
+    // Branch A: doubles the value
+    const branchA: INode = await storageService.addNodeAsync(
+      job.jobId, "python_code", "Doubler", "Doubles the value",
+      inputSchema,
+      { type: "object", properties: { doubled: { type: "number" } }, required: ["doubled"] },
+      {
+        code: "import json\nprint(json.dumps({'doubled': input_data['value'] * 2}))",
+        pythonPath: "python3",
+        timeout: 10000,
+      },
+    );
+
+    // Branch B: squares the value
+    const branchB: INode = await storageService.addNodeAsync(
+      job.jobId, "python_code", "Squarer", "Squares the value",
+      inputSchema,
+      { type: "object", properties: { squared: { type: "number" } }, required: ["squared"] },
+      {
+        code: "import json\nprint(json.dumps({'squared': input_data['value'] ** 2}))",
+        pythonPath: "python3",
+        timeout: 10000,
+      },
+    );
+
+    // Start fans out to both branches
+    await storageService.updateNodeAsync(job.jobId, startNode.nodeId, {
+      connections: [branchA.nodeId, branchB.nodeId],
+    });
+
+    await storageService.updateJobAsync(job.jobId, {
+      entrypointNodeId: startNode.nodeId,
+      status: "ready",
+    });
+
+    const result = await executorService.executeJobAsync(job.jobId, { value: 5 });
+
+    expect(result.success).toBe(true);
+    expect(result.nodesExecuted).toBe(3);
+    // Last node in topological order gets its output as result
+    // Both branches run — the result is the last branch's output
+    expect(result.output).toBeDefined();
+  });
+
+  it("should fan-in: downstream node receives merged output from multiple parents", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+
+    const job: IJob = await storageService.createJobAsync(
+      "Fan-in Diamond Job",
+      "Diamond graph: Start → [A, B] → Merge",
+    );
+
+    const inputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: { value: { type: "number" } },
+      required: ["value"],
+    };
+
+    const startNode: INode = await storageService.addNodeAsync(
+      job.jobId, "start", "Start", "Passes value",
+      inputSchema, inputSchema, {},
+    );
+
+    // Branch A: outputs { doubled: value*2 }
+    const branchA: INode = await storageService.addNodeAsync(
+      job.jobId, "python_code", "Doubler", "Doubles",
+      {},
+      { type: "object", properties: { doubled: { type: "number" } } },
+      {
+        code: "import json\nprint(json.dumps({'doubled': input_data['value'] * 2}))",
+        pythonPath: "python3",
+        timeout: 10000,
+      },
+    );
+
+    // Branch B: outputs { squared: value^2 }
+    const branchB: INode = await storageService.addNodeAsync(
+      job.jobId, "python_code", "Squarer", "Squares",
+      {},
+      { type: "object", properties: { squared: { type: "number" } } },
+      {
+        code: "import json\nprint(json.dumps({'squared': input_data['value'] ** 2}))",
+        pythonPath: "python3",
+        timeout: 10000,
+      },
+    );
+
+    // Merge node: receives { doubled, squared } from fan-in merge
+    const mergeNode: INode = await storageService.addNodeAsync(
+      job.jobId, "python_code", "Merger", "Combines doubled and squared",
+      {},
+      { type: "object", properties: { sum_of_both: { type: "number" } } },
+      {
+        code: "import json\nprint(json.dumps({'sum_of_both': input_data['doubled'] + input_data['squared']}))",
+        pythonPath: "python3",
+        timeout: 10000,
+      },
+    );
+
+    // Wire up diamond: Start → [A, B], A → Merge, B → Merge
+    await storageService.updateNodeAsync(job.jobId, startNode.nodeId, {
+      connections: [branchA.nodeId, branchB.nodeId],
+    });
+    await storageService.updateNodeAsync(job.jobId, branchA.nodeId, {
+      connections: [mergeNode.nodeId],
+    });
+    await storageService.updateNodeAsync(job.jobId, branchB.nodeId, {
+      connections: [mergeNode.nodeId],
+    });
+
+    await storageService.updateJobAsync(job.jobId, {
+      entrypointNodeId: startNode.nodeId,
+      status: "ready",
+    });
+
+    // value=5: doubled=10, squared=25, sum_of_both=35
+    const result = await executorService.executeJobAsync(job.jobId, { value: 5 });
+
+    expect(result.success).toBe(true);
+    expect(result.nodesExecuted).toBe(4);
+
+    const output = result.output as Record<string, unknown>;
+    expect(output.sum_of_both).toBe(35);
+  });
+
+  it("should fan-in: later parent overwrites duplicate keys from earlier parent", async () => {
+    const storageService: JobStorageService = JobStorageService.getInstance();
+    const executorService: JobExecutorService = JobExecutorService.getInstance();
+
+    const job: IJob = await storageService.createJobAsync(
+      "Fan-in Overwrite Job",
+      "Two parents output same key — later one wins",
+    );
+
+    const inputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: { value: { type: "number" } },
+      required: ["value"],
+    };
+
+    const startNode: INode = await storageService.addNodeAsync(
+      job.jobId, "start", "Start", "Passes value",
+      inputSchema, inputSchema, {},
+    );
+
+    // Branch A: outputs { result: "from_a" }
+    const branchA: INode = await storageService.addNodeAsync(
+      job.jobId, "python_code", "A", "Outputs from_a",
+      {},
+      { type: "object", properties: { result: { type: "string" } } },
+      {
+        code: 'import json\nprint(json.dumps({"result": "from_a"}))',
+        pythonPath: "python3",
+        timeout: 10000,
+      },
+    );
+
+    // Branch B: outputs { result: "from_b" }
+    const branchB: INode = await storageService.addNodeAsync(
+      job.jobId, "python_code", "B", "Outputs from_b",
+      {},
+      { type: "object", properties: { result: { type: "string" } } },
+      {
+        code: 'import json\nprint(json.dumps({"result": "from_b"}))',
+        pythonPath: "python3",
+        timeout: 10000,
+      },
+    );
+
+    // Merge: passthrough start node to just read the merged input
+    const mergeNode: INode = await storageService.addNodeAsync(
+      job.jobId, "start", "Merge", "Passthrough",
+      {}, {}, {},
+    );
+
+    // Start → [A, B], A → Merge, B → Merge
+    await storageService.updateNodeAsync(job.jobId, startNode.nodeId, {
+      connections: [branchA.nodeId, branchB.nodeId],
+    });
+    await storageService.updateNodeAsync(job.jobId, branchA.nodeId, {
+      connections: [mergeNode.nodeId],
+    });
+    await storageService.updateNodeAsync(job.jobId, branchB.nodeId, {
+      connections: [mergeNode.nodeId],
+    });
+
+    await storageService.updateJobAsync(job.jobId, {
+      entrypointNodeId: startNode.nodeId,
+      status: "ready",
+    });
+
+    const result = await executorService.executeJobAsync(job.jobId, { value: 1 });
+
+    expect(result.success).toBe(true);
+
+    const output = result.output as Record<string, unknown>;
+    // Shallow-merge means last parent in iteration order overwrites
+    // Both outputs have "result" key — one of them wins (order depends on node iteration)
+    expect(output.result).toMatch(/^from_(a|b)$/);
+  });
+
+  //#endregion Fan-out & Fan-in Tests
+
   //#region Error Reporting Tests
 
   it("should report failedNodeId and failedNodeName when curl_fetcher gets a 404", async () => {

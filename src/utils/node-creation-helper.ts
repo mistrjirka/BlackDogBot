@@ -1,6 +1,7 @@
 import { JobStorageService } from "../services/job-storage.service.js";
 import { type IJobActivityTracker } from "./job-activity-tracker.js";
 import { INode, IJob, NodeType, NodeConfig } from "../shared/types/index.js";
+import { checkSchemaCompatibility, ISchemaCompatResult } from "../jobs/schema-compat.js";
 
 //#region Interfaces
 
@@ -61,6 +62,22 @@ export async function createNodeAsync(
         success: true,
         message:
           `Node "${name}" created (${node.nodeId}) but parent node "${parentNodeId}" not found — connection was skipped.`,
+      };
+    }
+
+    // Schema compatibility check — same guard as connect_nodes
+    const compatResult: ISchemaCompatResult = checkSchemaCompatibility(parentNode.outputSchema, inputSchema);
+
+    if (!compatResult.compatible) {
+      jobTracker.trackModified(jobId, job.name);
+
+      return {
+        nodeId: node.nodeId,
+        success: true,
+        message:
+          `Node "${name}" created (${node.nodeId}) but auto-connection from parent "${parentNodeId}" was skipped due to schema incompatibility: ${compatResult.errors.join("; ")}. ` +
+          `Use connect_nodes to manually connect after fixing schemas.`,
+        error: `Schema incompatibility: ${compatResult.errors.join("; ")}`,
       };
     }
 

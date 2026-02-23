@@ -6,6 +6,8 @@ import { outputSchemaBlueprintSchema, type IOutputSchemaBlueprint } from "../sha
 import { convertOutputSchemaBlueprintToJsonSchema } from "../utils/output-schema-blueprint.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 
+const TOOL_RETRIES: number = 3;
+
 const SYSTEM_PROMPT: string = `You design strict output blueprints for node creation.
 
 Return ONLY a JSON object that matches this exact shape:
@@ -58,44 +60,57 @@ export function createCreateOutputSchemaTool() {
       error?: string;
     }> => {
       const logger: LoggerService = LoggerService.getInstance();
+      const aiProvider: AiProviderService = AiProviderService.getInstance();
+      const model = aiProvider.getModel();
 
-      try {
-        const aiProvider: AiProviderService = AiProviderService.getInstance();
-        const model = aiProvider.getModel();
+      let lastError: string = "";
 
-        const userPrompt: string = context
-          ? `Context: ${context}\n\nCreate an output blueprint for: ${description}`
-          : `Create an output blueprint for: ${description}`;
+      for (let attempt: number = 1; attempt <= TOOL_RETRIES; attempt++) {
+        try {
+          const userPrompt: string = attempt === 1
+            ? (context
+              ? `Context: ${context}\n\nCreate an output blueprint for: ${description}`
+              : `Create an output blueprint for: ${description}`)
+            : `IMPORTANT: You MUST return a valid JSON object with "type" and "fields". Do NOT return an empty response.\n\n` +
+              (context ? `Context: ${context}\n\n` : "") +
+              `Create an output blueprint for: ${description}`;
 
-        const result = await generateObjectWithRetryAsync({
-          model,
-          system: SYSTEM_PROMPT,
-          prompt: userPrompt,
-          schema: outputSchemaBlueprintSchema,
-        });
+          const result = await generateObjectWithRetryAsync({
+            model,
+            system: SYSTEM_PROMPT,
+            prompt: userPrompt,
+            schema: outputSchemaBlueprintSchema,
+          });
 
-        const blueprint: IOutputSchemaBlueprint = result.object;
-        const schema: Record<string, unknown> = convertOutputSchemaBlueprintToJsonSchema(blueprint);
+          const blueprint: IOutputSchemaBlueprint = result.object;
+          const schema: Record<string, unknown> = convertOutputSchemaBlueprintToJsonSchema(blueprint);
 
-        logger.info("Created output schema blueprint", { blueprint, schema });
+          logger.info("Created output schema blueprint", { blueprint, schema });
 
-        return {
-          success: true,
-          blueprint,
-          schema,
-        };
-      } catch (error: unknown) {
-        const errorMessage: string = error instanceof Error ? error.message : String(error);
+          return {
+            success: true,
+            blueprint,
+            schema,
+          };
+        } catch (error: unknown) {
+          lastError = error instanceof Error ? error.message : String(error);
 
-        logger.error("Failed to create output schema blueprint", { error: errorMessage });
-
-        return {
-          success: false,
-          blueprint: null,
-          schema: null,
-          error: errorMessage,
-        };
+          logger.warn("create_output_schema attempt failed", {
+            attempt,
+            maxAttempts: TOOL_RETRIES,
+            error: lastError,
+          });
+        }
       }
+
+      logger.error("Failed to create output schema blueprint after all retries", { error: lastError });
+
+      return {
+        success: false,
+        blueprint: null,
+        schema: null,
+        error: lastError,
+      };
     },
   });
 }

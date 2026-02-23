@@ -434,6 +434,11 @@ export class MainAgent extends BaseAgentBase {
         }
       }
 
+      // Final fallback: if we still have no text the model silently exited
+      if (!text.trim()) {
+        text = "I was unable to complete your request — the model stopped without providing a response. Please try again.";
+      }
+
       result = { text, stepsCount };
     } catch (error: unknown) {
       if (error instanceof Error && error.name === "AbortError") {

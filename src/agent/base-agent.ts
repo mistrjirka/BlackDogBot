@@ -155,6 +155,11 @@ export abstract class BaseAgentBase {
 
       this._logger.debug("Agent response generated", { stepsCount });
 
+      // Final fallback: if we still have no text the model silently exited
+      if (!text.trim()) {
+        text = "I was unable to complete your request — the model stopped without providing a response. Please try again.";
+      }
+
       return {
         text,
         stepsCount,
@@ -221,6 +226,29 @@ export abstract class BaseAgentBase {
             await onStepAsync(stepNumber, toolCalls);
           } catch {
             // Ignore step callback errors — never let UI failures affect agent execution
+          }
+        }
+
+        // Detect silent exit: if the previous step was the model producing text
+        // without calling any tools, force it to call done so the user gets a summary.
+        if (stepNumber > 0) {
+          const lastMsg: ModelMessage = messages[messages.length - 1];
+
+          if (lastMsg.role === "assistant" && Array.isArray(lastMsg.content)) {
+            const hasToolCalls: boolean = lastMsg.content.some(
+              (p: unknown) =>
+                typeof p === "object" && p !== null && "type" in p &&
+                (p as { type: string }).type === "tool-call",
+            );
+
+            if (!hasToolCalls) {
+              logger.warn("Model tried to stop without calling done — forcing done tool", { stepNumber });
+
+              return {
+                activeTools: ["done"] as (keyof typeof allTools)[],
+                toolChoice: { type: "tool" as const, toolName: "done" },
+              };
+            }
           }
         }
 
