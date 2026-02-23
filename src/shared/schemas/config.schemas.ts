@@ -63,6 +63,15 @@ const schedulerConfigSchema = z.object({
     .describe("Telegram chat ID where cron task notifications are sent. If null, messages are logged only."),
 });
 
+const jobCreationConfigSchema = z.object({
+  requirePassingNodeTests: z.boolean()
+    .default(true)
+    .describe("Whether all node tests must pass before finish_job_creation"),
+  requireSuccessfulRunBeforeFinish: z.boolean()
+    .default(true)
+    .describe("Whether finish_job_creation must execute the job successfully before marking it ready"),
+});
+
 const knowledgeConfigSchema = z.object({
   embeddingModelPath: z.string()
     .default("Xenova/bge-m3")
@@ -108,6 +117,8 @@ export const configSchema = z.object({
     .optional(),
   scheduler: schedulerConfigSchema
     .default({ enabled: true }),
+  jobCreation: jobCreationConfigSchema
+    .default({}),
   knowledge: knowledgeConfigSchema
     .default({}),
   skills: skillsConfigSchema

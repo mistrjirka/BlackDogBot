@@ -18,7 +18,18 @@ export interface ICheckSchemaCompatOptions {
 
 const _Ajv: Ajv = new Ajv({ allErrors: true, strict: false });
 
+/** Type pairs that are considered compatible (order-independent). */
+const _CompatibleTypePairs: ReadonlySet<string> = new Set(["integer:number", "number:integer"]);
+
 //#endregion Constants
+
+//#region Private functions
+
+function _areTypesCompatible(outputType: string, inputType: string): boolean {
+  return _CompatibleTypePairs.has(`${outputType}:${inputType}`);
+}
+
+//#endregion Private functions
 
 //#region Public functions
 
@@ -73,7 +84,7 @@ export function checkSchemaCompatibility(
         }
 
         if (inputField.type && outputField.type) {
-          if (inputField.type !== outputField.type) {
+          if (inputField.type !== outputField.type && !_areTypesCompatible(String(outputField.type), String(inputField.type))) {
             errors.push(
               `Field "${fieldName}" type mismatch: output is "${String(outputField.type)}" but input expects "${String(inputField.type)}".`,
             );

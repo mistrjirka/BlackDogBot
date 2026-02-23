@@ -39,6 +39,7 @@ import { getExecutionOrder } from "../jobs/graph.js";
 import { validateDataAgainstSchema, ISchemaCompatResult } from "../jobs/schema-compat.js";
 import { generateTextWithRetryAsync, generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { getForceThinkDirective } from "../utils/prepare-step.js";
+import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { parseRssFeed } from "../utils/rss-parser.js";
 import { createOutputZodSchema } from "../utils/json-schema-to-zod.js";
 import { thinkTool } from "../tools/index.js";
@@ -80,6 +81,12 @@ async function fetchWithTimeout(
 
 const _execAsync: typeof exec.__promisify__ = promisify(exec);
 
+export interface IJobExecutionOptions {
+  agentNodeMessageSender?: AgentNodeMessageSender;
+  allowCreatingStatus?: boolean;
+  preserveStatus?: boolean;
+}
+
 export class JobExecutorService {
   //#region Data members
 
@@ -114,7 +121,7 @@ export class JobExecutorService {
     jobId: string,
     input: Record<string, unknown>,
     onNodeProgressAsync?: OnNodeProgressCallback,
-    options?: { agentNodeMessageSender?: AgentNodeMessageSender },
+    options?: IJobExecutionOptions,
   ): Promise<IJobExecutionResult> {
     // Check if job is already running (in-memory lock to prevent concurrent execution)
     if (this._runningJobs.has(jobId)) {
@@ -126,7 +133,7 @@ export class JobExecutorService {
 
     const statusService: StatusService = StatusService.getInstance();
     const startTime: number = Date.now();
-    const nodeResults: { nodeId: string; nodeName: string; duration: number }[] = [];
+    const nodeResults: NonNullable<IJobExecutionResult["nodeResults"]> = [];
 
     try {
       const job: IJob | null = await this._storageService.getJobAsync(jobId);
@@ -135,11 +142,17 @@ export class JobExecutorService {
         throw new Error(`Job not found: ${jobId}`);
       }
 
-      if (job.status !== "ready") {
+      const allowCreatingStatus: boolean = options?.allowCreatingStatus === true;
+      const preserveStatus: boolean = options?.preserveStatus === true;
+      const canExecute: boolean = job.status === "ready" || (allowCreatingStatus && job.status === "creating");
+
+      if (!canExecute) {
         throw new Error(`Job "${jobId}" is not ready for execution. Current status: ${job.status}`);
       }
 
-      await this._storageService.updateJobAsync(jobId, { status: "running" });
+      if (!preserveStatus) {
+        await this._storageService.updateJobAsync(jobId, { status: "running" });
+      }
 
       statusService.setStatus("job_execution", `Running job: ${job.name}`, { jobId });
 
@@ -193,7 +206,19 @@ export class JobExecutorService {
         const inputValidation: ISchemaCompatResult = validateDataAgainstSchema(nodeInput, node.inputSchema);
 
         if (!inputValidation.compatible) {
-          await this._storageService.updateJobAsync(jobId, { status: "failed" });
+          if (!preserveStatus) {
+            await this._storageService.updateJobAsync(jobId, { status: "failed" });
+          }
+
+          nodeResults.push({
+            nodeId: node.nodeId,
+            nodeName: node.name,
+            duration: 0,
+            status: "failed",
+            input: nodeInput,
+            passedToNodeIds: [...node.connections],
+            error: `Input validation failed: ${inputValidation.errors.join(", ")}`,
+          });
 
           const errorMessage: string = `Input validation failed for node "${node.name}" (${nodeId}): ${inputValidation.errors.join(", ")}`;
 
@@ -235,6 +260,10 @@ export class JobExecutorService {
             nodeId: node.nodeId,
             nodeName: node.name,
             duration: nodeEndTime - nodeStartTime,
+            status: "completed",
+            input: nodeInput,
+            output: nodeOutput,
+            passedToNodeIds: [...node.connections],
           });
 
           try {
@@ -252,9 +281,22 @@ export class JobExecutorService {
           const rawMessage: string = nodeError instanceof Error ? nodeError.message : String(nodeError);
           const errorMessage: string = `Node "${node.name}" (${nodeId}, type: ${node.type}) failed: ${rawMessage}`;
 
+          const nodeEndTime: number = Date.now();
+          nodeResults.push({
+            nodeId: node.nodeId,
+            nodeName: node.name,
+            duration: nodeEndTime - nodeStartTime,
+            status: "failed",
+            input: nodeInput,
+            passedToNodeIds: [...node.connections],
+            error: rawMessage,
+          });
+
           this._logger.error(errorMessage, { jobId, nodeId, nodeType: node.type });
 
-          await this._storageService.updateJobAsync(jobId, { status: "failed" });
+          if (!preserveStatus) {
+            await this._storageService.updateJobAsync(jobId, { status: "failed" });
+          }
 
           return {
             success: false,
@@ -277,7 +319,20 @@ export class JobExecutorService {
         const outputValidation: ISchemaCompatResult = validateDataAgainstSchema(nodeOutput, node.outputSchema);
 
         if (!outputValidation.compatible) {
-          await this._storageService.updateJobAsync(jobId, { status: "failed" });
+          if (!preserveStatus) {
+            await this._storageService.updateJobAsync(jobId, { status: "failed" });
+          }
+
+          nodeResults.push({
+            nodeId: node.nodeId,
+            nodeName: node.name,
+            duration: 0,
+            status: "failed",
+            input: nodeInput,
+            output: nodeOutput,
+            passedToNodeIds: [...node.connections],
+            error: `Output validation failed: ${outputValidation.errors.join(", ")}`,
+          });
 
           const errorMessage: string = `Output validation failed for node "${node.name}" (${nodeId}): ${outputValidation.errors.join(", ")}`;
 
@@ -305,7 +360,9 @@ export class JobExecutorService {
       const lastNodeId: string = executionOrder[executionOrder.length - 1];
       const lastOutput: Record<string, unknown> | undefined = nodeOutputs.get(lastNodeId);
 
-      await this._storageService.updateJobAsync(jobId, { status: "completed" });
+      if (!preserveStatus) {
+        await this._storageService.updateJobAsync(jobId, { status: "completed" });
+      }
 
       this._logger.info("Job execution completed", { jobId, nodesExecuted: executionOrder.length });
 
@@ -328,10 +385,12 @@ export class JobExecutorService {
 
       this._logger.error("Job execution failed", { jobId, error: errorMessage });
 
-      try {
-        await this._storageService.updateJobAsync(jobId, { status: "failed" });
-      } catch {
-        // Ignore update errors during failure handling
+      if (!options?.preserveStatus) {
+        try {
+          await this._storageService.updateJobAsync(jobId, { status: "failed" });
+        } catch {
+          // Ignore update errors during failure handling
+        }
       }
 
       return {
@@ -420,7 +479,7 @@ export class JobExecutorService {
   private async _executeNodeAsync(
     node: INode,
     input: Record<string, unknown>,
-    options?: { agentNodeMessageSender?: AgentNodeMessageSender },
+    options?: IJobExecutionOptions,
   ): Promise<Record<string, unknown>> {
     const nodeType: NodeType = node.type;
 
@@ -820,7 +879,7 @@ export class JobExecutorService {
   private async _executeAgentAsync(
     node: INode,
     input: Record<string, unknown>,
-    options?: { agentNodeMessageSender?: AgentNodeMessageSender },
+    options?: IJobExecutionOptions,
   ): Promise<Record<string, unknown>> {
     // Clear tool call history at the start of each execution
     this._lastToolCallHistory = [];
@@ -892,6 +951,7 @@ export class JobExecutorService {
         hasToolCall("done"),
         stepCountIs(maxSteps),
       ],
+      experimental_repairToolCall: repairToolCallJsonAsync,
       prepareStep: async ({ stepNumber, messages }: { stepNumber: number; messages: ModelMessage[] }) => {
         const forceThink = getForceThinkDirective(stepNumber, messages);
 

@@ -13,6 +13,7 @@ import { StatusService } from "../services/status.service.js";
 import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
 import { getForceThinkDirective } from "../utils/prepare-step.js";
+import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { encodingForModel } from "js-tiktoken";
 
 //#region Constants
@@ -232,6 +233,7 @@ export abstract class BaseAgentBase {
       stopWhen: [
         hasToolCall("done"),
       ],
+      experimental_repairToolCall: repairToolCallJsonAsync,
       prepareStep: async ({ stepNumber, messages }) => {
         // Determine whether extra tools should be active this step
         const activeExtraTools: ToolSet | null = getExtraTools ? getExtraTools() : null;

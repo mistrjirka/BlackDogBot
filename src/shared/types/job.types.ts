@@ -136,6 +136,11 @@ export interface IJobExecutionResult {
     nodeId: string;
     nodeName: string;
     duration: number;
+    status?: "completed" | "failed";
+    input?: Record<string, unknown>;
+    output?: unknown;
+    passedToNodeIds?: string[];
+    error?: string;
   }[];
 }
 

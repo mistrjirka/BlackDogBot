@@ -1,8 +1,9 @@
 import { tool } from "ai";
 import { finishJobCreationToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { JobStorageService } from "../services/job-storage.service.js";
+import { ConfigService } from "../services/config.service.js";
 import { JobExecutorService } from "../services/job-executor.service.js";
-import { IJob, INode, INodeTestCase } from "../shared/types/index.js";
+import { IJob, INode, INodeTestCase, IJobExecutionResult } from "../shared/types/index.js";
 import { validateGraph, IGraphValidationResult } from "../jobs/graph.js";
 import { type IJobCreationModeTracker } from "../utils/job-creation-mode-tracker.js";
 import { auditGraphWithLLM, renderGraphForAudit, type IGraphAuditResult, type IJobContext } from "../utils/graph-audit.js";
@@ -82,14 +83,53 @@ function _validateTemplateRefs(
   return errors;
 }
 
+function _truncateText(value: unknown, maxLength: number = 250): string {
+  const text: string = typeof value === "string" ? value : JSON.stringify(value);
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength)}...`;
+}
+
+function _formatExecutionTrace(result: IJobExecutionResult): string[] {
+  const nodeResults = result.nodeResults ?? [];
+  const maxLines = 8;
+  const lines: string[] = [];
+
+  for (const nodeResult of nodeResults.slice(0, maxLines)) {
+    const status: string = nodeResult.status ?? "unknown";
+    const inputText: string = nodeResult.input !== undefined
+      ? _truncateText(nodeResult.input)
+      : "(none)";
+    const outputText: string = nodeResult.output !== undefined
+      ? _truncateText(nodeResult.output)
+      : "(none)";
+    const passedTo: string = (nodeResult.passedToNodeIds ?? []).join(", ") || "(none)";
+    const errorText: string = nodeResult.error ? ` | error: ${_truncateText(nodeResult.error, 180)}` : "";
+
+    lines.push(
+      `Node "${nodeResult.nodeName}" (${nodeResult.nodeId}) [${status}] ` +
+      `input: ${inputText} | output: ${outputText} | passedTo: ${passedTo}${errorText}`,
+    );
+  }
+
+  if (nodeResults.length > maxLines) {
+    lines.push(`... ${nodeResults.length - maxLines} more node trace line(s)`);
+  }
+
+  return lines;
+}
+
 //#endregion Private functions
 
 export function createFinishJobCreationTool(creationModeTracker: IJobCreationModeTracker) {
   return tool({
     description:
       "Finish a job creation session. Validates the graph structure, checks that all " +
-      "{{nodeId.outputKey}} template references are valid, ensures every node has at least one " +
-      "passing test, marks the job as ready, and exits job creation mode.",
+      "{{nodeId.outputKey}} template references are valid, applies configured job-creation checks, " +
+      "marks the job as ready, and exits job creation mode.",
     inputSchema: finishJobCreationToolInputSchema,
     execute: async ({
       jobId,
@@ -146,61 +186,89 @@ export function createFinishJobCreationTool(creationModeTracker: IJobCreationMod
           };
         }
 
-        // 3. Enforce: every node must have at least one test case (except start and litesql)
-        const nodesWithoutTests: string[] = [];
+        const configService: ConfigService = ConfigService.getInstance();
+        const jobCreationConfig = configService.getConfig().jobCreation;
+        const requirePassingNodeTests: boolean = jobCreationConfig.requirePassingNodeTests;
+        const requireSuccessfulRunBeforeFinish: boolean = jobCreationConfig.requireSuccessfulRunBeforeFinish;
 
-        for (const node of nodes) {
-          // Start nodes cannot have tests (no input)
-          // LITESQL nodes are storage operations - testing requires actual DB state
-          if (node.type === "start" || node.type === "litesql") {
-            continue;
-          }
-
-          const testCases: INodeTestCase[] = await storageService.getTestCasesAsync(jobId, node.nodeId);
-
-          if (testCases.length === 0) {
-            nodesWithoutTests.push(`"${node.name}" (${node.nodeId})`);
-          }
-        }
-
-        if (nodesWithoutTests.length > 0) {
-          return {
-            success: false,
-            message:
-              `The following nodes have no test cases. Add at least one test per node using add_node_test, ` +
-              `then run them with run_node_test: ${nodesWithoutTests.join(", ")}`,
-            validationErrors: [],
-          };
-        }
-
-        // 4. Enforce: all node tests must pass (except start and litesql)
         const executorService: JobExecutorService = JobExecutorService.getInstance();
-        const failedNodes: string[] = [];
 
-        for (const node of nodes) {
-          // Start nodes cannot have tests (no input)
-          // LITESQL nodes are storage operations - testing requires actual DB state
-          if (node.type === "start" || node.type === "litesql") {
-            continue;
+        if (requirePassingNodeTests) {
+          // 3. Enforce: every node must have at least one test case (except start and litesql)
+          const nodesWithoutTests: string[] = [];
+
+          for (const node of nodes) {
+            // Start nodes cannot have tests (no input)
+            // LITESQL nodes are storage operations - testing requires actual DB state
+            if (node.type === "start" || node.type === "litesql") {
+              continue;
+            }
+
+            const testCases: INodeTestCase[] = await storageService.getTestCasesAsync(jobId, node.nodeId);
+
+            if (testCases.length === 0) {
+              nodesWithoutTests.push(`"${node.name}" (${node.nodeId})`);
+            }
           }
 
-          const testResult = await executorService.runNodeTestsAsync(jobId, node.nodeId);
+          if (nodesWithoutTests.length > 0) {
+            return {
+              success: false,
+              message:
+                `The following nodes have no test cases. Add at least one test per node using add_node_test, ` +
+                `then run them with run_node_test: ${nodesWithoutTests.join(", ")}`,
+              validationErrors: [],
+            };
+          }
 
-          if (!testResult.allPassed) {
-            const failedCount: number = testResult.results.filter((r) => !r.passed).length;
+          // 4. Enforce: all node tests must pass (except start and litesql)
+          const failedNodes: string[] = [];
 
-            failedNodes.push(`"${node.name}" (${node.nodeId}): ${failedCount} test(s) failed`);
+          for (const node of nodes) {
+            // Start nodes cannot have tests (no input)
+            // LITESQL nodes are storage operations - testing requires actual DB state
+            if (node.type === "start" || node.type === "litesql") {
+              continue;
+            }
+
+            const testResult = await executorService.runNodeTestsAsync(jobId, node.nodeId);
+
+            if (!testResult.allPassed) {
+              const failedCount: number = testResult.results.filter((r) => !r.passed).length;
+
+              failedNodes.push(`"${node.name}" (${node.nodeId}): ${failedCount} test(s) failed`);
+            }
+          }
+
+          if (failedNodes.length > 0) {
+            return {
+              success: false,
+              message:
+                `Node tests must all pass before finishing the job. ` +
+                `Failing nodes: ${failedNodes.join("; ")}. Fix the issues and re-run tests with run_node_test.`,
+              validationErrors: [],
+            };
           }
         }
 
-        if (failedNodes.length > 0) {
-          return {
-            success: false,
-            message:
-              `Node tests must all pass before finishing the job. ` +
-              `Failing nodes: ${failedNodes.join("; ")}. Fix the issues and re-run tests with run_node_test.`,
-            validationErrors: [],
-          };
+        if (requireSuccessfulRunBeforeFinish) {
+          const runResult: IJobExecutionResult = await executorService.executeJobAsync(
+            jobId,
+            {},
+            undefined,
+            {
+              allowCreatingStatus: true,
+              preserveStatus: true,
+            },
+          );
+
+          if (!runResult.success) {
+            return {
+              success: false,
+              message: `Job execution must succeed before finishing creation. ${runResult.error ?? "Execution failed."}`,
+              validationErrors: _formatExecutionTrace(runResult),
+            };
+          }
         }
 
         // 5. LLM-based graph audit (currently disabled — too many false positives)
@@ -254,7 +322,7 @@ export function createFinishJobCreationTool(creationModeTracker: IJobCreationMod
 
         return {
           success: true,
-          message: "Job is now ready for execution. All nodes validated, tests passed, and graph audit approved. Job creation mode exited.",
+          message: "Job is now ready for execution. Configured creation checks passed and job creation mode exited.",
           validationErrors: [],
           suggestions: [],
         };

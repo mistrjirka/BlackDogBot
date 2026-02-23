@@ -43,6 +43,11 @@ export interface ISchedulerConfig {
   notificationChatId: string | null;
 }
 
+export interface IJobCreationConfig {
+  requirePassingNodeTests: boolean;
+  requireSuccessfulRunBeforeFinish: boolean;
+}
+
 export interface IKnowledgeConfig {
   embeddingModelPath: string;
   embeddingDtype: EmbeddingDtype;
@@ -69,6 +74,7 @@ export interface IConfig {
   ai: IAiConfig;
   telegram?: ITelegramConfig;
   scheduler: ISchedulerConfig;
+  jobCreation: IJobCreationConfig;
   knowledge: IKnowledgeConfig;
   skills: ISkillsConfig;
   logging: ILoggingConfig;

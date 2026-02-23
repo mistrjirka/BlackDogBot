@@ -206,6 +206,59 @@ describe("schema-compat", () => {
       expect(result.errors).toHaveLength(0);
     });
   });
+
+  describe("checkSchemaCompatibility - number/integer compatibility", () => {
+    it("should pass when output is number and input expects integer", () => {
+      const outputSchema: Record<string, unknown> = {
+        type: "object",
+        properties: { score: { type: "number" } },
+      };
+
+      const inputSchema: Record<string, unknown> = {
+        type: "object",
+        properties: { score: { type: "integer" } },
+      };
+
+      const result = checkSchemaCompatibility(outputSchema, inputSchema);
+
+      expect(result.compatible).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it("should pass when output is integer and input expects number", () => {
+      const outputSchema: Record<string, unknown> = {
+        type: "object",
+        properties: { value: { type: "integer" } },
+      };
+
+      const inputSchema: Record<string, unknown> = {
+        type: "object",
+        properties: { value: { type: "number" } },
+      };
+
+      const result = checkSchemaCompatibility(outputSchema, inputSchema);
+
+      expect(result.compatible).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it("should still fail when types are genuinely incompatible (string vs number)", () => {
+      const outputSchema: Record<string, unknown> = {
+        type: "object",
+        properties: { count: { type: "string" } },
+      };
+
+      const inputSchema: Record<string, unknown> = {
+        type: "object",
+        properties: { count: { type: "integer" } },
+      };
+
+      const result = checkSchemaCompatibility(outputSchema, inputSchema);
+
+      expect(result.compatible).toBe(false);
+      expect(result.errors.some((e: string) => e.includes("type mismatch"))).toBe(true);
+    });
+  });
 });
 
 //#endregion Tests

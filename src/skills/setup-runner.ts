@@ -6,6 +6,7 @@ import { AiProviderService } from "../services/ai-provider.service.js";
 import { SkillStateService } from "../services/skill-state.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { getForceThinkDirective } from "../utils/prepare-step.js";
+import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { thinkTool, doneTool, runCmdTool } from "../tools/index.js";
 
 //#region Interfaces
@@ -47,6 +48,7 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
       instructions: `${setupPrompt}\n\n${context}`,
       tools,
       stopWhen: [hasToolCall("done"), stepCountIs(10)],
+      experimental_repairToolCall: repairToolCallJsonAsync,
       prepareStep: async ({ stepNumber, messages }) => {
         const forceThink = getForceThinkDirective(stepNumber, messages);
 

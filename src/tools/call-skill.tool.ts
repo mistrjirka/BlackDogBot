@@ -5,6 +5,7 @@ import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { getForceThinkDirective } from "../utils/prepare-step.js";
+import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { thinkTool } from "./think.tool.js";
 import { doneTool } from "./done.tool.js";
 import { runCmdTool } from "./run-cmd.tool.js";
@@ -60,6 +61,7 @@ export const callSkillTool = tool({
         instructions: skill.instructions,
         tools,
         stopWhen: [hasToolCall("done"), stepCountIs(MAX_SKILL_STEPS)],
+        experimental_repairToolCall: repairToolCallJsonAsync,
         prepareStep: async ({ stepNumber, messages }) => {
           const forceThink = getForceThinkDirective(stepNumber, messages);
 
