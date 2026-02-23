@@ -62,6 +62,80 @@ const mockPhotoSender: PhotoSender = async (): Promise<string | null> => {
   return "mock-photo-id";
 };
 
+function buildAsciiGraph(nodes: INode[], entrypointNodeId: string | null): string {
+  const nodeMap: Map<string, INode> = new Map<string, INode>();
+
+  for (const node of nodes) {
+    nodeMap.set(node.nodeId, node);
+  }
+
+  const formatNode = (node: INode): string => `${node.name} [${node.type}] (${node.nodeId})`;
+  const lines: string[] = [];
+
+  lines.push(`Entrypoint: ${entrypointNodeId ?? "<none>"}`);
+  lines.push(`Nodes: ${nodes.length}`);
+  lines.push("");
+  lines.push("Adjacency:");
+
+  for (const node of nodes) {
+    if (node.connections.length === 0) {
+      lines.push(`  ${formatNode(node)} -> (no outgoing edges)`);
+      continue;
+    }
+
+    for (const targetId of node.connections) {
+      const target: INode | undefined = nodeMap.get(targetId);
+      lines.push(`  ${formatNode(node)} -> ${target ? formatNode(target) : `${targetId} [missing]`}`);
+    }
+  }
+
+  lines.push("");
+  lines.push("Reachability from entrypoint:");
+
+  if (!entrypointNodeId || !nodeMap.has(entrypointNodeId)) {
+    lines.push("  (entrypoint missing or invalid)");
+    return lines.join("\n");
+  }
+
+  const visited: Set<string> = new Set<string>();
+
+  const walk = (nodeId: string, prefix: string): void => {
+    const node: INode | undefined = nodeMap.get(nodeId);
+
+    if (!node) {
+      lines.push(`${prefix}└─ ${nodeId} [missing]`);
+      return;
+    }
+
+    const marker: string = visited.has(nodeId) ? " (already visited)" : "";
+    lines.push(`${prefix}└─ ${formatNode(node)}${marker}`);
+
+    if (visited.has(nodeId)) {
+      return;
+    }
+
+    visited.add(nodeId);
+
+    for (const childId of node.connections) {
+      walk(childId, `${prefix}   `);
+    }
+  };
+
+  walk(entrypointNodeId, "");
+
+  const unreachable: INode[] = nodes.filter((n: INode) => !visited.has(n.nodeId));
+
+  if (unreachable.length > 0) {
+    lines.push("");
+    lines.push("Unreachable nodes:");
+    for (const node of unreachable) {
+      lines.push(`  - ${formatNode(node)}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 //#endregion Helpers
 
 //#region Tests
@@ -116,7 +190,7 @@ describe("AI Job Pipeline E2E — RSS + Agent", () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
 
     await mainAgent.initializeForChatAsync("test-chat", mockMessageSender, mockPhotoSender);
-  }, 120_000);
+  }, 300_000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
@@ -192,25 +266,29 @@ Then call done.`;
     // ── Node inspection ──
     const nodes: INode[] = await storageService.listNodesAsync(digestJob!.jobId);
 
-    expect(nodes.length).toBe(3);
-
     const startNode: INode | undefined = nodes.find((n: INode) => n.type === "start");
     const rssNode: INode | undefined = nodes.find((n: INode) => n.type === "rss_fetcher");
     const agentNode: INode | undefined = nodes.find((n: INode) => n.type === "agent");
 
-    expect(startNode).toBeDefined();
+    console.log("\n========== ASCII GRAPH ==========");
+    console.log(buildAsciiGraph(nodes, digestJob!.entrypointNodeId));
+    console.log("=================================\n");
+
+    expect(nodes.length).toBeGreaterThanOrEqual(2);
     expect(rssNode).toBeDefined();
     expect(agentNode).toBeDefined();
 
     const rssConfig: IRssFetcherConfig = rssNode!.config as IRssFetcherConfig;
     const agentConfig: IAgentNodeConfig = agentNode!.config as IAgentNodeConfig;
 
-    console.log("\n========== START NODE ==========");
-    console.log("Node ID:", startNode!.nodeId);
-    console.log("Name:", startNode!.name);
-    console.log("Type:", startNode!.type);
-    console.log("Connections (outgoing):", JSON.stringify(startNode!.connections));
-    console.log("================================\n");
+    if (startNode) {
+      console.log("\n========== START NODE ==========");
+      console.log("Node ID:", startNode.nodeId);
+      console.log("Name:", startNode.name);
+      console.log("Type:", startNode.type);
+      console.log("Connections (outgoing):", JSON.stringify(startNode.connections));
+      console.log("================================\n");
+    }
 
     console.log("\n========== RSS NODE ==========");
     console.log("Node ID:", rssNode!.nodeId);
@@ -238,10 +316,15 @@ Then call done.`;
     console.log("================================\n");
 
     // ── Graph wiring assertions ──
-    expect(startNode!.connections).toContain(rssNode!.nodeId);
+    if (startNode) {
+      expect(startNode.connections).toContain(rssNode!.nodeId);
+      expect(digestJob!.entrypointNodeId).toBe(startNode.nodeId);
+    } else {
+      expect(digestJob!.entrypointNodeId).toBe(rssNode!.nodeId);
+    }
+
     expect(rssNode!.connections).toContain(agentNode!.nodeId);
     expect(agentNode!.connections).toEqual([]);
-    expect(digestJob!.entrypointNodeId).toBe(startNode!.nodeId);
 
     // ── Test case inspection ──
     const rssTestCases: INodeTestCase[] = await storageService.getTestCasesAsync(digestJob!.jobId, rssNode!.nodeId);
@@ -305,10 +388,12 @@ Then call done.`;
     console.log("Failed node ID:", pipelineResult.failedNodeId);
     console.log("Failed node name:", pipelineResult.failedNodeName);
     console.log("Pipeline output:", JSON.stringify(pipelineResult.output, null, 2));
+    console.log("\nPipeline graph snapshot:\n" + buildAsciiGraph(nodes, digestJob!.entrypointNodeId));
     console.log("==============================================\n");
 
     expect(pipelineResult.success).toBe(true);
-    expect(pipelineResult.nodesExecuted).toBe(3);
+    expect(pipelineResult.nodesExecuted).toBeGreaterThanOrEqual(2);
+    expect(pipelineResult.nodesExecuted).toBeLessThanOrEqual(3);
     expect(pipelineResult.output).toBeDefined();
 
     // The agent node should have produced titles

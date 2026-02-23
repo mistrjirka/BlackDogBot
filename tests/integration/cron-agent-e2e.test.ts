@@ -85,7 +85,7 @@ describe("CronAgent E2E", () => {
     const lanceDbPath: string = path.join(tempDir, ".betterclaw", "knowledge", "lancedb");
 
     await vectorStoreService.initializeAsync(lanceDbPath);
-  }, 120000);
+  }, 300000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();

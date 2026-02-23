@@ -5,7 +5,7 @@ import { JobExecutorService } from "../services/job-executor.service.js";
 import { IJob, INode, INodeTestCase } from "../shared/types/index.js";
 import { validateGraph, IGraphValidationResult } from "../jobs/graph.js";
 import { type IJobCreationModeTracker } from "../utils/job-creation-mode-tracker.js";
-import { auditGraphWithLLM, renderGraphForAudit, type IJobContext } from "../utils/graph-audit.js";
+import { auditGraphWithLLM, renderGraphForAudit, type IGraphAuditResult, type IJobContext } from "../utils/graph-audit.js";
 
 //#region Constants
 
@@ -220,7 +220,21 @@ export function createFinishJobCreationTool(creationModeTracker: IJobCreationMod
             jobDescription: job.description,
           };
 
-          const auditResult = await auditGraphWithLLM(graphDescription, jobContext);
+          let auditResult: IGraphAuditResult;
+
+          try {
+            auditResult = await auditGraphWithLLM(graphDescription, jobContext);
+          } catch (auditError: unknown) {
+            const auditErrorMessage: string = auditError instanceof Error
+              ? auditError.message
+              : String(auditError);
+
+            return {
+              success: false,
+              message: "Graph audit failed due to an LLM error. Fix the issue and try again, or use skipAudit=true after the first audit attempt.",
+              validationErrors: [auditErrorMessage],
+            };
+          }
 
           if (!auditResult.approved) {
             return {

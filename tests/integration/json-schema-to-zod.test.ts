@@ -283,4 +283,30 @@ describe("createOutputZodSchema", () => {
 
     expect(zodSchema.safeParse(invalidInput).success).toBe(false);
   });
+
+  it("should enforce strict object keys for structured output schemas", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        summary: { type: "string" },
+      },
+      required: ["title"],
+    };
+
+    const zodSchema = createOutputZodSchema(schema);
+
+    expect(
+      zodSchema.safeParse({
+        title: "Example",
+        summary: "Text",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      zodSchema.safeParse({
+        title: "Example",
+      }).success,
+    ).toBe(false);
+  });
 });

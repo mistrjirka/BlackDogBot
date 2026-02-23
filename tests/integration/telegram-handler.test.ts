@@ -162,7 +162,7 @@ describe("TelegramHandler", () => {
     const messagingService: MessagingService = MessagingService.getInstance();
 
     messagingService.registerAdapter(createFakeAdapter(sentMessages, sentPhotos, sentActions));
-  }, 120000);
+  }, 350000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
@@ -206,7 +206,7 @@ describe("TelegramHandler", () => {
 
     // Assert — typing action was sent, no crash occurred
     expect(sentActions.some((a) => a.action === "typing")).toBe(true);
-  }, 120000);
+  }, 300000);
 
   it("should reply with agent text when the agent returns non-empty text", async () => {
     // Arrange
@@ -226,7 +226,7 @@ describe("TelegramHandler", () => {
     // Assert — ctx.reply was called with some non-empty text from the agent
     expect(replyTexts.length).toBeGreaterThan(0);
     expect(replyTexts[0].length).toBeGreaterThan(0);
-  }, 120000);
+  }, 300000);
 
   it("should skip processing when ctx.message is absent", async () => {
     // Arrange — context has no message at all

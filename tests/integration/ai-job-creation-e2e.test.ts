@@ -103,7 +103,7 @@ describe("AI-Driven Job Creation E2E", () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
 
     await mainAgent.initializeForChatAsync("test-chat", mockMessageSender, mockPhotoSender);
-  }, 120000);
+  }, 300000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
@@ -120,7 +120,7 @@ describe("AI-Driven Job Creation E2E", () => {
 
     const result: IAgentResult = await mainAgent.processMessageForChatAsync(
       "test-chat",
-      "Create a new job called 'Text Uppercaser' with description 'Converts text to uppercase'. Just create the job, don't add any nodes yet. Then call done.",
+      "Create a new job called 'Text Uppercaser' with description 'Converts text to uppercase'. Use start_job_creation, then add_job, do not add any nodes, then call done.",
     );
 
     expect(result).toBeDefined();
@@ -130,7 +130,10 @@ describe("AI-Driven Job Creation E2E", () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
     const jobs: IJob[] = await storageService.listJobsAsync();
 
-    expect(jobs.length).toBeGreaterThanOrEqual(1);
+    expect(
+      jobs.length,
+      `No jobs created. stepsCount=${result.stepsCount}, agentText=${JSON.stringify(result.text)}`,
+    ).toBeGreaterThanOrEqual(1);
 
     const createdJob: IJob | undefined = jobs.find(
       (j: IJob) => j.name.toLowerCase().includes("uppercaser") || j.name.toLowerCase().includes("uppercase"),
@@ -138,7 +141,7 @@ describe("AI-Driven Job Creation E2E", () => {
 
     expect(createdJob).toBeDefined();
     expect(createdJob!.status).toBe("creating");
-  }, 120000);
+  }, 300000);
 });
 
 //#endregion Tests

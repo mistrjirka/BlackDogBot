@@ -3,87 +3,281 @@ import { AiProviderService } from "../services/ai-provider.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 
-const SYSTEM_PROMPT: string = `You are a JSON Schema expert. Your ONLY job is to generate valid JSON Schemas based on user descriptions.
+const SYSTEM_PROMPT: string = `You are a schema planner. Your job is to produce a strict JSON field blueprint that will be converted to JSON Schema by the app.
 
 ## Rules
-1. Always use "type": "object" as the root
-2. Always include a "properties" object
-3. Use these types only: "string", "number", "integer", "boolean", "array", "object", "null"
-4. For arrays, always include "items" describing what's in the array
-5. Mark required fields in a "required" array at the root level
-6. Add "description" fields for clarity - these help LLMs understand fields
+1. Output ONLY the blueprint format requested by the schema.
+2. Use these types only: "string", "number", "integer", "boolean", "array", "object", "null".
+3. For object fields, use "objectFields".
+4. For array fields, set "arrayItemType" and when item type is "object", provide "arrayItemObjectFields".
+5. If a field is optional, set "required": false.
+6. Include clear descriptions whenever possible.
+7. Preserve explicitly requested field names exactly as written.
+8. Do NOT invent wrapper/container top-level fields unless explicitly requested.
 
-## Common Patterns
-
-### Array of objects:
+Example blueprint:
 {
-  "type": "object",
-  "properties": {
-    "items": {
+  "fields": [
+    { "name": "title", "type": "string", "description": "Title", "required": true },
+    { "name": "count", "type": "number", "description": "Count", "required": false },
+    {
+      "name": "items",
       "type": "array",
-      "description": "Array of items",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": { "type": "string", "description": "Unique identifier" },
-          "name": { "type": "string", "description": "Item name" }
-        },
-        "required": ["id", "name"]
-      }
-    },
-    "count": { "type": "number", "description": "Total number of items" }
-  },
-  "required": ["items"]
-}
-
-### Simple object with fields:
-{
-  "type": "object",
-  "properties": {
-    "title": { "type": "string", "description": "The title" },
-    "count": { "type": "number", "description": "A count" },
-    "isActive": { "type": "boolean", "description": "Whether active" }
-  },
-  "required": ["title"]
-}
-
-### Nested objects:
-{
-  "type": "object",
-  "properties": {
-    "user": {
-      "type": "object",
-      "description": "User information",
-      "properties": {
-        "name": { "type": "string" },
-        "email": { "type": "string" }
-      },
-      "required": ["name"]
+      "required": true,
+      "arrayItemType": "object",
+      "arrayItemObjectFields": [
+        { "name": "id", "type": "string", "required": true },
+        { "name": "name", "type": "string", "required": true }
+      ]
     }
-  },
-  "required": ["user"]
+  ]
+}`;
+
+type JsonScalarType = "string" | "number" | "integer" | "boolean" | "null";
+type JsonFieldType = JsonScalarType | "array" | "object";
+
+interface IScalarFieldBlueprint {
+  name: string;
+  type: JsonScalarType;
+  description?: string | null;
+  required?: boolean | null;
 }
 
-## Important Notes
-- Arrays MUST have an "items" property defining what's inside
-- Objects MUST have a "properties" property
-- Never use "$schema", "$ref", "definitions", or advanced JSON Schema features
-- Keep schemas simple and flat when possible
-- Always add descriptions - they help LLMs produce correct output`;
+interface IMidFieldBlueprint {
+  name: string;
+  type: JsonFieldType;
+  description?: string | null;
+  required?: boolean | null;
+  objectFields?: IScalarFieldBlueprint[] | null;
+  arrayItemType?: JsonScalarType | "object" | null;
+  arrayItemObjectFields?: IScalarFieldBlueprint[] | null;
+}
 
-// Zod schema for the output - this enforces the structure
-// Using z.custom() instead of z.record() to avoid additionalProperties: {}
-// which OpenAI strict mode rejects. z.record() produces:
-// { type: "object", additionalProperties: {} } - strict mode hates this.
-// z.custom() with a validation function produces just { type: "object" }
-const OutputSchemaZod = z.object({
-  type: z.literal("object"),
-  properties: z.custom<Record<string, unknown>>(
-    (val) => typeof val === "object" && val !== null && !Array.isArray(val),
-    "properties must be an object"
-  ),
-  required: z.array(z.string()).optional(),
-});
+interface ITopFieldBlueprint {
+  name: string;
+  type: JsonFieldType;
+  description?: string | null;
+  required?: boolean | null;
+  objectFields?: IMidFieldBlueprint[] | null;
+  arrayItemType?: JsonScalarType | "object" | null;
+  arrayItemObjectFields?: IMidFieldBlueprint[] | null;
+}
+
+const ScalarFieldBlueprintSchema: z.ZodType<IScalarFieldBlueprint> = z.object({
+  name: z.string(),
+  type: z.enum(["string", "number", "integer", "boolean", "null"]),
+  description: z.string().nullable(),
+  required: z.boolean().nullable(),
+}).strict();
+
+const MidFieldBlueprintSchema: z.ZodType<IMidFieldBlueprint> = z.object({
+  name: z.string(),
+  type: z.enum(["string", "number", "integer", "boolean", "null", "array", "object"]),
+  description: z.string().nullable(),
+  required: z.boolean().nullable(),
+  objectFields: z.array(ScalarFieldBlueprintSchema).nullable(),
+  arrayItemType: z.enum(["string", "number", "integer", "boolean", "null", "object"]).nullable(),
+  arrayItemObjectFields: z.array(ScalarFieldBlueprintSchema).nullable(),
+}).strict();
+
+const TopFieldBlueprintSchema: z.ZodType<ITopFieldBlueprint> = z.object({
+  name: z.string(),
+  type: z.enum(["string", "number", "integer", "boolean", "null", "array", "object"]),
+  description: z.string().nullable(),
+  required: z.boolean().nullable(),
+  objectFields: z.array(MidFieldBlueprintSchema).nullable(),
+  arrayItemType: z.enum(["string", "number", "integer", "boolean", "null", "object"]).nullable(),
+  arrayItemObjectFields: z.array(MidFieldBlueprintSchema).nullable(),
+}).strict();
+
+const OutputBlueprintZod = z.object({
+  fields: z.array(TopFieldBlueprintSchema).min(1),
+}).strict();
+
+function _fieldTypeToSchemaType(fieldType: JsonFieldType, required: boolean): JsonFieldType | JsonFieldType[] {
+  if (required || fieldType === "null") {
+    return fieldType;
+  }
+
+  return [fieldType, "null"];
+}
+
+function _buildJsonSchemaForScalarField(field: IScalarFieldBlueprint): Record<string, unknown> {
+  const isRequired: boolean = field.required !== false;
+
+  const scalarSchema: Record<string, unknown> = {
+    type: _fieldTypeToSchemaType(field.type, isRequired),
+  };
+
+  if (field.description) {
+    scalarSchema.description = field.description;
+  }
+
+  return scalarSchema;
+}
+
+function _buildJsonSchemaForMidField(field: IMidFieldBlueprint): Record<string, unknown> {
+  const isRequired: boolean = field.required !== false;
+
+  if (field.type === "object") {
+    const nestedFields: IScalarFieldBlueprint[] = Array.isArray(field.objectFields) ? field.objectFields : [];
+    const properties: Record<string, unknown> = {};
+
+    for (const nestedField of nestedFields) {
+      properties[nestedField.name] = _buildJsonSchemaForScalarField(nestedField);
+    }
+
+    const objectSchema: Record<string, unknown> = {
+      type: _fieldTypeToSchemaType("object", isRequired),
+      properties,
+      required: Object.keys(properties),
+      additionalProperties: false,
+    };
+
+    if (field.description) {
+      objectSchema.description = field.description;
+    }
+
+    return objectSchema;
+  }
+
+  if (field.type === "array") {
+    const itemType: JsonScalarType | "object" = field.arrayItemType ?? "string";
+    let itemsSchema: Record<string, unknown> = { type: "string" };
+
+    if (itemType === "object") {
+      const itemFields: IScalarFieldBlueprint[] = Array.isArray(field.arrayItemObjectFields)
+        ? field.arrayItemObjectFields
+        : [];
+      const itemProperties: Record<string, unknown> = {};
+
+      for (const itemField of itemFields) {
+        itemProperties[itemField.name] = _buildJsonSchemaForScalarField(itemField);
+      }
+
+      itemsSchema = {
+        type: "object",
+        properties: itemProperties,
+        required: Object.keys(itemProperties),
+        additionalProperties: false,
+      };
+    } else {
+      itemsSchema = {
+        type: itemType,
+      };
+    }
+
+    const arraySchema: Record<string, unknown> = {
+      type: _fieldTypeToSchemaType("array", isRequired),
+      items: itemsSchema,
+    };
+
+    if (field.description) {
+      arraySchema.description = field.description;
+    }
+
+    return arraySchema;
+  }
+
+  const scalarSchema: Record<string, unknown> = {
+    type: _fieldTypeToSchemaType(field.type, isRequired),
+  };
+
+  if (field.description) {
+    scalarSchema.description = field.description;
+  }
+
+  return scalarSchema;
+}
+
+function _buildJsonSchemaForTopField(field: ITopFieldBlueprint): Record<string, unknown> {
+  const isRequired: boolean = field.required !== false;
+
+  if (field.type === "object") {
+    const nestedFields: IMidFieldBlueprint[] = Array.isArray(field.objectFields) ? field.objectFields : [];
+    const properties: Record<string, unknown> = {};
+
+    for (const nestedField of nestedFields) {
+      properties[nestedField.name] = _buildJsonSchemaForMidField(nestedField);
+    }
+
+    const objectSchema: Record<string, unknown> = {
+      type: _fieldTypeToSchemaType("object", isRequired),
+      properties,
+      required: Object.keys(properties),
+      additionalProperties: false,
+    };
+
+    if (field.description) {
+      objectSchema.description = field.description;
+    }
+
+    return objectSchema;
+  }
+
+  if (field.type === "array") {
+    const itemType: JsonScalarType | "object" = field.arrayItemType ?? "string";
+    let itemsSchema: Record<string, unknown> = { type: "string" };
+
+    if (itemType === "object") {
+      const itemFields: IMidFieldBlueprint[] = Array.isArray(field.arrayItemObjectFields)
+        ? field.arrayItemObjectFields
+        : [];
+      const itemProperties: Record<string, unknown> = {};
+
+      for (const itemField of itemFields) {
+        itemProperties[itemField.name] = _buildJsonSchemaForMidField(itemField);
+      }
+
+      itemsSchema = {
+        type: "object",
+        properties: itemProperties,
+        required: Object.keys(itemProperties),
+        additionalProperties: false,
+      };
+    } else {
+      itemsSchema = {
+        type: itemType,
+      };
+    }
+
+    const arraySchema: Record<string, unknown> = {
+      type: _fieldTypeToSchemaType("array", isRequired),
+      items: itemsSchema,
+    };
+
+    if (field.description) {
+      arraySchema.description = field.description;
+    }
+
+    return arraySchema;
+  }
+
+  const scalarSchema: Record<string, unknown> = {
+    type: _fieldTypeToSchemaType(field.type, isRequired),
+  };
+
+  if (field.description) {
+    scalarSchema.description = field.description;
+  }
+
+  return scalarSchema;
+}
+
+function _buildJsonSchemaFromBlueprint(blueprint: { fields: ITopFieldBlueprint[] }): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+
+  for (const field of blueprint.fields) {
+    properties[field.name] = _buildJsonSchemaForTopField(field);
+  }
+
+  return {
+    type: "object",
+    properties,
+    required: Object.keys(properties),
+    additionalProperties: false,
+  };
+}
 
 const createOutputSchemaToolInputSchema = z.object({
   description: z
@@ -121,17 +315,17 @@ export function createCreateOutputSchemaTool() {
         const model = aiProvider.getModel();
 
         const userPrompt: string = context
-          ? `Context: ${context}\n\nGenerate a JSON Schema for output that: ${description}`
-          : `Generate a JSON Schema for output that: ${description}`;
+          ? `Context: ${context}\n\nCreate a field blueprint for output that: ${description}`
+          : `Create a field blueprint for output that: ${description}`;
 
         const result = await generateObjectWithRetryAsync({
           model,
           system: SYSTEM_PROMPT,
           prompt: userPrompt,
-          schema: OutputSchemaZod,
+          schema: OutputBlueprintZod,
         });
 
-        const schema: Record<string, unknown> = result.object as Record<string, unknown>;
+        const schema: Record<string, unknown> = _buildJsonSchemaFromBlueprint(result.object);
 
         logger.info("Created output schema", { schema });
 

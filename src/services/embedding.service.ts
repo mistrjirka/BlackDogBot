@@ -45,6 +45,7 @@ export class EmbeddingService {
   private _dtype: EmbeddingDtype;
   private _device: PipelineDevice;
   private _initialized: boolean;
+  private _initializationPromise: Promise<void> | null;
 
   //#endregion Data members
 
@@ -56,6 +57,7 @@ export class EmbeddingService {
     this._dtype = "q8";
     this._device = "cpu";
     this._initialized = false;
+    this._initializationPromise = null;
   }
 
   //#endregion Constructors
@@ -75,12 +77,47 @@ export class EmbeddingService {
     dtype?: EmbeddingDtype,
     device?: EmbeddingDevice,
   ): Promise<void> {
+    const requestedModelPath: string = modelPath ?? DEFAULT_EMBEDDING_MODEL;
+    const requestedDtype: EmbeddingDtype = dtype ?? (DEFAULT_EMBEDDING_DTYPE as EmbeddingDtype);
+    const requestedDevice: EmbeddingDevice = device ?? (DEFAULT_EMBEDDING_DEVICE as EmbeddingDevice);
+
+    if (
+      this._initialized &&
+      this._modelPath === requestedModelPath &&
+      this._dtype === requestedDtype
+    ) {
+      return;
+    }
+
+    if (this._initializationPromise) {
+      await this._initializationPromise;
+      return;
+    }
+
+    const initializeTask: Promise<void> = this._initializeInternalAsync(
+      requestedModelPath,
+      requestedDtype,
+      requestedDevice,
+    );
+
+    this._initializationPromise = initializeTask;
+
+    try {
+      await initializeTask;
+    } finally {
+      this._initializationPromise = null;
+    }
+  }
+
+  private async _initializeInternalAsync(
+    requestedModelPath: string,
+    requestedDtype: EmbeddingDtype,
+    requestedDevice: EmbeddingDevice,
+  ): Promise<void> {
     const logger: LoggerService = LoggerService.getInstance();
 
-    this._modelPath = modelPath ?? DEFAULT_EMBEDDING_MODEL;
-    this._dtype = dtype ?? (DEFAULT_EMBEDDING_DTYPE as EmbeddingDtype);
-
-    const requestedDevice: EmbeddingDevice = device ?? (DEFAULT_EMBEDDING_DEVICE as EmbeddingDevice);
+    this._modelPath = requestedModelPath;
+    this._dtype = requestedDtype;
 
     this._device = await this._resolveDeviceAsync(requestedDevice);
 

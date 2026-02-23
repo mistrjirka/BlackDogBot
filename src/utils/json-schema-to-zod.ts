@@ -20,6 +20,41 @@ import { z } from "zod";
 
 type JsonSchema = Record<string, unknown>;
 
+function normalizeStrictObjectSchema(schema: JsonSchema): JsonSchema {
+  const normalized: JsonSchema = { ...schema };
+  const schemaType: unknown = normalized.type;
+
+  if (schemaType === "object") {
+    const properties: unknown = normalized.properties;
+
+    if (properties && typeof properties === "object") {
+      const propertyEntries: [string, JsonSchema][] = Object.entries(properties as Record<string, JsonSchema>);
+      const normalizedProperties: Record<string, JsonSchema> = {};
+
+      for (const [key, propertySchema] of propertyEntries) {
+        if (propertySchema && typeof propertySchema === "object") {
+          normalizedProperties[key] = normalizeStrictObjectSchema(propertySchema);
+        } else {
+          normalizedProperties[key] = propertySchema;
+        }
+      }
+
+      normalized.properties = normalizedProperties;
+      normalized.required = Object.keys(normalizedProperties);
+    }
+  }
+
+  if (schemaType === "array") {
+    const items: unknown = normalized.items;
+
+    if (items && typeof items === "object") {
+      normalized.items = normalizeStrictObjectSchema(items as JsonSchema);
+    }
+  }
+
+  return normalized;
+}
+
 /**
  * Converts a JSON Schema to a Zod schema.
  * Returns z.unknown() for unsupported or invalid schemas.
@@ -128,7 +163,6 @@ function handleObjectSchema(schema: JsonSchema): z.ZodType {
     if (requiredSet.has(key)) {
       shape[key] = zodSchema;
     } else {
-      // Optional field
       shape[key] = zodSchema.optional();
     }
   }
@@ -149,7 +183,8 @@ export function createOutputZodSchema(schema: JsonSchema | undefined | null): z.
     return z.record(z.string(), z.unknown());
   }
 
-  const zodSchema: z.ZodType = jsonSchemaToZod(schema);
+  const normalizedSchema: JsonSchema = normalizeStrictObjectSchema(schema);
+  const zodSchema: z.ZodType = jsonSchemaToZod(normalizedSchema);
 
   // Ensure the schema is for an object
   if (zodSchema instanceof z.ZodObject) {

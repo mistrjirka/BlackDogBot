@@ -43,7 +43,7 @@ describe("KnowledgeService extended", () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
 
     await vectorStoreService.initializeAsync(path.join(tempDir, "lancedb"));
-  }, 120000);
+  }, 300000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();

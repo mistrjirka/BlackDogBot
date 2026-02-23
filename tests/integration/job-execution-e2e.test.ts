@@ -1174,7 +1174,7 @@ describe("Job Execution E2E", () => {
         systemPrompt: "You are a math assistant. Given an array of numbers, calculate the sum, average, and count. When done, call the done tool with a JSON object containing sum (number), average (number), and count (number).",
         selectedTools: ["think"],
         model: null,
-        reasoningEffort: null,
+        reasoningEffort: "low",
         maxSteps: 5,
       },
     );
@@ -1240,7 +1240,7 @@ describe("Job Execution E2E", () => {
         ].join("\n"),
         selectedTools: ["read_file", "write_file"],
         model: null,
-        reasoningEffort: null,
+        reasoningEffort: "low",
         maxSteps: 10,
       },
     );

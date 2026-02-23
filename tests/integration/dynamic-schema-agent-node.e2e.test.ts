@@ -12,6 +12,7 @@ import { JobExecutorService } from "../../src/services/job-executor.service.js";
 import { PromptService } from "../../src/services/prompt.service.js";
 import type { IJob, INode } from "../../src/shared/types/index.js";
 import { createOutputZodSchema } from "../../src/utils/json-schema-to-zod.js";
+import { createCreateOutputSchemaTool } from "../../src/tools/create-output-schema.tool.js";
 
 //#region Helpers
 
@@ -31,6 +32,16 @@ function resetSingletons(): void {
 async function writeConfigAsync(configPath: string, content: string): Promise<void> {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   await fs.writeFile(configPath, content, "utf-8");
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function execTool<T>(toolObj: any, args: unknown): Promise<T> {
+  const result = await toolObj.execute(
+    args,
+    { toolCallId: "test", messages: [], abortSignal: new AbortController().signal },
+  );
+
+  return result as T;
 }
 
 //#endregion Helpers
@@ -81,10 +92,8 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
   it("should generate a schema dynamically, create an agent node, and execute it with valid output", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
     const executorService: JobExecutorService = JobExecutorService.getInstance();
-    const aiProviderService: AiProviderService = AiProviderService.getInstance();
-    const model = aiProviderService.getDefaultModel();
 
-    // ── Step 1: Generate schema dynamically using generateObject (simulating create_output_schema tool) ──
+    // ── Step 1: Generate schema dynamically using create_output_schema tool ──
     console.log("\n========== STEP 1: GENERATE DYNAMIC SCHEMA ==========");
 
     const schemaDescription: string = `An object with:
@@ -92,29 +101,14 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
       - confidence: a number between 0 and 1
       - keywords: an array of important keywords from the text`;
 
-    const { generateObject } = await import("ai");
-    const { z } = await import("zod");
+    const schemaTool = createCreateOutputSchemaTool();
+    const schemaResult = await execTool<{ success: boolean; schema: Record<string, unknown> | null; error?: string }>(
+      schemaTool,
+      { description: schemaDescription },
+    );
 
-    const JsonSchemaZod = z.object({
-      type: z.literal("object"),
-      properties: z.record(z.string(), z.unknown()),
-      required: z.array(z.string()).optional(),
-    });
-
-    const schemaResult = await generateObject({
-      model,
-      system: `You are a JSON Schema expert. Generate valid JSON Schemas.
-        Rules:
-        1. Always use "type": "object" as the root
-        2. Always include a "properties" object
-        3. Use these types: "string", "number", "integer", "boolean", "array", "object", "null"
-        4. For arrays, include "items" describing what's in the array
-        5. Mark required fields in a "required" array`,
-      prompt: `Generate a JSON Schema for: ${schemaDescription}`,
-      schema: JsonSchemaZod,
-    });
-
-    const dynamicOutputSchema: Record<string, unknown> = schemaResult.object;
+    expect(schemaResult.success).toBe(true);
+    const dynamicOutputSchema: Record<string, unknown> = schemaResult.schema as Record<string, unknown>;
     console.log("Generated schema:", JSON.stringify(dynamicOutputSchema, null, 2));
 
     // Verify the schema was generated correctly
@@ -163,7 +157,7 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
         { "sentiment": "positive", "confidence": 0.95, "keywords": ["love", "product"] }`,
         selectedTools: ["think"],
         model: null,
-        reasoningEffort: null,
+        reasoningEffort: "low",
         maxSteps: 5,
       },
     );
@@ -267,30 +261,18 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
   it("should handle complex nested schema and validate output", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
     const executorService: JobExecutorService = JobExecutorService.getInstance();
-    const aiProviderService: AiProviderService = AiProviderService.getInstance();
-    const model = aiProviderService.getDefaultModel();
 
-    const { generateObject } = await import("ai");
-    const { z } = await import("zod");
-
-    const JsonSchemaZod = z.object({
-      type: z.literal("object"),
-      properties: z.record(z.string(), z.unknown()),
-      required: z.array(z.string()).optional(),
-    });
-
-    // Generate a more complex schema with nested objects
-    const schemaResult = await generateObject({
-      model,
-      system: `You are a JSON Schema expert. Generate valid JSON Schemas with proper nesting.`,
-      prompt: `Generate a JSON Schema for: An analysis result object containing:
+    const schemaTool = createCreateOutputSchemaTool();
+    const schemaResult = await execTool<{ success: boolean; schema: Record<string, unknown> | null; error?: string }>(
+      schemaTool,
+      { description: `An analysis result object containing:
         - summary: a string summary
         - analysis: an object with score (number) and breakdown (object with positive number and negative number)
-        - items: an array of objects, each with id (string) and value (number)`,
-      schema: JsonSchemaZod,
-    });
+        - items: an array of objects, each with id (string) and value (number)` },
+    );
 
-    const dynamicOutputSchema: Record<string, unknown> = schemaResult.object;
+    expect(schemaResult.success).toBe(true);
+    const dynamicOutputSchema: Record<string, unknown> = schemaResult.schema as Record<string, unknown>;
     console.log("\nComplex schema:", JSON.stringify(dynamicOutputSchema, null, 2));
 
     // Create job and node
@@ -315,7 +297,7 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
         - items: array of { id: string, value: number }`,
         selectedTools: ["think"],
         model: null,
-        reasoningEffort: null,
+        reasoningEffort: "low",
         maxSteps: 5,
       },
     );

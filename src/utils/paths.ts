@@ -109,6 +109,12 @@ export function getDatabasesDir(): string {
 }
 
 export function getModelsDir(): string {
+  const envModelsDir: string | undefined = process.env.BETTERCLAW_MODELS_DIR;
+
+  if (envModelsDir && envModelsDir.trim().length > 0) {
+    return envModelsDir;
+  }
+
   return path.join(getBaseDir(), "models");
 }
 

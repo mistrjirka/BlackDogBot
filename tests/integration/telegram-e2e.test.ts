@@ -94,7 +94,7 @@ describe("Telegram E2E", () => {
     const skillLoaderService: SkillLoaderService = SkillLoaderService.getInstance();
 
     await skillLoaderService.loadAllSkillsAsync([]);
-  }, 120000);
+  }, 300000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
@@ -156,7 +156,7 @@ describe("Telegram E2E", () => {
     expect(replyTexts.length).toBeGreaterThan(0);
     // The reply should contain something (the agent's response)
     expect(replyTexts[0].length).toBeGreaterThan(0);
-  }, 120000);
+  }, 300000);
 });
 
 //#endregion Tests

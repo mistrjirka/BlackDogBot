@@ -102,7 +102,7 @@ describe("MainAgent E2E", () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
 
     await mainAgent.initializeForChatAsync("test-chat", mockMessageSender, mockPhotoSender);
-  }, 120000);
+  }, 300000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();

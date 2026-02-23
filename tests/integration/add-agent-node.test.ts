@@ -81,7 +81,7 @@ describe("add_agent_node (unit)", () => {
         systemPrompt: "Do something",
         selectedTools: [],
         model: null,
-        reasoningEffort: null,
+        reasoningEffort: "low",
         maxSteps: 10,
       },
     );
