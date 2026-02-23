@@ -72,6 +72,7 @@ import {
 } from "../tools/index.js";
 import { BrainInterfaceService } from "../brain-interface/service.js";
 import { PromptService } from "../services/prompt.service.js";
+import { ConfigService } from "../services/config.service.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import type { IJob, INode } from "../shared/types/index.js";
 import type { IToolCallSummary } from "./base-agent.js";
@@ -166,6 +167,8 @@ export class MainAgent extends BaseAgentBase {
     const jobTracker: JobActivityTracker = new JobActivityTracker();
     const brainInterface: BrainInterfaceService = BrainInterfaceService.getInstance();
     const promptService: PromptService = PromptService.getInstance();
+    const configService: ConfigService = ConfigService.getInstance();
+    const config = configService.getConfig();
     const jobCreationGuide: string = await promptService.getPromptAsync(PROMPT_JOB_CREATION_GUIDE);
 
     // Ensure session exists before building trackers that close over it
@@ -239,9 +242,12 @@ export class MainAgent extends BaseAgentBase {
       create_table: createTableTool,
       drop_table: dropTableTool,
       query_database: queryDatabaseTool,
-      // start_job_creation is always available (entry point for mode)
-      start_job_creation: createStartJobCreationTool(jobTracker, creationModeTracker),
     };
+
+    if (config.jobCreation.enabled) {
+      // start_job_creation is the entry point for mode
+      tools.start_job_creation = createStartJobCreationTool(jobTracker, creationModeTracker);
+    }
 
     // Node-creation tools are mode-gated: registered with the agent but only exposed
     // via activeTools when the chat session is in job creation mode.

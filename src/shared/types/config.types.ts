@@ -15,7 +15,7 @@ export interface IOpenRouterConfig {
   apiKey: string;
   model: string;
   rateLimits: IRateLimitConfig;
-  contextWindow?: number;  // Optional, defaults to 128000 if not specified
+  contextWindow?: number; // Optional, defaults to 128000 if not specified
 }
 
 export interface IOpenAiCompatibleConfig {
@@ -23,7 +23,7 @@ export interface IOpenAiCompatibleConfig {
   apiKey: string;
   model: string;
   rateLimits: IRateLimitConfig;
-  contextWindow?: number;  // Optional, defaults to 128000 if not specified
+  contextWindow?: number; // Optional, defaults to 128000 if not specified
 }
 
 export type AiProvider = "openrouter" | "openai-compatible";
@@ -44,6 +44,7 @@ export interface ISchedulerConfig {
 }
 
 export interface IJobCreationConfig {
+  enabled: boolean;
   requirePassingNodeTests: boolean;
   requireSuccessfulRunBeforeFinish: boolean;
 }

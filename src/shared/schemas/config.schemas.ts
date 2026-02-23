@@ -64,6 +64,9 @@ const schedulerConfigSchema = z.object({
 });
 
 const jobCreationConfigSchema = z.object({
+  enabled: z.boolean()
+    .default(true)
+    .describe("Whether the job creation feature is enabled"),
   requirePassingNodeTests: z.boolean()
     .default(true)
     .describe("Whether all node tests must pass before finish_job_creation"),

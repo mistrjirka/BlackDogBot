@@ -196,6 +196,8 @@ create_docker_compose() {
     
     echo -e "${YELLOW}Creating Docker Compose configuration...${NC}"
     
+    mkdir -p "$CONFIG_DIR"
+    
     cat > "$COMPOSE_FILE" << 'EOF'
 # BetterClaw optional services
 # Run with: docker compose -f ~/.betterclaw/docker-compose.yaml up -d
