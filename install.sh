@@ -145,6 +145,25 @@ install_dependencies() {
     
     pnpm install
     print_success "Dependencies installed"
+    
+    # Verify native addons were built correctly
+    echo -e "${YELLOW}Verifying native addons...${NC}"
+    
+    # Check better-sqlite3
+    SQLITE_BINDING=$(find node_modules -name "better_sqlite3.node" -type f 2>/dev/null | head -1)
+    if [ -z "$SQLITE_BINDING" ]; then
+        print_warning "better-sqlite3 native addon not found, rebuilding..."
+        pnpm rebuild better-sqlite3 2>/dev/null || true
+        SQLITE_BINDING=$(find node_modules -name "better_sqlite3.node" -type f 2>/dev/null | head -1)
+        if [ -n "$SQLITE_BINDING" ]; then
+            print_success "better-sqlite3 rebuilt successfully"
+        else
+            print_error "Failed to build better-sqlite3. You may need to install build tools (gcc, make, python3)"
+        fi
+    else
+        print_success "better-sqlite3 native addon OK"
+    fi
+    
     echo ""
 }
 
@@ -407,7 +426,7 @@ EOF
         cat >> "$CONFIG_FILE" << EOF
 
 telegram:
-  botToken: "${TELEGRAM_TOKEN}"
+  botToken: ${TELEGRAM_TOKEN}
 EOF
     fi
 

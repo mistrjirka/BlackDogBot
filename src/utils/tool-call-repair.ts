@@ -36,12 +36,17 @@ export async function repairToolCallJsonAsync({
   } catch {
     logger.warn("Tool call repair failed — JSON still invalid after sanitization", {
       toolName: toolCall.toolName,
+      originalInput: raw,
     });
 
     return null;
   }
 
-  logger.debug("Repaired malformed tool call JSON", { toolName: toolCall.toolName });
+  logger.debug("Repaired malformed tool call JSON", { 
+    toolName: toolCall.toolName,
+    originalInput: raw,
+    repairedInput: repaired 
+  });
 
   return { ...toolCall, input: repaired };
 }

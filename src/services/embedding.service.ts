@@ -122,6 +122,22 @@ export class EmbeddingService {
     this._device = await this._resolveDeviceAsync(requestedDevice);
 
     env.cacheDir = getModelsDir();
+    
+    // Explicitly configure ONNX execution providers to prevent onnxruntime-node from 
+    // crashing when probing for missing CUDA libraries on CPU fallback.
+    // Ensure env.backends.onnx exists first.
+    const backends = env.backends as any;
+    if (!backends) (env as any).backends = {};
+    if (!(env.backends as any).onnx) (env.backends as any).onnx = {};
+    
+    // Onnxruntime-node attempts to load all available providers (including CUDA) by default.
+    // When CUDA libraries are missing, this causes a fatal crash even if device='cpu' is passed to pipeline.
+    // By strictly limiting the executionProviders, we bypass this issue.
+    if (this._device === "cuda") {
+        (env.backends as any).onnx.executionProviders = ['cuda', 'cpu'];
+    } else {
+        (env.backends as any).onnx.executionProviders = ['cpu'];
+    }
 
     logger.info("Loading embedding model...", {
       modelPath: this._modelPath,
@@ -143,6 +159,19 @@ export class EmbeddingService {
           modelPath: this._modelPath,
         });
 
+        await this._loadPipelineAsync();
+      } else if (
+        this._device === "cuda" &&
+        error instanceof Error &&
+        (error.message.includes("libonnxruntime_providers_cuda") ||
+          error.message.includes("cannot open shared object file"))
+      ) {
+        logger.warn(
+          "Failed to load CUDA providers (missing libraries). Falling back to CPU inference. " +
+          "To enable GPU acceleration, please install the CUDA 12 toolkit (e.g., sudo pacman -S cuda).",
+          { error: error.message }
+        );
+        this._device = "cpu";
         await this._loadPipelineAsync();
       } else {
         throw error;
@@ -281,6 +310,30 @@ export class EmbeddingService {
     const logger: LoggerService = LoggerService.getInstance();
 
     if (await this._isCommandAvailableAsync("nvidia-smi")) {
+      if (process.platform === "linux") {
+        // onnxruntime-node 1.x ships pre-built binaries linked against CUDA 12.
+        // It requires libcublasLt.so.12, libcufft.so.11, libcudnn.so.9, etc.
+        // If the system has CUDA 13+ (e.g. Arch Linux), those .so.12 libs won't
+        // exist and onnxruntime will crash fatally at native addon load time.
+        //
+        // We check if the critical CUDA 12 libraries are available either via
+        // ldconfig or in LD_LIBRARY_PATH (which scripts/launch.sh may have set).
+        const hasCuda12 = await this._hasCuda12LibsAsync();
+
+        if (hasCuda12) {
+          logger.info("GPU detected: NVIDIA with CUDA 12 libraries available. Using CUDA.");
+          return "cuda";
+        }
+
+        logger.warn(
+          "NVIDIA GPU detected, but onnxruntime-node requires CUDA 12 libraries " +
+          "(libcublasLt.so.12, libcufft.so.11, etc.) which were not found. " +
+          "Falling back to CPU. To enable GPU inference, install a CUDA 12 compat package " +
+          "or set embeddingDevice: cpu in config to silence this warning.",
+        );
+        return "cpu";
+      }
+
       logger.info("GPU detected: NVIDIA. Using CUDA for embedding inference.");
       return "cuda";
     }
@@ -294,6 +347,51 @@ export class EmbeddingService {
 
     logger.info("No GPU detected. Using CPU for embedding inference.");
     return "cpu";
+  }
+
+  /**
+   * Checks if the core CUDA 12 libraries that onnxruntime-node needs are
+   * discoverable by the dynamic linker (via ldconfig or LD_LIBRARY_PATH).
+   */
+  private async _hasCuda12LibsAsync(): Promise<boolean> {
+    // The minimum set onnxruntime-node 1.21 needs from CUDA 12
+    const requiredLibs = ["libcublasLt.so.12", "libcufft.so.11"];
+
+    for (const lib of requiredLibs) {
+      const found = await this._isLibAvailableAsync(lib);
+      if (!found) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /** Checks if a shared library is findable via ldconfig or LD_LIBRARY_PATH */
+  private async _isLibAvailableAsync(libName: string): Promise<boolean> {
+    // 1. Check ldconfig cache
+    try {
+      await _execAsync(`ldconfig -p | grep '${libName}'`);
+      return true;
+    } catch {
+      // not in ldconfig
+    }
+
+    // 2. Check LD_LIBRARY_PATH directories (launch.sh may have set this)
+    const ldPaths = (process.env["LD_LIBRARY_PATH"] ?? "").split(":").filter(Boolean);
+    const { existsSync } = await import("fs");
+
+    for (const dir of ldPaths) {
+      try {
+        if (existsSync(path.join(dir, libName))) {
+          return true;
+        }
+      } catch {
+        // skip
+      }
+    }
+
+    return false;
   }
 
   private async _isCommandAvailableAsync(command: string): Promise<boolean> {

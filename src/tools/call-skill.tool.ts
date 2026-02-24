@@ -29,61 +29,82 @@ const MAX_SKILL_STEPS: number = 15;
 
 //#endregion Constants
 
-export const callSkillTool = tool({
-  description: "Invoke a skill by name. The skill agent will execute with the given input and return its output.",
-  inputSchema: callSkillToolInputSchema,
-  execute: async ({ skillName, input }: { skillName: string; input: string }): Promise<ICallSkillResult> => {
-    const logger: LoggerService = LoggerService.getInstance();
+/**
+ * Creates the call_skill tool with a dynamic description listing the currently
+ * available skills. This prevents the model from hallucinating skill names.
+ */
+export function createCallSkillTool(availableSkillNames: string[]) {
+  const skillListStr: string = availableSkillNames.length > 0
+    ? `Available skills: ${availableSkillNames.join(", ")}.`
+    : "No skills are currently loaded.";
 
-    try {
-      const skill: ISkill | undefined = SkillLoaderService.getInstance().getSkill(skillName);
+  return tool({
+    description:
+      `Invoke a skill by name. The skill agent will execute with the given input and return its output. ` +
+      `${skillListStr} ` +
+      `Do NOT call this tool with any skill name not listed above. ` +
+      `Web search is NOT a skill — use run_cmd with curl to SearXNG or create a job with add_searxng_node instead.`,
+    inputSchema: callSkillToolInputSchema,
+    execute: async ({ skillName, input }: { skillName: string; input: string }): Promise<ICallSkillResult> => {
+      const logger: LoggerService = LoggerService.getInstance();
 
-      if (!skill) {
-        return { success: false, output: "", error: `Skill not found: ${skillName}` };
+      try {
+        const skill: ISkill | undefined = SkillLoaderService.getInstance().getSkill(skillName);
+
+        if (!skill) {
+          const loaded = SkillLoaderService.getInstance().getAvailableSkills();
+          const names = loaded.map((s) => s.name).join(", ") || "(none)";
+          return {
+            success: false,
+            output: "",
+            error: `Skill "${skillName}" not found. Currently loaded skills: ${names}. Web search is available via run_cmd with curl to SearXNG, not as a skill.`,
+          };
+        }
+
+        if (skill.state.state !== "setuped") {
+          return { success: false, output: "", error: `Skill not set up. Current state: ${skill.state.state}` };
+        }
+
+        const model: LanguageModel = AiProviderService.getInstance().getModel();
+
+        const tools: ToolSet = {
+          think: thinkTool,
+          done: doneTool,
+          run_cmd: runCmdTool,
+          search_knowledge: searchKnowledgeTool,
+          add_knowledge: addKnowledgeTool,
+        };
+
+        const agent: ToolLoopAgent = new ToolLoopAgent({
+          model,
+          instructions: skill.instructions,
+          tools,
+          stopWhen: [hasToolCall("done"), stepCountIs(MAX_SKILL_STEPS)],
+          experimental_repairToolCall: repairToolCallJsonAsync,
+          prepareStep: async ({ stepNumber, messages }) => {
+            const forceThink = getForceThinkDirective(stepNumber, messages);
+
+            if (forceThink) {
+              return forceThink;
+            }
+
+            return {};
+          },
+        });
+
+        const result = await agent.generate({ prompt: input });
+
+        logger.debug(`Skill "${skillName}" completed successfully`);
+
+        return { success: true, output: result.text, error: null };
+      } catch (err: unknown) {
+        const errorMessage: string = err instanceof Error ? err.message : String(err);
+
+        logger.error(`Skill "${skillName}" execution failed: ${errorMessage}`);
+
+        return { success: false, output: "", error: errorMessage };
       }
+    },
+  });
+}
 
-      if (skill.state.state !== "setuped") {
-        return { success: false, output: "", error: `Skill not set up. Current state: ${skill.state.state}` };
-      }
-
-      const model: LanguageModel = AiProviderService.getInstance().getModel();
-
-      const tools: ToolSet = {
-        think: thinkTool,
-        done: doneTool,
-        run_cmd: runCmdTool,
-        search_knowledge: searchKnowledgeTool,
-        add_knowledge: addKnowledgeTool,
-      };
-
-      const agent: ToolLoopAgent = new ToolLoopAgent({
-        model,
-        instructions: skill.instructions,
-        tools,
-        stopWhen: [hasToolCall("done"), stepCountIs(MAX_SKILL_STEPS)],
-        experimental_repairToolCall: repairToolCallJsonAsync,
-        prepareStep: async ({ stepNumber, messages }) => {
-          const forceThink = getForceThinkDirective(stepNumber, messages);
-
-          if (forceThink) {
-            return forceThink;
-          }
-
-          return {};
-        },
-      });
-
-      const result = await agent.generate({ prompt: input });
-
-      logger.debug(`Skill "${skillName}" completed successfully`);
-
-      return { success: true, output: result.text, error: null };
-    } catch (err: unknown) {
-      const errorMessage: string = err instanceof Error ? err.message : String(err);
-
-      logger.error(`Skill "${skillName}" execution failed: ${errorMessage}`);
-
-      return { success: false, output: "", error: errorMessage };
-    }
-  },
-});

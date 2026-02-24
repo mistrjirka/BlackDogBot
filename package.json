@@ -5,8 +5,10 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts",
+    "start": "scripts/launch.sh",
+    "start:direct": "tsx src/index.ts",
+    "dev": "scripts/launch.sh --watch",
+    "dev:direct": "tsx watch src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
@@ -51,6 +53,7 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "better-sqlite3",
       "esbuild",
       "onnxruntime-node",
       "protobufjs",

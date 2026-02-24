@@ -22,7 +22,7 @@ export { disconnectNodesTool } from "./disconnect-nodes.tool.js";
 export { setEntrypointTool } from "./set-entrypoint.tool.js";
 export { addNodeTestTool } from "./add-node-test.tool.js";
 export { runNodeTestTool } from "./run-node-test.tool.js";
-export { callSkillTool } from "./call-skill.tool.js";
+export { createCallSkillTool } from "./call-skill.tool.js";
 export { getSkillFileTool } from "./get-skill-file.tool.js";
 export { addCronTool } from "./add-cron.tool.js";
 export { removeCronTool } from "./remove-cron.tool.js";

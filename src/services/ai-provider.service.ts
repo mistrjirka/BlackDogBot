@@ -4,11 +4,13 @@ import { LanguageModelV3 } from "@ai-sdk/provider";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
+import { LoggerService } from "./logger.service.js";
 import {
   IAiConfig,
   AiProvider,
   IOpenRouterConfig,
   IOpenAiCompatibleConfig,
+  ILmStudioConfig,
 } from "../shared/types/index.js";
 import { RateLimiterService } from "./rate-limiter.service.js";
 import { ModelInfoService } from "./model-info.service.js";
@@ -51,7 +53,7 @@ export class AiProviderService {
     this._aiConfig = aiConfig;
 
     const providerKey: string = aiConfig.provider;
-    const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig =
+    const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
       this._getActiveProviderConfig();
 
     this._rateLimiterService.createLimiter(providerKey, activeConfig.rateLimits);
@@ -77,7 +79,7 @@ export class AiProviderService {
     this._aiConfig = aiConfig;
 
     const providerKey: string = aiConfig.provider;
-    const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig =
+    const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
       this._getActiveProviderConfig();
 
     this._rateLimiterService.createLimiter(providerKey, activeConfig.rateLimits);
@@ -196,6 +198,79 @@ export class AiProviderService {
         name: "openai-compatible",
         baseURL: config.baseUrl,
         apiKey: config.apiKey,
+        supportsStructuredOutputs: true, // Assume generic OpenAI-compatible APIs support response_format: json_schema
+      }).chatModel(modelId);
+      return this._wrapModelWithRateLimiter(rawModel, provider);
+    }
+
+    if (provider === "lm-studio") {
+      if (!this._aiConfig.lmStudio) {
+        throw new Error(
+          `No configuration found for provider: ${provider}`,
+        );
+      }
+
+      const config: ILmStudioConfig = this._aiConfig.lmStudio;
+      const rawModel = createOpenAICompatible({
+        name: "lm-studio",
+        baseURL: config.baseUrl,
+        apiKey: config.apiKey || "lm-studio",
+        supportsStructuredOutputs: true, // LM Studio supports response_format: json_schema
+        fetch: async (url, init): Promise<Response> => {
+          // Intercept the request to fix LM Studio quirks with AI SDK.
+          if (init?.body && typeof init.body === "string" && init.method === "POST") {
+            try {
+              const body = JSON.parse(init.body);
+              let modified = false;
+
+              // Fix missing tool schema discriminator (LM Studio requires type: "object")
+              if (body.tools && Array.isArray(body.tools)) {
+                for (const tool of body.tools) {
+                  if (tool.type === "function" && tool.function?.parameters) {
+                    if (tool.function.parameters.type !== "object") {
+                      tool.function.parameters.type = "object";
+                      modified = true;
+                    }
+                  }
+                }
+              }
+
+              // Fix unsupported tool_choice object (LM Studio only supports string enums)
+              // AI SDK sends { type: "function", function: { name: "tool_name" } } when forcing a tool
+              if (body.tool_choice && typeof body.tool_choice === "object") {
+                // If it's forcing a tool, we degrade to "auto" (or "required" if the model supports it, but "auto" is safer)
+                body.tool_choice = "auto";
+                modified = true;
+              }
+
+              if (modified) {
+                init.body = JSON.stringify(body);
+              }
+            } catch (e) {
+              // Ignore parse errors, let the original fetch handle the bad payload
+            }
+          }
+          const response = await fetch(url, init);
+
+          // Log failed requests to help debug LM Studio compatibility issues
+          if (!response.ok) {
+            const logger: LoggerService = LoggerService.getInstance();
+            const responseText = await response.text();
+            logger.error("LM Studio request rejected", {
+              status: response.status,
+              responseBody: responseText,
+              requestBody: typeof init?.body === "string" ? init.body.substring(0, 2000) : "(non-string body)",
+            });
+            // Re-wrap in a new Response so the AI SDK can still read it
+            return new Response(responseText, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+            });
+          }
+
+          return response;
+        }
       }).chatModel(modelId);
       return this._wrapModelWithRateLimiter(rawModel, provider);
     }
@@ -204,7 +279,7 @@ export class AiProviderService {
   }
 
   private _getActiveModelId(): string {
-    const config: IOpenRouterConfig | IOpenAiCompatibleConfig =
+    const config: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
       this._getActiveProviderConfig();
 
     return config.model;
@@ -212,7 +287,8 @@ export class AiProviderService {
 
   private _getActiveProviderConfig():
     | IOpenRouterConfig
-    | IOpenAiCompatibleConfig {
+    | IOpenAiCompatibleConfig
+    | ILmStudioConfig {
     if (!this._aiConfig) {
       throw new Error("AiProviderService not initialized");
     }
@@ -235,6 +311,15 @@ export class AiProviderService {
         );
       }
       return this._aiConfig.openaiCompatible;
+    }
+
+    if (provider === "lm-studio") {
+      if (!this._aiConfig.lmStudio) {
+        throw new Error(
+          `No configuration found for provider: ${provider}`,
+        );
+      }
+      return this._aiConfig.lmStudio;
     }
 
     throw new Error(

@@ -243,6 +243,15 @@ export class BrainInterfaceService {
           const message: string = command.message;
           const mainAgent: MainAgent = MainAgent.getInstance();
 
+          if (!mainAgent.isInitializedForChat(chatId)) {
+            this._logger.warn("Chat session missing on send_message, auto-initializing", { chatId });
+            await mainAgent.initializeForChatAsync(
+              chatId,
+              async (_message: string): Promise<string | null> => null,
+              async (_photo: unknown): Promise<string | null> => null,
+            );
+          }
+
           const result = await mainAgent.processMessageForChatAsync(chatId, message);
 
           response.success = true;

@@ -100,6 +100,10 @@ export async function generateTextWithRetryAsync(
 /**
  * Generates structured output using generateObject with retry logic and rate limiting.
  * Guarantees valid JSON matching the provided Zod schema.
+ *
+ * For LM Studio, the provider is configured with supportsStructuredOutputs: true,
+ * which makes the AI SDK send response_format: json_schema — natively supported
+ * by LM Studio via grammar-based sampling (GGUF) or Outlines (MLX).
  */
 export async function generateObjectWithRetryAsync<T extends z.ZodType>(
   options: IGenerateObjectOptions<T>,
@@ -168,3 +172,5 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
 }
 
 //#endregion Public functions
+
+

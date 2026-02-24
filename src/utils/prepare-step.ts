@@ -6,8 +6,8 @@ import { FORCE_THINK_INTERVAL } from "../shared/constants.js";
 
 /**
  * Determines whether the agent should be forced to use the think tool
- * on this step. The think tool is forced every {@link FORCE_THINK_INTERVAL}
- * steps unless the agent already called think on the previous step.
+ * on this step. The think tool is forced if the agent hasn't used it
+ * in the last {@link FORCE_THINK_INTERVAL} steps (rolling window).
  *
  * Returns a `prepareStep`-compatible partial result when forcing is needed,
  * or `null` when no forcing is required.
@@ -16,50 +16,59 @@ export function getForceThinkDirective(
   stepNumber: number,
   messages: ModelMessage[],
 ): { toolChoice: { type: "tool"; toolName: "think" } } | null {
-  if (stepNumber <= 0 || stepNumber % FORCE_THINK_INTERVAL !== 0) {
+  if (stepNumber <= 0) {
     return null;
   }
 
-  // Check if the last assistant message already included a think call
-  const lastThought: boolean = _didLastAssistantCallThink(messages);
+  const stepsSinceThink: number = _stepsSinceLastThink(messages);
 
-  if (lastThought) {
-    return null;
+  if (stepsSinceThink >= FORCE_THINK_INTERVAL) {
+    return {
+      toolChoice: { type: "tool" as const, toolName: "think" as const },
+    };
   }
 
-  return {
-    toolChoice: { type: "tool" as const, toolName: "think" as const },
-  };
+  return null;
 }
 
 //#endregion Public functions
 
 //#region Private functions
 
-function _didLastAssistantCallThink(messages: ModelMessage[]): boolean {
+function _stepsSinceLastThink(messages: ModelMessage[]): number {
+  let stepsCount: number = 0;
+
   for (let i: number = messages.length - 1; i >= 0; i--) {
     const msg: ModelMessage = messages[i];
 
     if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      let hasToolCalls = false;
+      let hasThink = false;
+
       for (const part of msg.content) {
         if (
           typeof part === "object" &&
           part !== null &&
           "type" in part &&
-          (part as { type: string }).type === "tool-call" &&
-          "toolName" in part &&
-          (part as { toolName: string }).toolName === "think"
+          (part as { type: string }).type === "tool-call"
         ) {
-          return true;
+          hasToolCalls = true;
+          if ("toolName" in part && (part as { toolName: string }).toolName === "think") {
+            hasThink = true;
+          }
         }
       }
 
-      // Found the last assistant message, no think call in it
-      return false;
+      if (hasToolCalls) {
+        if (hasThink) {
+          return stepsCount;
+        }
+        stepsCount++;
+      }
     }
   }
 
-  return false;
+  return stepsCount;
 }
 
 //#endregion Private functions

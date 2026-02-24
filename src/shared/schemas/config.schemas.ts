@@ -38,12 +38,29 @@ const openAiCompatibleSchema = z.object({
     .default({ rpm: 120, tpm: 200000 }),
 });
 
+const lmStudioSchema = z.object({
+  baseUrl: z.string()
+    .url()
+    .describe("Base URL of the LM Studio endpoint (e.g., http://localhost:1234/v1)"),
+  apiKey: z.string()
+    .optional()
+    .default("lm-studio")
+    .describe("API key for LM Studio (usually 'lm-studio')"),
+  model: z.string()
+    .min(1)
+    .describe("Model identifier"),
+  rateLimits: rateLimitSchema
+    .default({ rpm: 120, tpm: 200000 }),
+});
+
 const aiConfigSchema = z.object({
-  provider: z.enum(["openrouter", "openai-compatible"])
+  provider: z.enum(["openrouter", "openai-compatible", "lm-studio"])
     .describe("Active AI provider"),
   openrouter: openRouterSchema
     .optional(),
   openaiCompatible: openAiCompatibleSchema
+    .optional(),
+  lmStudio: lmStudioSchema
     .optional(),
 });
 

@@ -31,7 +31,7 @@ import {
   runNodeTestTool,
   getNodesTool,
   clearJobGraphTool,
-  callSkillTool,
+  createCallSkillTool,
   getSkillFileTool,
   addCronTool,
   removeCronTool,
@@ -71,6 +71,7 @@ import {
   removeJobScheduleTool,
 } from "../tools/index.js";
 import { BrainInterfaceService } from "../brain-interface/service.js";
+import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { JobStorageService } from "../services/job-storage.service.js";
@@ -152,6 +153,10 @@ export class MainAgent extends BaseAgentBase {
     return this._currentChatId;
   }
 
+  public isInitializedForChat(chatId: string): boolean {
+    return this._initialized && this._sessions.has(chatId);
+  }
+
   public async initializeForChatAsync(
     chatId: string,
     messageSender: MessageSender,
@@ -159,6 +164,19 @@ export class MainAgent extends BaseAgentBase {
     onStepAsync?: OnStepCallback,
   ): Promise<void> {
     this._currentChatId = chatId;
+
+    // Ensure session exists FIRST — before any async operations that might throw
+    if (!this._sessions.has(chatId)) {
+      this._sessions.set(chatId, {
+        messages: [],
+        lastActivityAt: Date.now(),
+        jobCreationMode: null,
+        paused: false,
+        resumeResolve: null,
+        abortController: null,
+      });
+    }
+
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model: LanguageModel = aiProviderService.getModel();
     const instructions: string = await buildMainAgentPromptAsync();
@@ -170,18 +188,6 @@ export class MainAgent extends BaseAgentBase {
     const configService: ConfigService = ConfigService.getInstance();
     const config = configService.getConfig();
     const jobCreationGuide: string = await promptService.getPromptAsync(PROMPT_JOB_CREATION_GUIDE);
-
-    // Ensure session exists before building trackers that close over it
-    if (!this._sessions.has(chatId)) {
-      this._sessions.set(chatId, {
-        messages: [],
-        lastActivityAt: Date.now(),
-        jobCreationMode: null,
-        paused: false,
-        resumeResolve: null,
-        abortController: null,
-      });
-    }
 
     const session: IChatSession = this._sessions.get(chatId)!;
 
@@ -222,18 +228,9 @@ export class MainAgent extends BaseAgentBase {
       write_file: createWriteFileTool(readTracker),
       append_file: appendFileTool,
       edit_file: editFileTool,
-      edit_job: editJobTool,
-      remove_job: createRemoveJobTool(creationModeTracker),
-      get_jobs: getJobsTool,
-      run_job: createRunJobTool(jobTracker, nodeProgressEmitter, messageSender),
-      call_skill: callSkillTool,
-      get_skill_file: getSkillFileTool,
       add_cron: addCronTool,
       remove_cron: removeCronTool,
       list_crons: listCronsTool,
-      set_job_schedule: setJobScheduleTool,
-      remove_job_schedule: removeJobScheduleTool,
-      render_graph: createRenderGraphTool(photoSender),
       fetch_rss: fetchRssTool,
       list_databases: listDatabasesTool,
       list_tables: listTablesTool,
@@ -244,6 +241,25 @@ export class MainAgent extends BaseAgentBase {
       query_database: queryDatabaseTool,
     };
 
+    // Only include job tools if job creation is enabled
+    if (config.jobCreation.enabled) {
+      tools.edit_job = editJobTool;
+      tools.remove_job = createRemoveJobTool(creationModeTracker);
+      tools.get_jobs = getJobsTool;
+      tools.run_job = createRunJobTool(jobTracker, nodeProgressEmitter, messageSender);
+      tools.render_graph = createRenderGraphTool(photoSender);
+      tools.set_job_schedule = setJobScheduleTool;
+      tools.remove_job_schedule = removeJobScheduleTool;
+    }
+
+    // Only include skill tools if skills are actually loaded
+    const availableSkills = SkillLoaderService.getInstance().getAvailableSkills();
+    if (availableSkills.length > 0) {
+      const skillNames = availableSkills.map((s) => s.name);
+      tools.call_skill = createCallSkillTool(skillNames);
+      tools.get_skill_file = getSkillFileTool;
+    }
+
     if (config.jobCreation.enabled) {
       // start_job_creation is the entry point for mode
       tools.start_job_creation = createStartJobCreationTool(jobTracker, creationModeTracker);
@@ -251,30 +267,33 @@ export class MainAgent extends BaseAgentBase {
 
     // Node-creation tools are mode-gated: registered with the agent but only exposed
     // via activeTools when the chat session is in job creation mode.
-    const nodeCreationTools: ToolSet = {
-      add_job: addJobTool,
-      finish_job: finishJobTool,
-      edit_node: createEditNodeTool(jobTracker),
-      remove_node: removeNodeTool,
-      connect_nodes: connectNodesTool,
-      disconnect_nodes: disconnectNodesTool,
-      set_entrypoint: setEntrypointTool,
-      add_node_test: addNodeTestTool,
-      run_node_test: runNodeTestTool,
-      get_nodes: getNodesTool,
-      clear_job_graph: clearJobGraphTool,
-      add_curl_fetcher_node: createAddCurlFetcherNodeTool(jobTracker),
-      add_rss_fetcher_node: createAddRssFetcherNodeTool(jobTracker),
-      add_crawl4ai_node: createAddCrawl4aiNodeTool(jobTracker),
-      add_searxng_node: createAddSearxngNodeTool(jobTracker),
-      add_python_code_node: createAddPythonCodeNodeTool(jobTracker),
-      add_output_to_ai_node: createAddOutputToAiNodeTool(jobTracker),
-      add_agent_node: createAddAgentNodeTool(jobTracker),
-      add_litesql_node: createAddLitesqlNodeTool(jobTracker),
-      add_litesql_reader_node: createAddLitesqlReaderNodeTool(jobTracker),
-      finish_job_creation: createFinishJobCreationTool(creationModeTracker),
-      create_output_schema: createCreateOutputSchemaTool(),
-    };
+    // Only register them if job creation is enabled.
+    const nodeCreationTools: ToolSet | undefined = config.jobCreation.enabled
+      ? {
+          add_job: addJobTool,
+          finish_job: finishJobTool,
+          edit_node: createEditNodeTool(jobTracker),
+          remove_node: removeNodeTool,
+          connect_nodes: connectNodesTool,
+          disconnect_nodes: disconnectNodesTool,
+          set_entrypoint: setEntrypointTool,
+          add_node_test: addNodeTestTool,
+          run_node_test: runNodeTestTool,
+          get_nodes: getNodesTool,
+          clear_job_graph: clearJobGraphTool,
+          add_curl_fetcher_node: createAddCurlFetcherNodeTool(jobTracker),
+          add_rss_fetcher_node: createAddRssFetcherNodeTool(jobTracker),
+          add_crawl4ai_node: createAddCrawl4aiNodeTool(jobTracker),
+          add_searxng_node: createAddSearxngNodeTool(jobTracker),
+          add_python_code_node: createAddPythonCodeNodeTool(jobTracker),
+          add_output_to_ai_node: createAddOutputToAiNodeTool(jobTracker),
+          add_agent_node: createAddAgentNodeTool(jobTracker),
+          add_litesql_node: createAddLitesqlNodeTool(jobTracker),
+          add_litesql_reader_node: createAddLitesqlReaderNodeTool(jobTracker),
+          finish_job_creation: createFinishJobCreationTool(creationModeTracker),
+          create_output_schema: createCreateOutputSchemaTool(),
+        }
+      : undefined;
 
     const trackedDoneTool = createDoneTool(jobTracker);
 
@@ -339,7 +358,9 @@ export class MainAgent extends BaseAgentBase {
       combinedOnStepAsync,
       trackedDoneTool,
       // getExtraTools: returns node-creation tools when current chat is in creation mode
-      (): ToolSet | null => session.jobCreationMode !== null ? nodeCreationTools : null,
+      nodeCreationTools
+        ? (): ToolSet | null => session.jobCreationMode !== null ? nodeCreationTools : null
+        : undefined,
       nodeCreationTools,
       // getPausePromise: returns a promise that resolves when the chat is resumed
       (): Promise<void> | null => {
@@ -361,7 +382,12 @@ export class MainAgent extends BaseAgentBase {
   public async processMessageForChatAsync(chatId: string, userMessage: string): Promise<IAgentResult> {
     this._ensureInitialized();
 
-    const session: IChatSession = this._sessions.get(chatId)!;
+    const session: IChatSession | undefined = this._sessions.get(chatId);
+
+    if (!session) {
+      this._logger.error("Session not found for chatId — agent not initialized for this chat.", { chatId });
+      return { text: "Session not initialized. Please start a new conversation.", stepsCount: 0 };
+    }
 
     session.lastActivityAt = Date.now();
 

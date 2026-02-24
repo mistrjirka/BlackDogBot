@@ -14,7 +14,7 @@ import {
   addKnowledgeTool,
   editKnowledgeTool,
   createSendMessageTool,
-  callSkillTool,
+  createCallSkillTool,
   getSkillFileTool,
   createRunJobTool,
   getJobsTool,
@@ -27,6 +27,7 @@ import {
   JobActivityTracker,
 } from "../tools/index.js";
 import type { MessageSender } from "../tools/index.js";
+import { SkillLoaderService } from "../services/skill-loader.service.js";
 
 export class CronAgent extends BaseAgentBase {
   //#region Data members
@@ -100,12 +101,18 @@ export class CronAgent extends BaseAgentBase {
       write_file: createWriteFileTool(readTracker),
       append_file: appendFileTool,
       edit_file: editFileTool,
-      call_skill: callSkillTool,
-      get_skill_file: getSkillFileTool,
       run_job: createRunJobTool(jobTracker, undefined, messageSender),
       get_jobs: getJobsTool,
       list_crons: listCronsTool,
     };
+
+    // Only include skill tools if skills are loaded
+    const availableSkills = SkillLoaderService.getInstance().getAvailableSkills();
+    if (availableSkills.length > 0) {
+      const skillNames = availableSkills.map((s) => s.name);
+      availableTools.call_skill = createCallSkillTool(skillNames);
+      availableTools.get_skill_file = getSkillFileTool;
+    }
 
     const resolvedTools: ToolSet = {};
 

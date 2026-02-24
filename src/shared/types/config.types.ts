@@ -26,12 +26,21 @@ export interface IOpenAiCompatibleConfig {
   contextWindow?: number; // Optional, defaults to 128000 if not specified
 }
 
-export type AiProvider = "openrouter" | "openai-compatible";
+export interface ILmStudioConfig {
+  baseUrl: string;
+  apiKey?: string; // Optional for LM Studio
+  model: string;
+  rateLimits: IRateLimitConfig;
+  contextWindow?: number;
+}
+
+export type AiProvider = "openrouter" | "openai-compatible" | "lm-studio";
 
 export interface IAiConfig {
   provider: AiProvider;
   openrouter?: IOpenRouterConfig;
   openaiCompatible?: IOpenAiCompatibleConfig;
+  lmStudio?: ILmStudioConfig;
 }
 
 export interface ITelegramConfig {

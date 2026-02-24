@@ -226,6 +226,16 @@ export abstract class BaseAgentBase {
     /** Names of extra (mode-gated) tools — registered but hidden by default. */
     const extraToolNames: string[] = Object.keys(extraTools ?? {});
 
+    // Pre-compute the fixed token overhead that's included in every API request
+    // but not in the messages array: system prompt + tool definitions.
+    // This is critical for accurate context window tracking.
+    const fixedOverheadTokens: number = _estimateFixedOverhead(instructions, allTools);
+    logger.debug("Computed fixed token overhead for context tracking", {
+      systemPromptTokens: _countTextTokens(instructions),
+      toolCount: Object.keys(allTools).length,
+      totalOverhead: fixedOverheadTokens,
+    });
+
     this._agent = new ToolLoopAgent({
       model,
       instructions,
@@ -307,11 +317,10 @@ export abstract class BaseAgentBase {
           };
         }
 
-        // Token-based history compaction: use API-reported token count when available,
-        // fall back to tiktoken estimation for initial call or if API doesn't report usage
-        const tokenCount: number = self._totalInputTokens > 0 
-          ? self._totalInputTokens 
-          : _countTokens(messages);
+        // Token-based history compaction: count message tokens + fixed overhead
+        // (system prompt + tool definitions) for an accurate total.
+        const messageTokens: number = _countTokens(messages);
+        const tokenCount: number = messageTokens + fixedOverheadTokens;
 
         // Update status service with context info (including percentage for UI display)
         const statusService: StatusService = StatusService.getInstance();
@@ -320,6 +329,8 @@ export abstract class BaseAgentBase {
         if (tokenCount > compactionTokenThreshold) {
           logger.info("Compacting agent history", {
             tokenCount,
+            messageTokens,
+            fixedOverhead: fixedOverheadTokens,
             threshold: compactionTokenThreshold,
             messageCount: messages.length,
           });
@@ -369,8 +380,52 @@ export abstract class BaseAgentBase {
 //#region Private functions
 
 /**
+ * Count tokens in a plain text string using cl100k_base encoding.
+ */
+function _countTextTokens(text: string): number {
+  const enc = encodingForModel("gpt-4o");
+  return enc.encode(text).length;
+}
+
+/**
+ * Estimate the fixed token overhead per API request from the system prompt
+ * and tool definitions. This is computed once at agent build time.
+ *
+ * Tool definitions contribute significantly: each tool sends its name,
+ * description, and full JSON schema to the LLM. For 30+ tools with
+ * complex zod schemas, this can easily be 30,000–50,000+ tokens.
+ */
+function _estimateFixedOverhead(instructions: string, allTools: ToolSet): number {
+  let overhead: number = _countTextTokens(instructions);
+
+  // Estimate tool definition tokens by serializing what the API sends
+  for (const [name, toolDef] of Object.entries(allTools)) {
+    // Tool name + overhead per tool (~10 tokens for JSON structure)
+    overhead += _countTextTokens(name) + 10;
+
+    // Tool description
+    if (toolDef && typeof toolDef === "object") {
+      const desc: unknown = (toolDef as Record<string, unknown>).description;
+      if (typeof desc === "string") {
+        overhead += _countTextTokens(desc);
+      }
+
+      // Tool input schema (JSON schema) — the biggest contributor
+      const params: unknown = (toolDef as Record<string, unknown>).parameters;
+      if (params && typeof params === "object") {
+        const schemaStr: string = JSON.stringify(params);
+        overhead += _countTextTokens(schemaStr);
+      }
+    }
+  }
+
+  return overhead;
+}
+
+/**
  * Count tokens across all messages using cl100k_base encoding (GPT-4/Claude compatible).
  * This provides a reasonable approximation for most LLM providers.
+ * Note: This counts only message content, not system prompt or tool definitions.
  */
 function _countTokens(messages: ModelMessage[]): number {
   const enc = encodingForModel("gpt-4o");
