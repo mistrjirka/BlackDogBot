@@ -414,6 +414,34 @@ export const renderGraphToolOutputSchema = z.object({
 
 //#region Cron Tools
 
+const CRON_VALID_TOOL_NAMES = [
+  "think",
+  "run_cmd",
+  "search_knowledge",
+  "add_knowledge",
+  "edit_knowledge",
+  "send_message",
+  "read_file",
+  "write_file",
+  "append_file",
+  "edit_file",
+  "run_job",
+  "get_jobs",
+  "list_crons",
+  "fetch_rss",
+  "searxng",
+  "crawl4ai",
+  "list_databases",
+  "list_tables",
+  "get_table_schema",
+  "create_database",
+  "create_table",
+  "drop_table",
+  "query_database",
+  "call_skill",
+  "get_skill_file",
+] as const;
+
 export const addCronToolInputSchema = z.object({
   name: z.string()
     .min(1)
@@ -424,7 +452,7 @@ export const addCronToolInputSchema = z.object({
   instructions: z.string()
     .min(1)
     .describe("Detailed task instructions for the agent"),
-  tools: z.string()
+  tools: z.enum(CRON_VALID_TOOL_NAMES)
     .array()
     .min(1)
     .describe("Tools available to the task agent"),
@@ -438,6 +466,8 @@ export const addCronToolInputSchema = z.object({
       .optional(),
   })
     .describe("Schedule configuration"),
+  notifyUser: z.boolean()
+    .describe("Whether to send a Telegram notification when this task completes. Set true for tasks whose results are important to the user, false for silent background tasks."),
 });
 
 export const addCronToolOutputSchema = z.object({
@@ -945,3 +975,54 @@ export const listPromptsToolOutputSchema = z.object({
 });
 
 //#endregion Prompt Tools
+
+//#region Searxng Tool
+
+export const searxngToolInputSchema = z.object({
+  query: z.string()
+    .min(1)
+    .describe("The search query. Supports search syntax like 'site:github.com topic'"),
+  categories: z.string()
+    .array()
+    .optional()
+    .describe("Search categories to use (e.g., ['general', 'news', 'images']). Defaults to general."),
+  maxResults: z.number()
+    .int()
+    .positive()
+    .default(10)
+    .describe("Maximum number of results to return"),
+  safesearch: z.number()
+    .int()
+    .min(0)
+    .max(2)
+    .optional()
+    .describe("Safe search level: 0 (off), 1 (moderate), 2 (strict). Default: 0"),
+  language: z.string()
+    .optional()
+    .describe("Language code for results (e.g., 'en', 'all'). Default: 'all'"),
+});
+
+export const searxngToolOutputSchema = z.object({
+  results: z.string(),
+  error: z.string().optional(),
+});
+
+//#endregion Searxng Tool
+
+//#region Crawl4ai Tool
+
+export const crawl4aiToolInputSchema = z.object({
+  url: z.string()
+    .url()
+    .describe("URL of the web page to crawl"),
+  selector: z.string()
+    .optional()
+    .describe("Optional CSS selector to extract specific content"),
+});
+
+export const crawl4aiToolOutputSchema = z.object({
+  content: z.string(),
+  error: z.string().optional(),
+});
+
+//#endregion Crawl4ai Tool

@@ -207,6 +207,15 @@ export class BrainInterfaceService {
     }
   }
 
+  public broadcastCronMessage(taskName: string, message: string): void {
+    this._emit({
+      type: "cron_message",
+      taskName,
+      message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   private async _handleCommandAsync(_socket: Socket, command: BrainCommand, ack: (response: BrainCommandResponse) => void): Promise<void> {
     let response: BrainCommandResponse = { success: false };
 

@@ -5,6 +5,7 @@ import os from "node:os";
 
 import { SchedulerService } from "../../src/services/scheduler.service.js";
 import { LoggerService } from "../../src/services/logger.service.js";
+import { ConfigService } from "../../src/services/config.service.js";
 import type { IScheduledTask } from "../../src/shared/types/index.js";
 
 //#region Helpers
@@ -15,6 +16,7 @@ let originalHome: string;
 function resetSingletons(): void {
   (SchedulerService as unknown as { _instance: null })._instance = null;
   (LoggerService as unknown as { _instance: null })._instance = null;
+  (ConfigService as unknown as { _instance: null })._instance = null;
 }
 
 function createTask(overrides?: Partial<IScheduledTask>): IScheduledTask {
@@ -28,6 +30,7 @@ function createTask(overrides?: Partial<IScheduledTask>): IScheduledTask {
     tools: ["think"],
     schedule: { type: "interval", intervalMs: 60000 },
     enabled: false,
+    notifyUser: false,
     lastRunAt: null,
     lastRunStatus: null,
     lastRunError: null,
@@ -54,6 +57,14 @@ describe("SchedulerService", () => {
     vi.spyOn(logger, "info").mockReturnValue(undefined);
     vi.spyOn(logger, "warn").mockReturnValue(undefined);
     vi.spyOn(logger, "error").mockReturnValue(undefined);
+
+    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
+    await fs.mkdir(tempConfigDir, { recursive: true });
+    await fs.cp(realConfigPath, tempConfigPath);
+    const configService: ConfigService = ConfigService.getInstance();
+    await configService.initializeAsync(tempConfigPath);
   });
 
   afterEach(async () => {

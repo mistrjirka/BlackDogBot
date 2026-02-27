@@ -16,6 +16,7 @@ export interface IOpenRouterConfig {
   model: string;
   rateLimits: IRateLimitConfig;
   contextWindow?: number; // Optional, defaults to 128000 if not specified
+  supportsForcedToolChoice?: boolean; // Whether model supports forcing specific tool usage
 }
 
 export interface IOpenAiCompatibleConfig {
@@ -45,11 +46,13 @@ export interface IAiConfig {
 
 export interface ITelegramConfig {
   botToken: string;
+  allowedUsers?: string[];
 }
 
 export interface ISchedulerConfig {
   enabled: boolean;
   notificationChatId: string | null;
+  timezone?: string;
 }
 
 export interface IJobCreationConfig {

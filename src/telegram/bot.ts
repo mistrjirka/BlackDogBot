@@ -42,6 +42,15 @@ export class TelegramBot {
   public async initializeAsync(botToken: string): Promise<void> {
     this._bot = new Bot(botToken);
 
+    // Catch all grammY errors
+    this._bot.catch((err): void => {
+      const updateId = err.ctx?.update?.update_id;
+      this._logger.error("Telegram bot error", {
+        error: err.message,
+        updateId,
+      });
+    });
+
     // Register the Telegram adapter with the MessagingService
     const adapter: TelegramAdapter = new TelegramAdapter(this._bot);
     const messagingService: MessagingService = MessagingService.getInstance();

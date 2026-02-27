@@ -1,8 +1,12 @@
 import { Context } from "grammy";
+import { readFile, writeFile, mkdir } from "fs/promises";
+import { existsSync } from "fs";
+import { dirname, join } from "path";
 
 import { LoggerService } from "../services/logger.service.js";
 import { MessagingService } from "../services/messaging.service.js";
 import { MainAgent } from "../agent/main-agent.js";
+import { ConfigService } from "../services/config.service.js";
 import { type IAgentResult } from "../agent/base-agent.js";
 import { type OnStepCallback, type IToolCallSummary } from "../agent/base-agent.js";
 import { type IIncomingMessage } from "../shared/types/messaging.types.js";
@@ -59,6 +63,8 @@ export class TelegramHandler {
   private _messagingService: MessagingService;
   private _mainAgent: MainAgent;
   private _processing: Set<string>;
+  private _knownChatIds: Set<string>;
+  private _chatIdsFilePath: string;
 
   //#endregion Data members
 
@@ -69,6 +75,10 @@ export class TelegramHandler {
     this._messagingService = MessagingService.getInstance();
     this._mainAgent = MainAgent.getInstance();
     this._processing = new Set<string>();
+    this._knownChatIds = new Set<string>();
+    
+    const homeDir = process.env.HOME || process.env.USERPROFILE || "~";
+    this._chatIdsFilePath = join(homeDir, ".betterclaw", "known-telegram-chats.json");
   }
 
   //#endregion Constructors
@@ -83,6 +93,71 @@ export class TelegramHandler {
     return TelegramHandler._instance;
   }
 
+  public async initializeAsync(): Promise<void> {
+    await this._loadKnownChatIdsAsync();
+
+    const config = ConfigService.getInstance().getConfig();
+    const allowedUsers = config.telegram?.allowedUsers;
+
+    if (allowedUsers && allowedUsers.length > 0) {
+      this._knownChatIds = new Set(allowedUsers);
+      await this._saveKnownChatIdsAsync();
+      this._logger.info(`Telegram allowedUsers set in config, using that as authorized users`);
+    }
+  }
+
+  public getKnownChatIds(): string[] {
+    return Array.from(this._knownChatIds);
+  }
+
+  private async _loadKnownChatIdsAsync(): Promise<void> {
+    try {
+      if (existsSync(this._chatIdsFilePath)) {
+        const data = await readFile(this._chatIdsFilePath, "utf-8");
+        const chatIds: string[] = JSON.parse(data);
+        this._knownChatIds = new Set(chatIds);
+        this._logger.info(`Loaded ${chatIds.length} known Telegram chat IDs`);
+      }
+    } catch (error) {
+      this._logger.warn("Failed to load known Telegram chat IDs", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async _saveKnownChatIdsAsync(): Promise<void> {
+    try {
+      const dir = dirname(this._chatIdsFilePath);
+      if (!existsSync(dir)) {
+        await mkdir(dir, { recursive: true });
+      }
+      const chatIds = Array.from(this._knownChatIds);
+      await writeFile(this._chatIdsFilePath, JSON.stringify(chatIds, null, 2));
+    } catch (error) {
+      this._logger.warn("Failed to save known Telegram chat IDs", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async _isAuthorizedAsync(chatId: string): Promise<boolean> {
+    const config = ConfigService.getInstance().getConfig();
+    const allowedUsers = config.telegram?.allowedUsers;
+
+    if (allowedUsers && allowedUsers.length > 0) {
+      return allowedUsers.includes(chatId);
+    }
+
+    if (this._knownChatIds.size === 0) {
+      this._knownChatIds.add(chatId);
+      await this._saveKnownChatIdsAsync();
+      this._logger.info(`Registered first Telegram user: ${chatId}`);
+      return true;
+    }
+
+    return this._knownChatIds.has(chatId);
+  }
+
   public async handleMessageAsync(ctx: Context): Promise<void> {
     const message = ctx.message;
 
@@ -91,6 +166,10 @@ export class TelegramHandler {
     }
 
     const chatId: string = String(message.chat.id);
+
+    if (!(await this._isAuthorizedAsync(chatId))) {
+      return;
+    }
 
     // Prevent concurrent processing per chat
     if (this._processing.has(chatId)) {

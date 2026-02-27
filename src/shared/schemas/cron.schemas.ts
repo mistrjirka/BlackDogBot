@@ -47,6 +47,8 @@ export const scheduledTaskSchema = z.object({
     .min(1)
     .describe("Tool names available to the task agent"),
   schedule: scheduleSchema,
+  notifyUser: z.boolean()
+    .describe("Whether to send a Telegram notification when this task completes"),
   enabled: z.boolean()
     .default(true),
   lastRunAt: z.string()

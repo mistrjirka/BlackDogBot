@@ -15,7 +15,8 @@ export type BrainEventType =
   | "job_execution_failed"
   | "log_entry"
   | "status_update"
-  | "user_message";
+  | "user_message"
+  | "cron_message";
 
 export type BrainCommandType =
   | "start_conversation"
@@ -177,6 +178,13 @@ export interface AgentStoppedEvent {
   chatId: string;
 }
 
+export interface ICronMessageEvent extends IBrainEvent {
+  type: "cron_message";
+  taskName: string;
+  message: string;
+  timestamp: string;
+}
+
 export type BrainEvent =
   | { type: "step_started"; data: StepStartedEvent }
   | { type: "tool_called"; data: ToolCalledEvent }
@@ -193,7 +201,8 @@ export type BrainEvent =
   | IJobExecutionCompletedEvent
   | IJobExecutionFailedEvent
   | ILogEntryEvent
-  | IStatusUpdateEvent;
+  | IStatusUpdateEvent
+  | ICronMessageEvent;
 
 export interface IBrainCommand {
   type: string;

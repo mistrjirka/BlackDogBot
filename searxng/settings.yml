@@ -9,6 +9,13 @@ server:
   secret_key: "betterclaw-searxng-secret-key"
   limiter: false
 
+ui:
+  static_use_hash: true
+
+api:
+  enabled: true
+  secret_token: "betterclaw-searxng-secret-key"
+
 engines:
   - name: google
     engine: google

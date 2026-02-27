@@ -10,6 +10,8 @@ import { AiProviderService } from "../services/ai-provider.service.js";
 import {
   thinkTool,
   runCmdTool,
+  searxngTool,
+  crawl4aiTool,
   searchKnowledgeTool,
   addKnowledgeTool,
   editKnowledgeTool,
@@ -23,6 +25,14 @@ import {
   createWriteFileTool,
   appendFileTool,
   editFileTool,
+  fetchRssTool,
+  listDatabasesTool,
+  listTablesTool,
+  getTableSchemaTool,
+  createDatabaseTool,
+  createTableTool,
+  dropTableTool,
+  queryDatabaseTool,
   FileReadTracker,
   JobActivityTracker,
 } from "../tools/index.js";
@@ -104,6 +114,16 @@ export class CronAgent extends BaseAgentBase {
       run_job: createRunJobTool(jobTracker, undefined, messageSender),
       get_jobs: getJobsTool,
       list_crons: listCronsTool,
+      fetch_rss: fetchRssTool,
+      searxng: searxngTool,
+      crawl4ai: crawl4aiTool,
+      list_databases: listDatabasesTool,
+      list_tables: listTablesTool,
+      get_table_schema: getTableSchemaTool,
+      create_database: createDatabaseTool,
+      create_table: createTableTool,
+      drop_table: dropTableTool,
+      query_database: queryDatabaseTool,
     };
 
     // Only include skill tools if skills are loaded

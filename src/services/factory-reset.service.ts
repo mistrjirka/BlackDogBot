@@ -2,18 +2,10 @@ import fs from "node:fs/promises";
 
 import { LoggerService } from "./logger.service.js";
 import { JobStorageService } from "./job-storage.service.js";
-import { VectorStoreService } from "./vector-store.service.js";
 import { SchedulerService } from "./scheduler.service.js";
 import { PromptService } from "./prompt.service.js";
 import { MainAgent } from "../agent/main-agent.js";
-import {
-  getRssStateDir,
-  getSkillsDir,
-  getLogsDir,
-  getWorkspaceDir,
-  getDatabasesDir,
-  ensureDirectoryExistsAsync,
-} from "../utils/paths.js";
+import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
 
 //#region Interfaces
 
@@ -40,14 +32,24 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
 
   // 2. Wipe knowledge / LanceDB
   await _safeStepAsync("Wipe knowledge store", errors, async (): Promise<void> => {
-    const vectorStore: VectorStoreService = VectorStoreService.getInstance();
-    await vectorStore.deleteAsync("1 = 1");
+    await _wipeDirAsync(getKnowledgeDir());
   });
 
   // 3. Remove all scheduled tasks
   await _safeStepAsync("Remove all scheduled tasks", errors, async (): Promise<void> => {
     const scheduler: SchedulerService = SchedulerService.getInstance();
     await scheduler.removeAllTasksAsync();
+  });
+
+  // 3b. Wipe cron directory directly (safety net for unparseable files)
+  await _safeStepAsync("Wipe cron directory", errors, async (): Promise<void> => {
+    await _wipeDirAsync(getCronDir());
+  });
+
+  // 3c. Delete known Telegram chats (authorized users)
+  await _safeStepAsync("Delete known Telegram chats", errors, async (): Promise<void> => {
+    const filePath: string = getTelegramChatsFilePath();
+    await fs.rm(filePath, { recursive: true, force: true });
   });
 
   // 4. Clear RSS state

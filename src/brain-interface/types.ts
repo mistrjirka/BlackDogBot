@@ -94,7 +94,8 @@ export type BrainEventType =
   | "job_execution_started"
   | "job_execution_completed"
   | "job_execution_failed"
-  | "log_entry";
+  | "log_entry"
+  | "cron_message";
 
 export interface IBrainEvent {
   type: string;
@@ -194,6 +195,13 @@ export interface ErrorEvent {
   error: string;
 }
 
+export interface ICronMessageEvent extends IBrainEvent {
+  type: "cron_message";
+  taskName: string;
+  message: string;
+  timestamp: string;
+}
+
 export interface AgentPausedEvent {
   chatId: string;
 }
@@ -221,7 +229,8 @@ export type BrainEvent =
   | IJobExecutionStartedEvent
   | IJobExecutionCompletedEvent
   | IJobExecutionFailedEvent
-  | ILogEntryEvent;
+  | ILogEntryEvent
+  | ICronMessageEvent;
 
 export interface StoredJobInfo {
   jobId: string;

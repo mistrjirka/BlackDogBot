@@ -8,6 +8,13 @@ import { DatabaseComponent } from "../database/database";
 import { BrainSocketService } from "../../services/brain-socket.service";
 import type { IScheduleTask } from "../../models/brain.types";
 
+function generateId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return generateId();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
 @Component({
   selector: "app-dashboard",
   standalone: true,
@@ -28,17 +35,18 @@ export class DashboardComponent implements OnInit {
   protected schedules = signal<IScheduleTask[]>([]);
 
   public ngOnInit(): void {
-    this._socket.connect("http://localhost:3001");
+    const wsUrl = `http://${window.location.hostname}:3001`;
+    this._socket.connect(wsUrl);
     // Once connected, auto-start or re-use an existing chat session
     this._socket.onConnectedAsync().then(async () => {
       const existingId = this.currentChatId();
-      const chatId = existingId ?? crypto.randomUUID();
+      const chatId = existingId ?? generateId();
       await this._socket.startConversationAsync(chatId);
     });
   }
 
   protected onStartConversation(): void {
-    const chatId = this.chatIdInput().trim() || crypto.randomUUID();
+    const chatId = this.chatIdInput().trim() || generateId();
     this._socket.startConversationAsync(chatId);
     this.showStartDialog.set(false);
     this.chatIdInput.set("");

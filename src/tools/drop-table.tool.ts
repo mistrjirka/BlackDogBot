@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 
 import { LiteSqlService } from "../services/litesql.service.js";
+import { LoggerService } from "../services/logger.service.js";
 
 export const dropTableTool = tool({
   description: "Drop (delete) a table from a database",
@@ -18,27 +19,44 @@ export const dropTableTool = tool({
     databaseName: string;
     tableName: string;
     message: string;
+    error?: string;
   }> => {
     const service: LiteSqlService = LiteSqlService.getInstance();
+    const logger: LoggerService = LoggerService.getInstance();
 
-    const exists: boolean = await service.databaseExistsAsync(databaseName);
-    if (!exists) {
-      const allDbs = await service.listDatabasesAsync();
-      const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+    try {
+      const exists: boolean = await service.databaseExistsAsync(databaseName);
+      if (!exists) {
+        const allDbs = await service.listDatabasesAsync();
+        const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
-      throw new Error(
-        `Database "${databaseName}" does not exist.\n` +
-          `Available databases: ${available}`,
-      );
+        return {
+          success: false,
+          databaseName,
+          tableName,
+          message: "",
+          error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
+        };
+      }
+
+      await service.dropTableAsync(databaseName, tableName);
+
+      return {
+        success: true,
+        databaseName,
+        tableName,
+        message: `Table "${tableName}" dropped from database "${databaseName}"`,
+      };
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logger.error("drop-table tool error", { error: errorMsg });
+      return {
+        success: false,
+        databaseName,
+        tableName,
+        message: "",
+        error: errorMsg,
+      };
     }
-
-    await service.dropTableAsync(databaseName, tableName);
-
-    return {
-      success: true,
-      databaseName,
-      tableName,
-      message: `Table "${tableName}" dropped from database "${databaseName}"`,
-    };
   },
 });

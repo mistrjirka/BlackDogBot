@@ -27,6 +27,7 @@ export interface IScheduledTask {
   tools: string[];
   schedule: Schedule;
   enabled: boolean;
+  notifyUser: boolean;
   lastRunAt: string | null;
   lastRunStatus: "success" | "failure" | null;
   lastRunError: string | null;

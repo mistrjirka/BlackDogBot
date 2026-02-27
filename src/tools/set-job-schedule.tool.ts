@@ -108,6 +108,7 @@ export const setJobScheduleTool = tool({
         instructions: `Run job ${jobId} titled '${job.name}'. Use the run_job tool with jobId="${jobId}".`,
         tools: ["run_job"],
         schedule: builtSchedule,
+        notifyUser: false,
         enabled: true,
         createdAt: now,
         updatedAt: now,

@@ -2,21 +2,30 @@ import { tool } from "ai";
 import { z } from "zod";
 
 import { LiteSqlService, type IQueryResult } from "../services/litesql.service.js";
+import { LoggerService } from "../services/logger.service.js";
 
-const actionSchema = z.enum(["list_databases", "list_tables", "query_table", "show_schema"]);
+const actionSchema = z.enum([
+  "list_databases",
+  "list_tables",
+  "query_table",
+  "show_schema",
+  "insert",
+  "update",
+  "delete",
+]);
 
 const inputSchema = z.object({
   action: actionSchema
-    .describe("The action to perform"),
+    .describe("The action to perform: list_databases, list_tables, query_table (SELECT), show_schema, insert, update, delete"),
   databaseName: z.string()
     .optional()
-    .describe("Database name (required for list_tables, query_table, show_schema)"),
+    .describe("Database name (required for list_tables, query_table, show_schema, insert, update, delete)"),
   tableName: z.string()
     .optional()
-    .describe("Table name (required for query_table, show_schema)"),
+    .describe("Table name (required for query_table, show_schema, insert, update, delete)"),
   where: z.string()
     .optional()
-    .describe("SQL WHERE clause for query_table (e.g. \"isInteresting = 1 AND pubDate > '2024-01-01'\")"),
+    .describe("SQL WHERE clause for query_table, update, or delete (e.g. \"isInteresting = 1 AND pubDate > '2024-01-01'\"). Required for update and delete."),
   limit: z.number()
     .int()
     .positive()
@@ -29,6 +38,12 @@ const inputSchema = z.object({
     .array()
     .optional()
     .describe("Specific columns to select for query_table (defaults to all)"),
+  data: z.record(z.unknown())
+    .optional()
+    .describe("Data to insert as a single row object for insert action (e.g. {title: 'Hello', score: 5})"),
+  set: z.record(z.unknown())
+    .optional()
+    .describe("Column-value pairs to set for update action (e.g. {isInteresting: 1, score: 10})"),
 });
 
 type QueryDatabaseInput = z.infer<typeof inputSchema>;
@@ -64,14 +79,19 @@ interface IQueryDatabaseResult {
   totalCount?: number;
   returnedCount?: number;
   schema?: ITableSchema;
+  insertedCount?: number;
+  updatedCount?: number;
+  deletedCount?: number;
+  lastRowId?: number;
   error?: string;
 }
 
 export const queryDatabaseTool = tool({
-  description: "Unified database query tool with action-based interface for listing databases, tables, querying table data, and showing table schemas",
+  description: "Unified database query tool with action-based interface for listing databases, tables, querying table data, inserting, updating, deleting rows, and showing table schemas",
   inputSchema,
   execute: async (input: QueryDatabaseInput): Promise<IQueryDatabaseResult> => {
     const service: LiteSqlService = LiteSqlService.getInstance();
+    const logger: LoggerService = LoggerService.getInstance();
 
     try {
       switch (input.action) {
@@ -95,6 +115,31 @@ export const queryDatabaseTool = tool({
         case "show_schema":
           return await _handleShowSchemaAsync(service, input.databaseName, input.tableName);
 
+        case "insert":
+          return await _handleInsertAsync(
+            service,
+            input.databaseName,
+            input.tableName,
+            input.data,
+          );
+
+        case "update":
+          return await _handleUpdateAsync(
+            service,
+            input.databaseName,
+            input.tableName,
+            input.set,
+            input.where,
+          );
+
+        case "delete":
+          return await _handleDeleteAsync(
+            service,
+            input.databaseName,
+            input.tableName,
+            input.where,
+          );
+
         default:
           return {
             success: false,
@@ -103,10 +148,12 @@ export const queryDatabaseTool = tool({
           };
       }
     } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error("query-database tool error", { error: errorMsg });
       return {
         success: false,
         action: input.action,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMsg,
       };
     }
   },
@@ -298,5 +345,204 @@ async function _handleShowSchemaAsync(
       name: schema.name,
       columns: schema.columns,
     },
+  };
+}
+
+async function _handleInsertAsync(
+  service: LiteSqlService,
+  databaseName?: string,
+  tableName?: string,
+  data?: Record<string, unknown>,
+): Promise<IQueryDatabaseResult> {
+  if (!databaseName) {
+    const allDbs = await service.listDatabasesAsync();
+    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+
+    return {
+      success: false,
+      action: "insert",
+      error: `databaseName is required for insert action.\nAvailable databases: ${available}`,
+    };
+  }
+
+  if (!tableName) {
+    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const available: string = allTables.join(", ") || "(none)";
+
+    return {
+      success: false,
+      action: "insert",
+      error: `tableName is required for insert action.\nAvailable tables in "${databaseName}": ${available}`,
+    };
+  }
+
+  if (!data || Object.keys(data).length === 0) {
+    return {
+      success: false,
+      action: "insert",
+      error: "data is required for insert action (e.g. {title: 'Hello', score: 5})",
+    };
+  }
+
+  const dbExists: boolean = await service.databaseExistsAsync(databaseName);
+  if (!dbExists) {
+    const allDbs = await service.listDatabasesAsync();
+    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+
+    return {
+      success: false,
+      action: "insert",
+      error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
+    };
+  }
+
+  const tableExists: boolean = await service.tableExistsAsync(databaseName, tableName);
+  if (!tableExists) {
+    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const available: string = allTables.join(", ") || "(none)";
+
+    return {
+      success: false,
+      action: "insert",
+      error: `Table "${tableName}" does not exist in database "${databaseName}".\nAvailable tables: ${available}`,
+    };
+  }
+
+  const result = await service.insertIntoTableAsync(databaseName, tableName, data);
+
+  return {
+    success: true,
+    action: "insert",
+    databaseName,
+    tableName,
+    insertedCount: result.insertedCount,
+    lastRowId: result.lastRowId,
+  };
+}
+
+async function _handleUpdateAsync(
+  service: LiteSqlService,
+  databaseName?: string,
+  tableName?: string,
+  set?: Record<string, unknown>,
+  where?: string,
+): Promise<IQueryDatabaseResult> {
+  if (!databaseName) {
+    const allDbs = await service.listDatabasesAsync();
+    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+
+    return {
+      success: false,
+      action: "update",
+      error: `databaseName is required for update action.\nAvailable databases: ${available}`,
+    };
+  }
+
+  if (!tableName) {
+    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const available: string = allTables.join(", ") || "(none)";
+
+    return {
+      success: false,
+      action: "update",
+      error: `tableName is required for update action.\nAvailable tables in "${databaseName}": ${available}`,
+    };
+  }
+
+  if (!set || Object.keys(set).length === 0) {
+    return {
+      success: false,
+      action: "update",
+      error: "set is required for update action (e.g. {isInteresting: 1, score: 10})",
+    };
+  }
+
+  if (!where) {
+    return {
+      success: false,
+      action: "update",
+      error: "where is required for update action to prevent accidental full-table updates (e.g. \"id = 5\")",
+    };
+  }
+
+  const dbExists: boolean = await service.databaseExistsAsync(databaseName);
+  if (!dbExists) {
+    const allDbs = await service.listDatabasesAsync();
+    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+
+    return {
+      success: false,
+      action: "update",
+      error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
+    };
+  }
+
+  const result = await service.updateTableAsync(databaseName, tableName, set, where);
+
+  return {
+    success: true,
+    action: "update",
+    databaseName,
+    tableName,
+    updatedCount: result.updatedCount,
+  };
+}
+
+async function _handleDeleteAsync(
+  service: LiteSqlService,
+  databaseName?: string,
+  tableName?: string,
+  where?: string,
+): Promise<IQueryDatabaseResult> {
+  if (!databaseName) {
+    const allDbs = await service.listDatabasesAsync();
+    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+
+    return {
+      success: false,
+      action: "delete",
+      error: `databaseName is required for delete action.\nAvailable databases: ${available}`,
+    };
+  }
+
+  if (!tableName) {
+    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const available: string = allTables.join(", ") || "(none)";
+
+    return {
+      success: false,
+      action: "delete",
+      error: `tableName is required for delete action.\nAvailable tables in "${databaseName}": ${available}`,
+    };
+  }
+
+  if (!where) {
+    return {
+      success: false,
+      action: "delete",
+      error: "where is required for delete action to prevent accidental full-table deletes (e.g. \"id < 10\")",
+    };
+  }
+
+  const dbExists: boolean = await service.databaseExistsAsync(databaseName);
+  if (!dbExists) {
+    const allDbs = await service.listDatabasesAsync();
+    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+
+    return {
+      success: false,
+      action: "delete",
+      error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
+    };
+  }
+
+  const result = await service.deleteFromTableAsync(databaseName, tableName, where);
+
+  return {
+    success: true,
+    action: "delete",
+    databaseName,
+    tableName,
+    deletedCount: result.deletedCount,
   };
 }

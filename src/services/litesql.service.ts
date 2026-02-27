@@ -330,6 +330,71 @@ export class LiteSqlService {
     }
   }
 
+  public async updateTableAsync(
+    databaseName: string,
+    tableName: string,
+    set: Record<string, unknown>,
+    where: string,
+  ): Promise<{ updatedCount: number }> {
+    const db: Database.Database = this._openDatabase(databaseName);
+
+    try {
+      const tableExists: boolean = await this.tableExistsAsync(databaseName, tableName);
+      if (!tableExists) {
+        throw new Error(
+          `Table "${tableName}" does not exist in database "${databaseName}". ` +
+            `Available tables: ${(await this.listTablesAsync(databaseName)).join(", ") || "(none)"}`,
+        );
+      }
+
+      const setClauses: string[] = Object.keys(set).map((key: string) => `"${key}" = ?`);
+      const setValues: unknown[] = Object.values(set);
+      const updateSql: string = `UPDATE "${tableName}" SET ${setClauses.join(", ")} WHERE ${where}`;
+
+      this._logger.debug("Executing UPDATE", { databaseName, tableName, set, where, sql: updateSql });
+
+      const result: Database.RunResult = db.prepare(updateSql).run(...setValues);
+      const updatedCount: number = result.changes;
+
+      this._logger.debug("Rows updated", { databaseName, tableName, count: updatedCount });
+
+      return { updatedCount };
+    } finally {
+      db.close();
+    }
+  }
+
+  public async deleteFromTableAsync(
+    databaseName: string,
+    tableName: string,
+    where: string,
+  ): Promise<{ deletedCount: number }> {
+    const db: Database.Database = this._openDatabase(databaseName);
+
+    try {
+      const tableExists: boolean = await this.tableExistsAsync(databaseName, tableName);
+      if (!tableExists) {
+        throw new Error(
+          `Table "${tableName}" does not exist in database "${databaseName}". ` +
+            `Available tables: ${(await this.listTablesAsync(databaseName)).join(", ") || "(none)"}`,
+        );
+      }
+
+      const deleteSql: string = `DELETE FROM "${tableName}" WHERE ${where}`;
+
+      this._logger.debug("Executing DELETE", { databaseName, tableName, where, sql: deleteSql });
+
+      const result: Database.RunResult = db.prepare(deleteSql).run();
+      const deletedCount: number = result.changes;
+
+      this._logger.debug("Rows deleted", { databaseName, tableName, count: deletedCount });
+
+      return { deletedCount };
+    } finally {
+      db.close();
+    }
+  }
+
   //#endregion Public methods
 
   //#region Private methods

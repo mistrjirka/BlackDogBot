@@ -3,6 +3,7 @@ import { LanguageModel } from "ai";
 import { LanguageModelV3 } from "@ai-sdk/provider";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { z } from "zod";
 
 import { LoggerService } from "./logger.service.js";
 import {
@@ -71,6 +72,11 @@ export class AiProviderService {
     } else if (activeConfig.contextWindow) {
       this._contextWindow = activeConfig.contextWindow;
     }
+
+    // Test forced tool choice capability and log result
+    const supportsForced = await this.testForcedToolChoiceAsync();
+    const logger = LoggerService.getInstance();
+    logger.info(`Model ${defaultModelId} forced tool choice: ${supportsForced ? "SUPPORTED" : "NOT SUPPORTED"}`);
   }
 
   public initialize(aiConfig: IAiConfig): void {
@@ -141,6 +147,112 @@ export class AiProviderService {
 
   public getContextWindow(): number {
     return this._contextWindow;
+  }
+
+  public supportsForcedToolChoice(): boolean {
+    if (!this._aiConfig) {
+      return false;
+    }
+
+    // OpenRouter models - some support forced tool choice, some don't
+    // Default to false to be safe, can be overridden in config
+    if (this._aiConfig.provider === "openrouter") {
+      return this._aiConfig.openrouter?.supportsForcedToolChoice ?? false;
+    }
+
+    // LM Studio and OpenAI-compatible should generally work
+    return true;
+  }
+
+  /**
+   * Tests if the model supports forced tool choice by forcing a specific tool
+   * and verifying the full flow works correctly (tool call + execution + result).
+   * Returns true only if:
+   * - Model returns a tool call with the correct tool name
+   * - Tool executes without crashing
+   * - Tool returns the expected result
+   */
+  public async testForcedToolChoiceAsync(): Promise<boolean> {
+    if (!this._aiConfig || !this._defaultModel) {
+      return false;
+    }
+
+    const logger = LoggerService.getInstance();
+    logger.info("Testing model forced tool choice capability...");
+
+    try {
+      const { generateText, tool } = await import("ai");
+
+      const calculatorTool = tool({
+        description: "Performs basic arithmetic",
+        inputSchema: z.object({
+          a: z.number(),
+          b: z.number(),
+          operation: z.enum(["add", "subtract", "multiply", "divide"]),
+        }),
+        execute: async ({ a, b, operation }): Promise<string> => {
+          switch (operation) {
+            case "add":
+              return String(a + b);
+            case "subtract":
+              return String(a - b);
+            case "multiply":
+              return String(a * b);
+            case "divide":
+              return b !== 0 ? String(a / b) : "Error: divide by zero";
+          }
+        },
+      });
+
+      const weatherTool = tool({
+        description: "Gets weather for a city",
+        inputSchema: z.object({ city: z.string() }),
+        execute: async ({ city }): Promise<string> => `Weather in ${city}: sunny, 72°F`,
+      });
+
+      const result = await generateText({
+        model: this._defaultModel,
+        messages: [{ role: "user", content: "What is 5 + 3?" }],
+        tools: { calculator: calculatorTool, weather: weatherTool },
+        toolChoice: { type: "tool" as const, toolName: "calculator" },
+        maxOutputTokens: 200,
+      });
+
+      const hasToolCalls = result.toolCalls && result.toolCalls.length > 0;
+      const hasCorrectTool = hasToolCalls && result.toolCalls.some(
+        (tc) => tc.toolName === "calculator"
+      );
+
+      const toolResultRaw = result.toolResults?.[0];
+      let hasCorrectResult = false;
+      if (toolResultRaw && typeof toolResultRaw === "object") {
+        const tr = toolResultRaw as Record<string, unknown>;
+        if (tr.output !== undefined) {
+          const outputObj = tr.output as Record<string, unknown>;
+          if (outputObj && typeof outputObj === "object" && "value" in outputObj) {
+            hasCorrectResult = String(outputObj.value).includes("8");
+          }
+        }
+      }
+
+      logger.info("Model forced tool choice test result", {
+        hasToolCalls,
+        hasCorrectTool,
+        hasCorrectResult,
+        finishReason: result.finishReason,
+        text: result.text?.substring(0, 100),
+        toolCallsCount: result.toolCalls?.length ?? 0,
+        toolName: result.toolCalls?.[0]?.toolName,
+        toolResult: hasCorrectResult ? "8" : "not matched",
+      });
+
+      return hasCorrectTool && hasCorrectResult;
+    } catch (error) {
+      logger.warn("Model forced tool choice test failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
   }
 
   //#endregion Public methods

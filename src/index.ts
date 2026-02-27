@@ -14,9 +14,12 @@ import { MessagingService } from "./services/messaging.service.js";
 import { JobStorageService } from "./services/job-storage.service.js";
 import { CronAgent } from "./agent/cron-agent.js";
 import { TelegramBot } from "./telegram/bot.js";
+import { TelegramHandler } from "./telegram/handler.js";
 import { BrainInterfaceService } from "./brain-interface/service.js";
 import { StatusService } from "./services/status.service.js";
 import type { IConfig, IScheduledTask } from "./shared/types/index.js";
+import { getJobLogsDir } from "./utils/paths.js";
+import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
 
 const BRAIN_INTERFACE_PORT: number = parseInt(process.env.BRAIN_INTERFACE_PORT ?? "3001", 10);
 
@@ -41,7 +44,14 @@ async function mainAsync(): Promise<void> {
 
   logger.info("BetterClaw daemon starting...");
 
-  // 2.5. Clean up orphaned jobs in "creating" status (from interrupted job creation)
+  // 2.5. Catch unhandled promise rejections
+  process.on("unhandledRejection", (reason: unknown): void => {
+    logger.error("Unhandled promise rejection", {
+      reason: reason instanceof Error ? reason.message : String(reason),
+    });
+  });
+
+  // 2.6. Clean up orphaned jobs in "creating" status (from interrupted job creation)
   const jobStorageService: JobStorageService = JobStorageService.getInstance();
   const orphanedCount: number = await jobStorageService.cleanupOrphanedCreatingJobsAsync();
 
@@ -110,6 +120,8 @@ async function mainAsync(): Promise<void> {
 
     await telegramBot.initializeAsync(config.telegram.botToken);
 
+    await TelegramHandler.getInstance().initializeAsync();
+
     logger.info("Telegram bot initialized.");
   } else {
     logger.warn("Telegram not configured. Bot will not start.");
@@ -122,24 +134,39 @@ async function mainAsync(): Promise<void> {
     const cronAgent: CronAgent = CronAgent.getInstance();
 
     schedulerService.setTaskExecutor(async (task: IScheduledTask): Promise<void> => {
-      // Create a message sender for cron tasks.
-      // If a notification chat ID is configured, send messages there.
-      // Otherwise, log the messages instead of trying to send to a non-existent chat.
       const notificationChatId: string | null = config.scheduler.notificationChatId;
 
-      let sender: (message: string) => Promise<string | null>;
+      // Helper: deliver a message to Telegram unconditionally
+      const sendToTelegramAsync = async (message: string): Promise<void> => {
+        if (!config.telegram) return;
 
-      if (notificationChatId && config.telegram) {
-        sender = messagingService.createSenderForChat("telegram", notificationChatId);
-      } else {
-        const logger: LoggerService = LoggerService.getInstance();
-        sender = async (message: string): Promise<string | null> => {
-          logger.info("Cron task message (no notification chat configured)", { taskId: task.taskId, message });
-          return null;
-        };
-      }
+        if (notificationChatId) {
+          await messagingService.createSenderForChat("telegram", notificationChatId)(message);
+        } else {
+          const knownChatIds = TelegramHandler.getInstance().getKnownChatIds();
+          for (const chatId of knownChatIds) {
+            try {
+              await messagingService.createSenderForChat("telegram", chatId)(message);
+            } catch (error) {
+              logger.warn(`Failed to send cron message to chat ${chatId}`, {
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        }
+      };
 
-      await cronAgent.executeTaskAsync(task, sender);
+      await executeCronTaskAsync(task, {
+        sendToTelegramAsync,
+        broadcastCronMessage: (name: string, msg: string) =>
+          BrainInterfaceService.getInstance().broadcastCronMessage(name, msg),
+        logInfo: (msg: string, meta?: Record<string, unknown>) => logger.info(msg, meta),
+        executeTaskAsync: (t, sender) => cronAgent.executeTaskAsync(t, sender),
+        openJobLogAsync: (key, path) => logger.openJobLogAsync(key, path),
+        closeJobLog: (key) => logger.closeJobLog(key),
+        getJobLogPath: (name, ts) =>
+          `${getJobLogsDir()}/${name.replace(/[^a-zA-Z0-9_-]/g, "_")}-${ts}.log`,
+      });
     });
 
     await schedulerService.startAsync();

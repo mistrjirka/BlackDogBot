@@ -31,8 +31,9 @@ import { DEFAULT_PYTHON_TIMEOUT_MS, DEFAULT_AGENT_MAX_STEPS } from "../shared/co
 import { LoggerService } from "./logger.service.js";
 import { JobStorageService } from "./job-storage.service.js";
 import { RssStateService } from "./rss-state.service.js";
-import { ConfigService } from "./config.service.js";
 import { AiProviderService } from "./ai-provider.service.js";
+import { searchSearxngAsync } from "../utils/searxng-client.js";
+import { crawlUrlAsync } from "../utils/crawl4ai-client.js";
 import { LiteSqlService } from "./litesql.service.js";
 import { StatusService } from "./status.service.js";
 import { getExecutionOrder } from "../jobs/graph.js";
@@ -620,8 +621,6 @@ export class JobExecutorService {
     input: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     const config: ICrawl4AiConfig = node.config as ICrawl4AiConfig;
-    const configService: ConfigService = ConfigService.getInstance();
-    const servicesConfig = configService.getConfig().services;
 
     let url: string = config.url;
 
@@ -629,62 +628,22 @@ export class JobExecutorService {
       url = url.replaceAll(`{{${key}}}`, String(value));
     }
 
-    const crawlRequestBody: Record<string, unknown> = {
-      urls: [url],
-      crawler_config: {
-        cache_mode: "bypass",
-      },
-    };
-
-    if (config.selector) {
-      (crawlRequestBody.crawler_config as Record<string, unknown>).css_selector = config.selector;
-    }
-
     this._logger.debug("Executing crawl4ai node", { url });
 
-    const response: Response = await fetchWithTimeout(
-      `${servicesConfig.crawl4aiUrl}/crawl`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(crawlRequestBody),
-      },
-    );
-
-    if (!response.ok) {
-      const errorText: string = await response.text();
-      throw new Error(`Crawl4AI request failed (${response.status}): ${errorText}`);
-    }
-
-    const crawlResult: Record<string, unknown> = await response.json() as Record<string, unknown>;
-
-    const results: unknown[] = (crawlResult.results ?? []) as unknown[];
-    const firstResult: Record<string, unknown> = (results[0] ?? {}) as Record<string, unknown>;
-
-    // Crawl4AI returns markdown as an object with raw_markdown, markdown_with_citations, etc.
-    const markdownField: unknown = firstResult.markdown;
-    let markdown: string;
-
-    if (markdownField && typeof markdownField === "object" && (markdownField as Record<string, unknown>).raw_markdown) {
-      markdown = (markdownField as Record<string, unknown>).raw_markdown as string;
-    } else if (typeof markdownField === "string") {
-      markdown = markdownField;
-    } else {
-      markdown = "";
-    }
-
-    const html: string = (typeof firstResult.html === "string" ? firstResult.html : "") as string;
-    const success: boolean = (firstResult.success ?? false) as boolean;
+    const crawlResult = await crawlUrlAsync(url, {
+      selector: config.selector ?? undefined,
+      cacheMode: "bypass",
+    });
 
     const output: Record<string, unknown> = {
       url,
-      success,
-      markdown,
-      html,
+      success: crawlResult.success,
+      markdown: crawlResult.markdown,
+      html: crawlResult.html,
     };
 
     // If extraction prompt is provided, run AI extraction on the markdown content
-    if (config.extractionPrompt && markdown) {
+    if (config.extractionPrompt && crawlResult.markdown) {
       const aiProviderService: AiProviderService = AiProviderService.getInstance();
       const model: LanguageModel = aiProviderService.getDefaultModel();
 
@@ -702,7 +661,7 @@ export class JobExecutorService {
       if (shouldUseStructuredExtraction) {
         const extractionResult = await generateObjectWithRetryAsync({
           model,
-          prompt: `${config.extractionPrompt}\n\nContent:\n${markdown}`,
+          prompt: `${config.extractionPrompt}\n\nContent:\n${crawlResult.markdown}`,
           schema: createOutputZodSchema(extractedSchema),
         });
 
@@ -710,7 +669,7 @@ export class JobExecutorService {
       } else {
         const extractionResult = await generateTextWithRetryAsync({
           model,
-          prompt: `${config.extractionPrompt}\n\nContent:\n${markdown}`,
+          prompt: `${config.extractionPrompt}\n\nContent:\n${crawlResult.markdown}`,
         });
 
         output.extracted = extractionResult.text;
@@ -725,8 +684,6 @@ export class JobExecutorService {
     input: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     const config: ISearxngConfig = node.config as ISearxngConfig;
-    const configService: ConfigService = ConfigService.getInstance();
-    const servicesConfig = configService.getConfig().services;
 
     let query: string = config.query;
 
@@ -734,40 +691,20 @@ export class JobExecutorService {
       query = query.replaceAll(`{{${key}}}`, String(value));
     }
 
-    const params: URLSearchParams = new URLSearchParams({
-      q: query,
-      format: "json",
-    });
-
-    if (config.categories.length > 0) {
-      params.set("categories", config.categories.join(","));
-    }
-
     this._logger.debug("Executing searxng node", { query });
 
-    const response: Response = await fetchWithTimeout(
-      `${servicesConfig.searxngUrl}/search?${params.toString()}`,
-      {
-        method: "GET",
-        headers: { "Accept": "application/json" },
-      },
-    );
-
-    if (!response.ok) {
-      const errorText: string = await response.text();
-      throw new Error(`SearXNG request failed (${response.status}): ${errorText}`);
-    }
-
-    const searchResult: Record<string, unknown> = await response.json() as Record<string, unknown>;
-    const allResults: unknown[] = (searchResult.results ?? []) as unknown[];
+    const searchResult = await searchSearxngAsync(query, {
+      categories: config.categories,
+      maxResults: config.maxResults,
+    });
 
     const maxResults: number = config.maxResults || 10;
-    const trimmedResults: unknown[] = allResults.slice(0, maxResults);
+    const trimmedResults = searchResult.results.slice(0, maxResults);
 
     return {
       query,
       results: trimmedResults,
-      totalResults: allResults.length,
+      totalResults: searchResult.number_of_results,
     };
   }
 

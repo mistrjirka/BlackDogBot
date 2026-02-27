@@ -162,10 +162,24 @@ export class TelegramAdapter implements IPlatformAdapter {
     const chunks: string[] = splitTelegramMessage(message.text);
     let lastMessageId: string | null = null;
     for (const chunk of chunks) {
-      const sentMessage = await this._bot.api.sendMessage(chatId, chunk, {
-        parse_mode: "Markdown",
-      });
-      lastMessageId = String(sentMessage.message_id);
+      try {
+        // Try sending with Markdown formatting first
+        const sentMessage = await this._bot.api.sendMessage(chatId, chunk, {
+          parse_mode: "Markdown",
+        });
+        lastMessageId = String(sentMessage.message_id);
+      } catch (error: unknown) {
+        // If Markdown parsing fails (e.g. unmatched _ or *), retry as plain text.
+        // This handles LLM-generated text that contains accidental markdown characters.
+        const isParseError: boolean =
+          error instanceof Error && error.message.includes("can't parse entities");
+        if (isParseError) {
+          const sentMessage = await this._bot.api.sendMessage(chatId, chunk);
+          lastMessageId = String(sentMessage.message_id);
+        } else {
+          throw error;
+        }
+      }
     }
     return lastMessageId;
   }

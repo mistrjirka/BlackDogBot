@@ -22,6 +22,14 @@ const openRouterSchema = z.object({
     .describe("Model identifier (e.g. anthropic/claude-sonnet-4)"),
   rateLimits: rateLimitSchema
     .default({ rpm: 60, tpm: 100000 }),
+  contextWindow: z.number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Model context window size (optional, auto-detected for known models)"),
+  supportsForcedToolChoice: z.boolean()
+    .default(false)
+    .describe("Whether the model supports forcing specific tool usage via tool_choice"),
 });
 
 const openAiCompatibleSchema = z.object({
@@ -68,6 +76,9 @@ const telegramConfigSchema = z.object({
   botToken: z.string()
     .min(1)
     .describe("Telegram Bot API token"),
+  allowedUsers: z.array(z.string())
+    .optional()
+    .describe("List of allowed Telegram user IDs. If empty or undefined, all users are allowed."),
 });
 
 const schedulerConfigSchema = z.object({
@@ -78,6 +89,9 @@ const schedulerConfigSchema = z.object({
     .nullable()
     .default(null)
     .describe("Telegram chat ID where cron task notifications are sent. If null, messages are logged only."),
+  timezone: z.string()
+    .optional()
+    .describe("Timezone for cron expressions (e.g., 'Europe/Prague', 'UTC', 'America/New_York'). Defaults to server local time."),
 });
 
 const jobCreationConfigSchema = z.object({

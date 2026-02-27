@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 
 import { LiteSqlService, IColumnInfo } from "../services/litesql.service.js";
+import { LoggerService } from "../services/logger.service.js";
 import { columnsToJsonSchema, IJsonSchema } from "../utils/litesql-schema-helper.js";
 
 const columnDefinitionSchema = z.object({
@@ -50,52 +51,78 @@ export const createTableTool = tool({
     columns: IColumnInfo[];
     inputSchema: IJsonSchema;
     message: string;
+    error?: string;
   }> => {
     const service: LiteSqlService = LiteSqlService.getInstance();
+    const logger: LoggerService = LoggerService.getInstance();
 
-    const exists: boolean = await service.databaseExistsAsync(databaseName);
-    if (!exists) {
-      const allDbs = await service.listDatabasesAsync();
-      const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+    try {
+      const exists: boolean = await service.databaseExistsAsync(databaseName);
+      if (!exists) {
+        const allDbs = await service.listDatabasesAsync();
+        const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
-      throw new Error(
-        `Database "${databaseName}" does not exist.\n` +
-          `Available databases: ${available}`,
-      );
+        return {
+          success: false,
+          databaseName,
+          tableName,
+          columns: [],
+          inputSchema: { type: "object", properties: {}, required: [] },
+          message: "",
+          error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
+        };
+      }
+
+      const tableExists: boolean = await service.tableExistsAsync(databaseName, tableName);
+      if (tableExists) {
+        return {
+          success: false,
+          databaseName,
+          tableName,
+          columns: [],
+          inputSchema: { type: "object", properties: {}, required: [] },
+          message: "",
+          error: `Table "${tableName}" already exists in database "${databaseName}".\nUse drop_table first if you want to recreate it.`,
+        };
+      }
+
+      await service.createTableAsync(databaseName, tableName, columns);
+
+      // Build IColumnInfo from the input columns so we can derive the JSON Schema
+      const columnInfos: IColumnInfo[] = columns.map((c) => ({
+        name: c.name,
+        type: c.type,
+        notNull: c.notNull ?? false,
+        primaryKey: c.primaryKey ?? false,
+        defaultValue: c.defaultValue ?? null,
+      }));
+
+      const inputSchema: IJsonSchema = columnsToJsonSchema(columnInfos);
+      const schemaJson: string = JSON.stringify(inputSchema);
+
+      return {
+        success: true,
+        databaseName,
+        tableName,
+        columns: columnInfos,
+        inputSchema,
+        message:
+          `Table "${tableName}" created with columns: ${columns.map((c) => c.name).join(", ")}.\n` +
+          `For LITESQL nodes inserting into this table, use this inputSchema (pass as inputSchemaHint to add_litesql_node):\n` +
+          schemaJson,
+      };
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logger.error("create-table tool error", { error: errorMsg });
+      return {
+        success: false,
+        databaseName,
+        tableName,
+        columns: [],
+        inputSchema: { type: "object", properties: {}, required: [] },
+        message: "",
+        error: errorMsg,
+      };
     }
-
-    const tableExists: boolean = await service.tableExistsAsync(databaseName, tableName);
-    if (tableExists) {
-      throw new Error(
-        `Table "${tableName}" already exists in database "${databaseName}".\n` +
-          `Use drop_table first if you want to recreate it.`,
-      );
-    }
-
-    await service.createTableAsync(databaseName, tableName, columns);
-
-    // Build IColumnInfo from the input columns so we can derive the JSON Schema
-    const columnInfos: IColumnInfo[] = columns.map((c) => ({
-      name: c.name,
-      type: c.type,
-      notNull: c.notNull ?? false,
-      primaryKey: c.primaryKey ?? false,
-      defaultValue: c.defaultValue ?? null,
-    }));
-
-    const inputSchema: IJsonSchema = columnsToJsonSchema(columnInfos);
-    const schemaJson: string = JSON.stringify(inputSchema);
-
-    return {
-      success: true,
-      databaseName,
-      tableName,
-      columns: columnInfos,
-      inputSchema,
-      message:
-        `Table "${tableName}" created with columns: ${columns.map((c) => c.name).join(", ")}.\n` +
-        `For LITESQL nodes inserting into this table, use this inputSchema (pass as inputSchemaHint to add_litesql_node):\n` +
-        schemaJson,
-    };
   },
 });

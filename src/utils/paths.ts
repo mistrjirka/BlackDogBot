@@ -55,6 +55,10 @@ export function getLogsDir(): string {
   return path.join(getBaseDir(), "logs");
 }
 
+export function getJobLogsDir(): string {
+  return path.join(getLogsDir(), "jobs");
+}
+
 export function getWorkspaceDir(): string {
   return path.join(getBaseDir(), "workspace");
 }
@@ -108,6 +112,10 @@ export function getDatabasesDir(): string {
   return path.join(getBaseDir(), "databases");
 }
 
+export function getTelegramChatsFilePath(): string {
+  return path.join(getBaseDir(), "known-telegram-chats.json");
+}
+
 export function getModelsDir(): string {
   const envModelsDir: string | undefined = process.env.BETTERCLAW_MODELS_DIR;
 
@@ -135,6 +143,7 @@ export async function ensureAllDirectoriesAsync(): Promise<void> {
     getLanceDbDir(),
     getCronDir(),
     getLogsDir(),
+    getJobLogsDir(),
     getWorkspaceDir(),
     getRssStateDir(),
     getPromptsDir(),

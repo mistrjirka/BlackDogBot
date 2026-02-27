@@ -1,6 +1,7 @@
-import cron from "node-cron";
 import fs from "node:fs/promises";
 import path from "node:path";
+
+import { CronScheduler } from "./cron-scheduler.js";
 
 import { IScheduledTask } from "../shared/types/index.js";
 import { scheduledTaskSchema } from "../shared/schemas/index.js";
@@ -10,13 +11,14 @@ import {
   ensureDirectoryExistsAsync,
 } from "../utils/paths.js";
 import { LoggerService } from "./logger.service.js";
+import { ConfigService } from "./config.service.js";
 
 export class SchedulerService {
   //#region Data members
 
   private static _instance: SchedulerService | null;
   private _logger: LoggerService;
-  private _scheduledJobs: Map<string, cron.ScheduledTask>;
+  private _cronScheduler: CronScheduler;
   private _tasks: Map<string, IScheduledTask>;
   private _taskExecutor: ((task: IScheduledTask) => Promise<void>) | null;
   private _intervals: Map<string, NodeJS.Timeout>;
@@ -28,7 +30,7 @@ export class SchedulerService {
 
   private constructor() {
     this._logger = LoggerService.getInstance();
-    this._scheduledJobs = new Map();
+    this._cronScheduler = new CronScheduler();
     this._tasks = new Map();
     this._taskExecutor = null;
     this._intervals = new Map();
@@ -57,6 +59,8 @@ export class SchedulerService {
     await ensureDirectoryExistsAsync(getCronDir());
     await this._loadAllTasksAsync();
 
+    this._cronScheduler.start();
+
     for (const task of this._tasks.values()) {
       if (task.enabled) {
         this._scheduleTask(task);
@@ -70,10 +74,7 @@ export class SchedulerService {
   }
 
   public async stopAsync(): Promise<void> {
-    for (const [taskId, job] of this._scheduledJobs) {
-      job.stop();
-      this._scheduledJobs.delete(taskId);
-    }
+    this._cronScheduler.stop();
 
     for (const [taskId, intervalId] of this._intervals) {
       clearInterval(intervalId);
@@ -85,7 +86,6 @@ export class SchedulerService {
       this._timeouts.delete(taskId);
     }
 
-    this._scheduledJobs.clear();
     this._intervals.clear();
     this._timeouts.clear();
 
@@ -255,17 +255,22 @@ export class SchedulerService {
 
     switch (schedule.type) {
       case "cron": {
-        const job: cron.ScheduledTask = cron.schedule(
+        const config = ConfigService.getInstance().getConfig();
+        const timezone = config.scheduler.timezone;
+        const nextRun: Date | null = this._cronScheduler.addJob(
+          task.taskId,
           schedule.expression,
+          timezone,
           () => {
             void executeCallback();
           },
         );
 
-        this._scheduledJobs.set(task.taskId, job);
         this._logger.debug("Scheduled cron task", {
           taskId: task.taskId,
           expression: schedule.expression,
+          timezone: timezone ?? "server local",
+          nextRun: nextRun ? nextRun.toISOString() : "none",
         });
         break;
       }
@@ -284,7 +289,8 @@ export class SchedulerService {
       }
 
       case "once": {
-        const delayMs: number = Date.parse(schedule.runAt) - Date.now();
+        const runAtDate: Date = new Date(schedule.runAt);
+        const delayMs: number = runAtDate.getTime() - Date.now();
 
         if (delayMs <= 0) {
           this._logger.warn("Scheduled time has already passed, skipping", {
@@ -296,13 +302,13 @@ export class SchedulerService {
 
         const timeoutId: NodeJS.Timeout = setTimeout(() => {
           void executeCallback();
+          this._timeouts.delete(task.taskId);
         }, delayMs);
 
         this._timeouts.set(task.taskId, timeoutId);
         this._logger.debug("Scheduled one-time task", {
           taskId: task.taskId,
           runAt: schedule.runAt,
-          delayMs,
         });
         break;
       }
@@ -310,13 +316,7 @@ export class SchedulerService {
   }
 
   private _unscheduleTask(taskId: string): void {
-    const job: cron.ScheduledTask | undefined =
-      this._scheduledJobs.get(taskId);
-
-    if (job) {
-      job.stop();
-      this._scheduledJobs.delete(taskId);
-    }
+    this._cronScheduler.removeJob(taskId);
 
     const intervalId: NodeJS.Timeout | undefined =
       this._intervals.get(taskId);

@@ -1,5 +1,13 @@
-import { Injectable, signal, OnDestroy } from "@angular/core";
+import { Injectable, signal, OnDestroy, inject } from "@angular/core";
 import { io, Socket } from "socket.io-client";
+import { ChangeDetectorRef } from "@angular/core";
+
+function generateId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return generateId();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
 import type {
   BrainEvent,
   BrainCommand,
@@ -125,7 +133,7 @@ export class BrainSocketService implements OnDestroy {
   public addUserMessage(message: string): void {
     const entry: UserMessageEntry = {
       type: "user_message",
-      id: crypto.randomUUID(),
+      id: generateId(),
       timestamp: new Date(),
       data: { message },
     };
@@ -269,7 +277,7 @@ export class BrainSocketService implements OnDestroy {
     const res: BrainCommandResponse = await this.sendCommandAsync({ type: "factory_reset" });
 
     // Clear local state regardless of result
-    const newId: string = crypto.randomUUID();
+    const newId: string = generateId();
     localStorage.setItem("betterclaw_chat_id", newId);
     this._currentChatId.set(newId);
     this._events.set([]);
@@ -313,6 +321,8 @@ export class BrainSocketService implements OnDestroy {
   }
 
   private _handleEvent(event: BrainEvent): void {
+    console.log("[BrainSocket] Received event:", event.type);
+    
     if (event.type === "log_entry") {
       this._logs.update((logs: ILogEntryEvent[]): ILogEntryEvent[] => {
         const newLogs: ILogEntryEvent[] = [...logs, event];
@@ -327,9 +337,20 @@ export class BrainSocketService implements OnDestroy {
       return;
     }
 
+    if (event.type === "cron_message") {
+      const entry: TerminalEntry = {
+        type: "user_message",
+        id: generateId(),
+        timestamp: new Date(event.timestamp),
+        data: { message: `[CRON:${event.taskName}] ${event.message}` },
+      };
+      this._events.update((events: TerminalEntry[]): TerminalEntry[] => [...events, entry]);
+      return;
+    }
+
     const entry: TerminalEntry = {
       ...event,
-      id: crypto.randomUUID(),
+      id: generateId(),
       timestamp: new Date(),
     };
 

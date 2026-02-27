@@ -1,6 +1,7 @@
 import type { ModelMessage } from "ai";
 
 import { FORCE_THINK_INTERVAL } from "../shared/constants.js";
+import { AiProviderService } from "../services/ai-provider.service.js";
 
 //#region Public functions
 
@@ -17,6 +18,12 @@ export function getForceThinkDirective(
   messages: ModelMessage[],
 ): { toolChoice: { type: "tool"; toolName: "think" } } | null {
   if (stepNumber <= 0) {
+    return null;
+  }
+
+  // Check if the model supports forced tool choice
+  const aiProvider = AiProviderService.getInstance();
+  if (!aiProvider.supportsForcedToolChoice()) {
     return null;
   }
 
