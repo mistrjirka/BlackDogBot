@@ -2,11 +2,13 @@ import type { ToolSet, LanguageModel } from "ai";
 import type { Tool } from "ai";
 
 import { BaseAgentBase } from "./base-agent.js";
-import type { IAgentResult } from "./base-agent.js";
+import type { IAgentResult, IToolCallSummary } from "./base-agent.js";
 import type { IScheduledTask } from "../shared/types/index.js";
 import { PROMPT_CRON_AGENT } from "../shared/constants.js";
 import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
+import { ConfigService } from "../services/config.service.js";
+import { getCurrentDateTime } from "../utils/time.js";
 import {
   thinkTool,
   runCmdTool,
@@ -75,14 +77,31 @@ export class CronAgent extends BaseAgentBase {
       PROMPT_CRON_AGENT,
     );
 
+    const config = ConfigService.getInstance().getConfig();
+    const currentDateTime = getCurrentDateTime(config.scheduler?.timezone);
+
     const instructions: string =
       basePrompt +
-      `\n\n<task_context>\nTask: ${task.name}\nDescription: ${task.description}\nInstructions: ${task.instructions}\n</task_context>`;
+      `\n\n<task_context>\nTask: ${task.name}\nDescription: ${task.description}\nCurrent time: ${currentDateTime}\nInstructions: ${task.instructions}\n</task_context>`;
 
     const tools: ToolSet = this._resolveTools(task.tools, messageSender);
     const model: LanguageModel = AiProviderService.getInstance().getModel();
 
-    this._buildAgent(model, instructions, tools);
+    const onStepAsync = async (
+      stepNumber: number,
+      toolCalls: IToolCallSummary[],
+    ): Promise<void> => {
+      for (const tc of toolCalls) {
+        const argsStr = JSON.stringify(tc.input).slice(0, 500);
+        const resultStr = tc.result !== undefined 
+          ? JSON.stringify(tc.result).slice(0, 500) 
+          : "(pending)";
+        this._logger.debug(`Step ${stepNumber}: tool_call ${tc.name} ${argsStr}`);
+        this._logger.debug(`Step ${stepNumber}: tool_result ${tc.name} ${resultStr}`);
+      }
+    };
+
+    this._buildAgent(model, instructions, tools, onStepAsync);
 
     return this.processMessageAsync(
       "Execute the scheduled task according to your instructions.",

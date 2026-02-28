@@ -143,6 +143,40 @@ export class SchedulerService {
     return true;
   }
 
+  public async updateTaskAsync(
+    taskId: string,
+    patch: Partial<IScheduledTask>,
+  ): Promise<IScheduledTask | undefined> {
+    const task: IScheduledTask | undefined = this._tasks.get(taskId);
+
+    if (!task) {
+      return undefined;
+    }
+
+    const scheduleChanged: boolean =
+      patch.schedule !== undefined &&
+      JSON.stringify(patch.schedule) !== JSON.stringify(task.schedule);
+
+    const enabledChanged: boolean =
+      patch.enabled !== undefined && patch.enabled !== task.enabled;
+
+    Object.assign(task, patch);
+    task.updatedAt = new Date().toISOString();
+
+    this._tasks.set(taskId, task);
+    await this._saveTaskAsync(task);
+
+    if (enabledChanged || scheduleChanged) {
+      this._unscheduleTask(taskId);
+      if (task.enabled) {
+        this._scheduleTask(task);
+      }
+    }
+
+    this._logger.info("Task updated", { taskId, name: task.name });
+    return task;
+  }
+
   public async removeAllTasksAsync(): Promise<void> {
     const taskIds: string[] = Array.from(this._tasks.keys());
 

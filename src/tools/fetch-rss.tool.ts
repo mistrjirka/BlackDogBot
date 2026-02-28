@@ -1,9 +1,41 @@
 import { tool } from "ai";
+import TurndownService from "turndown";
 
 import { fetchRssToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { parseRssFeed } from "../utils/rss-parser.js";
 import { RssStateService } from "../services/rss-state.service.js";
 import type { IRssState } from "../shared/types/index.js";
+
+// Initialize Turndown service for HTML to Markdown conversion
+const turndownService = new TurndownService({
+  headingStyle: "atx",
+  codeBlockStyle: "fenced",
+});
+
+// Add custom rule for Telegram links (e.g., ?q=%23Breaking -> #Breaking)
+turndownService.addRule("telegramLinks", {
+  filter: "a",
+  replacement: function (content, node: any) {
+    const href = node.getAttribute("href");
+    if (href && href.startsWith("?q=")) {
+      // Decode URL-encoded hashtags/mentions (e.g., ?q=%23Breaking -> #Breaking)
+      const decoded = decodeURIComponent(href.substring(3));
+      return `${content} (${decoded})`;
+    }
+    if (href) {
+      return `[${content}](${href})`;
+    }
+    return content;
+  },
+});
+
+// Handle <br> tags - convert to markdown line breaks
+turndownService.addRule("br", {
+  filter: "br",
+  replacement: function () {
+    return "  \n";
+  },
+});
 
 //#region Interfaces
 
@@ -20,16 +52,45 @@ interface IFetchRssResult {
 
 //#endregion Interfaces
 
+//#region Helper Functions
+
+function transformItem(item: Record<string, unknown>): Record<string, unknown> {
+  const transformed = { ...item };
+
+  // Determine primary content source (priority: content:encoded > content > description)
+  const contentEncoded = transformed["content:encoded"] as string | undefined;
+  const content = transformed.content as string | undefined;
+  const description = transformed.description as string | undefined;
+
+  const rawHtml = contentEncoded || content || description || "";
+
+  // Convert HTML to Markdown if there's content
+  if (rawHtml) {
+    transformed.contentMarkdown = turndownService.turndown(rawHtml);
+    transformed.rawHtml = rawHtml;
+  }
+
+  // Ensure we have a content field for convenience (prefer content:encoded)
+  if (!transformed.content && rawHtml) {
+    transformed.content = rawHtml;
+  }
+
+  return transformed;
+}
+
+//#endregion Helper Functions
+
 //#region Tool
 
 export const fetchRssTool = tool({
-  description: "Fetch and parse an RSS or Atom feed. Returns feed metadata and items. Use mode='unseen' to only get new items since the last fetch (state is persisted per URL).",
+  description:
+    "Fetch and parse an RSS or Atom feed. Returns feed metadata and items. Use mode='unseen' to only get new items since the last fetch (state is persisted per URL).",
   inputSchema: fetchRssToolInputSchema,
   execute: async ({ url, maxItems, mode }): Promise<IFetchRssResult> => {
     const response: Response = await fetch(url, {
       method: "GET",
       headers: {
-        "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml",
+        Accept: "application/rss+xml, application/xml, application/atom+xml, text/xml",
         "User-Agent": "BetterClaw/1.0",
       },
     });
@@ -43,13 +104,16 @@ export const fetchRssTool = tool({
     const parsed: Record<string, unknown> = parseRssFeed(xmlText);
     const allItems: Record<string, unknown>[] = (parsed.items ?? []) as Record<string, unknown>[];
 
+    // Transform all items to add markdown content
+    const transformedAllItems = allItems.map(transformItem);
+
     let returnedItems: Record<string, unknown>[];
     let unseenCount: number | undefined;
 
     if (mode === "unseen") {
       const rssStateService: RssStateService = RssStateService.getInstance();
       const state: IRssState | null = await rssStateService.loadStateAsync(url);
-      const unseenItems: Record<string, unknown>[] = rssStateService.filterUnseenItems(allItems, state);
+      const unseenItems: Record<string, unknown>[] = rssStateService.filterUnseenItems(transformedAllItems, state);
 
       unseenCount = unseenItems.length;
       returnedItems = unseenItems.slice(0, maxItems);
@@ -57,7 +121,7 @@ export const fetchRssTool = tool({
       const updatedSeenIds: string[] = rssStateService.mergeSeenIds(state?.seenIds ?? [], allItems);
       await rssStateService.saveStateAsync(url, updatedSeenIds);
     } else {
-      returnedItems = allItems.slice(0, maxItems);
+      returnedItems = transformedAllItems.slice(0, maxItems);
     }
 
     const output: IFetchRssResult = {

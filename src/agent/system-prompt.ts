@@ -2,6 +2,7 @@ import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { PROMPT_MAIN_AGENT } from "../shared/constants.js";
+import { getCurrentDateTime } from "../utils/time.js";
 
 //#region Public functions
 
@@ -16,10 +17,10 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
     basePrompt = basePrompt.replace(/<job_creation>[\s\S]*?<\/job_creation>\n?/g, "");
   }
 
-  const dateString: string = new Date().toISOString().split("T")[0];
+  const dateString: string = getCurrentDateTime(config.scheduler?.timezone);
 
   // Build dynamic context about capabilities
-  const contextParts: string[] = [`Current date: ${dateString}`];
+  const contextParts: string[] = [`Current date and time: ${dateString}`];
 
   // Web search capability
   const searxngUrl: string | undefined = config.services?.searxngUrl;

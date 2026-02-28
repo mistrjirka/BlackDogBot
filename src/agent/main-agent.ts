@@ -36,6 +36,8 @@ import {
   addCronTool,
   removeCronTool,
   listCronsTool,
+  getCronTool,
+  editCronTool,
   createRenderGraphTool,
   type PhotoSender,
   createReadFileTool,
@@ -67,6 +69,8 @@ import {
   createAddAgentNodeTool,
   createAddLitesqlNodeTool,
   createAddLitesqlReaderNodeTool,
+  searxngTool,
+  crawl4aiTool,
   setJobScheduleTool,
   removeJobScheduleTool,
 } from "../tools/index.js";
@@ -231,6 +235,8 @@ export class MainAgent extends BaseAgentBase {
       add_cron: addCronTool,
       remove_cron: removeCronTool,
       list_crons: listCronsTool,
+      get_cron: getCronTool,
+      edit_cron: editCronTool,
       fetch_rss: fetchRssTool,
       list_databases: listDatabasesTool,
       list_tables: listTablesTool,
@@ -239,6 +245,8 @@ export class MainAgent extends BaseAgentBase {
       create_table: createTableTool,
       drop_table: dropTableTool,
       query_database: queryDatabaseTool,
+      searxng: searxngTool,
+      crawl4ai: crawl4aiTool,
     };
 
     // Only include job tools if job creation is enabled

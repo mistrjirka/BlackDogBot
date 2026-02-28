@@ -1,7 +1,32 @@
 /**
  * Parses RSS 2.0 and Atom feed XML into a structured object.
  * Returns feed-level metadata (title, description, link) plus an array of items.
+ * Extracts ALL available fields from each item including content:encoded.
  */
+
+function extractAllTags(xml: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  
+  // Match any tag with its content
+  const tagRegex = /<([a-zA-Z0-9_:]+)[^>]*>([\s\S]*?)<\/\1>/gi;
+  let match;
+  
+  while ((match = tagRegex.exec(xml)) !== null) {
+    const tagName = match[1];
+    let content = match[2];
+    
+    // Handle CDATA
+    const cdataMatch = content.match(/<!\[CDATA\[(.*?)\]\]>/is);
+    if (cdataMatch) {
+      content = cdataMatch[1];
+    }
+    
+    result[tagName] = content.trim();
+  }
+  
+  return result;
+}
+
 export function parseRssFeed(xml: string): Record<string, unknown> {
   const result: Record<string, unknown> = {
     items: [],
@@ -37,39 +62,7 @@ export function parseRssFeed(xml: string): Record<string, unknown> {
     }
 
     result.items = entries.map((entry: string): Record<string, unknown> => {
-      const item: Record<string, unknown> = {};
-
-      const entryTitleMatch: RegExpMatchArray | null = entry.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>|<title[^>]*>(.*?)<\/title>/is);
-      if (entryTitleMatch) {
-        item.title = (entryTitleMatch[1] ?? entryTitleMatch[2] ?? "").trim();
-      }
-
-      const entryLinkMatch: RegExpMatchArray | null = entry.match(/<link[^>]*href=["']([^"']+)["'][^>]*>|<link[^>]*>(.*?)<\/link>/is);
-      if (entryLinkMatch) {
-        item.link = entryLinkMatch[1] || entryLinkMatch[2];
-      }
-
-      const entryContentMatch: RegExpMatchArray | null = entry.match(/<content[^>]*><!\[CDATA\[(.*?)\]\]><\/content>|<content[^>]*>(.*?)<\/content>/is);
-      if (entryContentMatch) {
-        item.content = entryContentMatch[1] ?? entryContentMatch[2];
-      }
-
-      const entrySummaryMatch: RegExpMatchArray | null = entry.match(/<summary[^>]*><!\[CDATA\[(.*?)\]\]><\/summary>|<summary[^>]*>(.*?)<\/summary>/is);
-      if (entrySummaryMatch) {
-        item.summary = entrySummaryMatch[1] ?? entrySummaryMatch[2];
-      }
-
-      const entryIdMatch: RegExpMatchArray | null = entry.match(/<id[^>]*>(.*?)<\/id>/is);
-      if (entryIdMatch) {
-        item.id = entryIdMatch[1];
-      }
-
-      const entryPublishedMatch: RegExpMatchArray | null = entry.match(/<published[^>]*>(.*?)<\/published>|<updated[^>]*>(.*?)<\/updated>/is);
-      if (entryPublishedMatch) {
-        item.published = entryPublishedMatch[1] ?? entryPublishedMatch[2];
-      }
-
-      return item;
+      return extractAllTags(entry);
     });
   } else {
     // RSS 2.0 — scope feed-level metadata to within the <channel> block
@@ -103,35 +96,9 @@ export function parseRssFeed(xml: string): Record<string, unknown> {
       items.push(match[1]);
     }
 
+    // Extract ALL tags from each item
     result.items = items.map((itemXml: string): Record<string, unknown> => {
-      const item: Record<string, unknown> = {};
-
-      const itemTitleMatch: RegExpMatchArray | null = itemXml.match(/<title[^>]*><!\[CDATA\[(.*?)\]\]><\/title>|<title[^>]*>(.*?)<\/title>/is);
-      if (itemTitleMatch) {
-        item.title = (itemTitleMatch[1] ?? itemTitleMatch[2] ?? "").trim();
-      }
-
-      const itemLinkMatch: RegExpMatchArray | null = itemXml.match(/<link[^>]*>(.*?)<\/link>/is);
-      if (itemLinkMatch) {
-        item.link = itemLinkMatch[1].trim();
-      }
-
-      const itemDescMatch: RegExpMatchArray | null = itemXml.match(/<description[^>]*><!\[CDATA\[(.*?)\]\]><\/description>|<description[^>]*>(.*?)<\/description>/is);
-      if (itemDescMatch) {
-        item.description = itemDescMatch[1] ?? itemDescMatch[2];
-      }
-
-      const itemGuidMatch: RegExpMatchArray | null = itemXml.match(/<guid[^>]*>(.*?)<\/guid>/is);
-      if (itemGuidMatch) {
-        item.guid = itemGuidMatch[1];
-      }
-
-      const itemPubDateMatch: RegExpMatchArray | null = itemXml.match(/<pubDate[^>]*>(.*?)<\/pubDate>/is);
-      if (itemPubDateMatch) {
-        item.pubDate = itemPubDateMatch[1];
-      }
-
-      return item;
+      return extractAllTags(itemXml);
     });
   }
 

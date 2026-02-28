@@ -487,6 +487,61 @@ export const removeCronToolOutputSchema = z.object({
   message: z.string(),
 });
 
+export const getCronToolInputSchema = z.object({
+  taskId: z.string()
+    .min(1)
+    .describe("ID of the cron task to retrieve"),
+});
+
+export const getCronToolOutputSchema = z.object({
+  success: z.boolean(),
+  task: z.any()
+    .optional()
+    .describe("Full scheduled task configuration"),
+  error: z.string()
+    .optional(),
+});
+
+export const editCronToolInputSchema = z.object({
+  taskId: z.string()
+    .min(1),
+  name: z.string()
+    .min(1)
+    .optional()
+    .describe("Updated task name"),
+  description: z.string()
+    .optional()
+    .describe("Updated description"),
+  instructions: z.string()
+    .min(1)
+    .optional()
+    .describe("Updated instructions for the agent. If changed, the instructions will be re-verified."),
+  tools: z.enum(CRON_VALID_TOOL_NAMES)
+    .array()
+    .min(1)
+    .optional()
+    .describe("Updated list of available tools"),
+  schedule: z.object({
+    type: z.enum(["once", "interval", "cron"]),
+    runAt: z.string()
+      .optional(),
+    intervalMs: z.number()
+      .optional(),
+    expression: z.string()
+      .optional(),
+  })
+    .optional()
+    .describe("Updated schedule configuration"),
+  notifyUser: z.boolean()
+    .optional()
+    .describe("Whether to send a Telegram notification"),
+  enabled: z.boolean()
+    .optional()
+    .describe("Whether the task is enabled"),
+});
+
+export const editCronToolOutputSchema = getCronToolOutputSchema;
+
 export const listCronsToolInputSchema = z.object({
   enabledOnly: z.boolean()
     .default(false)
@@ -1026,3 +1081,24 @@ export const crawl4aiToolOutputSchema = z.object({
 });
 
 //#endregion Crawl4ai Tool
+
+// ============================================================================
+// Tool Prerequisites Registry
+// ============================================================================
+
+const TASK_ID_PLACEHOLDER = "TASK_ID_PLACEHOLDER";
+
+/**
+ * Registry of tool prerequisites.
+ *
+ * Format: { toolName: [ { tool: "prerequisiteTool", args: {...} }, ... ] }
+ *
+ * Use TASK_ID_PLACEHOLDER in args to indicate the value should be taken from
+ * the calling tool's input (e.g., { taskId: TASK_ID_PLACEHOLDER } means
+ * use the same taskId that was passed to the calling tool).
+ */
+export const TOOL_PREREQUISITES: Record<string, { tool: string; args: Record<string, unknown> }[]> = {
+  edit_cron: [
+    { tool: "get_cron", args: { taskId: TASK_ID_PLACEHOLDER } },
+  ],
+};

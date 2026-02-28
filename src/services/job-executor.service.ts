@@ -37,6 +37,8 @@ import { crawlUrlAsync } from "../utils/crawl4ai-client.js";
 import { LiteSqlService } from "./litesql.service.js";
 import { StatusService } from "./status.service.js";
 import { getExecutionOrder } from "../jobs/graph.js";
+import { ConfigService } from "./config.service.js";
+import { getCurrentDateTime } from "../utils/time.js";
 import { validateDataAgainstSchema, ISchemaCompatResult } from "../jobs/schema-compat.js";
 import { generateTextWithRetryAsync, generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { getForceThinkDirective } from "../utils/prepare-step.js";
@@ -876,7 +878,10 @@ export class JobExecutorService {
       outputSchemaInstructions = `\n\n## Expected Output Schema\nYour output must match this JSON schema:\n\`\`\`json\n${JSON.stringify(node.outputSchema, null, 2)}\n\`\`\`\n\nMake sure your "done" tool call returns a result object that conforms to this schema.`;
     }
 
-    const instructions: string = `${config.systemPrompt}${outputSchemaInstructions}\n\n## Input Data\nYou have been given the following input data:\n${JSON.stringify(input, null, 2)}\n\nWhen you are done, call the "done" tool with your final result as a JSON object.`;
+    const currentDateTime: string = getCurrentDateTime(
+      ConfigService.getInstance().getConfig().scheduler?.timezone,
+    );
+    const instructions: string = `Current date and time: ${currentDateTime}\n\n${config.systemPrompt}${outputSchemaInstructions}\n\n## Input Data\nYou have been given the following input data:\n${JSON.stringify(input, null, 2)}\n\nWhen you are done, call the "done" tool with your final result as a JSON object.`;
 
     this._logger.debug("Executing agent node", { nodeId: node.nodeId, toolCount: Object.keys(selectedTools).length, maxSteps, reasoningEffort: config.reasoningEffort });
 
