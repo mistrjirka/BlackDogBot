@@ -1,4 +1,5 @@
 import type { IScheduledTask } from "../shared/types/index.js";
+import type { IRegisteredChannel } from "../shared/types/channel.types.js";
 
 /**
  * Result returned by the cron agent after executing a task.
@@ -13,7 +14,10 @@ export interface ICronAgentResult {
  * This allows the executor to be tested with mocks.
  */
 export interface ICronTaskExecutorDeps {
+  /** @deprecated Use broadcastToNotificationChannelsAsync instead */
   sendToTelegramAsync: (message: string) => Promise<void>;
+  /** Broadcast a message to all channels that have receiveNotifications=true */
+  broadcastToNotificationChannelsAsync: (message: string) => Promise<void>;
   broadcastCronMessage: (taskName: string, message: string) => void;
   logInfo: (message: string, meta?: Record<string, unknown>) => void;
   executeTaskAsync: (
@@ -28,11 +32,11 @@ export interface ICronTaskExecutorDeps {
 /**
  * Executes a cron task with proper message routing:
  *
- * - The `send_message` tool (toolMessageSender) ALWAYS delivers to Telegram.
+ * - The `send_message` tool (toolMessageSender) broadcasts to ALL notification channels.
  *   When the agent explicitly calls send_message, the message goes through unconditionally.
  *
  * - The agent's final text output (result.text from the done tool summary)
- *   is forwarded to Telegram ONLY when `task.notifyUser` is true.
+ *   is forwarded to notification channels ONLY when `task.notifyUser` is true.
  *
  * - Logs and UI broadcast always happen regardless of notifyUser.
  */
@@ -40,12 +44,12 @@ export async function executeCronTaskAsync(
   task: IScheduledTask,
   deps: ICronTaskExecutorDeps,
 ): Promise<void> {
-  // Sender for the send_message tool — ALWAYS delivers to Telegram.
+  // Sender for the send_message tool — broadcasts to all notification channels.
   // The agent explicitly chose to call send_message, so the message must go through.
   const toolMessageSender = async (message: string): Promise<string | null> => {
     deps.logInfo(`[Cron:${task.name}] ${message}`, { taskId: task.taskId });
     deps.broadcastCronMessage(task.name, message);
-    await deps.sendToTelegramAsync(message);
+    await deps.broadcastToNotificationChannelsAsync(message);
     return null;
   };
 
@@ -64,14 +68,20 @@ export async function executeCronTaskAsync(
       deps.logInfo(`[Cron:${task.name}] Result: ${result.text}`, { taskId: task.taskId });
       deps.broadcastCronMessage(task.name, result.text);
 
-      // Only forward the final text to Telegram when notifyUser is enabled.
+      // Only forward the final text to notification channels when notifyUser is enabled.
       // send_message tool calls always go through regardless — this only gates
       // the automatic forwarding of the agent's summary/result text.
       if (task.notifyUser) {
-        await deps.sendToTelegramAsync(result.text);
+        await deps.broadcastToNotificationChannelsAsync(result.text);
       }
     }
   } finally {
     deps.closeJobLog(jobLogKey);
   }
 }
+
+/**
+ * Helper to get notification channels from the channel registry.
+ * Re-exported for convenience.
+ */
+export type { IRegisteredChannel };

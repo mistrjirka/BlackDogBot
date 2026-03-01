@@ -1,6 +1,6 @@
 //#region Messaging Types
 
-export type MessagePlatform = "telegram" | "console" | "api";
+export type MessagePlatform = "telegram" | "discord" | "console" | "api";
 
 export interface IIncomingMessage {
   id: string;

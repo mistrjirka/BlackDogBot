@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import {
   MessagingService,
-  TelegramAdapter,
   type IPlatformAdapter,
 } from "../../src/services/messaging.service.js";
+import { TelegramAdapter } from "../../src/platforms/telegram/adapter.js";
 import { LoggerService } from "../../src/services/logger.service.js";
 import type {
   IOutgoingMessage,

@@ -12,14 +12,19 @@ import { SkillLoaderService } from "./services/skill-loader.service.js";
 import { SchedulerService } from "./services/scheduler.service.js";
 import { MessagingService } from "./services/messaging.service.js";
 import { JobStorageService } from "./services/job-storage.service.js";
+import { ChannelRegistryService } from "./services/channel-registry.service.js";
+import { ToolRegistryService } from "./services/tool-registry.service.js";
 import { CronAgent } from "./agent/cron-agent.js";
-import { TelegramBot } from "./telegram/bot.js";
-import { TelegramHandler } from "./telegram/handler.js";
+import { MainAgent } from "./agent/main-agent.js";
 import { BrainInterfaceService } from "./brain-interface/service.js";
 import { StatusService } from "./services/status.service.js";
+import { telegramPlatform } from "./platforms/telegram/index.js";
+import { discordPlatform } from "./platforms/discord/index.js";
+import type { IPlatformDeps } from "./platforms/types.js";
 import type { IConfig, IScheduledTask } from "./shared/types/index.js";
 import { getJobLogsDir } from "./utils/paths.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
+import { TelegramHandler } from "./platforms/telegram/handler.js";
 
 const BRAIN_INTERFACE_PORT: number = parseInt(process.env.BRAIN_INTERFACE_PORT ?? "3001", 10);
 
@@ -112,19 +117,38 @@ async function mainAsync(): Promise<void> {
 
   logger.info("Messaging service initialized.");
 
-  // 8. Initialize Telegram bot (if configured)
-  let telegramBot: TelegramBot | null = null;
+  // 7.5. Initialize channel registry (for permissions and notifications)
+  const channelRegistry = ChannelRegistryService.getInstance();
+  await channelRegistry.initializeAsync();
 
-  if (config.telegram) {
-    telegramBot = TelegramBot.getInstance();
+  logger.info("Channel registry initialized.", {
+    channelCount: channelRegistry.getAllChannels().length,
+    notificationChannelCount: channelRegistry.getNotificationChannels().length,
+  });
 
-    await telegramBot.initializeAsync(config.telegram.botToken);
+  // 8. Initialize platform dependencies
+  const platformDeps: IPlatformDeps = {
+    mainAgent: MainAgent.getInstance(),
+    channelRegistry,
+    messagingService,
+    toolRegistry: ToolRegistryService.getInstance(),
+    logger,
+  };
 
-    await TelegramHandler.getInstance().initializeAsync();
-
+  // 8.5. Initialize Telegram bot (if configured)
+  if (config.telegram && telegramPlatform.isEnabled?.(config.telegram)) {
+    await telegramPlatform.initialize(config.telegram, platformDeps);
     logger.info("Telegram bot initialized.");
   } else {
     logger.warn("Telegram not configured. Bot will not start.");
+  }
+
+  // 8.6. Initialize Discord bot (if configured)
+  if (config.discord && discordPlatform.isEnabled?.(config.discord)) {
+    await discordPlatform.initialize(config.discord, platformDeps);
+    logger.info("Discord bot initialized.");
+  } else {
+    logger.info("Discord not configured. Bot will not start.");
   }
 
   // 9. Initialize scheduler (if enabled)
@@ -136,7 +160,7 @@ async function mainAsync(): Promise<void> {
     schedulerService.setTaskExecutor(async (task: IScheduledTask): Promise<void> => {
       const notificationChatId: string | null = config.scheduler.notificationChatId;
 
-      // Helper: deliver a message to Telegram unconditionally
+      // Helper: deliver a message to Telegram (backward compat)
       const sendToTelegramAsync = async (message: string): Promise<void> => {
         if (!config.telegram) return;
 
@@ -156,8 +180,31 @@ async function mainAsync(): Promise<void> {
         }
       };
 
+      // Helper: broadcast to all channels with receiveNotifications=true
+      const broadcastToNotificationChannelsAsync = async (message: string): Promise<void> => {
+        const notificationChannels = channelRegistry.getNotificationChannels();
+
+        if (notificationChannels.length === 0) {
+          // Fall back to legacy Telegram behavior if no channels configured
+          await sendToTelegramAsync(message);
+          return;
+        }
+
+        for (const channel of notificationChannels) {
+          try {
+            const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
+            await sender(message);
+          } catch (error) {
+            logger.warn(`Failed to send cron message to ${channel.platform}:${channel.channelId}`, {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      };
+
       await executeCronTaskAsync(task, {
         sendToTelegramAsync,
+        broadcastToNotificationChannelsAsync,
         broadcastCronMessage: (name: string, msg: string) =>
           BrainInterfaceService.getInstance().broadcastCronMessage(name, msg),
         logInfo: (msg: string, meta?: Record<string, unknown>) => logger.info(msg, meta),
@@ -176,12 +223,7 @@ async function mainAsync(): Promise<void> {
     logger.info("Scheduler disabled in config.");
   }
 
-  // 10. Start Telegram bot
-  if (telegramBot) {
-    await telegramBot.startAsync();
-  }
-
-  // 11. Initialize BrainInterface (WebSocket server for debug UI)
+  // 10. Initialize BrainInterface (WebSocket server for debug UI)
   const httpServer = createServer();
   const io: SocketIOServer = new SocketIOServer(httpServer, {
     cors: {
@@ -203,13 +245,12 @@ async function mainAsync(): Promise<void> {
 
   logger.info("BetterClaw daemon is running.");
 
-  // 12. Graceful shutdown
+  // 11. Graceful shutdown
   const shutdownAsync = async (): Promise<void> => {
     logger.info("Shutdown signal received. Stopping BetterClaw...");
 
-    if (telegramBot) {
-      await telegramBot.stopAsync();
-    }
+    await telegramPlatform.stop();
+    await discordPlatform.stop();
 
     if (config.scheduler.enabled) {
       await schedulerService.stopAsync();

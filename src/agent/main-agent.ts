@@ -79,8 +79,11 @@ import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { JobStorageService } from "../services/job-storage.service.js";
+import { ChannelRegistryService } from "../services/channel-registry.service.js";
+import { ToolRegistryService } from "../services/tool-registry.service.js";
 import type { IJob, INode } from "../shared/types/index.js";
 import type { IToolCallSummary } from "./base-agent.js";
+import type { MessagePlatform } from "../shared/types/messaging.types.js";
 
 //#region Constants
 
@@ -166,6 +169,7 @@ export class MainAgent extends BaseAgentBase {
     messageSender: MessageSender,
     photoSender: PhotoSender,
     onStepAsync?: OnStepCallback,
+    platform: MessagePlatform = "telegram",
   ): Promise<void> {
     this._currentChatId = chatId;
 
@@ -303,6 +307,19 @@ export class MainAgent extends BaseAgentBase {
         }
       : undefined;
 
+    // Filter tools based on channel permission
+    const channelRegistry = ChannelRegistryService.getInstance();
+    const toolRegistry = ToolRegistryService.getInstance();
+    const permission = channelRegistry.getPermission(platform, chatId);
+    const skillNames = availableSkills.map((s) => s.name);
+
+    const filteredTools: ToolSet = {};
+    for (const [toolName, tool] of Object.entries(tools)) {
+      if (toolRegistry.isToolAllowed(toolName, permission, { jobCreationEnabled: config.jobCreation.enabled, skillNames })) {
+        filteredTools[toolName] = tool;
+      }
+    }
+
     const trackedDoneTool = createDoneTool(jobTracker);
 
     const combinedOnStepAsync = async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
@@ -362,7 +379,7 @@ export class MainAgent extends BaseAgentBase {
     this._buildAgent(
       model,
       instructions,
-      tools,
+      filteredTools,
       combinedOnStepAsync,
       trackedDoneTool,
       // getExtraTools: returns node-creation tools when current chat is in creation mode
@@ -384,7 +401,7 @@ export class MainAgent extends BaseAgentBase {
       (): string | null => session.jobCreationMode !== null ? jobCreationGuide : null,
     );
 
-    this._logger.info("MainAgent initialized for chat.", { chatId });
+    this._logger.info("MainAgent initialized for chat.", { chatId, permission });
   }
 
   public async processMessageForChatAsync(chatId: string, userMessage: string): Promise<IAgentResult> {

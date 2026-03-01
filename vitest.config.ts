@@ -4,7 +4,12 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    include: ["tests/unit/**/*.test.ts"],
+    fileParallelism: false,
+    include: [
+      "tests/unit/**/*.test.ts",
+      "tests/integration/core/**/*.test.ts",
+      "tests/integration/jobs/**/*.test.ts",
+    ],
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],

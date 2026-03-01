@@ -17,7 +17,6 @@ export { SkillLoaderService } from "./skill-loader.service.js";
 export { SchedulerService } from "./scheduler.service.js";
 export {
   MessagingService,
-  TelegramAdapter,
   type IPlatformAdapter,
 } from "./messaging.service.js";
 export { factoryResetAsync, type IFactoryResetResult } from "./factory-reset.service.js";
