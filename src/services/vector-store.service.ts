@@ -38,6 +38,7 @@ export class VectorStoreService {
   private _connection: Connection | null;
   private _tables: Map<string, Table>;
   private _dbPath: string;
+  private _embeddingDimension: number;
   private _initialized: boolean;
 
   //#endregion Data members
@@ -48,6 +49,7 @@ export class VectorStoreService {
     this._connection = null;
     this._tables = new Map<string, Table>();
     this._dbPath = "";
+    this._embeddingDimension = EMBEDDING_DIMENSION;
     this._initialized = false;
   }
 
@@ -63,8 +65,12 @@ export class VectorStoreService {
     return VectorStoreService._instance;
   }
 
-  public async initializeAsync(dbPath?: string): Promise<void> {
+  public async initializeAsync(
+    dbPath?: string,
+    embeddingDimension?: number,
+  ): Promise<void> {
     this._dbPath = dbPath ?? getLanceDbDir();
+    this._embeddingDimension = embeddingDimension ?? EMBEDDING_DIMENSION;
 
     await ensureDirectoryExistsAsync(this._dbPath);
 
@@ -93,7 +99,7 @@ export class VectorStoreService {
         id: "__seed__",
         content: "",
         collection: "__seed__",
-        vector: new Array(EMBEDDING_DIMENSION).fill(0) as number[],
+        vector: new Array(this._embeddingDimension).fill(0) as number[],
         metadata: "{}",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),

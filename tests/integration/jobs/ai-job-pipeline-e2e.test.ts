@@ -181,7 +181,10 @@ describe("AI Job Pipeline E2E — RSS + Agent", () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
     const lanceDbPath: string = path.join(tempDir, ".betterclaw", "knowledge", "lancedb");
 
-    await vectorStoreService.initializeAsync(lanceDbPath);
+    await vectorStoreService.initializeAsync(
+      lanceDbPath,
+      embeddingService.getDimension(),
+    );
 
     const skillLoaderService: SkillLoaderService = SkillLoaderService.getInstance();
 

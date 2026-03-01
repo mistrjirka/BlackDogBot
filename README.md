@@ -102,7 +102,10 @@ scheduler:
   notificationChatId: null  # Telegram chat ID for cron notifications
 
 knowledge:
-  embeddingModelPath: Xenova/bge-m3
+  embeddingProvider: local  # local | openrouter
+  embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
+  embeddingOpenRouterModel: https://openrouter.ai/nvidia/llama-nemotron-embed-vl-1b-v2:free
+  # embeddingOpenRouterApiKey: sk-or-your-key  # optional override; falls back to ai.openrouter.apiKey
   lancedbPath: ~/.betterclaw/knowledge/lancedb
 
 skills:
@@ -177,7 +180,7 @@ src/
 | `AiProviderService` | Creates LLM model instances (OpenRouter / OpenAI-compatible) |
 | `RateLimiterService` | Per-provider TPM/RPM rate limiting via Bottleneck |
 | `PromptService` | Loads, caches, and resolves prompt templates with `{{include:}}` directives |
-| `EmbeddingService` | Local BGE-M3 embeddings via Transformers.js (1024-dim vectors) |
+| `EmbeddingService` | Configurable local/OpenRouter embeddings (default local GTE multilingual) |
 | `VectorStoreService` | LanceDB vector storage with cosine similarity search |
 | `KnowledgeService` | High-level knowledge CRUD over the vector store |
 | `JobStorageService` | Persists jobs, nodes, and test cases to `~/.betterclaw/jobs/` |

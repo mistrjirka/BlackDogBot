@@ -7,7 +7,7 @@ BetterClaw is a proactive AI assistant daemon for Linux, designed to run as a lo
 - **Language**: TypeScript
 - **Package Manager**: `pnpm` (Workspace/Monorepo)
 - **AI/LLM**: Vercel AI SDK (`ai`), OpenRouter, OpenAI
-- **Embeddings**: Local BGE-M3 via Transformers.js
+- **Embeddings**: Configurable local (GTE multilingual) or OpenRouter embeddings
 - **Databases**: LanceDB (Vector), SQLite (`better-sqlite3`)
 - **Messaging**: Telegram (`grammy`), WebSockets (`socket.io`)
 - **Task Scheduling**: `node-cron`

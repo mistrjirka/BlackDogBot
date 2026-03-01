@@ -28,10 +28,13 @@ export const DEFAULTS_DIR: string = "defaults";
 
 //#region Defaults
 
-export const DEFAULT_EMBEDDING_MODEL: string = "Xenova/bge-m3";
+export const DEFAULT_EMBEDDING_MODEL: string = "onnx-community/Qwen3-Embedding-0.6B-ONNX";
 export const DEFAULT_EMBEDDING_DTYPE: string = "q8";
 export const DEFAULT_EMBEDDING_DEVICE: string = "auto";
-export const EMBEDDING_DIMENSION: number = 1024;
+export const EMBEDDING_DIMENSION: number = 768;
+export const DEFAULT_EMBEDDING_PROVIDER: string = "local";
+export const DEFAULT_OPENROUTER_EMBEDDING_MODEL: string = "https://openrouter.ai/nvidia/llama-nemotron-embed-vl-1b-v2:free";
+export const DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL: string = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
 export const DEFAULT_KNOWLEDGE_COLLECTION: string = "default";
 export const DEFAULT_MAX_SEARCH_RESULTS: number = 10;
 

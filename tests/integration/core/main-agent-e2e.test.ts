@@ -92,7 +92,10 @@ describe("MainAgent E2E", () => {
 
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
 
-    await vectorStoreService.initializeAsync();
+    await vectorStoreService.initializeAsync(
+      undefined,
+      embeddingService.getDimension(),
+    );
 
     const skillLoaderService: SkillLoaderService = SkillLoaderService.getInstance();
 

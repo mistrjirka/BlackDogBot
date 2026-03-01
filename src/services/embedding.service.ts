@@ -18,12 +18,20 @@ import {
   DEFAULT_EMBEDDING_MODEL,
   DEFAULT_EMBEDDING_DTYPE,
   DEFAULT_EMBEDDING_DEVICE,
+  DEFAULT_EMBEDDING_PROVIDER,
+  DEFAULT_OPENROUTER_EMBEDDING_MODEL,
+  DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
   EMBEDDING_DIMENSION,
 } from "../shared/constants.js";
-import type { EmbeddingDevice, EmbeddingDtype } from "../shared/types/index.js";
+import type {
+  EmbeddingDevice,
+  EmbeddingDtype,
+  EmbeddingProvider,
+} from "../shared/types/index.js";
 import { LoggerService } from "./logger.service.js";
 import { StatusService } from "./status.service.js";
 import { getModelsDir } from "../utils/paths.js";
+import { fetchWithTimeout } from "../utils/fetch-with-timeout.js";
 
 //#region Corruption error patterns
 
@@ -41,9 +49,13 @@ export class EmbeddingService {
 
   private static _instance: EmbeddingService | null;
   private _pipeline: FeatureExtractionPipeline | null;
+  private _provider: EmbeddingProvider;
   private _modelPath: string;
   private _dtype: EmbeddingDtype;
   private _device: PipelineDevice;
+  private _openRouterModel: string;
+  private _openRouterApiKey: string;
+  private _dimension: number;
   private _initialized: boolean;
   private _initializationPromise: Promise<void> | null;
 
@@ -53,9 +65,13 @@ export class EmbeddingService {
 
   private constructor() {
     this._pipeline = null;
+    this._provider = "local";
     this._modelPath = "";
     this._dtype = "q8";
     this._device = "cpu";
+    this._openRouterModel = "";
+    this._openRouterApiKey = "";
+    this._dimension = EMBEDDING_DIMENSION;
     this._initialized = false;
     this._initializationPromise = null;
   }
@@ -76,15 +92,28 @@ export class EmbeddingService {
     modelPath?: string,
     dtype?: EmbeddingDtype,
     device?: EmbeddingDevice,
+    provider?: EmbeddingProvider,
+    openRouterModel?: string,
+    openRouterApiKey?: string,
   ): Promise<void> {
+    const requestedProvider: EmbeddingProvider = provider ?? (DEFAULT_EMBEDDING_PROVIDER as EmbeddingProvider);
     const requestedModelPath: string = modelPath ?? DEFAULT_EMBEDDING_MODEL;
     const requestedDtype: EmbeddingDtype = dtype ?? (DEFAULT_EMBEDDING_DTYPE as EmbeddingDtype);
     const requestedDevice: EmbeddingDevice = device ?? (DEFAULT_EMBEDDING_DEVICE as EmbeddingDevice);
+    const requestedOpenRouterModel: string =
+      openRouterModel ?? DEFAULT_OPENROUTER_EMBEDDING_MODEL;
+    const requestedOpenRouterApiKey: string =
+      openRouterApiKey ?? process.env.OPENROUTER_API_KEY ?? "";
+    const normalizedOpenRouterModel: string =
+      this._normalizeOpenRouterModel(requestedOpenRouterModel);
 
     if (
       this._initialized &&
+      this._provider === requestedProvider &&
       this._modelPath === requestedModelPath &&
-      this._dtype === requestedDtype
+      this._dtype === requestedDtype &&
+      this._device === (requestedDevice === "auto" ? this._device : requestedDevice) &&
+      this._openRouterModel === normalizedOpenRouterModel
     ) {
       return;
     }
@@ -95,9 +124,12 @@ export class EmbeddingService {
     }
 
     const initializeTask: Promise<void> = this._initializeInternalAsync(
+      requestedProvider,
       requestedModelPath,
       requestedDtype,
       requestedDevice,
+      normalizedOpenRouterModel,
+      requestedOpenRouterApiKey,
     );
 
     this._initializationPromise = initializeTask;
@@ -110,14 +142,53 @@ export class EmbeddingService {
   }
 
   private async _initializeInternalAsync(
+    requestedProvider: EmbeddingProvider,
     requestedModelPath: string,
     requestedDtype: EmbeddingDtype,
     requestedDevice: EmbeddingDevice,
+    requestedOpenRouterModel: string,
+    requestedOpenRouterApiKey: string,
   ): Promise<void> {
     const logger: LoggerService = LoggerService.getInstance();
 
+    this._provider = requestedProvider;
     this._modelPath = requestedModelPath;
     this._dtype = requestedDtype;
+    this._openRouterModel = requestedOpenRouterModel;
+    this._openRouterApiKey = requestedOpenRouterApiKey;
+
+    if (this._provider === "openrouter") {
+      if (!this._openRouterApiKey) {
+        throw new Error(
+          "OpenRouter embedding provider requires an API key. " +
+            "Set knowledge.embeddingOpenRouterApiKey or OPENROUTER_API_KEY.",
+        );
+      }
+
+      logger.info("Initializing OpenRouter embedding provider...", {
+        model: this._openRouterModel,
+      });
+
+      const probeEmbeddings: number[][] = await this._embedWithOpenRouterAsync([
+        "embedding dimension probe",
+      ]);
+
+      if (probeEmbeddings.length === 0 || probeEmbeddings[0].length === 0) {
+        throw new Error("OpenRouter embedding API returned empty vectors.");
+      }
+
+      this._dimension = probeEmbeddings[0].length;
+      this._device = "cpu";
+      this._pipeline = null;
+      this._initialized = true;
+
+      logger.info("OpenRouter embedding provider initialized.", {
+        model: this._openRouterModel,
+        dimension: this._dimension,
+      });
+
+      return;
+    }
 
     this._device = await this._resolveDeviceAsync(requestedDevice);
 
@@ -148,7 +219,23 @@ export class EmbeddingService {
     try {
       await this._loadPipelineAsync();
     } catch (error: unknown) {
-      if (this._isCorruptionError(error)) {
+      if (
+        this._modelPath === DEFAULT_EMBEDDING_MODEL &&
+        this._shouldFallbackToDefaultLocalModel(error)
+      ) {
+        logger.warn(
+          "Default local embedding model failed to load in current Transformers.js runtime. " +
+            "Falling back to compatible multilingual model.",
+          {
+            requestedModel: this._modelPath,
+            fallbackModel: DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+
+        this._modelPath = DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL;
+        await this._loadPipelineAsync();
+      } else if (this._isCorruptionError(error)) {
         logger.warn("Corrupted model cache detected. Clearing and re-downloading...", {
           modelPath: this._modelPath,
         });
@@ -178,6 +265,16 @@ export class EmbeddingService {
       }
     }
 
+    const probeOutput: unknown = await this._pipeline!("embedding dimension probe", {
+      pooling: "mean",
+      normalize: true,
+    });
+    const probeVectors: number[][] = (probeOutput as { tolist(): number[][] }).tolist();
+
+    if (probeVectors.length > 0) {
+      this._dimension = probeVectors[0].length;
+    }
+
     this._initialized = true;
   }
 
@@ -187,9 +284,17 @@ export class EmbeddingService {
     const statusService: StatusService = StatusService.getInstance();
     statusService.setStatus("embedding", "Generating embedding", {
       textLength: text.length,
+      provider: this._provider,
     });
 
     try {
+      if (this._provider === "openrouter") {
+        const result: number[][] = await this._embedWithOpenRouterAsync([text]);
+
+        statusService.clearStatus();
+        return result[0];
+      }
+
       const output: unknown = await this._pipeline!(text, {
         pooling: "mean",
         normalize: true,
@@ -215,9 +320,17 @@ export class EmbeddingService {
     statusService.setStatus("embedding", `Generating ${texts.length} embeddings`, {
       count: texts.length,
       totalChars: texts.reduce((sum, t) => sum + t.length, 0),
+      provider: this._provider,
     });
 
     try {
+      if (this._provider === "openrouter") {
+        const result: number[][] = await this._embedWithOpenRouterAsync(texts);
+
+        statusService.clearStatus();
+        return result;
+      }
+
       const output: unknown = await this._pipeline!(texts, {
         pooling: "mean",
         normalize: true,
@@ -233,10 +346,14 @@ export class EmbeddingService {
   }
 
   public getDimension(): number {
-    return EMBEDDING_DIMENSION;
+    return this._dimension;
   }
 
   public getModelPath(): string {
+    if (this._provider === "openrouter") {
+      return this._openRouterModel;
+    }
+
     return this._modelPath;
   }
 
@@ -401,6 +518,76 @@ export class EmbeddingService {
     } catch {
       return false;
     }
+  }
+
+  private _shouldFallbackToDefaultLocalModel(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const message: string = error.message.toLowerCase();
+
+    return (
+      message.includes("onnx/model_quantized.onnx") ||
+      message.includes("unauthorized access to file") ||
+      message.includes("protobuf parsing failed")
+    );
+  }
+
+  private _normalizeOpenRouterModel(model: string): string {
+    const fromHttpsPrefix = "https://openrouter.ai/";
+    const fromHttpPrefix = "http://openrouter.ai/";
+
+    if (model.startsWith(fromHttpsPrefix)) {
+      return model.slice(fromHttpsPrefix.length).replace(/^\/+/, "");
+    }
+
+    if (model.startsWith(fromHttpPrefix)) {
+      return model.slice(fromHttpPrefix.length).replace(/^\/+/, "");
+    }
+
+    return model;
+  }
+
+  private async _embedWithOpenRouterAsync(texts: string[]): Promise<number[][]> {
+    const response: Response = await fetchWithTimeout(
+      "https://openrouter.ai/api/v1/embeddings",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this._openRouterApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: this._openRouterModel,
+          input: texts,
+        }),
+      },
+      60000,
+    );
+
+    if (!response.ok) {
+      const errorBody: string = await response.text();
+      throw new Error(`OpenRouter embedding request failed (${response.status}): ${errorBody}`);
+    }
+
+    const payload = (await response.json()) as {
+      data?: Array<{ embedding?: number[] }>;
+    };
+
+    if (!payload.data || !Array.isArray(payload.data)) {
+      throw new Error("OpenRouter embedding response missing data array.");
+    }
+
+    const vectors: number[][] = payload.data.map((item): number[] => {
+      if (!item.embedding || !Array.isArray(item.embedding)) {
+        throw new Error("OpenRouter embedding response contains invalid vector.");
+      }
+
+      return item.embedding;
+    });
+
+    return vectors;
   }
 
   private _ensureInitialized(): void {

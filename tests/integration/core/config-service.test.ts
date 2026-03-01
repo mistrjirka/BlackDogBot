@@ -40,7 +40,7 @@ telegram:
 scheduler:
   enabled: false
 knowledge:
-  embeddingModelPath: Xenova/bge-m3
+  embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
   lancedbPath: ./lancedb
 skills:
   directories: []
@@ -127,7 +127,7 @@ ai:
 scheduler:
   enabled: false
 knowledge:
-  embeddingModelPath: Xenova/bge-m3
+  embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
   lancedbPath: ./lancedb
 skills:
   directories: []
@@ -186,7 +186,7 @@ logging:
 
     await service.initializeAsync(configPath);
 
-    expect(service.getKnowledgeConfig().embeddingModelPath).toBe("Xenova/bge-m3");
+    expect(service.getKnowledgeConfig().embeddingModelPath).toBe("onnx-community/Qwen3-Embedding-0.6B-ONNX");
   });
 
   it("should return skills config via getSkillsConfig", async () => {

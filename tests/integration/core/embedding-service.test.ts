@@ -14,7 +14,8 @@ describe("EmbeddingService", () => {
 
     expect(embedding).toBeDefined();
     expect(Array.isArray(embedding)).toBe(true);
-    expect(embedding.length).toBe(1024); // BGE-M3 produces 1024-dim vectors
+    expect(embedding.length).toBe(service.getDimension());
+    expect(service.getModelPath().length).toBeGreaterThan(0);
     expect(typeof embedding[0]).toBe("number");
   }, 120000); // Model download can be slow
 

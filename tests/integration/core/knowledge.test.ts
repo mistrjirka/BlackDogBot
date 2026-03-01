@@ -50,7 +50,10 @@ describe("KnowledgeService", () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
     const lanceDbPath: string = path.join(tempDir, ".betterclaw", "knowledge", "lancedb");
 
-    await vectorStoreService.initializeAsync(lanceDbPath);
+    await vectorStoreService.initializeAsync(
+      lanceDbPath,
+      embeddingService.getDimension(),
+    );
   }, 300000);
 
   afterAll(async () => {

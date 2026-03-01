@@ -94,7 +94,10 @@ describe("AI-Driven Job Creation E2E", () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
     const lanceDbPath: string = path.join(tempDir, ".betterclaw", "knowledge", "lancedb");
 
-    await vectorStoreService.initializeAsync(lanceDbPath);
+    await vectorStoreService.initializeAsync(
+      lanceDbPath,
+      embeddingService.getDimension(),
+    );
 
     const skillLoaderService: SkillLoaderService = SkillLoaderService.getInstance();
 

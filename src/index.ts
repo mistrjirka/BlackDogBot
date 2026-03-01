@@ -83,18 +83,26 @@ async function mainAsync(): Promise<void> {
 
   // 5. Initialize embeddings and vector store
   const embeddingService: EmbeddingService = EmbeddingService.getInstance();
+  const embeddingOpenRouterApiKey: string | undefined =
+    config.knowledge.embeddingOpenRouterApiKey ?? config.ai.openrouter?.apiKey;
 
   await embeddingService.initializeAsync(
     config.knowledge.embeddingModelPath,
     config.knowledge.embeddingDtype,
     config.knowledge.embeddingDevice,
+    config.knowledge.embeddingProvider,
+    config.knowledge.embeddingOpenRouterModel,
+    embeddingOpenRouterApiKey,
   );
 
   logger.info("Embedding service initialized.");
 
   const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
 
-  await vectorStoreService.initializeAsync(config.knowledge.lancedbPath);
+  await vectorStoreService.initializeAsync(
+    config.knowledge.lancedbPath,
+    embeddingService.getDimension(),
+  );
 
   logger.info("Vector store initialized.");
 

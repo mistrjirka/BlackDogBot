@@ -3,6 +3,7 @@
 import type { IDiscordConfig } from "./discord.types.js";
 
 export type EmbeddingDtype = "fp32" | "fp16" | "q8" | "q4" | "q4f16";
+export type EmbeddingProvider = "local" | "openrouter";
 // Note: @huggingface/transformers ONNX backend only supports "cuda" (NVIDIA) and "cpu".
 // AMD ROCm is not exposed as a separate device — ROCm users can try "cuda" if their
 // ROCm install provides a CUDA-compatible onnxruntime build.
@@ -64,9 +65,12 @@ export interface IJobCreationConfig {
 }
 
 export interface IKnowledgeConfig {
+  embeddingProvider: EmbeddingProvider;
   embeddingModelPath: string;
   embeddingDtype: EmbeddingDtype;
   embeddingDevice: EmbeddingDevice;
+  embeddingOpenRouterModel: string;
+  embeddingOpenRouterApiKey?: string;
   lancedbPath: string;
 }
 
