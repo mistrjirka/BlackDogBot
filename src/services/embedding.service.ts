@@ -565,18 +565,26 @@ export class EmbeddingService {
   }
 
   private _normalizeOpenRouterModel(model: string): string {
+    const trimmedModel: string = model.trim();
     const fromHttpsPrefix = "https://openrouter.ai/";
     const fromHttpPrefix = "http://openrouter.ai/";
 
-    if (model.startsWith(fromHttpsPrefix)) {
-      return model.slice(fromHttpsPrefix.length).replace(/^\/+/, "");
+    let normalizedModel: string = trimmedModel;
+
+    if (normalizedModel.startsWith(fromHttpsPrefix)) {
+      normalizedModel = normalizedModel.slice(fromHttpsPrefix.length).replace(/^\/+/, "");
+    } else if (normalizedModel.startsWith(fromHttpPrefix)) {
+      normalizedModel = normalizedModel.slice(fromHttpPrefix.length).replace(/^\/+/, "");
     }
 
-    if (model.startsWith(fromHttpPrefix)) {
-      return model.slice(fromHttpPrefix.length).replace(/^\/+/, "");
+    if (
+      !normalizedModel.includes("/") &&
+      normalizedModel.startsWith("llama-nemotron-embed-vl-1b-v2")
+    ) {
+      return `nvidia/${normalizedModel}`;
     }
 
-    return model;
+    return normalizedModel;
   }
 
   private async _embedWithOpenRouterAsync(texts: string[]): Promise<number[][]> {

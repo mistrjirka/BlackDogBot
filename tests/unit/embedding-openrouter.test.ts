@@ -100,6 +100,43 @@ describe("EmbeddingService (OpenRouter provider)", () => {
       ),
     ).rejects.toThrow("requires an API key");
   });
+
+  it("should normalize bare llama-nemotron model alias to nvidia provider namespace", async () => {
+    const fetchMock: ReturnType<typeof vi.fn> = vi.fn();
+
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ embedding: [0.1, 0.2, 0.3] }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const service: EmbeddingService = EmbeddingService.getInstance();
+
+    await service.initializeAsync(
+      "Xenova/gte-multilingual-base",
+      "q8",
+      "cpu",
+      "openrouter",
+      "llama-nemotron-embed-vl-1b-v2:free",
+      "test-or-key",
+    );
+
+    expect(service.getModelPath()).toBe("nvidia/llama-nemotron-embed-vl-1b-v2:free");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openrouter.ai/api/v1/embeddings",
+      expect.objectContaining({
+        body: JSON.stringify({
+          model: "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+          input: ["embedding dimension probe"],
+        }),
+      }),
+    );
+  });
 });
 
 //#endregion Tests
