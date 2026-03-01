@@ -324,9 +324,9 @@ describe("TelegramHandler", () => {
     });
 
     const replySpy: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined);
-    const ctx1: Context = makeCtx({ chatId: 42, text: "first", replyImpl: replySpy });
-    const ctx2: Context = makeCtx({ chatId: 42, text: "second", replyImpl: replySpy });
-    const ctx3: Context = makeCtx({ chatId: 42, text: "third", replyImpl: replySpy });
+    const ctx1: Context = makeCtx({ chatId: 100, text: "first", replyImpl: replySpy });
+    const ctx2: Context = makeCtx({ chatId: 100, text: "second", replyImpl: replySpy });
+    const ctx3: Context = makeCtx({ chatId: 100, text: "third", replyImpl: replySpy });
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
     // Start first call (will block at processMessageForChatAsync)

@@ -231,7 +231,34 @@ export class EmbeddingService {
           modelPath: this._modelPath,
         });
 
-        await this._loadPipelineAsync();
+        try {
+          await this._loadPipelineAsync();
+        } catch (retryError: unknown) {
+          if (
+            this._modelPath === DEFAULT_EMBEDDING_MODEL &&
+            this._shouldFallbackToDefaultLocalModel(retryError)
+          ) {
+            const requestedModel: string = this._modelPath;
+
+            logger.warn(
+              "Default local embedding model still failed after cache reset. " +
+                "Falling back to compatible multilingual model.",
+              {
+                requestedModel,
+                fallbackModel: DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
+                error:
+                  retryError instanceof Error
+                    ? retryError.message
+                    : String(retryError),
+              },
+            );
+
+            this._modelPath = DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL;
+            await this._loadPipelineAsync();
+          } else {
+            throw retryError;
+          }
+        }
       } else if (
         this._modelPath === DEFAULT_EMBEDDING_MODEL &&
         this._shouldFallbackToDefaultLocalModel(error)
