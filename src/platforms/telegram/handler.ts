@@ -65,6 +65,7 @@ export class TelegramHandler {
   private _mainAgent: MainAgent;
   private _channelRegistry: ChannelRegistryService;
   private _processing: Set<string>;
+  private _pendingMessages: Map<string, string[]>;
   private _knownChatIds: Set<string>;
   private _chatIdsFilePath: string;
   private _config: ITelegramConfig | null = null;
@@ -79,6 +80,7 @@ export class TelegramHandler {
     this._mainAgent = MainAgent.getInstance();
     this._channelRegistry = ChannelRegistryService.getInstance();
     this._processing = new Set<string>();
+    this._pendingMessages = new Map<string, string[]>();
     this._knownChatIds = new Set<string>();
 
     const homeDir = process.env.HOME || process.env.USERPROFILE || "~";
@@ -138,7 +140,15 @@ export class TelegramHandler {
 
     // Prevent concurrent processing per chat
     if (this._processing.has(chatId)) {
-      this._logger.warn("Already processing a message for this chat, skipping", { chatId });
+      const pendingForChat: string[] = this._pendingMessages.get(chatId) ?? [];
+      pendingForChat.push(message.text);
+      this._pendingMessages.set(chatId, pendingForChat);
+
+      this._logger.info("Queued Telegram message while previous one is still processing", {
+        chatId,
+        queuedCount: pendingForChat.length,
+      });
+
       return;
     }
 
@@ -291,6 +301,16 @@ export class TelegramHandler {
       }
     } finally {
       this._processing.delete(chatId);
+
+      const pendingForChat: string[] | undefined = this._pendingMessages.get(chatId);
+
+      if (pendingForChat && pendingForChat.length > 0) {
+        this._pendingMessages.delete(chatId);
+
+        const mergedMessage: string = pendingForChat.join("\n");
+
+        void this._processMergedQueuedMessageAsync(chatId, mergedMessage);
+      }
     }
   }
 
@@ -325,6 +345,68 @@ export class TelegramHandler {
       this._logger.warn("Failed to save known Telegram chat IDs", {
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  private async _processMergedQueuedMessageAsync(chatId: string, mergedText: string): Promise<void> {
+    if (this._processing.has(chatId)) {
+      const pendingForChat: string[] = this._pendingMessages.get(chatId) ?? [];
+      pendingForChat.push(mergedText);
+      this._pendingMessages.set(chatId, pendingForChat);
+      return;
+    }
+
+    this._processing.add(chatId);
+
+    try {
+      this._logger.info("Processing merged queued Telegram messages", {
+        chatId,
+        mergedLength: mergedText.length,
+      });
+
+      const sender = this._messagingService.createSenderForChat("telegram", chatId);
+      const photoSender = this._messagingService.createPhotoSenderForChat("telegram", chatId);
+
+      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, undefined, "telegram");
+
+      await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
+
+      const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(chatId, mergedText);
+
+      if (result.text) {
+        const chunks: string[] = splitTelegramMessage(result.text);
+        for (const chunk of chunks) {
+          await sender(chunk);
+        }
+      }
+
+      this._logger.info("Merged queued Telegram messages processed", {
+        chatId,
+        stepsCount: result.stepsCount,
+        responseLength: result.text.length,
+      });
+    } catch (error: unknown) {
+      const errorDetails: IAiErrorDetails = extractAiErrorDetails(error);
+      const logMessage: string = formatAiErrorForLog(errorDetails);
+
+      this._logger.error("Error processing merged queued Telegram messages", {
+        chatId,
+        error: logMessage,
+        statusCode: errorDetails.statusCode,
+        provider: errorDetails.provider,
+        model: errorDetails.model,
+        retryable: errorDetails.isRetryable,
+      });
+    } finally {
+      this._processing.delete(chatId);
+
+      const pendingForChat: string[] | undefined = this._pendingMessages.get(chatId);
+
+      if (pendingForChat && pendingForChat.length > 0) {
+        this._pendingMessages.delete(chatId);
+        const nextMergedMessage: string = pendingForChat.join("\n");
+        void this._processMergedQueuedMessageAsync(chatId, nextMergedMessage);
+      }
     }
   }
 

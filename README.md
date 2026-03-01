@@ -7,7 +7,7 @@ A proactive AI assistant daemon for Linux. It runs as a long-lived process, comm
 - **Jobs** — Directed acyclic graphs of typed nodes with Zod-validated I/O schemas. 7 node types: `manual`, `python_code`, `curl_fetcher`, `crawl4ai`, `searxng`, `output_to_ai`, `agent`.
 - **Skills** — Pluggable capabilities described in `SKILL.md` files (OpenClaw-compatible format). Skills go through a setup phase and are then callable by the agent.
 - **Scheduled Tasks** — Cron-like periodic tasks with `cron`, `interval`, and `once` schedule types, executed by a dedicated cron agent.
-- **Knowledge** — Persistent vector database (LanceDB + BGE-M3 embeddings) for storing and retrieving information across sessions.
+- **Knowledge** — Persistent vector database (LanceDB + configurable local/OpenRouter embeddings) for storing and retrieving information across sessions.
 - **Telegram** — Primary messaging interface with `/start`, `/reset` commands.
 - **Externalized Prompts** — All agent prompts live in `~/.betterclaw/prompts/` and can be modified at runtime via tools or reset to factory defaults.
 
@@ -104,7 +104,7 @@ scheduler:
 knowledge:
   embeddingProvider: local  # local | openrouter
   embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
-  embeddingOpenRouterModel: https://openrouter.ai/nvidia/llama-nemotron-embed-vl-1b-v2:free
+  embeddingOpenRouterModel: nvidia/llama-nemotron-embed-vl-1b-v2:free
   # embeddingOpenRouterApiKey: sk-or-your-key  # optional override; falls back to ai.openrouter.apiKey
   lancedbPath: ~/.betterclaw/knowledge/lancedb
 
@@ -180,7 +180,7 @@ src/
 | `AiProviderService` | Creates LLM model instances (OpenRouter / OpenAI-compatible) |
 | `RateLimiterService` | Per-provider TPM/RPM rate limiting via Bottleneck |
 | `PromptService` | Loads, caches, and resolves prompt templates with `{{include:}}` directives |
-| `EmbeddingService` | Configurable local/OpenRouter embeddings (default local GTE multilingual) |
+| `EmbeddingService` | Configurable local/OpenRouter embeddings (default local Qwen3 ONNX) |
 | `VectorStoreService` | LanceDB vector storage with cosine similarity search |
 | `KnowledgeService` | High-level knowledge CRUD over the vector store |
 | `JobStorageService` | Persists jobs, nodes, and test cases to `~/.betterclaw/jobs/` |
@@ -261,7 +261,7 @@ Tests for pure non-LLM logic (routing, session management, error handling) may m
 | `prompt-service.test.ts` | 7 | Prompt CRUD, include directive resolution, factory reset |
 | `scheduler.test.ts` | 5 | Task persistence, retrieval, removal, disk reload, enabled filtering |
 | `scheduler-extended.test.ts` | 8 | Interval/once/cron scheduling, past-time skip, executor callback, failure/success status, stopAsync, disabled on startup |
-| `embedding-service.test.ts` | 2 | BGE-M3 model loading, 1024-dim output, semantic similarity |
+| `embedding-service.test.ts` | 2 | Local ONNX embedding model loading, vector output, semantic similarity |
 | `ai-provider-e2e.test.ts` | 3 | Model creation, real LLM calls via OpenRouter |
 | `ai-provider-unit.test.ts` | 11 | openrouter/openai-compatible init, getRateLimiter, error paths, unsupported provider |
 | `knowledge-e2e.test.ts` | 4 | Document add/search/edit, multi-document relevance ranking |

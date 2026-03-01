@@ -40,6 +40,7 @@ const CorruptionPatterns: RegExp[] = [
   /out of bounds/i,
   /can not be read in full/i,
   /GetExtDataFromTensorProto/i,
+  /Protobuf parsing failed/i,
 ];
 
 //#endregion Corruption error patterns
@@ -219,23 +220,7 @@ export class EmbeddingService {
     try {
       await this._loadPipelineAsync();
     } catch (error: unknown) {
-      if (
-        this._modelPath === DEFAULT_EMBEDDING_MODEL &&
-        this._shouldFallbackToDefaultLocalModel(error)
-      ) {
-        logger.warn(
-          "Default local embedding model failed to load in current Transformers.js runtime. " +
-            "Falling back to compatible multilingual model.",
-          {
-            requestedModel: this._modelPath,
-            fallbackModel: DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        );
-
-        this._modelPath = DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL;
-        await this._loadPipelineAsync();
-      } else if (this._isCorruptionError(error)) {
+      if (this._isCorruptionError(error)) {
         logger.warn("Corrupted model cache detected. Clearing and re-downloading...", {
           modelPath: this._modelPath,
         });
@@ -246,6 +231,24 @@ export class EmbeddingService {
           modelPath: this._modelPath,
         });
 
+        await this._loadPipelineAsync();
+      } else if (
+        this._modelPath === DEFAULT_EMBEDDING_MODEL &&
+        this._shouldFallbackToDefaultLocalModel(error)
+      ) {
+        const requestedModel: string = this._modelPath;
+
+        logger.warn(
+          "Default local embedding model failed to load in current Transformers.js runtime. " +
+            "Falling back to compatible multilingual model.",
+          {
+            requestedModel,
+            fallbackModel: DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+
+        this._modelPath = DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL;
         await this._loadPipelineAsync();
       } else if (
         this._device === "cuda" &&

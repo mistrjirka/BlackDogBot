@@ -305,7 +305,7 @@ describe("TelegramHandler", () => {
     expect(sentActions.length).toBe(0);
   });
 
-  it("should skip a second message for the same chat while the first is still processing", async () => {
+  it("should queue and merge subsequent messages for the same chat while first is still processing", async () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
 
     let resolveBlock: () => void;
@@ -315,31 +315,42 @@ describe("TelegramHandler", () => {
 
     let callCount: number = 0;
 
-    vi.spyOn(mainAgent, "processMessageForChatAsync").mockImplementation(async () => {
+    const processSpy = vi.spyOn(mainAgent, "processMessageForChatAsync").mockImplementation(async (_chatId, text) => {
       callCount++;
-      await blockPromise;
-      return { text: "", stepsCount: 1 };
+      if (callCount === 1) {
+        await blockPromise;
+      }
+      return { text, stepsCount: 1 };
     });
 
     const replySpy: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined);
-    const ctx: Context = makeCtx({ chatId: 42, replyImpl: replySpy });
+    const ctx1: Context = makeCtx({ chatId: 42, text: "first", replyImpl: replySpy });
+    const ctx2: Context = makeCtx({ chatId: 42, text: "second", replyImpl: replySpy });
+    const ctx3: Context = makeCtx({ chatId: 42, text: "third", replyImpl: replySpy });
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
     // Start first call (will block at processMessageForChatAsync)
-    const firstCall: Promise<void> = handler.handleMessageAsync(ctx);
+    const firstCall: Promise<void> = handler.handleMessageAsync(ctx1);
 
     // Wait for the mock to be called (proves first call reached the agent)
     await vi.waitUntil(() => callCount === 1, { timeout: 30000 });
 
-    // Second call should return immediately without calling the agent
-    await handler.handleMessageAsync(ctx);
+    // Additional calls should return immediately and be queued
+    await handler.handleMessageAsync(ctx2);
+    await handler.handleMessageAsync(ctx3);
 
-    // Agent should still have been called only once
+    // Agent should still have been called only once while first call is blocked
     expect(callCount).toBe(1);
 
-    // Clean up - let the first call complete
+    // Let first call complete and ensure queued messages are processed as a single merged call
     resolveBlock!();
     await firstCall;
+
+    await vi.waitUntil(() => callCount === 2, { timeout: 30000 });
+
+    const secondInvocationArgs: unknown[] = processSpy.mock.calls[1] ?? [];
+
+    expect(secondInvocationArgs[1]).toBe("second\nthird");
   }, 120000);
 
   it("should send an error reply when the agent throws", async () => {
