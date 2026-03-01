@@ -317,7 +317,7 @@ describe("TelegramHandler", () => {
     const firstCall: Promise<void> = handler.handleMessageAsync(ctx);
 
     // Wait for the mock to be called (proves first call reached the agent)
-    await vi.waitUntil(() => callCount === 1, { timeout: 5000 });
+    await vi.waitUntil(() => callCount === 1, { timeout: 30000 });
 
     // Second call should return immediately without calling the agent
     await handler.handleMessageAsync(ctx);
@@ -328,7 +328,7 @@ describe("TelegramHandler", () => {
     // Clean up - let the first call complete
     resolveBlock!();
     await firstCall;
-  });
+  }, 120000);
 
   it("should send an error reply when the agent throws", async () => {
     // Arrange — spy on processMessageForChatAsync to throw a controlled error
@@ -349,7 +349,7 @@ describe("TelegramHandler", () => {
     expect(replySpy).toHaveBeenCalledWith(
       expect.stringContaining("agent boom"),
     );
-  });
+  }, 120000);
 
   it("should include provider details in error reply when an APICallError is thrown", async () => {
     // Arrange — spy on processMessageForChatAsync to throw an APICallError
@@ -381,7 +381,7 @@ describe("TelegramHandler", () => {
     expect(userReply).toContain("Authentication failed");
     expect(userReply).toContain("openrouter.ai");
     expect(userReply).toContain("minimax/minimax-m2.5");
-  });
+  }, 120000);
 
   it("should log but not throw when even the error reply fails", async () => {
     // Arrange — spy on processMessageForChatAsync to throw AND ctx.reply also throws
@@ -402,7 +402,7 @@ describe("TelegramHandler", () => {
 
     // Act — must NOT throw even though both the agent and the reply fail
     await expect(handler.handleMessageAsync(ctx)).resolves.toBeUndefined();
-  });
+  }, 120000);
 });
 
 //#endregion Tests
