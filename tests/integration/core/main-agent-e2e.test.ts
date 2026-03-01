@@ -86,9 +86,18 @@ describe("MainAgent E2E", () => {
 
     await promptService.initializeAsync();
 
+    const loadedConfig = configService.getConfig();
+
     const embeddingService: EmbeddingService = EmbeddingService.getInstance();
 
-    await embeddingService.initializeAsync();
+    await embeddingService.initializeAsync(
+      loadedConfig.knowledge.embeddingModelPath,
+      loadedConfig.knowledge.embeddingDtype,
+      loadedConfig.knowledge.embeddingDevice,
+      loadedConfig.knowledge.embeddingProvider,
+      loadedConfig.knowledge.embeddingOpenRouterModel,
+      loadedConfig.knowledge.embeddingOpenRouterApiKey ?? loadedConfig.ai.openrouter?.apiKey,
+    );
 
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
 

@@ -16,6 +16,38 @@ import type { MessageSender, PhotoSender } from "../../../src/tools/index.js";
 let tempDir: string;
 let originalHome: string;
 
+const TEST_CONFIG_YAML: string = `
+ai:
+  provider: openrouter
+  openrouter:
+    apiKey: test-key
+    model: anthropic/claude-sonnet-4
+    rateLimits:
+      rpm: 60
+      tpm: 100000
+
+scheduler:
+  enabled: false
+
+knowledge:
+  embeddingProvider: local
+  embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
+  embeddingDtype: q8
+  embeddingDevice: cpu
+  embeddingOpenRouterModel: nvidia/llama-nemotron-embed-vl-1b-v2:free
+  lancedbPath: ~/.betterclaw/knowledge/lancedb
+
+skills:
+  directories: []
+
+logging:
+  level: info
+
+services:
+  searxngUrl: http://localhost:18731
+  crawl4aiUrl: http://localhost:18732
+`;
+
 /**
  * Resets all singletons involved in MainAgent unit tests.
  */
@@ -66,13 +98,12 @@ describe("MainAgent unit", () => {
 
     resetSingletons();
 
-    // Copy real config into the temp home directory
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
+    // Write deterministic config fixture into the temp home directory
     const tempConfigDir: string = path.join(tempDir, ".betterclaw");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });
-    await fs.cp(realConfigPath, tempConfigPath);
+    await fs.writeFile(tempConfigPath, TEST_CONFIG_YAML, "utf-8");
   });
 
   afterEach(async () => {
