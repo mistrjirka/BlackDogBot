@@ -24,7 +24,6 @@ import type { IPlatformDeps } from "./platforms/types.js";
 import type { IConfig, IScheduledTask } from "./shared/types/index.js";
 import { getJobLogsDir } from "./utils/paths.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
-import { TelegramHandler } from "./platforms/telegram/handler.js";
 
 const BRAIN_INTERFACE_PORT: number = parseInt(process.env.BRAIN_INTERFACE_PORT ?? "3001", 10);
 
@@ -166,36 +165,16 @@ async function mainAsync(): Promise<void> {
     const cronAgent: CronAgent = CronAgent.getInstance();
 
     schedulerService.setTaskExecutor(async (task: IScheduledTask): Promise<void> => {
-      const notificationChatId: string | null = config.scheduler.notificationChatId;
-
-      // Helper: deliver a message to Telegram (backward compat)
-      const sendToTelegramAsync = async (message: string): Promise<void> => {
-        if (!config.telegram) return;
-
-        if (notificationChatId) {
-          await messagingService.createSenderForChat("telegram", notificationChatId)(message);
-        } else {
-          const knownChatIds = TelegramHandler.getInstance().getKnownChatIds();
-          for (const chatId of knownChatIds) {
-            try {
-              await messagingService.createSenderForChat("telegram", chatId)(message);
-            } catch (error) {
-              logger.warn(`Failed to send cron message to chat ${chatId}`, {
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-          }
-        }
-      };
-
       // Helper: broadcast to all channels with receiveNotifications=true
       const broadcastToNotificationChannelsAsync = async (message: string): Promise<void> => {
         const notificationChannels = channelRegistry.getNotificationChannels();
 
         if (notificationChannels.length === 0) {
-          // Fall back to legacy Telegram behavior if no channels configured
-          await sendToTelegramAsync(message);
-          return;
+          throw new Error(
+            "No notification channels configured. " +
+            "Use /notifications_enable in a Telegram or Discord channel, " +
+            "or manually configure ~/.betterclaw/channels.yaml"
+          );
         }
 
         for (const channel of notificationChannels) {
@@ -203,15 +182,15 @@ async function mainAsync(): Promise<void> {
             const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
             await sender(message);
           } catch (error) {
-            logger.warn(`Failed to send cron message to ${channel.platform}:${channel.channelId}`, {
+            logger.error(`Failed to send cron message to ${channel.platform}:${channel.channelId}`, {
               error: error instanceof Error ? error.message : String(error),
+              taskId: task.taskId,
             });
           }
         }
       };
 
       await executeCronTaskAsync(task, {
-        sendToTelegramAsync,
         broadcastToNotificationChannelsAsync,
         broadcastCronMessage: (name: string, msg: string) =>
           BrainInterfaceService.getInstance().broadcastCronMessage(name, msg),

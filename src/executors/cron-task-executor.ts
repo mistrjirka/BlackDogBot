@@ -1,5 +1,4 @@
 import type { IScheduledTask } from "../shared/types/index.js";
-import type { IRegisteredChannel } from "../shared/types/channel.types.js";
 
 /**
  * Result returned by the cron agent after executing a task.
@@ -14,8 +13,6 @@ export interface ICronAgentResult {
  * This allows the executor to be tested with mocks.
  */
 export interface ICronTaskExecutorDeps {
-  /** @deprecated Use broadcastToNotificationChannelsAsync instead */
-  sendToTelegramAsync: (message: string) => Promise<void>;
   /** Broadcast a message to all channels that have receiveNotifications=true */
   broadcastToNotificationChannelsAsync: (message: string) => Promise<void>;
   broadcastCronMessage: (taskName: string, message: string) => void;
@@ -79,9 +76,3 @@ export async function executeCronTaskAsync(
     deps.closeJobLog(jobLogKey);
   }
 }
-
-/**
- * Helper to get notification channels from the channel registry.
- * Re-exported for convenience.
- */
-export type { IRegisteredChannel };

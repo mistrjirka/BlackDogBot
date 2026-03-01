@@ -368,13 +368,17 @@ create_config() {
     prompt_input "Telegram Bot Token" "" TELEGRAM_TOKEN
     
     echo ""
+    echo -e "${BLUE}Discord Configuration (optional)${NC}"
+    echo "Leave empty to skip Discord integration"
+    echo ""
+    prompt_input "Discord Bot Token" "" DISCORD_TOKEN
+
+    echo ""
     echo -e "${BLUE}Scheduler Configuration${NC}"
     if prompt_yesno "Enable scheduler?" "y"; then
         SCHEDULER_ENABLED="true"
-        prompt_input "Notification Chat ID (optional)" "" NOTIFICATION_CHAT
     else
         SCHEDULER_ENABLED="false"
-        NOTIFICATION_CHAT=""
     fi
     
     echo ""
@@ -430,17 +434,24 @@ telegram:
 EOF
     fi
 
+    if [ -n "$DISCORD_TOKEN" ]; then
+        cat >> "$CONFIG_FILE" << EOF
+
+discord:
+  botToken: ${DISCORD_TOKEN}
+EOF
+    fi
+
     cat >> "$CONFIG_FILE" << EOF
 
 scheduler:
   enabled: ${SCHEDULER_ENABLED}
-  notificationChatId: ${NOTIFICATION_CHAT:-null}
 
 jobCreation:
   enabled: ${JOB_CREATION_ENABLED}
 
 knowledge:
-  embeddingModelPath: Xenova/bge-m3
+  embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
   lancedbPath: ~/.betterclaw/knowledge/lancedb
 
 skills:

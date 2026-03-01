@@ -54,7 +54,6 @@ export interface ITelegramConfig {
 
 export interface ISchedulerConfig {
   enabled: boolean;
-  notificationChatId: string | null;
   timezone?: string;
 }
 

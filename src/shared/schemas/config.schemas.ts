@@ -85,10 +85,6 @@ const schedulerConfigSchema = z.object({
   enabled: z.boolean()
     .default(true)
     .describe("Whether the scheduler is active"),
-  notificationChatId: z.string()
-    .nullable()
-    .default(null)
-    .describe("Telegram chat ID where cron task notifications are sent. If null, messages are logged only."),
   timezone: z.string()
     .optional()
     .describe("Timezone for cron expressions (e.g., 'Europe/Prague', 'UTC', 'America/New_York'). Defaults to server local time."),

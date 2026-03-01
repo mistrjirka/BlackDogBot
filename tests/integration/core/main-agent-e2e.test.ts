@@ -15,6 +15,7 @@ import { JobStorageService } from "../../../src/services/job-storage.service.js"
 import { JobExecutorService } from "../../../src/services/job-executor.service.js";
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
 import { LiteSqlService } from "../../../src/services/litesql.service.js";
+import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
 import { MainAgent, type IAgentResult } from "../../../src/agent/main-agent.js";
 import type { MessageSender, PhotoSender } from "../../../src/tools/index.js";
 
@@ -37,6 +38,7 @@ function resetSingletons(): void {
   (JobExecutorService as unknown as { _instance: null })._instance = null;
   (SkillLoaderService as unknown as { _instance: null })._instance = null;
   (LiteSqlService as unknown as { _instance: null })._instance = null;
+  (ChannelRegistryService as unknown as { _instance: null })._instance = null;
   (MainAgent as unknown as { _instance: null })._instance = null;
 }
 
@@ -110,10 +112,18 @@ describe("MainAgent E2E", () => {
 
     await skillLoaderService.loadAllSkillsAsync([]);
 
+    // Initialize ChannelRegistryService and register test channel
+    const channelRegistry: ChannelRegistryService = ChannelRegistryService.getInstance();
+    await channelRegistry.initializeAsync();
+    await channelRegistry.registerChannelAsync("telegram", "test-chat", {
+      permission: "full",
+      receiveNotifications: false,
+    });
+
     // Initialize MainAgent
     const mainAgent: MainAgent = MainAgent.getInstance();
 
-    await mainAgent.initializeForChatAsync("test-chat", mockMessageSender, mockPhotoSender);
+    await mainAgent.initializeForChatAsync("test-chat", mockMessageSender, mockPhotoSender, undefined, "telegram");
   }, 300000);
 
   afterAll(async () => {

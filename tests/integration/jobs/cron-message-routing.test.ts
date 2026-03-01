@@ -7,8 +7,8 @@ import type { IScheduledTask } from "../../../src/shared/types/index.js";
  * No LLM calls — all agent behavior is mocked.
  *
  * Tests verify that:
- * - send_message tool calls ALWAYS deliver to Telegram (regardless of notifyUser)
- * - Agent's final text output is forwarded to Telegram ONLY when notifyUser=true
+ * - send_message tool calls ALWAYS broadcast to notification channels (regardless of notifyUser)
+ * - Agent's final text output is forwarded to notification channels ONLY when notifyUser=true
  * - Logs and UI broadcasts always happen regardless of notifyUser
  */
 
@@ -32,20 +32,20 @@ function createMockTask(overrides: Partial<IScheduledTask> = {}): IScheduledTask
 }
 
 function createMockDeps(overrides: Partial<ICronTaskExecutorDeps> = {}): ICronTaskExecutorDeps & {
-  telegramMessages: string[];
+  notificationMessages: string[];
   broadcastMessages: Array<{ taskName: string; message: string }>;
   logMessages: string[];
 } {
-  const telegramMessages: string[] = [];
+  const notificationMessages: string[] = [];
   const broadcastMessages: Array<{ taskName: string; message: string }> = [];
   const logMessages: string[] = [];
 
   return {
-    telegramMessages,
+    notificationMessages,
     broadcastMessages,
     logMessages,
-    sendToTelegramAsync: vi.fn(async (message: string): Promise<void> => {
-      telegramMessages.push(message);
+    broadcastToNotificationChannelsAsync: vi.fn(async (message: string): Promise<void> => {
+      notificationMessages.push(message);
     }),
     broadcastCronMessage: vi.fn((taskName: string, message: string): void => {
       broadcastMessages.push({ taskName, message });
@@ -63,7 +63,7 @@ function createMockDeps(overrides: Partial<ICronTaskExecutorDeps> = {}): ICronTa
 
 describe("Cron Task Message Routing", () => {
   describe("send_message tool (explicit agent calls)", () => {
-    it("should ALWAYS send to Telegram when agent calls send_message, even with notifyUser=false", async () => {
+    it("should ALWAYS broadcast to notification channels when agent calls send_message, even with notifyUser=false", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: false });
       const deps = createMockDeps({
         executeTaskAsync: vi.fn(async (_task, sender) => {
@@ -75,14 +75,14 @@ describe("Cron Task Message Routing", () => {
 
       await executeCronTaskAsync(task, deps);
 
-      expect(deps.telegramMessages).toContain("Hello from send_message tool");
+      expect(deps.notificationMessages).toContain("Hello from send_message tool");
       expect(deps.broadcastMessages).toContainEqual({
         taskName: "test-task",
         message: "Hello from send_message tool",
       });
     });
 
-    it("should ALWAYS send to Telegram when agent calls send_message with notifyUser=true", async () => {
+    it("should ALWAYS broadcast to notification channels when agent calls send_message with notifyUser=true", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: true });
       const deps = createMockDeps({
         executeTaskAsync: vi.fn(async (_task, sender) => {
@@ -93,10 +93,10 @@ describe("Cron Task Message Routing", () => {
 
       await executeCronTaskAsync(task, deps);
 
-      expect(deps.telegramMessages).toContain("Hello from send_message tool");
+      expect(deps.notificationMessages).toContain("Hello from send_message tool");
     });
 
-    it("should send multiple messages to Telegram when agent calls send_message multiple times", async () => {
+    it("should broadcast multiple messages to notification channels when agent calls send_message multiple times", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: false });
       const deps = createMockDeps({
         executeTaskAsync: vi.fn(async (_task, sender) => {
@@ -109,7 +109,7 @@ describe("Cron Task Message Routing", () => {
 
       await executeCronTaskAsync(task, deps);
 
-      expect(deps.telegramMessages).toEqual([
+      expect(deps.notificationMessages).toEqual([
         "Progress: step 1 complete",
         "Progress: step 2 complete",
         "Final results: everything passed",
@@ -118,7 +118,7 @@ describe("Cron Task Message Routing", () => {
   });
 
   describe("agent final text output (automatic forwarding)", () => {
-    it("should forward final text to Telegram when notifyUser=true", async () => {
+    it("should forward final text to notification channels when notifyUser=true", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: true });
       const deps = createMockDeps({
         executeTaskAsync: vi.fn(async () => ({
@@ -129,14 +129,14 @@ describe("Cron Task Message Routing", () => {
 
       await executeCronTaskAsync(task, deps);
 
-      expect(deps.telegramMessages).toContain("Task completed: fetched 5 articles");
+      expect(deps.notificationMessages).toContain("Task completed: fetched 5 articles");
       expect(deps.broadcastMessages).toContainEqual({
         taskName: "test-task",
         message: "Task completed: fetched 5 articles",
       });
     });
 
-    it("should NOT forward final text to Telegram when notifyUser=false", async () => {
+    it("should NOT forward final text to notification channels when notifyUser=false", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: false });
       const deps = createMockDeps({
         executeTaskAsync: vi.fn(async () => ({
@@ -147,8 +147,8 @@ describe("Cron Task Message Routing", () => {
 
       await executeCronTaskAsync(task, deps);
 
-      // Final text should NOT go to Telegram
-      expect(deps.telegramMessages).toEqual([]);
+      // Final text should NOT go to notification channels
+      expect(deps.notificationMessages).toEqual([]);
 
       // But it should still be broadcast to UI and logged
       expect(deps.broadcastMessages).toContainEqual({
@@ -166,13 +166,13 @@ describe("Cron Task Message Routing", () => {
 
       await executeCronTaskAsync(task, deps);
 
-      expect(deps.telegramMessages).toEqual([]);
+      expect(deps.notificationMessages).toEqual([]);
       expect(deps.broadcastMessages).toEqual([]);
     });
   });
 
   describe("combined: send_message calls + final text", () => {
-    it("should send tool messages AND final text to Telegram when notifyUser=true", async () => {
+    it("should send tool messages AND final text to notification channels when notifyUser=true", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: true });
       const deps = createMockDeps({
         executeTaskAsync: vi.fn(async (_task, sender) => {
@@ -184,15 +184,15 @@ describe("Cron Task Message Routing", () => {
 
       await executeCronTaskAsync(task, deps);
 
-      // All three messages should reach Telegram
-      expect(deps.telegramMessages).toEqual([
+      // All three messages should reach notification channels
+      expect(deps.notificationMessages).toEqual([
         "Searching for news...",
         "Found 5 articles",
         "Summary: processed 5 articles and stored results",
       ]);
     });
 
-    it("should send ONLY tool messages to Telegram when notifyUser=false, NOT the final text", async () => {
+    it("should send ONLY tool messages to notification channels when notifyUser=false, NOT the final text", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: false });
       const deps = createMockDeps({
         executeTaskAsync: vi.fn(async (_task, sender) => {
@@ -204,8 +204,8 @@ describe("Cron Task Message Routing", () => {
 
       await executeCronTaskAsync(task, deps);
 
-      // Only send_message calls should reach Telegram — NOT the final summary
-      expect(deps.telegramMessages).toEqual([
+      // Only send_message calls should reach notification channels — NOT the final summary
+      expect(deps.notificationMessages).toEqual([
         "Searching for news...",
         "Found 5 articles",
       ]);

@@ -143,23 +143,22 @@ export function setupTelegramCommands(bot: Bot): void {
 
     if (!channel) {
       await ctx.reply(
-        "📊 *Chat Status*\n\n" +
+        "📊 Chat Status\n\n" +
           "This chat is not yet registered.\n" +
-          "Send any message to register, or use /notifications_enable",
-        { parse_mode: "Markdown" }
+          "Send any message to register, or use /notifications_enable"
       );
       return;
     }
 
     const statusLines = [
-      "📊 *Chat Status*",
+      "📊 Chat Status",
       "",
-      `*Permission:* ${channel.permission}`,
-      `*Notifications:* ${channel.receiveNotifications ? "✅ Enabled" : "🔕 Disabled"}`,
-      `*Registered:* ${new Date(channel.createdAt).toLocaleDateString()}`,
+      `Permission: ${channel.permission}`,
+      `Notifications: ${channel.receiveNotifications ? "✅ Enabled" : "🔕 Disabled"}`,
+      `Registered: ${new Date(channel.createdAt).toLocaleDateString()}`,
     ];
 
-    await ctx.reply(statusLines.join("\n"), { parse_mode: "Markdown" });
+    await ctx.reply(statusLines.join("\n"));
   });
 }
 
