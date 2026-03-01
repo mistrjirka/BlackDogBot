@@ -225,6 +225,69 @@ services:
 EOF
 
     if [ "$SETUP_SEARXNG" = true ]; then
+        # Create SearXNG settings with JSON API enabled and bot detection disabled
+        mkdir -p "$CONFIG_DIR/searxng"
+        
+        SEARXNG_SECRET=$(openssl rand -hex 32)
+        
+        cat > "$CONFIG_DIR/searxng/settings.yml" << SEARXNG_EOF
+# SearXNG settings for BetterClaw
+# Bot detection disabled for local usage
+
+use_default_settings: true
+
+general:
+  instance_name: "BetterClaw Search"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "all"
+  formats:
+    - html
+    - json
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "${SEARXNG_SECRET}"
+  limiter: false
+  image_proxy: true
+  http_protocol_version: "1.1"
+  method: "GET"
+
+botdetection:
+  ip_enabled: false
+  ip_lists:
+    pass_ip:
+      - 127.0.0.0/8
+      - ::1/128
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+    block_ip: []
+  link_token: false
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+  pool_connections: 100
+  pool_maxsize: 20
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+  - name: bing
+    engine: bing
+    shortcut: bing
+    disabled: false
+SEARXNG_EOF
+        
         cat >> "$COMPOSE_FILE" << EOF
   searxng:
     image: searxng/searxng:latest
@@ -233,9 +296,8 @@ EOF
       - "${SEARXNG_PORT}:8080"
     environment:
       - SEARXNG_BASE_URL=http://localhost:${SEARXNG_PORT}/
-      - SEARXNG_SECRET=$(openssl rand -hex 32)
     volumes:
-      - searxng-data:/etc/searxng
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/healthz"]
@@ -266,11 +328,13 @@ EOF
     fi
 
     echo "volumes:" >> "$COMPOSE_FILE"
-    if [ "$SETUP_SEARXNG" = true ]; then
-        echo "  searxng-data:" >> "$COMPOSE_FILE"
-    fi
+    # No named volumes needed - using bind mounts for configuration
     
     print_success "Created $COMPOSE_FILE"
+    
+    if [ "$SETUP_SEARXNG" = true ]; then
+        print_success "Created $CONFIG_DIR/searxng/settings.yml with JSON API enabled"
+    fi
 }
 
 start_docker_services() {

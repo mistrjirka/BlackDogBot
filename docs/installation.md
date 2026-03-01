@@ -82,29 +82,80 @@ Create `~/.betterclaw/docker-compose.yaml`:
 services:
   searxng:
     image: searxng/searxng:latest
+    container_name: betterclaw-searxng
     ports:
       - "18731:8080"
     environment:
       - SEARXNG_BASE_URL=http://localhost:18731/
       - SEARXNG_SECRET=<generate-with-openssl-rand-hex-32>
     volumes:
-      - searxng-data:/etc/searxng
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     restart: unless-stopped
 
   crawl4ai:
     image: unclecode/crawl4ai:latest
+    container_name: betterclaw-crawl4ai
     ports:
       - "18732:8000"
     restart: unless-stopped
+```
 
-volumes:
-  searxng-data:
+**Important:** SearXNG requires a `settings.yml` file to enable JSON API access and disable bot detection for local use.
+
+Create `~/.betterclaw/searxng/settings.yml`:
+
+```yaml
+use_default_settings: true
+
+general:
+  instance_name: "BetterClaw Search"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "all"
+  formats:
+    - html
+    - json    # Required for BetterClaw API access
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "<your-secret-key>"  # Generate with: openssl rand -hex 32
+  limiter: false
+  image_proxy: true
+  http_protocol_version: "1.1"
+  method: "GET"
+
+# Critical: Disable bot detection for local usage
+botdetection:
+  ip_enabled: false
+  ip_lists:
+    pass_ip:
+      - 127.0.0.0/8
+      - ::1/128
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+    block_ip: []
+  link_token: false
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+  pool_connections: 100
+  pool_maxsize: 20
 ```
 
 Start services:
 
 ```bash
 docker compose -f ~/.betterclaw/docker-compose.yaml up -d
+```
+
+Verify SearXNG is working:
+
+```bash
+curl 'http://localhost:18731/search?q=test&format=json'
 ```
 
 ### 4. Create Required Directories
