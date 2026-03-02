@@ -2,6 +2,12 @@
 
 export type ScheduleType = "once" | "interval" | "cron";
 
+export interface ICronMessageHistory {
+  messageId: string;
+  content: string;
+  sentAt: string;
+}
+
 export interface IScheduleOnce {
   type: "once";
   runAt: string;
@@ -33,6 +39,9 @@ export interface IScheduledTask {
   lastRunError: string | null;
   createdAt: string;
   updatedAt: string;
+  messageHistory: ICronMessageHistory[];
+  messageSummary: string | null;
+  summaryGeneratedAt: string | null;
 }
 
 //#endregion Cron Types

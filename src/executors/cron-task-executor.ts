@@ -1,4 +1,5 @@
 import type { IScheduledTask } from "../shared/types/index.js";
+import { generateId } from "../utils/id.js";
 
 /**
  * Result returned by the cron agent after executing a task.
@@ -20,6 +21,7 @@ export interface ICronTaskExecutorDeps {
   executeTaskAsync: (
     task: IScheduledTask,
     sender: (msg: string) => Promise<string | null>,
+    taskIdProvider: () => string | null,
   ) => Promise<ICronAgentResult>;
   openJobLogAsync: (key: string, path: string) => Promise<void>;
   closeJobLog: (key: string) => void;
@@ -41,13 +43,13 @@ export async function executeCronTaskAsync(
   task: IScheduledTask,
   deps: ICronTaskExecutorDeps,
 ): Promise<void> {
-  // Sender for the send_message tool — broadcasts to all notification channels.
-  // The agent explicitly chose to call send_message, so the message must go through.
+  const taskIdProvider = (): string | null => task.taskId;
+
   const toolMessageSender = async (message: string): Promise<string | null> => {
     deps.logInfo(`[Cron:${task.name}] ${message}`, { taskId: task.taskId });
     deps.broadcastCronMessage(task.name, message);
     await deps.broadcastToNotificationChannelsAsync(message);
-    return null;
+    return generateId();
   };
 
   const safeTimestamp: string = new Date().toISOString().replace(/[:.]/g, "-");
@@ -57,17 +59,12 @@ export async function executeCronTaskAsync(
   await deps.openJobLogAsync(jobLogKey, jobLogPath);
 
   try {
-    const result: ICronAgentResult = await deps.executeTaskAsync(task, toolMessageSender);
+    const result: ICronAgentResult = await deps.executeTaskAsync(task, toolMessageSender, taskIdProvider);
 
-    // Forward the agent's final text output (done tool summary / model text).
-    // This is separate from any send_message tool calls the agent made during execution.
     if (result.text) {
       deps.logInfo(`[Cron:${task.name}] Result: ${result.text}`, { taskId: task.taskId });
       deps.broadcastCronMessage(task.name, result.text);
 
-      // Only forward the final text to notification channels when notifyUser is enabled.
-      // send_message tool calls always go through regardless — this only gates
-      // the automatic forwarding of the agent's summary/result text.
       if (task.notifyUser) {
         await deps.broadcastToNotificationChannelsAsync(result.text);
       }

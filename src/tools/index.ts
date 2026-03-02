@@ -1,7 +1,8 @@
 export { thinkTool } from "./think.tool.js";
 export { doneTool, createDoneTool } from "./done.tool.js";
 export { runCmdTool } from "./run-cmd.tool.js";
-export { createSendMessageTool, type MessageSender } from "./send-message.tool.js";
+export { createSendMessageTool, createSendMessageToolWithHistory, type MessageSender, type TaskIdProvider } from "./send-message.tool.js";
+export { createGetPreviousMessageTool } from "./get-previous-message.tool.js";
 export { modifyPromptTool } from "./modify-prompt.tool.js";
 export { listPromptsTool } from "./list-prompts.tool.js";
 export { searchKnowledgeTool } from "./search-knowledge.tool.js";

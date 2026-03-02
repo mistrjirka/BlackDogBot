@@ -174,6 +174,9 @@ Output a JSON object with:
         lastRunAt: null,
         lastRunStatus: null,
         lastRunError: null,
+        messageHistory: [],
+        messageSummary: null,
+        summaryGeneratedAt: null,
       };
 
       await SchedulerService.getInstance().addTaskAsync(task);

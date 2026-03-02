@@ -26,7 +26,14 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
   send_message:
     "Send a Telegram message directly to the user who owns this agent. " +
     "No chat ID, token, or destination config is needed — it always reaches the correct user automatically. " +
+    "IMPORTANT: Call get_previous_message first to check what was sent previously and avoid sending duplicates. " +
     "Args: message (string, required).",
+
+  get_previous_message:
+    "Get previous messages sent by this cron task in earlier runs. " +
+    "Returns the last 3 messages verbatim (with timestamps) plus a summary of older messages. " +
+    "CRITICAL: You MUST call this BEFORE send_message to avoid sending duplicate or repetitive content. " +
+    "Args: none.",
 
   read_file:
     "Read the contents of a file. Default location is the workspace (~/.betterclaw/workspace/). " +

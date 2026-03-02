@@ -324,7 +324,7 @@ async function mainAsync(): Promise<void> {
         broadcastCronMessage: (name: string, msg: string) =>
           BrainInterfaceService.getInstance().broadcastCronMessage(name, msg),
         logInfo: (msg: string, meta?: Record<string, unknown>) => logger.info(msg, meta),
-        executeTaskAsync: (t, sender) => cronAgent.executeTaskAsync(t, sender),
+        executeTaskAsync: (t, sender, taskIdProvider) => cronAgent.executeTaskAsync(t, sender, taskIdProvider),
         openJobLogAsync: (key, path) => logger.openJobLogAsync(key, path),
         closeJobLog: (key) => logger.closeJobLog(key),
         getJobLogPath: (name, ts) =>

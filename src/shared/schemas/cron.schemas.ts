@@ -30,6 +30,15 @@ export const scheduleSchema = z.discriminatedUnion("type", [
   scheduleCronSchema,
 ]);
 
+export const cronMessageHistorySchema = z.object({
+  messageId: z.string()
+    .min(1),
+  content: z.string()
+    .min(1),
+  sentAt: z.string()
+    .datetime(),
+});
+
 export const scheduledTaskSchema = z.object({
   taskId: z.string()
     .min(1),
@@ -64,6 +73,15 @@ export const scheduledTaskSchema = z.object({
     .datetime(),
   updatedAt: z.string()
     .datetime(),
+  messageHistory: cronMessageHistorySchema.array()
+    .default([]),
+  messageSummary: z.string()
+    .nullable()
+    .default(null),
+  summaryGeneratedAt: z.string()
+    .datetime()
+    .nullable()
+    .default(null),
 });
 
 //#endregion Cron Schemas

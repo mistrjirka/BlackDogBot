@@ -116,6 +116,9 @@ export const setJobScheduleTool = tool({
         lastRunAt: null,
         lastRunStatus: null,
         lastRunError: null,
+        messageHistory: [],
+        messageSummary: null,
+        summaryGeneratedAt: null,
       };
 
       await schedulerService.addTaskAsync(task);
