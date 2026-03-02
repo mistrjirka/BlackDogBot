@@ -21,6 +21,7 @@ export class SchedulerService {
   private _cronScheduler: CronScheduler;
   private _tasks: Map<string, IScheduledTask>;
   private _taskExecutor: ((task: IScheduledTask) => Promise<void>) | null;
+  private _onTaskFailure: ((task: IScheduledTask, error: string) => Promise<void>) | null;
   private _intervals: Map<string, NodeJS.Timeout>;
   private _timeouts: Map<string, NodeJS.Timeout>;
 
@@ -33,6 +34,7 @@ export class SchedulerService {
     this._cronScheduler = new CronScheduler();
     this._tasks = new Map();
     this._taskExecutor = null;
+    this._onTaskFailure = null;
     this._intervals = new Map();
     this._timeouts = new Map();
   }
@@ -53,6 +55,12 @@ export class SchedulerService {
     executor: (task: IScheduledTask) => Promise<void>,
   ): void {
     this._taskExecutor = executor;
+  }
+
+  public setOnTaskFailure(
+    callback: (task: IScheduledTask, error: string) => Promise<void>,
+  ): void {
+    this._onTaskFailure = callback;
   }
 
   public async startAsync(): Promise<void> {
@@ -282,6 +290,17 @@ export class SchedulerService {
           taskId: task.taskId,
           error: errorMessage,
         });
+
+        if (this._onTaskFailure) {
+          try {
+            await this._onTaskFailure(task, errorMessage);
+          } catch (notifyError) {
+            this._logger.error("Failed to send task failure notification", {
+              taskId: task.taskId,
+              error: notifyError instanceof Error ? notifyError.message : String(notifyError),
+            });
+          }
+        }
       }
     };
 

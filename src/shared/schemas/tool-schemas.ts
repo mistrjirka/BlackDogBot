@@ -162,6 +162,21 @@ export const getSkillFileToolInputSchema = z.object({
     .describe("Relative path within the skill directory"),
 });
 
+export const setupSkillToolInputSchema = z.object({
+  skillName: z.string()
+    .min(1)
+    .describe("Name of the skill to set up"),
+});
+
+export const setupSkillToolOutputSchema = z.object({
+  success: z.boolean(),
+  state: z.string(),
+  installed: z.array(z.string()),
+  manualStepsRequired: z.array(z.string()),
+  error: z.string()
+    .nullable(),
+});
+
 export const getSkillFileToolOutputSchema = z.object({
   content: z.string(),
   exists: z.boolean(),

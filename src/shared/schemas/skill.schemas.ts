@@ -4,8 +4,12 @@ import { z } from "zod";
 
 export const skillStateSchema = z.enum([
   "never-touched",
-  "setuped",
-  "error-during-setup",
+  "ready",
+  "needs-setup",
+  "setup-in-progress",
+  "missing-deps",
+  "setup-failed",
+  "os-unsupported",
 ]);
 
 export const skillRequirementsSchema = z.object({
@@ -25,14 +29,19 @@ export const skillRequirementsSchema = z.object({
 
 export const skillInstallStepSchema = z.object({
   id: z.string(),
-  kind: z.enum(["brew", "node", "go", "uv", "download", "apt"]),
+  kind: z.enum(["brew", "node", "go", "uv", "download", "apt", "pacman"]),
   formula: z.string()
+    .nullable()
+    .default(null),
+  package: z.string()
     .nullable()
     .default(null),
   bins: z.string()
     .array()
     .default([]),
-  label: z.string(),
+  label: z.string()
+    .nullable()
+    .default(null),
   os: z.string()
     .array()
     .default([]),
@@ -107,6 +116,18 @@ export const skillStateInfoSchema = z.object({
   lastCheckedAt: z.string()
     .nullable()
     .default(null),
+  missingDeps: z.object({
+    bins: z.string().array().default([]),
+    anyBins: z.string().array().default([]),
+    env: z.string().array().default([]),
+    config: z.string().array().default([]),
+  }).nullable().default(null),
+  manualStepsRequired: z.string()
+    .array()
+    .default([]),
+  attemptedInstalls: z.string()
+    .array()
+    .default([]),
 });
 
 //#endregion Skill Schemas

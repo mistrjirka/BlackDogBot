@@ -49,6 +49,9 @@ export class SkillStateService {
         lastError: null,
         setupAt: null,
         lastCheckedAt: null,
+        missingDeps: null,
+        manualStepsRequired: [],
+        attemptedInstalls: [],
       };
     }
   }
@@ -69,29 +72,87 @@ export class SkillStateService {
   public async markSetupCompleteAsync(skillName: string): Promise<void> {
     const now: string = new Date().toISOString();
     const state: ISkillStateInfo = {
-      state: "setuped",
+      state: "ready",
       lastError: null,
       setupAt: now,
       lastCheckedAt: now,
+      missingDeps: null,
+      manualStepsRequired: [],
+      attemptedInstalls: [],
     };
 
     await this.saveStateAsync(skillName, state);
 
-    this._logger.info(`Skill "${skillName}" marked as setup complete`);
+    this._logger.info(`Skill "${skillName}" marked as ready`);
   }
 
   public async markSetupErrorAsync(skillName: string, error: string): Promise<void> {
+    const currentState = await this.getStateAsync(skillName);
     const now: string = new Date().toISOString();
     const state: ISkillStateInfo = {
-      state: "error-during-setup",
+      state: "setup-failed",
       lastError: error,
       setupAt: null,
       lastCheckedAt: now,
+      missingDeps: currentState.missingDeps,
+      manualStepsRequired: currentState.manualStepsRequired,
+      attemptedInstalls: currentState.attemptedInstalls,
     };
 
     await this.saveStateAsync(skillName, state);
 
-    this._logger.warn(`Skill "${skillName}" encountered setup error: ${error}`);
+    this._logger.warn(`Skill "${skillName}" setup failed: ${error}`);
+  }
+
+  public async markSetupInProgressAsync(skillName: string): Promise<void> {
+    const currentState = await this.getStateAsync(skillName);
+    const now: string = new Date().toISOString();
+    const state: ISkillStateInfo = {
+      state: "setup-in-progress",
+      lastError: null,
+      setupAt: null,
+      lastCheckedAt: now,
+      missingDeps: currentState.missingDeps,
+      manualStepsRequired: currentState.manualStepsRequired,
+      attemptedInstalls: currentState.attemptedInstalls,
+    };
+
+    await this.saveStateAsync(skillName, state);
+
+    this._logger.debug(`Skill "${skillName}" setup in progress`);
+  }
+
+  public async markNeedsSetupAsync(
+    skillName: string,
+    missingDeps: ISkillStateInfo["missingDeps"],
+    manualSteps: string[],
+  ): Promise<void> {
+    const now: string = new Date().toISOString();
+    const state: ISkillStateInfo = {
+      state: "needs-setup",
+      lastError: null,
+      setupAt: null,
+      lastCheckedAt: now,
+      missingDeps,
+      manualStepsRequired: manualSteps,
+      attemptedInstalls: [],
+    };
+
+    await this.saveStateAsync(skillName, state);
+
+    this._logger.info(`Skill "${skillName}" needs setup`);
+  }
+
+  public async addAttemptedInstallAsync(skillName: string, stepId: string): Promise<void> {
+    const currentState = await this.getStateAsync(skillName);
+    const attemptedInstalls = [...(currentState.attemptedInstalls || []), stepId];
+    const state: ISkillStateInfo = {
+      ...currentState,
+      attemptedInstalls,
+      lastCheckedAt: new Date().toISOString(),
+    };
+
+    await this.saveStateAsync(skillName, state);
   }
 
   //#endregion Public methods

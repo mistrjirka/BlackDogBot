@@ -9,6 +9,8 @@ import { EmbeddingService } from "./services/embedding.service.js";
 import { VectorStoreService } from "./services/vector-store.service.js";
 import { KnowledgeService } from "./services/knowledge.service.js";
 import { SkillLoaderService } from "./services/skill-loader.service.js";
+import { SkillInstallerService } from "./services/skill-installer.service.js";
+import { SkillStateService } from "./services/skill-state.service.js";
 import { SchedulerService } from "./services/scheduler.service.js";
 import { MessagingService } from "./services/messaging.service.js";
 import { JobStorageService } from "./services/job-storage.service.js";
@@ -112,8 +114,9 @@ async function mainAsync(): Promise<void> {
 
   // 6. Initialize skill loader
   const skillLoaderService: SkillLoaderService = SkillLoaderService.getInstance();
+  const skipOsCheck = config.skills.skipOsCheck ?? false;
 
-  await skillLoaderService.loadAllSkillsAsync(config.skills.directories);
+  await skillLoaderService.loadAllSkillsAsync(config.skills.directories, skipOsCheck);
 
   logger.info("Skill loader initialized.", {
     skillCount: skillLoaderService.getAllSkills().length,
@@ -132,6 +135,138 @@ async function mainAsync(): Promise<void> {
     channelCount: channelRegistry.getAllChannels().length,
     notificationChannelCount: channelRegistry.getNotificationChannels().length,
   });
+
+  // 7.6. Auto-setup skills with missing dependencies
+  const skillsConfig = config.skills;
+  const autoSetup = skillsConfig.autoSetup ?? true;
+  const autoSetupNotify = skillsConfig.autoSetupNotify ?? true;
+  const allowedInstallKinds = skillsConfig.allowedInstallKinds ?? ["brew", "node", "go", "uv"];
+  const installTimeout = skillsConfig.installTimeout ?? 300000;
+
+  if (autoSetup) {
+    const skillsNeedingSetup = skillLoaderService.getAllSkills().filter(
+      (skill) => skill.state.state === "needs-setup"
+    );
+
+    if (skillsNeedingSetup.length > 0) {
+      logger.info(`Auto-setting up ${skillsNeedingSetup.length} skills...`);
+
+      const skillInstaller = SkillInstallerService.getInstance();
+      const skillState = SkillStateService.getInstance();
+
+      for (const skill of skillsNeedingSetup) {
+        try {
+          logger.info(`Setting up skill "${skill.name}"...`);
+
+          await skillState.markSetupInProgressAsync(skill.name);
+
+          const installSteps = skill.frontmatter.metadata?.openclaw?.install || [];
+          const result = await skillInstaller.executeInstallSteps(
+            installSteps,
+            allowedInstallKinds as any,
+            installTimeout
+          );
+
+          if (result.success) {
+            await skillState.markSetupCompleteAsync(skill.name);
+            logger.info(`Skill "${skill.name}" setup completed`, { installed: result.installed });
+
+            if (autoSetupNotify) {
+              const notifyMessage =
+                `✅ **Skill Ready**: \`${skill.name}\`\n\n` +
+                (result.installed.length > 0 ? `**Installed:** ${result.installed.join(", ")}` : "");
+
+              const notificationChannels = channelRegistry.getNotificationChannels();
+              for (const channel of notificationChannels) {
+                try {
+                  const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
+                  await sender(notifyMessage);
+                } catch (sendError) {
+                  logger.error(`Failed to notify ${channel.platform}:${channel.channelId}`, {
+                    error: sendError instanceof Error ? sendError.message : String(sendError),
+                  });
+                }
+              }
+            }
+          } else if (result.manualStepsRequired.length > 0) {
+            await skillState.markNeedsSetupAsync(
+              skill.name,
+              skill.state.missingDeps,
+              result.manualStepsRequired
+            );
+            logger.info(`Skill "${skill.name}" requires manual steps`, {
+              manualSteps: result.manualStepsRequired,
+            });
+
+            if (autoSetupNotify) {
+              const notifyMessage =
+                `⚠️ **Skill Needs Manual Setup**: \`${skill.name}\`\n\n` +
+                `This skill requires packages that cannot be auto-installed.\n\n` +
+                `**Manual steps:**\n${result.manualStepsRequired.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\n` +
+                `After completing these steps, restart BetterClaw or use the setup-skill tool.`;
+
+              const notificationChannels = channelRegistry.getNotificationChannels();
+              for (const channel of notificationChannels) {
+                try {
+                  const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
+                  await sender(notifyMessage);
+                } catch (sendError) {
+                  logger.error(`Failed to notify ${channel.platform}:${channel.channelId}`, {
+                    error: sendError instanceof Error ? sendError.message : String(sendError),
+                  });
+                }
+              }
+            }
+          } else {
+            await skillState.markSetupErrorAsync(skill.name, result.error || "Unknown error");
+            logger.error(`Skill "${skill.name}" setup failed`, { error: result.error });
+
+            if (autoSetupNotify) {
+              const notifyMessage =
+                `❌ **Skill Setup Failed**: \`${skill.name}\`\n\n` +
+                `**Error:**\n\`\`\`\n${result.error}\n\`\`\`\n\n` +
+                `Will retry on next startup.`;
+
+              const notificationChannels = channelRegistry.getNotificationChannels();
+              for (const channel of notificationChannels) {
+                try {
+                  const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
+                  await sender(notifyMessage);
+                } catch (sendError) {
+                  logger.error(`Failed to notify ${channel.platform}:${channel.channelId}`, {
+                    error: sendError instanceof Error ? sendError.message : String(sendError),
+                  });
+                }
+              }
+            }
+          }
+        } catch (setupError) {
+          const errorMsg = setupError instanceof Error ? setupError.message : String(setupError);
+          await skillState.markSetupErrorAsync(skill.name, errorMsg);
+          logger.error(`Skill "${skill.name}" setup threw error`, { error: errorMsg });
+
+          if (autoSetupNotify) {
+            const notifyMessage =
+              `❌ **Skill Setup Failed**: \`${skill.name}\`\n\n` +
+              `**Error:**\n\`\`\`\n${errorMsg}\n\`\`\`\n\n` +
+              `Will retry on next startup.`;
+
+            const notificationChannels = channelRegistry.getNotificationChannels();
+            for (const channel of notificationChannels) {
+              try {
+                const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
+                await sender(notifyMessage);
+              } catch (sendError) {
+                logger.error(`Failed to notify ${channel.platform}:${channel.channelId}`, {
+                  error: sendError instanceof Error ? sendError.message : String(sendError),
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   // 8. Initialize platform dependencies
   const platformDeps: IPlatformDeps = {
@@ -201,6 +336,27 @@ async function mainAsync(): Promise<void> {
         getJobLogPath: (name, ts) =>
           `${getJobLogsDir()}/${name.replace(/[^a-zA-Z0-9_-]/g, "_")}-${ts}.log`,
       });
+    });
+
+    schedulerService.setOnTaskFailure(async (task, error) => {
+      const timestamp = new Date().toISOString();
+      const message =
+        `❌ **Task Failed**: \`${task.name}\`\n\n` +
+        `**Time:** ${timestamp}\n` +
+        `**Task ID:** \`${task.taskId}\`\n\n` +
+        `**Error:**\n\`\`\`\n${error}\n\`\`\``;
+
+      const notificationChannels = channelRegistry.getNotificationChannels();
+      for (const channel of notificationChannels) {
+        try {
+          const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
+          await sender(message);
+        } catch (sendError) {
+          logger.error(`Failed to send failure notification to ${channel.platform}:${channel.channelId}`, {
+            error: sendError instanceof Error ? sendError.message : String(sendError),
+          });
+        }
+      }
     });
 
     await schedulerService.startAsync();

@@ -131,6 +131,24 @@ const skillsConfigSchema = z.object({
     .array()
     .default(["~/.betterclaw/skills"])
     .describe("Directories to scan for skills"),
+  autoSetup: z.boolean()
+    .default(true)
+    .describe("Automatically set up skills with missing dependencies at boot"),
+  autoSetupNotify: z.boolean()
+    .default(true)
+    .describe("Send notifications when skill setup completes or fails"),
+  installTimeout: z.number()
+    .int()
+    .positive()
+    .default(300000)
+    .describe("Timeout in milliseconds for each install step"),
+  allowedInstallKinds: z.enum(["brew", "node", "go", "uv", "pacman", "apt", "download"])
+    .array()
+    .default(["brew", "node", "go", "uv"])
+    .describe("Whitelist of allowed install kinds. pacman, apt, and download require manual steps."),
+  skipOsCheck: z.boolean()
+    .default(false)
+    .describe("Skip OS compatibility check for skills"),
 });
 
 const loggingConfigSchema = z.object({

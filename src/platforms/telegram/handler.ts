@@ -250,10 +250,15 @@ export class TelegramHandler {
 
         // Send response
         if (result.text) {
-          const chunks: string[] = splitTelegramMessage(result.text);
+          const formattedText: string = this._formatThinkingBlocks(result.text);
+          const chunks: string[] = splitTelegramMessage(formattedText);
           for (let i: number = 0; i < chunks.length; i++) {
-            const options: Record<string, unknown> =
-              i === 0 ? { reply_parameters: { message_id: message.message_id } } : {};
+            const options: Record<string, unknown> = {
+              parse_mode: "HTML",
+            };
+            if (i === 0) {
+              options.reply_parameters = { message_id: message.message_id };
+            }
             await ctx.reply(chunks[i], options);
           }
         }
@@ -346,6 +351,17 @@ export class TelegramHandler {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  /**
+   * Formats thinking/reasoning blocks as collapsible blockquotes.
+   * Supports: <think</think, <thinking</thinking, [think][/think]
+   */
+  private _formatThinkingBlocks(text: string): string {
+    return text
+      .replace(/<think\b[^>]*>([\s\S]*?)<\/think>/gi, "<blockquote expandable>$1</blockquote>")
+      .replace(/<thinking\b[^>]*>([\s\S]*?)<\/thinking>/gi, "<blockquote expandable>$1</blockquote>")
+      .replace(/\[think\]([\s\S]*?)\[\/think\]/gi, "<blockquote expandable>$1</blockquote>");
   }
 
   private async _processMergedQueuedMessageAsync(chatId: string, mergedText: string): Promise<void> {

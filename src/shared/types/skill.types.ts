@@ -1,6 +1,13 @@
 //#region Skill Types
 
-export type SkillState = "never-touched" | "setuped" | "error-during-setup";
+export type SkillState = 
+  | "never-touched"
+  | "ready"
+  | "needs-setup"
+  | "setup-in-progress"
+  | "missing-deps"
+  | "setup-failed"
+  | "os-unsupported";
 
 export interface ISkillRequirements {
   bins: string[];
@@ -11,10 +18,11 @@ export interface ISkillRequirements {
 
 export interface ISkillInstallStep {
   id: string;
-  kind: "brew" | "node" | "go" | "uv" | "download" | "apt";
+  kind: "brew" | "node" | "go" | "uv" | "download" | "apt" | "pacman";
   formula: string | null;
+  package: string | null;
   bins: string[];
-  label: string;
+  label: string | null;
   os: string[];
 }
 
@@ -51,11 +59,21 @@ export interface ISkill {
   state: ISkillStateInfo;
 }
 
+export interface ISkillMissingDeps {
+  bins: string[];
+  anyBins: string[];
+  env: string[];
+  config: string[];
+}
+
 export interface ISkillStateInfo {
   state: SkillState;
   lastError: string | null;
   setupAt: string | null;
   lastCheckedAt: string | null;
+  missingDeps: ISkillMissingDeps | null;
+  manualStepsRequired: string[];
+  attemptedInstalls: string[];
 }
 
 //#endregion Skill Types

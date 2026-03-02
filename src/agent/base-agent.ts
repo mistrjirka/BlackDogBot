@@ -379,12 +379,21 @@ export abstract class BaseAgentBase {
 
 //#region Private functions
 
+// Cached tokenizer to avoid recreating it on every call (saves ~23s per message)
+let _cachedEncoder: ReturnType<typeof encodingForModel> | null = null;
+
+function _getTextEncoder(): ReturnType<typeof encodingForModel> {
+  if (!_cachedEncoder) {
+    _cachedEncoder = encodingForModel("gpt-4o");
+  }
+  return _cachedEncoder;
+}
+
 /**
  * Count tokens in a plain text string using cl100k_base encoding.
  */
 function _countTextTokens(text: string): number {
-  const enc = encodingForModel("gpt-4o");
-  return enc.encode(text).length;
+  return _getTextEncoder().encode(text).length;
 }
 
 /**
@@ -428,7 +437,7 @@ function _estimateFixedOverhead(instructions: string, allTools: ToolSet): number
  * Note: This counts only message content, not system prompt or tool definitions.
  */
 function _countTokens(messages: ModelMessage[]): number {
-  const enc = encodingForModel("gpt-4o");
+  const enc = _getTextEncoder();
   let totalTokens: number = 0;
 
   for (const msg of messages) {

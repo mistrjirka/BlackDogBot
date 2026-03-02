@@ -61,8 +61,8 @@ export function createCallSkillTool(availableSkillNames: string[]) {
           };
         }
 
-        if (skill.state.state !== "setuped") {
-          return { success: false, output: "", error: `Skill not set up. Current state: ${skill.state.state}` };
+        if (skill.state.state !== "ready") {
+          return { success: false, output: "", error: `Skill not ready. Current state: ${skill.state.state}` };
         }
 
         const model: LanguageModel = AiProviderService.getInstance().getModel();

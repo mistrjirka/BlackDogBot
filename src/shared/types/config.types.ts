@@ -28,6 +28,7 @@ export interface IOpenAiCompatibleConfig {
   model: string;
   rateLimits: IRateLimitConfig;
   contextWindow?: number; // Optional, defaults to 128000 if not specified
+  supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
 }
 
 export interface ILmStudioConfig {
@@ -36,6 +37,7 @@ export interface ILmStudioConfig {
   model: string;
   rateLimits: IRateLimitConfig;
   contextWindow?: number;
+  supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
 }
 
 export type AiProvider = "openrouter" | "openai-compatible" | "lm-studio";
@@ -75,6 +77,11 @@ export interface IKnowledgeConfig {
 
 export interface ISkillsConfig {
   directories: string[];
+  autoSetup?: boolean;
+  autoSetupNotify?: boolean;
+  installTimeout?: number;
+  allowedInstallKinds?: ("brew" | "node" | "go" | "uv" | "pacman" | "apt" | "download")[];
+  skipOsCheck?: boolean;
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
