@@ -1,4 +1,5 @@
 import { LoggerService } from "./logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
 
@@ -181,7 +182,7 @@ export class ModelInfoService {
       return { loaded: loadedContext, max: maxContext };
     } catch (error: unknown) {
       this._logger.warn("Error fetching model info from LM Studio API", {
-        error: error instanceof Error ? error.message : String(error),
+        error: extractErrorMessage(error),
       });
 
       return { loaded: null, max: null };
@@ -246,7 +247,7 @@ export class ModelInfoService {
       });
     } catch (error: unknown) {
       this._logger.error("Error fetching models from OpenRouter API", {
-        error: error instanceof Error ? error.message : String(error),
+        error: extractErrorMessage(error),
       });
     }
   }

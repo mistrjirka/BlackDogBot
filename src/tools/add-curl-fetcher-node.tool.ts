@@ -6,6 +6,7 @@ import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-
 import { ICurlFetcherConfig } from "../shared/types/index.js";
 import { IOutputSchemaBlueprint } from "../shared/schemas/output-schema-blueprint.schema.js";
 import { convertOutputSchemaBlueprintToJsonSchema } from "../utils/output-schema-blueprint.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 export function createAddCurlFetcherNodeTool(jobTracker: IJobActivityTracker) {
   return tool({
@@ -55,7 +56,7 @@ export function createAddCurlFetcherNodeTool(jobTracker: IJobActivityTracker) {
           jobTracker,
         );
       } catch (error: unknown) {
-        const errorMessage: string = error instanceof Error ? error.message : String(error);
+        const errorMessage: string = extractErrorMessage(error);
 
         return { nodeId: "", success: false, message: errorMessage, error: errorMessage };
       }

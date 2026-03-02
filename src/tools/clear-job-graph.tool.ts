@@ -3,6 +3,7 @@ import { z } from "zod";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { type IJob, type INode } from "../shared/types/index.js";
 import { buildAsciiGraph } from "../utils/ascii-graph.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 export const clearJobGraphTool = tool({
   description:
@@ -45,7 +46,7 @@ export const clearJobGraphTool = tool({
 
       return { success: true, message, clearedNodesCount, graphAscii };
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
       return {
         success: false,
         message: errorMessage,

@@ -50,6 +50,7 @@ import {
   createAgentNodeToolPool,
   type AgentNodeMessageSender,
 } from "../utils/agent-node-tool-pool.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 // Default timeout for HTTP requests in node execution (30 seconds)
 const DEFAULT_FETCH_TIMEOUT_MS: number = 30000;
@@ -384,7 +385,7 @@ export class JobExecutorService {
         nodeResults: nodeResults,
       };
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
 
       this._logger.error("Job execution failed", { jobId, error: errorMessage });
 
@@ -454,7 +455,7 @@ export class JobExecutorService {
         results.push(result);
       } catch (error: unknown) {
         const executionTimeMs: number = Date.now() - startTime;
-        const errorMessage: string = error instanceof Error ? error.message : String(error);
+        const errorMessage: string = extractErrorMessage(error);
 
         const result: INodeTestResult = {
           testId: testCase.testId,
@@ -1082,7 +1083,7 @@ export class JobExecutorService {
         lastRowId: result.lastRowId,
       };
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
 
       if (errorMessage.includes("UNIQUE constraint failed") || errorMessage.includes("duplicate key")) {
         throw new Error(

@@ -1,5 +1,6 @@
 import { tool } from "ai";
 import { sendMessageToolInputSchema } from "../shared/schemas/tool-schemas.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 export type MessageSender = (message: string) => Promise<string | null>;
 
@@ -17,7 +18,7 @@ export function createSendMessageTool(sender: MessageSender) {
         const messageId: string | null = await sender(message);
         return { sent: true, messageId };
       } catch (error: unknown) {
-        const errorMessage: string = error instanceof Error ? error.message : String(error);
+        const errorMessage: string = extractErrorMessage(error);
         return { sent: false, messageId: null, error: errorMessage };
       }
     },

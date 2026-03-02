@@ -5,6 +5,7 @@ import { PromptService } from "../../services/prompt.service.js";
 import { MainAgent } from "../../agent/main-agent.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
 import { factoryResetAsync, type IFactoryResetResult } from "../../services/factory-reset.service.js";
+import { extractErrorMessage } from "../../utils/error.js";
 
 //#region Telegram Commands
 
@@ -65,7 +66,7 @@ export function setupTelegramCommands(bot: Bot): void {
         logger.info("Prompt reset via /reset command.", { promptName });
       }
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
       await ctx.reply(`Failed to reset: ${errorMessage}`);
       logger.error("Failed to reset prompt via /reset command.", { error: errorMessage });
     }
@@ -87,7 +88,7 @@ export function setupTelegramCommands(bot: Bot): void {
         await ctx.reply(`Factory reset completed with errors:\n${errorSummary}`);
       }
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
       await ctx.reply(`Factory reset failed: ${errorMessage}`);
       logger.error("Factory reset failed.", { error: errorMessage });
     }

@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { crawl4aiToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { crawlUrlAsync } from "../utils/crawl4ai-client.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 function formatCrawlResultAsMarkdown(
   url: string,
@@ -53,7 +54,7 @@ export const crawl4aiTool = tool({
 
       return { content: formattedMarkdown };
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
       return { content: "", error: `Crawl4AI crawl failed: ${errorMessage}` };
     }
   },

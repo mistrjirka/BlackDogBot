@@ -4,6 +4,7 @@ import { JobStorageService } from "../services/job-storage.service.js";
 import { IJob, INode } from "../shared/types/index.js";
 import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { type IJobCreationModeTracker } from "../utils/job-creation-mode-tracker.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 export function createStartJobCreationTool(
   jobTracker: IJobActivityTracker,
@@ -71,7 +72,7 @@ export function createStartJobCreationTool(
             "specifying parentNodeId to auto-connect. Call finish_job_creation when done.",
         };
       } catch (error: unknown) {
-        const errorMessage: string = error instanceof Error ? error.message : String(error);
+        const errorMessage: string = extractErrorMessage(error);
 
         return { jobId: "", startNodeId: "", message: errorMessage, error: errorMessage };
       }

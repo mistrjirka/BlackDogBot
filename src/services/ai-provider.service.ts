@@ -16,6 +16,7 @@ import {
 import { RateLimiterService } from "./rate-limiter.service.js";
 import { ModelInfoService } from "./model-info.service.js";
 import { countRequestBodyTokens } from "../utils/request-token-counter.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 export class AiProviderService {
   //#region Data members
@@ -303,7 +304,7 @@ export class AiProviderService {
       return hasCorrectTool && hasCorrectResult;
     } catch (error) {
       logger.warn("Model forced tool choice test failed", {
-        error: error instanceof Error ? error.message : String(error),
+        error: extractErrorMessage(error),
       });
       return false;
     }
@@ -372,9 +373,9 @@ export class AiProviderService {
       return { ok: true };
     } catch (error) {
       logger.warn("Model response format test failed", {
-        error: error instanceof Error ? error.message : String(error),
+        error: extractErrorMessage(error),
       });
-      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      return { ok: false, reason: extractErrorMessage(error) };
     }
   }
 

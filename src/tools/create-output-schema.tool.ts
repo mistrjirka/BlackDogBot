@@ -5,6 +5,7 @@ import { LoggerService } from "../services/logger.service.js";
 import { outputSchemaBlueprintSchema, type IOutputSchemaBlueprint } from "../shared/schemas/output-schema-blueprint.schema.js";
 import { convertOutputSchemaBlueprintToJsonSchema } from "../utils/output-schema-blueprint.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 const TOOL_RETRIES: number = 3;
 
@@ -93,7 +94,7 @@ export function createCreateOutputSchemaTool() {
             schema,
           };
         } catch (error: unknown) {
-          lastError = error instanceof Error ? error.message : String(error);
+          lastError = extractErrorMessage(error);
 
           logger.warn("create_output_schema attempt failed", {
             attempt,

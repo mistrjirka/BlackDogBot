@@ -6,6 +6,7 @@ import { SchedulerService } from "./scheduler.service.js";
 import { PromptService } from "./prompt.service.js";
 import { MainAgent } from "../agent/main-agent.js";
 import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
 
@@ -116,7 +117,7 @@ async function _safeStepAsync(
     await action();
     logger.info(`Factory reset step completed: ${stepName}`);
   } catch (error: unknown) {
-    const message: string = error instanceof Error ? error.message : String(error);
+    const message: string = extractErrorMessage(error);
     errors.push(`${stepName}: ${message}`);
     logger.error(`Factory reset step failed: ${stepName}`, { error: message });
   }

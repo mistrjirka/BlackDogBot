@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { searxngToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { searchSearxngAsync } from "../utils/searxng-client.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 interface ISearxngResult {
   title?: string;
@@ -71,7 +72,7 @@ export const searxngTool = tool({
 
       return { results: formattedMarkdown };
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
       return { results: "", error: `SearXNG search failed: ${errorMessage}` };
     }
   },

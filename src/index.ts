@@ -25,6 +25,7 @@ import type { IPlatformDeps } from "./platforms/types.js";
 import type { IConfig, IScheduledTask } from "./shared/types/index.js";
 import { getJobLogsDir } from "./utils/paths.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
+import { extractErrorMessage } from "./utils/error.js";
 
 const BRAIN_INTERFACE_PORT: number = parseInt(process.env.BRAIN_INTERFACE_PORT ?? "3001", 10);
 
@@ -311,7 +312,7 @@ async function mainAsync(): Promise<void> {
             await sender(message);
           } catch (error) {
             logger.error(`Failed to send cron message to ${channel.platform}:${channel.channelId}`, {
-              error: error instanceof Error ? error.message : String(error),
+              error: extractErrorMessage(error),
               taskId: task.taskId,
             });
           }

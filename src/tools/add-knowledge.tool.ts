@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { addKnowledgeToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import * as knowledge from "../helpers/knowledge.js";
+import { extractErrorMessage } from "../utils/error.js";
 import { IKnowledgeDocument } from "../shared/types/index.js";
 
 export const addKnowledgeTool = tool({
@@ -12,7 +13,7 @@ export const addKnowledgeTool = tool({
 
       return { id: doc.id, success: true };
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
       return { id: "", success: false, error: errorMessage };
     }
   },

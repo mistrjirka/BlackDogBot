@@ -7,6 +7,7 @@ import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
+import { extractErrorMessage } from "../utils/error.js";
 import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
@@ -143,7 +144,7 @@ Output a JSON object with:
       task: updatedTask,
     };
   } catch (error: unknown) {
-    const errorMessage: string = error instanceof Error ? error.message : String(error);
+    const errorMessage: string = extractErrorMessage(error);
     logger.error(`[${TOOL_NAME}] Failed to edit cron task: ${errorMessage}`);
 
     return { success: false, error: errorMessage };

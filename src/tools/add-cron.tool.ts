@@ -7,6 +7,7 @@ import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { generateId } from "../utils/id.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
+import { extractErrorMessage } from "../utils/error.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 
 //#region Interfaces
@@ -179,7 +180,7 @@ Output a JSON object with:
 
       return { taskId, success: true };
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
       logger.error(`[${TOOL_NAME}] Failed to add cron task: ${errorMessage}`);
 
       return { taskId: "", success: false, error: errorMessage };

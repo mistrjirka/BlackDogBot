@@ -1,6 +1,7 @@
 import type { IPlatform, IPlatformDeps } from "./types.js";
 import { LoggerService } from "../services/logger.service.js";
 import { ConfigService } from "../services/config.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 //#region Platform Registry
 
@@ -119,7 +120,7 @@ export class PlatformManager {
       } catch (error) {
         this._logger.error("Failed to initialize platform", {
           name: platform.name,
-          error: error instanceof Error ? error.message : String(error),
+          error: extractErrorMessage(error),
         });
       }
     }
@@ -140,7 +141,7 @@ export class PlatformManager {
         } catch (error) {
           this._logger.error("Failed to stop platform", {
             name: platformName,
-            error: error instanceof Error ? error.message : String(error),
+            error: extractErrorMessage(error),
           });
         }
       }

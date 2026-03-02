@@ -8,6 +8,7 @@ import type { ITableInfo } from "../helpers/litesql.js";
 import { deriveOutputSchemaFromTable } from "../utils/litesql-schema-helper.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { buildAsciiGraph } from "../utils/ascii-graph.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 export function createAddLitesqlReaderNodeTool(jobTracker: IJobActivityTracker) {
   return tool({
@@ -90,7 +91,7 @@ export function createAddLitesqlReaderNodeTool(jobTracker: IJobActivityTracker) 
 
         return { ...result, derivedOutputSchema, graphAscii };
       } catch (error: unknown) {
-        const errorMessage: string = error instanceof Error ? error.message : String(error);
+        const errorMessage: string = extractErrorMessage(error);
 
         return { nodeId: "", success: false, message: errorMessage, error: errorMessage };
       }

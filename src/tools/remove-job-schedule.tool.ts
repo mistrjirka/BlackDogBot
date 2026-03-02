@@ -4,6 +4,7 @@ import { JobStorageService } from "../services/job-storage.service.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import type { IJob, INode, IStartNodeConfig } from "../shared/types/index.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
 
@@ -84,7 +85,7 @@ export const removeJobScheduleTool = tool({
         message: `Schedule removed from job "${job.name}". ScheduledTask "${existingTaskId}" deleted.`,
       };
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
       logger.error(`[${TOOL_NAME}] Failed: ${errorMessage}`);
 
       return { success: false, message: errorMessage };

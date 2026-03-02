@@ -4,6 +4,7 @@ import { JobStorageService } from "../services/job-storage.service.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { generateId } from "../utils/id.js";
+import { extractErrorMessage } from "../utils/error.js";
 import type { IJob, INode, IStartNodeConfig } from "../shared/types/index.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 
@@ -131,7 +132,7 @@ export const setJobScheduleTool = tool({
         message: `Schedule set for job "${job.name}". ScheduledTask "${taskId}" created with ${schedule.type} schedule.`,
       };
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
       logger.error(`[${TOOL_NAME}] Failed: ${errorMessage}`);
 
       return { success: false, scheduledTaskId: "", message: errorMessage };

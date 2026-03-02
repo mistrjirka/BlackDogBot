@@ -1,4 +1,5 @@
 import { APICallError } from "ai";
+import { extractErrorMessage } from "./error.js";
 
 //#region Interfaces
 
@@ -24,7 +25,7 @@ export interface IAiErrorDetails {
  */
 export function extractAiErrorDetails(error: unknown): IAiErrorDetails {
   const details: IAiErrorDetails = {
-    message: error instanceof Error ? error.message : String(error),
+    message: extractErrorMessage(error),
     provider: null,
     model: null,
     statusCode: null,

@@ -19,6 +19,7 @@ import {
   formatAiErrorForUser,
   type IAiErrorDetails,
 } from "../../utils/ai-error.js";
+import { extractErrorMessage } from "../../utils/error.js";
 
 //#region Constants
 
@@ -333,7 +334,7 @@ export class TelegramHandler {
       }
     } catch (error) {
       this._logger.warn("Failed to load known Telegram chat IDs", {
-        error: error instanceof Error ? error.message : String(error),
+        error: extractErrorMessage(error),
       });
     }
   }
@@ -348,7 +349,7 @@ export class TelegramHandler {
       await writeFile(this._chatIdsFilePath, JSON.stringify(chatIds, null, 2));
     } catch (error) {
       this._logger.warn("Failed to save known Telegram chat IDs", {
-        error: error instanceof Error ? error.message : String(error),
+        error: extractErrorMessage(error),
       });
     }
   }

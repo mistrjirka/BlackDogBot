@@ -32,6 +32,7 @@ import { LoggerService } from "./logger.service.js";
 import { StatusService } from "./status.service.js";
 import { getModelsDir } from "../utils/paths.js";
 import { fetchWithTimeout } from "../utils/fetch-with-timeout.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 //#region Corruption error patterns
 
@@ -243,18 +244,15 @@ export class EmbeddingService {
             logger.warn(
               "Default local embedding model still failed after cache reset. " +
                 "Falling back to compatible multilingual model.",
-              {
-                requestedModel,
-                fallbackModel: DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
-                error:
-                  retryError instanceof Error
-                    ? retryError.message
-                    : String(retryError),
-              },
-            );
+          {
+            requestedModel,
+            fallbackModel: DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
+            error: extractErrorMessage(error),
+          },
+        );
 
-            this._modelPath = DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL;
-            await this._loadPipelineAsync();
+        this._modelPath = DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL;
+        await this._loadPipelineAsync();
           } else {
             throw retryError;
           }
@@ -271,7 +269,7 @@ export class EmbeddingService {
           {
             requestedModel,
             fallbackModel: DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
-            error: error instanceof Error ? error.message : String(error),
+            error: extractErrorMessage(error),
           },
         );
 

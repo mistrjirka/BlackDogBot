@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { removeCronToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
 
@@ -32,7 +33,7 @@ export const removeCronTool = tool({
 
       return { success: true, message: "Task removed successfully" };
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
       logger.error(`[${TOOL_NAME}] Failed to remove cron task: ${errorMessage}`);
 
       return { success: false, message: errorMessage };

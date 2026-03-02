@@ -10,6 +10,7 @@ import type {
 } from "../shared/types/channel.types.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
 import { LoggerService } from "./logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 //#region ChannelRegistryService
 
@@ -254,7 +255,7 @@ export class ChannelRegistryService {
       }
     } catch (error) {
       this._logger.warn("Failed to load channels.yaml, starting fresh", {
-        error: error instanceof Error ? error.message : String(error),
+        error: extractErrorMessage(error),
       });
       this._config = { version: 1, channels: [] };
     }
@@ -271,7 +272,7 @@ export class ChannelRegistryService {
       await writeFile(this._filePath, content, "utf-8");
     } catch (error) {
       this._logger.error("Failed to save channels.yaml", {
-        error: error instanceof Error ? error.message : String(error),
+        error: extractErrorMessage(error),
       });
     }
   }

@@ -6,6 +6,7 @@ import { validateFetcherConfigAsync } from "../utils/node-validation.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
 import { IRssFetcherConfig, RssFetchMode } from "../shared/types/index.js";
 import { buildAsciiGraph } from "../utils/ascii-graph.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 //#region Constants
 
@@ -84,7 +85,7 @@ export function createAddRssFetcherNodeTool(jobTracker: IJobActivityTracker) {
 
         return { ...result, graphAscii };
       } catch (error: unknown) {
-        const errorMessage: string = error instanceof Error ? error.message : String(error);
+        const errorMessage: string = extractErrorMessage(error);
 
         return { nodeId: "", success: false, message: errorMessage, error: errorMessage };
       }

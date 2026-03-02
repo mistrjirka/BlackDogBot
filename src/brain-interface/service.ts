@@ -14,6 +14,7 @@ import { JobStorageService } from "../services/job-storage.service.js";
 import { JobExecutorService } from "../services/job-executor.service.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { StatusService, type IStatusState } from "../services/status.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 import * as litesql from "../helpers/litesql.js";
 import type { IQueryResult } from "../helpers/litesql.js";
 import type { IJob, INode } from "../shared/types/index.js";
@@ -659,7 +660,7 @@ export class BrainInterfaceService {
           response.error = `Unknown command type: ${(command as BrainCommand).type}`;
       }
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorMessage: string = extractErrorMessage(error);
       this._logger.error("BrainInterface command error", { command, error: errorMessage });
       response = { success: false, error: errorMessage };
       const chatId: string = "chatId" in command ? (command.chatId ?? "") : "";

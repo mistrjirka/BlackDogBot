@@ -12,6 +12,7 @@ import {
 } from "../utils/paths.js";
 import { LoggerService } from "./logger.service.js";
 import { ConfigService } from "./config.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 export class SchedulerService {
   //#region Data members
@@ -122,7 +123,7 @@ export class SchedulerService {
     } catch (error: unknown) {
       this._logger.warn("Failed to delete task file", {
         taskId,
-        error: error instanceof Error ? error.message : String(error),
+        error: extractErrorMessage(error),
       });
     }
 
@@ -225,7 +226,7 @@ export class SchedulerService {
     } catch (error: unknown) {
       this._logger.warn("Failed to read cron directory", {
         cronDir,
-        error: error instanceof Error ? error.message : String(error),
+        error: extractErrorMessage(error),
       });
       return;
     }
@@ -246,7 +247,7 @@ export class SchedulerService {
       } catch (error: unknown) {
         this._logger.warn("Failed to parse task file, skipping", {
           filePath,
-          error: error instanceof Error ? error.message : String(error),
+          error: extractErrorMessage(error),
         });
       }
     }
@@ -278,7 +279,7 @@ export class SchedulerService {
         await this._saveTaskAsync(task);
       } catch (error: unknown) {
         const errorMessage: string =
-          error instanceof Error ? error.message : String(error);
+          extractErrorMessage(error);
 
         task.lastRunAt = new Date().toISOString();
         task.lastRunStatus = "failure";

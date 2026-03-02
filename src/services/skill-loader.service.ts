@@ -6,6 +6,7 @@ import { ISkill, ISkillStateInfo } from "../shared/types/index.js";
 import { getSkillsDir } from "../utils/paths.js";
 import { SKILL_FILE_NAME } from "../shared/constants.js";
 import { parseSkillFileAsync, IParsedSkill } from "../skills/parser.js";
+import { extractErrorMessage } from "../utils/error.js";
 import * as skillState from "../helpers/skill-state.js";
 import * as dependencyChecker from "../helpers/dependency-checker.js";
 import * as skillInstaller from "../helpers/skill-installer.js";
@@ -167,7 +168,7 @@ export class SkillLoaderService {
 
         this._logger.debug(`Loaded skill "${skillName}"`, { state: skill.state.state });
       } catch (error: unknown) {
-        const message: string = error instanceof Error ? error.message : String(error);
+        const message: string = extractErrorMessage(error);
 
         this._logger.warn(`Failed to parse skill "${skillName}": ${message}`);
       }

@@ -8,6 +8,7 @@ import type { ITableInfo } from "../helpers/litesql.js";
 import { deriveInputSchemaFromTable, validateSchemaHintAgainstTable, IJsonSchema } from "../utils/litesql-schema-helper.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { buildAsciiGraph } from "../utils/ascii-graph.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 // Default output schema for litesql nodes - they return insert metadata, not the data itself
 const LITESQL_DEFAULT_OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -115,7 +116,7 @@ export function createAddLitesqlNodeTool(jobTracker: IJobActivityTracker) {
 
         return { ...result, warning, derivedInputSchema: effectiveInputSchema, graphAscii };
       } catch (error: unknown) {
-        const errorMessage: string = error instanceof Error ? error.message : String(error);
+        const errorMessage: string = extractErrorMessage(error);
 
         return { nodeId: "", success: false, message: errorMessage, error: errorMessage };
       }
