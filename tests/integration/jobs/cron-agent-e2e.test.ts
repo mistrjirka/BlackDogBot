@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { ConfigService } from "../../../src/services/config.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
@@ -16,29 +17,17 @@ import type { IAgentResult } from "../../../src/agent/base-agent.js";
 import type { IScheduledTask } from "../../../src/shared/types/index.js";
 import type { MessageSender } from "../../../src/tools/index.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
 const sentMessages: string[] = [];
 
-function resetSingletons(): void {
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (AiProviderService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (RateLimiterService as unknown as { _instance: null })._instance = null;
-  (PromptService as unknown as { _instance: null })._instance = null;
-  (EmbeddingService as unknown as { _instance: null })._instance = null;
-  (VectorStoreService as unknown as { _instance: null })._instance = null;
-  (CronAgent as unknown as { _instance: null })._instance = null;
-}
 
 const mockMessageSender: MessageSender = async (message: string): Promise<string | null> => {
   sentMessages.push(message);
   return "mock-message-id";
 };
 
-//#endregion Helpers
 
 //#region Tests
 

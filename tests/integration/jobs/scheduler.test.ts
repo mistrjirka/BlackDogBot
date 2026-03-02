@@ -4,20 +4,15 @@ import path from "node:path";
 import os from "node:os";
 
 import { SchedulerService } from "../../../src/services/scheduler.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import type { IScheduledTask } from "../../../src/shared/types/index.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
 
-function resetSingletons(): void {
-  (SchedulerService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (ConfigService as unknown as { _instance: null })._instance = null;
-}
 
 function createTask(overrides?: Partial<IScheduledTask>): IScheduledTask {
   const now: string = new Date().toISOString();
@@ -40,7 +35,6 @@ function createTask(overrides?: Partial<IScheduledTask>): IScheduledTask {
   };
 }
 
-//#endregion Helpers
 
 //#region Tests
 

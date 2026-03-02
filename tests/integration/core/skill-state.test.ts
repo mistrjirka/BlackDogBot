@@ -4,10 +4,10 @@ import path from "node:path";
 import os from "node:os";
 
 import * as skillState from "../../../src/helpers/skill-state.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import type { ISkillStateInfo } from "../../../src/shared/types/index.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
@@ -23,11 +23,7 @@ async function cleanupTempHomeAsync(): Promise<void> {
   await fs.rm(tempDir, { recursive: true, force: true });
 }
 
-function resetSingletons(): void {
-  (LoggerService as unknown as { _instance: null })._instance = null;
-}
 
-//#endregion Helpers
 
 //#region Tests
 

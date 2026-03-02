@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { ConfigService } from "../../../src/services/config.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { SchedulerService } from "../../../src/services/scheduler.service.js";
 import { PromptService } from "../../../src/services/prompt.service.js";
@@ -12,12 +13,6 @@ import { factoryResetAsync } from "../../../src/services/factory-reset.service.j
 let tempDir: string;
 let originalHome: string;
 
-function resetSingletons(): void {
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (SchedulerService as unknown as { _instance: null })._instance = null;
-  (PromptService as unknown as { _instance: null })._instance = null;
-}
 
 describe("factoryResetAsync", () => {
   beforeEach(async () => {

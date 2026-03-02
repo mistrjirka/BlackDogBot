@@ -4,11 +4,11 @@ import path from "node:path";
 import os from "node:os";
 
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import * as skillState from "../../../src/helpers/skill-state.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import type { ISkill } from "../../../src/shared/types/index.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
@@ -24,10 +24,6 @@ async function cleanupTempHomeAsync(): Promise<void> {
   await fs.rm(tempDir, { recursive: true, force: true });
 }
 
-function resetSingletons(): void {
-  (SkillLoaderService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-}
 
 async function createSkillOnDiskAsync(dir: string, skillName: string, frontmatter: string, instructions: string): Promise<void> {
   const skillDir: string = path.join(dir, skillName);
@@ -39,7 +35,6 @@ async function createSkillOnDiskAsync(dir: string, skillName: string, frontmatte
   await fs.writeFile(path.join(skillDir, "SKILL.md"), content, "utf-8");
 }
 
-//#endregion Helpers
 
 //#region Tests
 

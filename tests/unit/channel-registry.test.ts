@@ -4,11 +4,7 @@ import * as path from "node:path";
 import { ChannelRegistryService } from "../../src/services/channel-registry.service.js";
 import { LoggerService } from "../../src/services/logger.service.js";
 import type { IRegisteredChannel } from "../../src/shared/types/channel.types.js";
-
-function resetSingletons(): void {
-  (ChannelRegistryService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-}
+import { resetSingletons } from "../utils/test-helpers.js";
 
 async function createTempChannelsFile(
   content: Record<string, unknown>

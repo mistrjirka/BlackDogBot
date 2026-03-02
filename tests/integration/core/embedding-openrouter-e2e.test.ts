@@ -4,21 +4,16 @@ import path from "node:path";
 import os from "node:os";
 
 import { ConfigService } from "../../../src/services/config.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { EmbeddingService } from "../../../src/services/embedding.service.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
 let shouldRunLiveTest: boolean = false;
 let skipReason: string = "";
 
-function resetSingletons(): void {
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (EmbeddingService as unknown as { _instance: null })._instance = null;
-}
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dotProduct: number = 0;
@@ -34,7 +29,6 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-//#endregion Helpers
 
 //#region Tests
 

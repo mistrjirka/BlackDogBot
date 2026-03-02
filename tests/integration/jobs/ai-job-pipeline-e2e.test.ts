@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { ConfigService } from "../../../src/services/config.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
@@ -29,25 +30,11 @@ import type {
 } from "../../../src/shared/types/index.js";
 import type { MessageSender, PhotoSender } from "../../../src/tools/index.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
 const sentMessages: string[] = [];
 
-function resetSingletons(): void {
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (AiProviderService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (RateLimiterService as unknown as { _instance: null })._instance = null;
-  (PromptService as unknown as { _instance: null })._instance = null;
-  (EmbeddingService as unknown as { _instance: null })._instance = null;
-  (VectorStoreService as unknown as { _instance: null })._instance = null;
-  (JobStorageService as unknown as { _instance: null })._instance = null;
-  (JobExecutorService as unknown as { _instance: null })._instance = null;
-  (SkillLoaderService as unknown as { _instance: null })._instance = null;
-  (MainAgent as unknown as { _instance: null })._instance = null;
-}
 
 const mockMessageSender: MessageSender = async (message: string): Promise<string | null> => {
   sentMessages.push(message);
@@ -132,7 +119,6 @@ function buildAsciiGraph(nodes: INode[], entrypointNodeId: string | null): strin
   return lines.join("\n");
 }
 
-//#endregion Helpers
 
 //#region Tests
 

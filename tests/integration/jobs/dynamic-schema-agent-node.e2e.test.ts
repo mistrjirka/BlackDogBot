@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { LoggerService } from "../../../src/services/logger.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
@@ -14,20 +15,10 @@ import type { IJob, INode } from "../../../src/shared/types/index.js";
 import { createOutputZodSchema } from "../../../src/utils/json-schema-to-zod.js";
 import { createCreateOutputSchemaTool } from "../../../src/tools/create-output-schema.tool.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
 
-function resetSingletons(): void {
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (AiProviderService as unknown as { _instance: null })._instance = null;
-  (RateLimiterService as unknown as { _instance: null })._instance = null;
-  (JobStorageService as unknown as { _instance: null })._instance = null;
-  (JobExecutorService as unknown as { _instance: null })._instance = null;
-  (PromptService as unknown as { _instance: null })._instance = null;
-}
 
 async function writeConfigAsync(configPath: string, content: string): Promise<void> {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
@@ -44,7 +35,6 @@ async function execTool<T>(toolObj: any, args: unknown): Promise<T> {
   return result as T;
 }
 
-//#endregion Helpers
 
 //#region Tests
 

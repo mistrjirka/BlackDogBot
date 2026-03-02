@@ -27,6 +27,9 @@ function createMockTask(overrides: Partial<IScheduledTask> = {}): IScheduledTask
     lastRunError: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    messageHistory: [],
+    messageSummary: null,
+    summaryGeneratedAt: null,
     ...overrides,
   };
 }
@@ -53,7 +56,7 @@ function createMockDeps(overrides: Partial<ICronTaskExecutorDeps> = {}): ICronTa
     logInfo: vi.fn((message: string, _meta?: Record<string, unknown>): void => {
       logMessages.push(message);
     }),
-    executeTaskAsync: vi.fn(async (_task, _sender) => ({ text: "", stepsCount: 1 })),
+    executeTaskAsync: vi.fn(async (_task, _sender, _taskIdProvider) => ({ text: "", stepsCount: 1 })),
     openJobLogAsync: vi.fn(async () => {}),
     closeJobLog: vi.fn(() => {}),
     getJobLogPath: vi.fn((name: string, ts: string) => `/tmp/test-logs/${name}-${ts}.log`),
@@ -66,8 +69,7 @@ describe("Cron Task Message Routing", () => {
     it("should ALWAYS broadcast to notification channels when agent calls send_message, even with notifyUser=false", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: false });
       const deps = createMockDeps({
-        executeTaskAsync: vi.fn(async (_task, sender) => {
-          // Simulate the agent calling send_message during execution
+        executeTaskAsync: vi.fn(async (_task, sender, _taskIdProvider) => {
           await sender("Hello from send_message tool");
           return { text: "", stepsCount: 1 };
         }),
@@ -85,7 +87,7 @@ describe("Cron Task Message Routing", () => {
     it("should ALWAYS broadcast to notification channels when agent calls send_message with notifyUser=true", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: true });
       const deps = createMockDeps({
-        executeTaskAsync: vi.fn(async (_task, sender) => {
+        executeTaskAsync: vi.fn(async (_task, sender, _taskIdProvider) => {
           await sender("Hello from send_message tool");
           return { text: "", stepsCount: 1 };
         }),
@@ -99,7 +101,7 @@ describe("Cron Task Message Routing", () => {
     it("should broadcast multiple messages to notification channels when agent calls send_message multiple times", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: false });
       const deps = createMockDeps({
-        executeTaskAsync: vi.fn(async (_task, sender) => {
+        executeTaskAsync: vi.fn(async (_task, sender, _taskIdProvider) => {
           await sender("Progress: step 1 complete");
           await sender("Progress: step 2 complete");
           await sender("Final results: everything passed");
@@ -175,7 +177,7 @@ describe("Cron Task Message Routing", () => {
     it("should send tool messages AND final text to notification channels when notifyUser=true", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: true });
       const deps = createMockDeps({
-        executeTaskAsync: vi.fn(async (_task, sender) => {
+        executeTaskAsync: vi.fn(async (_task, sender, _taskIdProvider) => {
           await sender("Searching for news...");
           await sender("Found 5 articles");
           return { text: "Summary: processed 5 articles and stored results", stepsCount: 3 };
@@ -195,7 +197,7 @@ describe("Cron Task Message Routing", () => {
     it("should send ONLY tool messages to notification channels when notifyUser=false, NOT the final text", async () => {
       const task: IScheduledTask = createMockTask({ notifyUser: false });
       const deps = createMockDeps({
-        executeTaskAsync: vi.fn(async (_task, sender) => {
+        executeTaskAsync: vi.fn(async (_task, sender, _taskIdProvider) => {
           await sender("Searching for news...");
           await sender("Found 5 articles");
           return { text: "Summary: processed 5 articles and stored results", stepsCount: 3 };

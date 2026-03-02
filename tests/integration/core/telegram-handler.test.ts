@@ -5,6 +5,7 @@ import os from "node:os";
 import { APICallError } from "ai";
 
 import { ConfigService } from "../../../src/services/config.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
@@ -24,27 +25,10 @@ import type { ITelegramConfig } from "../../../src/platforms/telegram/types.js";
 import type { IPlatformDeps } from "../../../src/platforms/types.js";
 import type { Context } from "grammy";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
 
-function resetSingletons(): void {
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (AiProviderService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (RateLimiterService as unknown as { _instance: null })._instance = null;
-  (PromptService as unknown as { _instance: null })._instance = null;
-  (EmbeddingService as unknown as { _instance: null })._instance = null;
-  (VectorStoreService as unknown as { _instance: null })._instance = null;
-  (JobStorageService as unknown as { _instance: null })._instance = null;
-  (JobExecutorService as unknown as { _instance: null })._instance = null;
-  (SkillLoaderService as unknown as { _instance: null })._instance = null;
-  (MessagingService as unknown as { _instance: null })._instance = null;
-  (ChannelRegistryService as unknown as { _instance: null })._instance = null;
-  (MainAgent as unknown as { _instance: null })._instance = null;
-  (TelegramHandler as unknown as { _instance: null })._instance = null;
-}
 
 function createMockTelegramConfig(allowedUsers?: string[]): ITelegramConfig {
   return {
@@ -118,7 +102,6 @@ function createFakeAdapter(
   };
 }
 
-//#endregion Helpers
 
 //#region Tests
 

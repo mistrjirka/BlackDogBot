@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { ConfigService } from "../../../src/services/config.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { SchedulerService } from "../../../src/services/scheduler.service.js";
@@ -16,13 +17,6 @@ let tempDir: string;
 let originalHome: string;
 let schedulerService: SchedulerService;
 
-function resetSingletons(): void {
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (AiProviderService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (SchedulerService as unknown as { _instance: null })._instance = null;
-  (PromptService as unknown as { _instance: null })._instance = null;
-}
 
 async function createTaskDirectly(name: string): Promise<string> {
   const task: IScheduledTask = {

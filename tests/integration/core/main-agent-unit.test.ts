@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { MainAgent } from "../../../src/agent/main-agent.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
@@ -11,7 +12,6 @@ import { RateLimiterService } from "../../../src/services/rate-limiter.service.j
 import { PromptService } from "../../../src/services/prompt.service.js";
 import type { MessageSender, PhotoSender } from "../../../src/tools/index.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
@@ -51,14 +51,6 @@ services:
 /**
  * Resets all singletons involved in MainAgent unit tests.
  */
-function resetSingletons(): void {
-  (MainAgent as unknown as { _instance: null })._instance = null;
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (AiProviderService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (RateLimiterService as unknown as { _instance: null })._instance = null;
-  (PromptService as unknown as { _instance: null })._instance = null;
-}
 
 /**
  * Initializes all services required by MainAgent.initializeForChatAsync
@@ -86,7 +78,6 @@ async function initializeServicesAsync(): Promise<void> {
 const messageSender: MessageSender = async (): Promise<string | null> => null;
 const photoSender: PhotoSender = async (): Promise<string | null> => null;
 
-//#endregion Helpers
 
 //#region Tests
 

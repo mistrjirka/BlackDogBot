@@ -1,68 +1,22 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import fs from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
 
-import { ConfigService } from "../../../src/services/config.service.js";
-import { LoggerService } from "../../../src/services/logger.service.js";
-import { EmbeddingService } from "../../../src/services/embedding.service.js";
-import { VectorStoreService } from "../../../src/services/vector-store.service.js";
+import { createTestEnvironment, setupVectorStoreAsync } from "../../utils/test-helpers.js";
 import * as knowledge from "../../../src/helpers/knowledge.js";
 import type { IKnowledgeDocument, IKnowledgeSearchResult } from "../../../src/shared/types/index.js";
+import { VectorStoreService } from "../../../src/services/vector-store.service.js";
 
-//#region Helpers
-
-let tempDir: string;
-let originalHome: string;
-
-function resetSingletons(): void {
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (EmbeddingService as unknown as { _instance: null })._instance = null;
-  (VectorStoreService as unknown as { _instance: null })._instance = null;
-}
-
-//#endregion Helpers
-
-//#region Tests
+const env = createTestEnvironment("knowledge");
 
 describe("KnowledgeService", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-knowledge-"));
-    originalHome = process.env.HOME ?? os.homedir();
-    process.env.HOME = tempDir;
-
-    resetSingletons();
-
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
-
-    await fs.mkdir(tempConfigDir, { recursive: true });
-
-    const loggerService: LoggerService = LoggerService.getInstance();
-
-    await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
-
-    const embeddingService: EmbeddingService = EmbeddingService.getInstance();
-
-    await embeddingService.initializeAsync();
-
-    const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
-    const lanceDbPath: string = path.join(tempDir, ".betterclaw", "knowledge", "lancedb");
-
-    await vectorStoreService.initializeAsync(
-      lanceDbPath,
-      embeddingService.getDimension(),
-    );
+    await env.setupAsync();
+    await setupVectorStoreAsync();
   }, 300000);
 
   afterAll(async () => {
-    const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
-
+    const vectorStoreService = VectorStoreService.getInstance();
     await vectorStoreService.closeAsync();
-
-    process.env.HOME = originalHome;
-    resetSingletons();
-    await fs.rm(tempDir, { recursive: true, force: true });
+    await env.teardownAsync();
   });
 
   it("should add a knowledge document and retrieve it by search", async () => {
@@ -190,5 +144,3 @@ describe("KnowledgeService", () => {
     expect(count).toBe(0);
   });
 });
-
-//#endregion Tests

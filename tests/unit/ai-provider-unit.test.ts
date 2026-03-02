@@ -1,19 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { AiProviderService } from "../../src/services/ai-provider.service.js";
+import { resetSingletons } from "../utils/test-helpers.js";
 import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
 import type { IAiConfig } from "../../src/shared/types/index.js";
 import type { LanguageModel } from "ai";
 
-//#region Helpers
 
 /**
  * Resets AiProviderService and RateLimiterService singletons between tests.
  */
-function resetSingletons(): void {
-  (AiProviderService as unknown as { _instance: null })._instance = null;
-  (RateLimiterService as unknown as { _instance: null })._instance = null;
-}
 
 /** Minimal valid OpenRouter config for testing. */
 const openrouterConfig: IAiConfig = {
@@ -36,7 +32,6 @@ const openaiCompatibleConfig: IAiConfig = {
   },
 };
 
-//#endregion Helpers
 
 //#region Tests
 

@@ -4,22 +4,16 @@ import path from "node:path";
 import os from "node:os";
 
 import { ConfigService } from "../../../src/services/config.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
 import { createCreateOutputSchemaTool } from "../../../src/tools/create-output-schema.tool.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
 
-function resetSingletons(): void {
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (AiProviderService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (RateLimiterService as unknown as { _instance: null })._instance = null;
-}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function execTool<T>(toolObj: any, args: unknown): Promise<T> {
@@ -31,7 +25,6 @@ async function execTool<T>(toolObj: any, args: unknown): Promise<T> {
   return result as T;
 }
 
-//#endregion Helpers
 
 //#region Tests
 

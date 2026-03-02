@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { LoggerService } from "../../../src/services/logger.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { searchSearxngAsync } from "../../../src/utils/searxng-client.js";
 import { crawlUrlAsync } from "../../../src/utils/crawl4ai-client.js";
@@ -31,10 +32,6 @@ let originalHome: string;
 let searxngUrl: string | undefined;
 let crawl4aiUrl: string | undefined;
 
-function resetSingletons(): void {
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (ConfigService as unknown as { _instance: null })._instance = null;
-}
 
 beforeAll(async () => {
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-tools-test-"));

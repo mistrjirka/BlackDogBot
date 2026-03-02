@@ -5,6 +5,7 @@ import os from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { ConfigService } from "../../../src/services/config.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { MessagingService } from "../../../src/services/messaging.service.js";
 import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
@@ -16,14 +17,6 @@ import type { IPlatformDeps } from "../../../src/platforms/types.js";
 let tempDir: string;
 let originalHome: string;
 
-function resetSingletons(): void {
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (MessagingService as unknown as { _instance: null })._instance = null;
-  (ChannelRegistryService as unknown as { _instance: null })._instance = null;
-  (TelegramHandler as unknown as { _instance: null })._instance = null;
-  (MainAgent as unknown as { _instance: null })._instance = null;
-}
 
 function createMockDeps(): IPlatformDeps {
   return {

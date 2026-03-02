@@ -10,13 +10,7 @@ import type {
   IOutgoingMessage,
   IOutgoingPhoto,
 } from "../../src/shared/types/messaging.types.js";
-
-//#region Helpers
-
-function resetSingletons(): void {
-  (MessagingService as unknown as { _instance: null })._instance = null;
-  (LoggerService as unknown as { _instance: null })._instance = null;
-}
+import { resetSingletons } from "../utils/test-helpers.js";
 
 function createFakeAdapter(platform: "telegram" | "console" | "api"): IPlatformAdapter {
   return {
@@ -26,8 +20,6 @@ function createFakeAdapter(platform: "telegram" | "console" | "api"): IPlatformA
     sendChatActionAsync: vi.fn().mockResolvedValue(undefined),
   };
 }
-
-//#endregion Helpers
 
 //#region Tests
 

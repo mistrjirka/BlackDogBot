@@ -4,11 +4,11 @@ import path from "node:path";
 import os from "node:os";
 
 import { LoggerService } from "../../../src/services/logger.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import { connectNodesTool } from "../../../src/tools/connect-nodes.tool.js";
 import type { IJob, INode } from "../../../src/shared/types/index.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
@@ -19,10 +19,6 @@ interface IConnectNodesResult {
   schemaCompatible: boolean;
 }
 
-function resetSingletons(): void {
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (JobStorageService as unknown as { _instance: null })._instance = null;
-}
 
 /** Invoke a tool's execute function, bypassing strict input typing for testing. */
 async function execConnectNodesTool(args: {
@@ -98,7 +94,6 @@ async function createTestJobWithNodes(
   return { job, nodeA, nodeB, nodeC };
 }
 
-//#endregion Helpers
 
 //#region Tests
 

@@ -4,22 +4,16 @@ import path from "node:path";
 import os from "node:os";
 
 import { LoggerService } from "../../../src/services/logger.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import * as litesql from "../../../src/helpers/litesql.js";
 import { JobExecutorService } from "../../../src/services/job-executor.service.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
 
-function resetSingletons(): void {
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (JobStorageService as unknown as { _instance: null })._instance = null;
-  (JobExecutorService as unknown as { _instance: null })._instance = null;
-}
 
 async function initServicesAsync(): Promise<void> {
   const loggerService: LoggerService = LoggerService.getInstance();
@@ -33,7 +27,6 @@ async function initServicesAsync(): Promise<void> {
   await configService.initializeAsync(path.join(tempConfigDir, "config.yaml"));
 }
 
-//#endregion Helpers
 
 describe("LITESQL node execution — object and array inserts", () => {
   beforeEach(async () => {

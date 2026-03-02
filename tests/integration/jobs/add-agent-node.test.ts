@@ -4,22 +4,17 @@ import path from "node:path";
 import os from "node:os";
 
 import { LoggerService } from "../../../src/services/logger.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import { JobActivityTracker } from "../../../src/utils/job-activity-tracker.js";
 import { getAgentNodeToolNames } from "../../../src/utils/agent-node-tool-pool.js";
 import { createAddAgentNodeTool } from "../../../src/tools/add-agent-node.tool.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
 
-function resetSingletons(): void {
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (JobStorageService as unknown as { _instance: null })._instance = null;
-}
 
 async function initServicesAsync(): Promise<void> {
   const loggerService: LoggerService = LoggerService.getInstance();
@@ -47,7 +42,6 @@ async function execTool<T>(toolObj: any, args: unknown): Promise<T> {
   return result as T;
 }
 
-//#endregion Helpers
 
 describe("add_agent_node (unit)", () => {
   beforeEach(async () => {

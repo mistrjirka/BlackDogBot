@@ -4,18 +4,14 @@ import path from "node:path";
 import os from "node:os";
 
 import { LoggerService } from "../../../src/services/logger.service.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import type { IJob, INode } from "../../../src/shared/types/index.js";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
 
-function resetSingletons(): void {
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (JobStorageService as unknown as { _instance: null })._instance = null;
-}
 
 async function createTestJobWithNodes(
   storageService: JobStorageService,
@@ -58,7 +54,6 @@ async function createTestJobWithNodes(
   return { job, nodeA, nodeB, nodeC };
 }
 
-//#endregion Helpers
 
 //#region Tests
 

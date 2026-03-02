@@ -4,13 +4,13 @@ import path from "node:path";
 import os from "node:os";
 
 import { BaseAgentBase } from "../../../src/agent/base-agent.js";
+import { resetSingletons } from "../../utils/test-helpers.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
 import type { ToolSet, LanguageModel } from "ai";
 
-//#region Helpers
 
 let tempDir: string;
 let originalHome: string;
@@ -33,14 +33,7 @@ class TestAgent extends BaseAgentBase {
   }
 }
 
-function resetSingletons(): void {
-  (LoggerService as unknown as { _instance: null })._instance = null;
-  (ConfigService as unknown as { _instance: null })._instance = null;
-  (AiProviderService as unknown as { _instance: null })._instance = null;
-  (RateLimiterService as unknown as { _instance: null })._instance = null;
-}
 
-//#endregion Helpers
 
 //#region Tests
 
