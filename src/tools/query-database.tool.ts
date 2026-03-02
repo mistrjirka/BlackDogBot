@@ -2,8 +2,10 @@ import { tool } from "ai";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
+import * as litesqlValidation from "../helpers/litesql-validation.js";
 import type { IQueryResult } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 const actionSchema = z.enum([
   "list_databases",
@@ -144,7 +146,7 @@ export const queryDatabaseTool = tool({
           };
       }
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = extractErrorMessage(error);
       logger.error("query-database tool error", { error: errorMsg });
       return {
         success: false,
@@ -174,8 +176,7 @@ async function _handleListTablesAsync(
   databaseName?: string,
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+    const available = await litesqlValidation.getAvailableDatabasesAsync();
 
     return {
       success: false,
@@ -184,15 +185,13 @@ async function _handleListTablesAsync(
     };
   }
 
-  const exists: boolean = await litesql.databaseExistsAsync(databaseName);
-  if (!exists) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
+  try {
+    await litesqlValidation.validateDatabaseExistsAsync(databaseName);
+  } catch (error: unknown) {
     return {
       success: false,
       action: "list_tables",
-      error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
+      error: extractErrorMessage(error),
     };
   }
 
@@ -215,8 +214,7 @@ async function _handleQueryTableAsync(
   columns?: string[],
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+    const available = await litesqlValidation.getAvailableDatabasesAsync();
 
     return {
       success: false,
@@ -226,8 +224,7 @@ async function _handleQueryTableAsync(
   }
 
   if (!tableName) {
-    const allTables: string[] = await litesql.listTablesAsync(databaseName);
-    const available: string = allTables.join(", ") || "(none)";
+    const available = await litesqlValidation.getAvailableTablesAsync(databaseName);
 
     return {
       success: false,
@@ -236,27 +233,13 @@ async function _handleQueryTableAsync(
     };
   }
 
-  const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
-  if (!dbExists) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
+  try {
+    await litesqlValidation.validateTableExistsAsync(databaseName, tableName);
+  } catch (error: unknown) {
     return {
       success: false,
       action: "query_table",
-      error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
-    };
-  }
-
-  const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
-  if (!tableExists) {
-    const allTables: string[] = await litesql.listTablesAsync(databaseName);
-    const available: string = allTables.join(", ") || "(none)";
-
-    return {
-      success: false,
-      action: "query_table",
-      error: `Table "${tableName}" does not exist in database "${databaseName}".\nAvailable tables: ${available}`,
+      error: extractErrorMessage(error),
     };
   }
 
@@ -283,8 +266,7 @@ async function _handleShowSchemaAsync(
   tableName?: string,
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+    const available = await litesqlValidation.getAvailableDatabasesAsync();
 
     return {
       success: false,
@@ -294,8 +276,7 @@ async function _handleShowSchemaAsync(
   }
 
   if (!tableName) {
-    const allTables: string[] = await litesql.listTablesAsync(databaseName);
-    const available: string = allTables.join(", ") || "(none)";
+    const available = await litesqlValidation.getAvailableTablesAsync(databaseName);
 
     return {
       success: false,
@@ -304,27 +285,13 @@ async function _handleShowSchemaAsync(
     };
   }
 
-  const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
-  if (!dbExists) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
+  try {
+    await litesqlValidation.validateTableExistsAsync(databaseName, tableName);
+  } catch (error: unknown) {
     return {
       success: false,
       action: "show_schema",
-      error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
-    };
-  }
-
-  const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
-  if (!tableExists) {
-    const allTables: string[] = await litesql.listTablesAsync(databaseName);
-    const available: string = allTables.join(", ") || "(none)";
-
-    return {
-      success: false,
-      action: "show_schema",
-      error: `Table "${tableName}" does not exist in database "${databaseName}".\nAvailable tables: ${available}`,
+      error: extractErrorMessage(error),
     };
   }
 
@@ -347,8 +314,7 @@ async function _handleInsertAsync(
   data?: Record<string, unknown>,
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+    const available = await litesqlValidation.getAvailableDatabasesAsync();
 
     return {
       success: false,
@@ -358,8 +324,7 @@ async function _handleInsertAsync(
   }
 
   if (!tableName) {
-    const allTables: string[] = await litesql.listTablesAsync(databaseName);
-    const available: string = allTables.join(", ") || "(none)";
+    const available = await litesqlValidation.getAvailableTablesAsync(databaseName);
 
     return {
       success: false,
@@ -376,27 +341,13 @@ async function _handleInsertAsync(
     };
   }
 
-  const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
-  if (!dbExists) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
+  try {
+    await litesqlValidation.validateTableExistsAsync(databaseName, tableName);
+  } catch (error: unknown) {
     return {
       success: false,
       action: "insert",
-      error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
-    };
-  }
-
-  const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
-  if (!tableExists) {
-    const allTables: string[] = await litesql.listTablesAsync(databaseName);
-    const available: string = allTables.join(", ") || "(none)";
-
-    return {
-      success: false,
-      action: "insert",
-      error: `Table "${tableName}" does not exist in database "${databaseName}".\nAvailable tables: ${available}`,
+      error: extractErrorMessage(error),
     };
   }
 
@@ -419,8 +370,7 @@ async function _handleUpdateAsync(
   where?: string,
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+    const available = await litesqlValidation.getAvailableDatabasesAsync();
 
     return {
       success: false,
@@ -430,8 +380,7 @@ async function _handleUpdateAsync(
   }
 
   if (!tableName) {
-    const allTables: string[] = await litesql.listTablesAsync(databaseName);
-    const available: string = allTables.join(", ") || "(none)";
+    const available = await litesqlValidation.getAvailableTablesAsync(databaseName);
 
     return {
       success: false,
@@ -456,15 +405,13 @@ async function _handleUpdateAsync(
     };
   }
 
-  const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
-  if (!dbExists) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
+  try {
+    await litesqlValidation.validateTableExistsAsync(databaseName, tableName);
+  } catch (error: unknown) {
     return {
       success: false,
       action: "update",
-      error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
+      error: extractErrorMessage(error),
     };
   }
 
@@ -485,8 +432,7 @@ async function _handleDeleteAsync(
   where?: string,
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
+    const available = await litesqlValidation.getAvailableDatabasesAsync();
 
     return {
       success: false,
@@ -496,8 +442,7 @@ async function _handleDeleteAsync(
   }
 
   if (!tableName) {
-    const allTables: string[] = await litesql.listTablesAsync(databaseName);
-    const available: string = allTables.join(", ") || "(none)";
+    const available = await litesqlValidation.getAvailableTablesAsync(databaseName);
 
     return {
       success: false,
@@ -514,15 +459,13 @@ async function _handleDeleteAsync(
     };
   }
 
-  const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
-  if (!dbExists) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
+  try {
+    await litesqlValidation.validateTableExistsAsync(databaseName, tableName);
+  } catch (error: unknown) {
     return {
       success: false,
       action: "delete",
-      error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
+      error: extractErrorMessage(error),
     };
   }
 
@@ -536,3 +479,4 @@ async function _handleDeleteAsync(
     deletedCount: result.deletedCount,
   };
 }
+
