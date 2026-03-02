@@ -6,9 +6,9 @@ import { ISkill, ISkillStateInfo } from "../shared/types/index.js";
 import { getSkillsDir } from "../utils/paths.js";
 import { SKILL_FILE_NAME } from "../shared/constants.js";
 import { parseSkillFileAsync, IParsedSkill } from "../skills/parser.js";
-import { SkillStateService } from "./skill-state.service.js";
-import { DependencyCheckerService } from "./dependency-checker.service.js";
-import { SkillInstallerService } from "./skill-installer.service.js";
+import * as skillState from "../helpers/skill-state.js";
+import * as dependencyChecker from "../helpers/dependency-checker.js";
+import * as skillInstaller from "../helpers/skill-installer.js";
 import { LoggerService } from "./logger.service.js";
 
 export class SkillLoaderService {
@@ -17,7 +17,6 @@ export class SkillLoaderService {
 
   private static _instance: SkillLoaderService | null;
   private _logger: LoggerService;
-  private _skillStateService: SkillStateService;
   private _skills: Map<string, ISkill>;
 
   //#endregion Data members
@@ -26,7 +25,6 @@ export class SkillLoaderService {
 
   private constructor() {
     this._logger = LoggerService.getInstance();
-    this._skillStateService = SkillStateService.getInstance();
     this._skills = new Map<string, ISkill>();
   }
 
@@ -61,12 +59,11 @@ export class SkillLoaderService {
 
   public getManualSteps(skill: ISkill): string[] {
     const installSteps = skill.frontmatter.metadata?.openclaw?.install || [];
-    const installer = SkillInstallerService.getInstance();
     const manualSteps: string[] = [];
 
     for (const step of installSteps) {
       if (step.kind === "pacman" || step.kind === "apt" || step.kind === "download") {
-        manualSteps.push(installer.getManualInstructions(step));
+        manualSteps.push(skillInstaller.getSkillManualInstructions(step));
       }
     }
 
@@ -148,7 +145,7 @@ export class SkillLoaderService {
 
       try {
         const parsed: IParsedSkill = await parseSkillFileAsync(skillFilePath);
-        const savedState: ISkillStateInfo = await this._skillStateService.getStateAsync(skillName);
+        const savedState: ISkillStateInfo = await skillState.getSkillStateAsync(skillName);
 
         const skill: ISkill = {
           name: skillName,
@@ -206,8 +203,7 @@ export class SkillLoaderService {
       };
     }
 
-    const depChecker = DependencyCheckerService.getInstance();
-    const depResult = await depChecker.checkRequirements(requires);
+    const depResult = await dependencyChecker.checkRequirementsAsync(requires);
 
     if (depResult.satisfied) {
       return {

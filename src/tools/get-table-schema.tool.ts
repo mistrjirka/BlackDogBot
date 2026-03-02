@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { LiteSqlService } from "../services/litesql.service.js";
+import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 
 const columnSchema = z.object({
@@ -28,13 +28,12 @@ export const getTableSchemaTool = tool({
     columns: z.infer<typeof columnSchema>[];
     error?: string;
   }> => {
-    const service: LiteSqlService = LiteSqlService.getInstance();
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const exists: boolean = await service.databaseExistsAsync(databaseName);
+      const exists: boolean = await litesql.databaseExistsAsync(databaseName);
       if (!exists) {
-        const allDbs = await service.listDatabasesAsync();
+        const allDbs = await litesql.listDatabasesAsync();
         const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
         return {
@@ -45,9 +44,9 @@ export const getTableSchemaTool = tool({
         };
       }
 
-      const tableExists: boolean = await service.tableExistsAsync(databaseName, tableName);
+      const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
       if (!tableExists) {
-        const tables = await service.listTablesAsync(databaseName);
+        const tables = await litesql.listTablesAsync(databaseName);
         const available: string = tables.join(", ") || "(none)";
 
         return {
@@ -58,7 +57,7 @@ export const getTableSchemaTool = tool({
         };
       }
 
-      const schema = await service.getTableSchemaAsync(databaseName, tableName);
+      const schema = await litesql.getTableSchemaAsync(databaseName, tableName);
 
       return {
         databaseName,

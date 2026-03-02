@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { queryDatabaseTool } from "../../../src/tools/query-database.tool.js";
-import { LiteSqlService } from "../../../src/services/litesql.service.js";
+import * as litesql from "../../../src/helpers/litesql.js";
 import { ensureAllDirectoriesAsync } from "../../../src/utils/paths.js";
 
-// Input type for the query-database tool
 interface IQueryDatabaseInput {
   action: "list_databases" | "list_tables" | "query_table" | "show_schema";
   databaseName?: string;
@@ -14,9 +13,7 @@ interface IQueryDatabaseInput {
   columns?: string[];
 }
 
-// Helper to call the tool with typed input
 async function executeTool(input: IQueryDatabaseInput): Promise<unknown> {
-  // @ts-expect-error - tool.execute signature
   return queryDatabaseTool.execute(input);
 }
 
@@ -26,20 +23,16 @@ describe("query-database tool", () => {
 
   beforeAll(async () => {
     await ensureAllDirectoriesAsync();
-    const service = LiteSqlService.getInstance();
     
-    // Create test database
-    await service.createDatabaseAsync(testDbName);
+    await litesql.createDatabaseAsync(testDbName);
     
-    // Create test table
-    await service.createTableAsync(testDbName, testTableName, [
+    await litesql.createTableAsync(testDbName, testTableName, [
       { name: "id", type: "INTEGER", primaryKey: true },
       { name: "name", type: "TEXT", notNull: true },
       { name: "value", type: "INTEGER" },
     ]);
     
-    // Insert test data
-    await service.insertIntoTableAsync(testDbName, testTableName, [
+    await litesql.insertIntoTableAsync(testDbName, testTableName, [
       { id: 1, name: "item1", value: 100 },
       { id: 2, name: "item2", value: 200 },
       { id: 3, name: "item3", value: 300 },
@@ -47,10 +40,7 @@ describe("query-database tool", () => {
   });
 
   afterAll(async () => {
-    // Clean up - drop the test database file
-    const service = LiteSqlService.getInstance();
-    await service.dropTableAsync(testDbName, testTableName);
-    // Note: We don't delete the database file, just clean up tables
+    await litesql.dropTableAsync(testDbName, testTableName);
   });
 
   describe("list_databases action", () => {
@@ -61,7 +51,6 @@ describe("query-database tool", () => {
       expect(result.databases).toBeDefined();
       expect(Array.isArray(result.databases)).toBe(true);
       
-      // Our test database should be in the list
       const dbNames = result.databases.map((d) => d.name);
       expect(dbNames).toContain(testDbName);
     });
@@ -113,7 +102,7 @@ describe("query-database tool", () => {
       }) as { success: boolean; rows: Record<string, unknown>[] };
       
       expect(result.success).toBe(true);
-      expect(result.rows.length).toBe(2); // items with value 200 and 300
+      expect(result.rows.length).toBe(2);
     });
 
     it("should order rows with orderBy clause", async () => {
@@ -139,7 +128,7 @@ describe("query-database tool", () => {
       
       expect(result.success).toBe(true);
       expect(result.rows.length).toBe(2);
-      expect(result.totalCount).toBe(3); // Total count is still 3
+      expect(result.totalCount).toBe(3);
     });
 
     it("should select specific columns", async () => {

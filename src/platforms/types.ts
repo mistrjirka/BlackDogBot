@@ -2,7 +2,7 @@ import type { IPlatformAdapter } from "../services/messaging.service.js";
 import type { ChannelRegistryService } from "../services/channel-registry.service.js";
 import type { MessagingService } from "../services/messaging.service.js";
 import type { LoggerService } from "../services/logger.service.js";
-import type { ToolRegistryService } from "../services/tool-registry.service.js";
+import type * as ToolRegistry from "../helpers/tool-registry.js";
 import type { MainAgent } from "../agent/main-agent.js";
 
 //#region Platform Types
@@ -21,8 +21,8 @@ export interface IPlatformDeps {
   /** Messaging service for sending messages */
   messagingService: MessagingService;
 
-  /** Tool registry for permission-based tool filtering */
-  toolRegistry: ToolRegistryService;
+  /** Tool registry helpers for permission-based tool filtering */
+  toolRegistry: typeof ToolRegistry;
 
   /** Logger instance */
   logger: LoggerService;

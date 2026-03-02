@@ -1,7 +1,8 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { LiteSqlService, IColumnInfo } from "../services/litesql.service.js";
+import * as litesql from "../helpers/litesql.js";
+import type { IColumnInfo } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 import { columnsToJsonSchema, IJsonSchema } from "../utils/litesql-schema-helper.js";
 
@@ -53,13 +54,12 @@ export const createTableTool = tool({
     message: string;
     error?: string;
   }> => {
-    const service: LiteSqlService = LiteSqlService.getInstance();
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const exists: boolean = await service.databaseExistsAsync(databaseName);
+      const exists: boolean = await litesql.databaseExistsAsync(databaseName);
       if (!exists) {
-        const allDbs = await service.listDatabasesAsync();
+        const allDbs = await litesql.listDatabasesAsync();
         const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
         return {
@@ -73,7 +73,7 @@ export const createTableTool = tool({
         };
       }
 
-      const tableExists: boolean = await service.tableExistsAsync(databaseName, tableName);
+      const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
       if (tableExists) {
         return {
           success: false,
@@ -86,7 +86,7 @@ export const createTableTool = tool({
         };
       }
 
-      await service.createTableAsync(databaseName, tableName, columns);
+      await litesql.createTableAsync(databaseName, tableName, columns);
 
       // Build IColumnInfo from the input columns so we can derive the JSON Schema
       const columnInfos: IColumnInfo[] = columns.map((c) => ({

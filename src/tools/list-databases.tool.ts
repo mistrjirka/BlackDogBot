@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { LiteSqlService } from "../services/litesql.service.js";
+import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 
 export const listDatabasesTool = tool({
@@ -16,11 +16,10 @@ export const listDatabasesTool = tool({
     }[];
     error?: string;
   }> => {
-    const service: LiteSqlService = LiteSqlService.getInstance();
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const databases = await service.listDatabasesAsync();
+      const databases = await litesql.listDatabasesAsync();
 
       return {
         databases: databases.map((db) => ({

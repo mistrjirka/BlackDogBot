@@ -9,10 +9,8 @@ export {
   type IVectorRecord,
   type IVectorSearchResult,
 } from "./vector-store.service.js";
-export { KnowledgeService } from "./knowledge.service.js";
 export { JobStorageService } from "./job-storage.service.js";
 export { JobExecutorService } from "./job-executor.service.js";
-export { SkillStateService } from "./skill-state.service.js";
 export { SkillLoaderService } from "./skill-loader.service.js";
 export { SchedulerService } from "./scheduler.service.js";
 export {

@@ -6,7 +6,7 @@ import os from "node:os";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
-import { LiteSqlService } from "../../../src/services/litesql.service.js";
+import * as litesql from "../../../src/helpers/litesql.js";
 import { JobExecutorService } from "../../../src/services/job-executor.service.js";
 
 //#region Helpers
@@ -18,7 +18,6 @@ function resetSingletons(): void {
   (LoggerService as unknown as { _instance: null })._instance = null;
   (ConfigService as unknown as { _instance: null })._instance = null;
   (JobStorageService as unknown as { _instance: null })._instance = null;
-  (LiteSqlService as unknown as { _instance: null })._instance = null;
   (JobExecutorService as unknown as { _instance: null })._instance = null;
 }
 
@@ -60,9 +59,8 @@ describe("LITESQL node execution — object and array inserts", () => {
   });
 
   async function setupTableAndJobAsync(): Promise<{ jobId: string; litesqlNodeId: string }> {
-    const liteSqlService: LiteSqlService = LiteSqlService.getInstance();
-    await liteSqlService.createDatabaseAsync("testdb");
-    await liteSqlService.createTableAsync("testdb", "articles", [
+    await litesql.createDatabaseAsync("testdb");
+    await litesql.createTableAsync("testdb", "articles", [
       { name: "id", type: "INTEGER", primaryKey: true },
       { name: "title", type: "TEXT", notNull: true },
       { name: "url", type: "TEXT", notNull: false },
@@ -106,7 +104,6 @@ describe("LITESQL node execution — object and array inserts", () => {
       { databaseName: "testdb", tableName: "articles" },
     );
 
-    // Connect start → litesql
     await storage.updateNodeAsync(job.jobId, startNode.nodeId, {
       connections: [litesqlNode.nodeId],
     });
@@ -128,19 +125,15 @@ describe("LITESQL node execution — object and array inserts", () => {
     expect(result.success).toBe(true);
     expect(result.output).toMatchObject({ insertedCount: 1, lastRowId: 1 });
 
-    // Verify data actually in DB
-    const liteSqlService: LiteSqlService = LiteSqlService.getInstance();
-    const queryResult = await liteSqlService.queryTableAsync("testdb", "articles");
+    const queryResult = await litesql.queryTableAsync("testdb", "articles");
     expect(queryResult.rows).toHaveLength(1);
     expect(queryResult.rows[0]).toMatchObject({ title: "Hello World", url: "https://example.com" });
   });
 
   it("inserts array wrapped in { items: [...] }", async () => {
-    // Update the litesql node's inputSchema to accept the wrapper format
     const storage: JobStorageService = JobStorageService.getInstance();
     const { jobId, litesqlNodeId } = await setupTableAndJobAsync();
 
-    // Relax input schema to accept wrapper object
     await storage.updateNodeAsync(jobId, litesqlNodeId, {
       inputSchema: {
         type: "object",
@@ -174,9 +167,7 @@ describe("LITESQL node execution — object and array inserts", () => {
     expect(result.success).toBe(true);
     expect(result.output).toMatchObject({ insertedCount: 3 });
 
-    // Verify all rows in DB
-    const liteSqlService: LiteSqlService = LiteSqlService.getInstance();
-    const queryResult = await liteSqlService.queryTableAsync("testdb", "articles", { orderBy: "id" });
+    const queryResult = await litesql.queryTableAsync("testdb", "articles", { orderBy: "id" });
     expect(queryResult.rows).toHaveLength(3);
     expect(queryResult.rows[0]).toMatchObject({ title: "Article 1" });
     expect(queryResult.rows[2]).toMatchObject({ title: "Article 3" });
@@ -185,7 +176,6 @@ describe("LITESQL node execution — object and array inserts", () => {
   it("rejects insert with missing required columns", async () => {
     const { jobId } = await setupTableAndJobAsync();
 
-    // Relax the node input schema so AJV pass lets the litesql executor validate
     const storage: JobStorageService = JobStorageService.getInstance();
     const nodes = await storage.listNodesAsync(jobId);
     const litesqlNode = nodes.find((n) => n.type === "litesql")!;
@@ -195,7 +185,6 @@ describe("LITESQL node execution — object and array inserts", () => {
 
     const executor: JobExecutorService = JobExecutorService.getInstance();
 
-    // title is NOT NULL but we only send url — should fail
     const result = await executor.executeJobAsync(jobId, {
       url: "https://example.com",
     });

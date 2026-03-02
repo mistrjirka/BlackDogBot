@@ -9,8 +9,6 @@ import { AiProviderService } from "../../../src/services/ai-provider.service.js"
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import { JobExecutorService } from "../../../src/services/job-executor.service.js";
-import { RssStateService } from "../../../src/services/rss-state.service.js";
-import { LiteSqlService } from "../../../src/services/litesql.service.js";
 import type { IJob, INode, IJobExecutionResult } from "../../../src/shared/types/index.js";
 
 //#region Helpers
@@ -25,8 +23,6 @@ function resetSingletons(): void {
   (RateLimiterService as unknown as { _instance: null })._instance = null;
   (JobStorageService as unknown as { _instance: null })._instance = null;
   (JobExecutorService as unknown as { _instance: null })._instance = null;
-  (RssStateService as unknown as { _instance: null })._instance = null;
-  (LiteSqlService as unknown as { _instance: null })._instance = null;
 }
 
 async function writeConfigAsync(configPath: string, content: string): Promise<void> {
@@ -49,7 +45,6 @@ describe("job-completion-event", () => {
 
     resetSingletons();
 
-    // Copy real config
     const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
     const tempConfigDir: string = path.join(tempDir, ".betterclaw");
     const configPath: string = path.join(tempConfigDir, "config.yaml");
@@ -67,7 +62,6 @@ describe("job-completion-event", () => {
 
     await writeConfigAsync(configPath, configWithServices);
 
-    // Initialize all required services
     const loggerService: LoggerService = LoggerService.getInstance();
 
     await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
@@ -80,7 +74,6 @@ describe("job-completion-event", () => {
 
     aiProviderService.initialize(configService.getAiConfig());
 
-    // Create a simple test job with a start node
     const job: IJob = await storageService.createJobAsync(
       "Test Job Completion",
       "Test job for completion events",
@@ -123,7 +116,6 @@ describe("job-completion-event", () => {
   });
 
   beforeEach(async () => {
-    // Reset job status to "ready" before each test
     await storageService.updateJobAsync(jobId, { status: "ready" });
   });
 
@@ -150,7 +142,6 @@ describe("job-completion-event", () => {
   });
 
   it("should return timing info on failed job execution", async () => {
-    // Create a job with a failing node
     const failJob: IJob = await storageService.createJobAsync(
       "Test Failing Job",
       "Test job that fails",
@@ -182,7 +173,6 @@ describe("job-completion-event", () => {
     expect(result.timing).toBeDefined();
     expect(result.timing!.durationMs).toBeGreaterThanOrEqual(0);
 
-    // Clean up
     await storageService.deleteJobAsync(failJob.jobId);
   });
 

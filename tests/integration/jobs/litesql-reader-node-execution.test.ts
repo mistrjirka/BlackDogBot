@@ -6,7 +6,7 @@ import os from "node:os";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
-import { LiteSqlService } from "../../../src/services/litesql.service.js";
+import * as litesql from "../../../src/helpers/litesql.js";
 import { JobExecutorService } from "../../../src/services/job-executor.service.js";
 
 //#region Helpers
@@ -18,7 +18,6 @@ function resetSingletons(): void {
   (LoggerService as unknown as { _instance: null })._instance = null;
   (ConfigService as unknown as { _instance: null })._instance = null;
   (JobStorageService as unknown as { _instance: null })._instance = null;
-  (LiteSqlService as unknown as { _instance: null })._instance = null;
   (JobExecutorService as unknown as { _instance: null })._instance = null;
 }
 
@@ -60,18 +59,17 @@ describe("LITESQL_READER node execution", () => {
   });
 
   async function seedDatabaseAsync(): Promise<void> {
-    const liteSqlService: LiteSqlService = LiteSqlService.getInstance();
-    await liteSqlService.createDatabaseAsync("testdb");
-    await liteSqlService.createTableAsync("testdb", "articles", [
+    await litesql.createDatabaseAsync("testdb");
+    await litesql.createTableAsync("testdb", "articles", [
       { name: "id", type: "INTEGER", primaryKey: true },
       { name: "title", type: "TEXT", notNull: true },
       { name: "category", type: "TEXT", notNull: false },
       { name: "score", type: "INTEGER", notNull: false },
     ]);
 
-    await liteSqlService.insertIntoTableAsync("testdb", "articles", { title: "Alpha", category: "tech", score: 10 });
-    await liteSqlService.insertIntoTableAsync("testdb", "articles", { title: "Beta", category: "science", score: 20 });
-    await liteSqlService.insertIntoTableAsync("testdb", "articles", { title: "Gamma", category: "tech", score: 30 });
+    await litesql.insertIntoTableAsync("testdb", "articles", { title: "Alpha", category: "tech", score: 10 });
+    await litesql.insertIntoTableAsync("testdb", "articles", { title: "Beta", category: "science", score: 20 });
+    await litesql.insertIntoTableAsync("testdb", "articles", { title: "Gamma", category: "tech", score: 30 });
   }
 
   async function buildReaderJobAsync(config: Record<string, unknown>): Promise<string> {
@@ -168,7 +166,6 @@ describe("LITESQL_READER node execution", () => {
 
     expect(result.success).toBe(true);
     const output = result.output as { rows: Record<string, unknown>[]; totalCount: number };
-    // totalCount is the count matching WHERE (all 3), but rows limited to 2
     expect(output.totalCount).toBe(3);
     expect(output.rows).toHaveLength(2);
     expect(output.rows[0]).toMatchObject({ title: "Gamma", score: 30 });
@@ -211,8 +208,7 @@ describe("LITESQL_READER node execution", () => {
   });
 
   it("errors when table does not exist", async () => {
-    const liteSqlService: LiteSqlService = LiteSqlService.getInstance();
-    await liteSqlService.createDatabaseAsync("testdb");
+    await litesql.createDatabaseAsync("testdb");
 
     const jobId = await buildReaderJobAsync({
       databaseName: "testdb",

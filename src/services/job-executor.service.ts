@@ -30,11 +30,11 @@ import {
 import { DEFAULT_PYTHON_TIMEOUT_MS, DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import { LoggerService } from "./logger.service.js";
 import { JobStorageService } from "./job-storage.service.js";
-import { RssStateService } from "./rss-state.service.js";
+import * as rssState from "../helpers/rss-state.js";
 import { AiProviderService } from "./ai-provider.service.js";
 import { searchSearxngAsync } from "../utils/searxng-client.js";
 import { crawlUrlAsync } from "../utils/crawl4ai-client.js";
-import { LiteSqlService } from "./litesql.service.js";
+import * as litesql from "../helpers/litesql.js";
 import { StatusService } from "./status.service.js";
 import { getExecutionOrder } from "../jobs/graph.js";
 import { ConfigService } from "./config.service.js";
@@ -751,20 +751,18 @@ export class JobExecutorService {
     let unseenCount: number | undefined;
 
     if (mode === "unseen") {
-      const rssStateService: RssStateService = RssStateService.getInstance();
-      const state: IRssState | null = await rssStateService.loadStateAsync(url);
-      const unseenItems: Record<string, unknown>[] = rssStateService.filterUnseenItems(allItems, state);
+      const state: IRssState | null = await rssState.loadRssStateAsync(url);
+      const unseenItems: Record<string, unknown>[] = rssState.filterUnseenRssItems(allItems, state);
 
       unseenCount = unseenItems.length;
       returnedItems = unseenItems.slice(0, maxItems);
 
-      // Persist seen IDs: union of previously seen + all fetched (not just returned)
-      const updatedSeenIds: string[] = rssStateService.mergeSeenIds(
+      const updatedSeenIds: string[] = rssState.mergeRssSeenIds(
         state?.seenIds ?? [],
         allItems,
       );
 
-      await rssStateService.saveStateAsync(url, updatedSeenIds);
+      await rssState.saveRssStateAsync(url, updatedSeenIds);
     } else {
       returnedItems = allItems.slice(0, maxItems);
     }
@@ -977,11 +975,9 @@ export class JobExecutorService {
     const databaseName: string = this._substituteTemplate(config.databaseName, input);
     const tableName: string = this._substituteTemplate(config.tableName, input);
 
-    const liteSqlService: LiteSqlService = LiteSqlService.getInstance();
-
-    const dbExists: boolean = await liteSqlService.databaseExistsAsync(databaseName);
+    const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
     if (!dbExists) {
-      const allDbs = await liteSqlService.listDatabasesAsync();
+      const allDbs = await litesql.listDatabasesAsync();
       const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
       throw new Error(
@@ -991,9 +987,9 @@ export class JobExecutorService {
       );
     }
 
-    const tableExists: boolean = await liteSqlService.tableExistsAsync(databaseName, tableName);
+    const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
     if (!tableExists) {
-      const tables = await liteSqlService.listTablesAsync(databaseName);
+      const tables = await litesql.listTablesAsync(databaseName);
       const available: string = tables.join(", ") || "(none)";
 
       throw new Error(
@@ -1003,7 +999,7 @@ export class JobExecutorService {
       );
     }
 
-    const schema = await liteSqlService.getTableSchemaAsync(databaseName, tableName);
+    const schema = await litesql.getTableSchemaAsync(databaseName, tableName);
     const tableColumns: string[] = schema.columns.map((c) => c.name);
 
     // Auto-unwrap if input is a wrapper object containing an array
@@ -1079,7 +1075,7 @@ export class JobExecutorService {
     }
 
     try {
-      const result = await liteSqlService.insertIntoTableAsync(databaseName, tableName, dataToInsert);
+      const result = await litesql.insertIntoTableAsync(databaseName, tableName, dataToInsert);
 
       return {
         insertedCount: result.insertedCount,
@@ -1119,11 +1115,9 @@ export class JobExecutorService {
     const databaseName: string = this._substituteTemplate(config.databaseName, input);
     const tableName: string = this._substituteTemplate(config.tableName, input);
 
-    const liteSqlService: LiteSqlService = LiteSqlService.getInstance();
-
-    const dbExists: boolean = await liteSqlService.databaseExistsAsync(databaseName);
+    const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
     if (!dbExists) {
-      const allDbs = await liteSqlService.listDatabasesAsync();
+      const allDbs = await litesql.listDatabasesAsync();
       const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
       throw new Error(
@@ -1132,9 +1126,9 @@ export class JobExecutorService {
       );
     }
 
-    const tableExists: boolean = await liteSqlService.tableExistsAsync(databaseName, tableName);
+    const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
     if (!tableExists) {
-      const tables = await liteSqlService.listTablesAsync(databaseName);
+      const tables = await litesql.listTablesAsync(databaseName);
       const available: string = tables.join(", ") || "(none)";
 
       throw new Error(
@@ -1147,7 +1141,7 @@ export class JobExecutorService {
       ? this._substituteTemplate(config.where, input)
       : undefined;
 
-    const result = await liteSqlService.queryTableAsync(databaseName, tableName, {
+    const result = await litesql.queryTableAsync(databaseName, tableName, {
       where,
       orderBy: config.orderBy ?? undefined,
       limit: config.limit ?? undefined,

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
-import { SkillStateService } from "../../../src/services/skill-state.service.js";
+import * as skillState from "../../../src/helpers/skill-state.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import type { ISkillStateInfo } from "../../../src/shared/types/index.js";
 
@@ -24,7 +24,6 @@ async function cleanupTempHomeAsync(): Promise<void> {
 }
 
 function resetSingletons(): void {
-  (SkillStateService as unknown as { _instance: null })._instance = null;
   (LoggerService as unknown as { _instance: null })._instance = null;
 }
 
@@ -32,12 +31,11 @@ function resetSingletons(): void {
 
 //#region Tests
 
-describe("SkillStateService", () => {
+describe("skill-state", () => {
   beforeEach(async () => {
     await setupTempHomeAsync();
     resetSingletons();
 
-    // Silence logger
     const logger: LoggerService = LoggerService.getInstance();
     vi.spyOn(logger, "debug").mockReturnValue(undefined);
     vi.spyOn(logger, "info").mockReturnValue(undefined);
@@ -52,9 +50,7 @@ describe("SkillStateService", () => {
   });
 
   it("should return default never-touched state when no state file exists", async () => {
-    const service: SkillStateService = SkillStateService.getInstance();
-
-    const state: ISkillStateInfo = await service.getStateAsync("nonexistent-skill");
+    const state: ISkillStateInfo = await skillState.getSkillStateAsync("nonexistent-skill");
 
     expect(state.state).toBe("never-touched");
     expect(state.lastError).toBeNull();
@@ -63,64 +59,59 @@ describe("SkillStateService", () => {
   });
 
   it("should save and retrieve state roundtrip", async () => {
-    const service: SkillStateService = SkillStateService.getInstance();
-
     const stateToSave: ISkillStateInfo = {
-      state: "setuped",
+      state: "ready",
       lastError: null,
       setupAt: "2026-01-01T00:00:00.000Z",
       lastCheckedAt: "2026-01-01T00:00:00.000Z",
+      missingDeps: null,
+      manualStepsRequired: [],
+      attemptedInstalls: [],
     };
 
-    await service.saveStateAsync("my-skill", stateToSave);
+    await skillState.saveSkillStateAsync("my-skill", stateToSave);
 
-    const retrieved: ISkillStateInfo = await service.getStateAsync("my-skill");
+    const retrieved: ISkillStateInfo = await skillState.getSkillStateAsync("my-skill");
 
-    expect(retrieved.state).toBe("setuped");
+    expect(retrieved.state).toBe("ready");
     expect(retrieved.setupAt).toBe("2026-01-01T00:00:00.000Z");
     expect(retrieved.lastError).toBeNull();
   });
 
-  it("should markSetupComplete and persist the setuped state", async () => {
-    const service: SkillStateService = SkillStateService.getInstance();
+  it("should markSkillSetupCompleteAsync and persist the ready state", async () => {
+    await skillState.markSkillSetupCompleteAsync("completed-skill");
 
-    await service.markSetupCompleteAsync("completed-skill");
+    const state: ISkillStateInfo = await skillState.getSkillStateAsync("completed-skill");
 
-    const state: ISkillStateInfo = await service.getStateAsync("completed-skill");
-
-    expect(state.state).toBe("setuped");
+    expect(state.state).toBe("ready");
     expect(state.lastError).toBeNull();
     expect(state.setupAt).toBeTruthy();
     expect(state.lastCheckedAt).toBeTruthy();
   });
 
-  it("should markSetupError and persist the error state", async () => {
-    const service: SkillStateService = SkillStateService.getInstance();
+  it("should markSkillSetupErrorAsync and persist the error state", async () => {
+    await skillState.markSkillSetupErrorAsync("broken-skill", "Something went wrong");
 
-    await service.markSetupErrorAsync("broken-skill", "Something went wrong");
+    const state: ISkillStateInfo = await skillState.getSkillStateAsync("broken-skill");
 
-    const state: ISkillStateInfo = await service.getStateAsync("broken-skill");
-
-    expect(state.state).toBe("error-during-setup");
+    expect(state.state).toBe("setup-failed");
     expect(state.lastError).toBe("Something went wrong");
     expect(state.setupAt).toBeNull();
     expect(state.lastCheckedAt).toBeTruthy();
   });
 
   it("should overwrite previous state when saving new state", async () => {
-    const service: SkillStateService = SkillStateService.getInstance();
+    await skillState.markSkillSetupErrorAsync("flip-skill", "initial error");
 
-    await service.markSetupErrorAsync("flip-skill", "initial error");
+    let state: ISkillStateInfo = await skillState.getSkillStateAsync("flip-skill");
 
-    let state: ISkillStateInfo = await service.getStateAsync("flip-skill");
+    expect(state.state).toBe("setup-failed");
 
-    expect(state.state).toBe("error-during-setup");
+    await skillState.markSkillSetupCompleteAsync("flip-skill");
 
-    await service.markSetupCompleteAsync("flip-skill");
+    state = await skillState.getSkillStateAsync("flip-skill");
 
-    state = await service.getStateAsync("flip-skill");
-
-    expect(state.state).toBe("setuped");
+    expect(state.state).toBe("ready");
     expect(state.lastError).toBeNull();
   });
 });

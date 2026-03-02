@@ -7,7 +7,7 @@ import { ConfigService } from "../../../src/services/config.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { EmbeddingService } from "../../../src/services/embedding.service.js";
 import { VectorStoreService } from "../../../src/services/vector-store.service.js";
-import { KnowledgeService } from "../../../src/services/knowledge.service.js";
+import * as knowledge from "../../../src/helpers/knowledge.js";
 import type { IKnowledgeDocument, IKnowledgeSearchResult } from "../../../src/shared/types/index.js";
 
 //#region Helpers
@@ -20,7 +20,6 @@ function resetSingletons(): void {
   (LoggerService as unknown as { _instance: null })._instance = null;
   (EmbeddingService as unknown as { _instance: null })._instance = null;
   (VectorStoreService as unknown as { _instance: null })._instance = null;
-  (KnowledgeService as unknown as { _instance: null })._instance = null;
 }
 
 //#endregion Helpers
@@ -67,9 +66,7 @@ describe("KnowledgeService", () => {
   });
 
   it("should add a knowledge document and retrieve it by search", async () => {
-    const knowledgeService: KnowledgeService = KnowledgeService.getInstance();
-
-    const doc: IKnowledgeDocument = await knowledgeService.addDocumentAsync(
+    const doc: IKnowledgeDocument = await knowledge.addKnowledgeDocumentAsync(
       "TypeScript is a strongly typed programming language that builds on JavaScript.",
       "test-collection",
       { source: "e2e-test" },
@@ -81,7 +78,7 @@ describe("KnowledgeService", () => {
     expect(doc.collection).toBe("test-collection");
     expect(doc.metadata.source).toBe("e2e-test");
 
-    const results: IKnowledgeSearchResult[] = await knowledgeService.searchAsync({
+    const results: IKnowledgeSearchResult[] = await knowledge.searchKnowledgeAsync({
       query: "What is TypeScript?",
       collection: "test-collection",
       limit: 5,
@@ -94,27 +91,25 @@ describe("KnowledgeService", () => {
   }, 60000);
 
   it("should return relevant results when multiple documents exist", async () => {
-    const knowledgeService: KnowledgeService = KnowledgeService.getInstance();
-
-    await knowledgeService.addDocumentAsync(
+    await knowledge.addKnowledgeDocumentAsync(
       "Python is a high-level general purpose programming language known for its readability.",
       "test-collection",
       { source: "e2e-test" },
     );
 
-    await knowledgeService.addDocumentAsync(
+    await knowledge.addKnowledgeDocumentAsync(
       "Rust is a systems programming language focused on safety and performance.",
       "test-collection",
       { source: "e2e-test" },
     );
 
-    await knowledgeService.addDocumentAsync(
+    await knowledge.addKnowledgeDocumentAsync(
       "The best recipe for chocolate cake requires cocoa powder and butter.",
       "test-collection",
       { source: "e2e-test" },
     );
 
-    const results: IKnowledgeSearchResult[] = await knowledgeService.searchAsync({
+    const results: IKnowledgeSearchResult[] = await knowledge.searchKnowledgeAsync({
       query: "programming languages and type safety",
       collection: "test-collection",
       limit: 5,
@@ -136,22 +131,20 @@ describe("KnowledgeService", () => {
   }, 60000);
 
   it("should edit a knowledge document and find updated content", async () => {
-    const knowledgeService: KnowledgeService = KnowledgeService.getInstance();
-
-    const doc: IKnowledgeDocument = await knowledgeService.addDocumentAsync(
+    const doc: IKnowledgeDocument = await knowledge.addKnowledgeDocumentAsync(
       "Original content about databases.",
       "edit-test-collection",
       { version: 1 },
     );
 
-    await knowledgeService.editDocumentAsync(
+    await knowledge.editKnowledgeDocumentAsync(
       doc.id,
       "edit-test-collection",
       "Updated content about vector databases and embeddings for semantic search.",
       { version: 2 },
     );
 
-    const results: IKnowledgeSearchResult[] = await knowledgeService.searchAsync({
+    const results: IKnowledgeSearchResult[] = await knowledge.searchKnowledgeAsync({
       query: "vector databases semantic search",
       collection: "edit-test-collection",
       limit: 5,
@@ -164,26 +157,22 @@ describe("KnowledgeService", () => {
   }, 60000);
 
   it("should report correct document counts", async () => {
-    const knowledgeService: KnowledgeService = KnowledgeService.getInstance();
-    const count: number = await knowledgeService.getDocumentCountAsync("test-collection");
+    const count: number = await knowledge.getKnowledgeDocumentCountAsync("test-collection");
 
-    // We added 4 documents to test-collection (1 TypeScript, 1 Python, 1 Rust, 1 cake)
     expect(count).toBe(4);
   });
 
   it("should delete a document and not find it in search", async () => {
-    const service: KnowledgeService = KnowledgeService.getInstance();
-
-    const doc = await service.addDocumentAsync(
+    const doc = await knowledge.addKnowledgeDocumentAsync(
       "This document will be deleted shortly",
       "delete-test",
     );
 
     expect(doc.id).toBeTruthy();
 
-    await service.deleteDocumentAsync(doc.id);
+    await knowledge.deleteKnowledgeDocumentAsync(doc.id);
 
-    const results = await service.searchAsync({
+    const results = await knowledge.searchKnowledgeAsync({
       query: "document will be deleted",
       limit: 5,
       collection: "delete-test",
@@ -196,9 +185,7 @@ describe("KnowledgeService", () => {
   });
 
   it("should return 0 count for an empty collection", async () => {
-    const service: KnowledgeService = KnowledgeService.getInstance();
-
-    const count: number = await service.getDocumentCountAsync("nonexistent-collection-xyz");
+    const count: number = await knowledge.getKnowledgeDocumentCountAsync("nonexistent-collection-xyz");
 
     expect(count).toBe(0);
   });

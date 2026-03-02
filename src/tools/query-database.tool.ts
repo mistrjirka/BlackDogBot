@@ -1,7 +1,8 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { LiteSqlService, type IQueryResult } from "../services/litesql.service.js";
+import * as litesql from "../helpers/litesql.js";
+import type { IQueryResult } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 
 const actionSchema = z.enum([
@@ -90,20 +91,18 @@ export const queryDatabaseTool = tool({
   description: "Unified database query tool with action-based interface for listing databases, tables, querying table data, inserting, updating, deleting rows, and showing table schemas",
   inputSchema,
   execute: async (input: QueryDatabaseInput): Promise<IQueryDatabaseResult> => {
-    const service: LiteSqlService = LiteSqlService.getInstance();
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
       switch (input.action) {
         case "list_databases":
-          return await _handleListDatabasesAsync(service);
+          return await _handleListDatabasesAsync();
 
         case "list_tables":
-          return await _handleListTablesAsync(service, input.databaseName);
+          return await _handleListTablesAsync(input.databaseName);
 
         case "query_table":
           return await _handleQueryTableAsync(
-            service,
             input.databaseName,
             input.tableName,
             input.where,
@@ -113,11 +112,10 @@ export const queryDatabaseTool = tool({
           );
 
         case "show_schema":
-          return await _handleShowSchemaAsync(service, input.databaseName, input.tableName);
+          return await _handleShowSchemaAsync(input.databaseName, input.tableName);
 
         case "insert":
           return await _handleInsertAsync(
-            service,
             input.databaseName,
             input.tableName,
             input.data,
@@ -125,7 +123,6 @@ export const queryDatabaseTool = tool({
 
         case "update":
           return await _handleUpdateAsync(
-            service,
             input.databaseName,
             input.tableName,
             input.set,
@@ -134,7 +131,6 @@ export const queryDatabaseTool = tool({
 
         case "delete":
           return await _handleDeleteAsync(
-            service,
             input.databaseName,
             input.tableName,
             input.where,
@@ -159,8 +155,8 @@ export const queryDatabaseTool = tool({
   },
 });
 
-async function _handleListDatabasesAsync(service: LiteSqlService): Promise<IQueryDatabaseResult> {
-  const databases = await service.listDatabasesAsync();
+async function _handleListDatabasesAsync(): Promise<IQueryDatabaseResult> {
+  const databases = await litesql.listDatabasesAsync();
 
   return {
     success: true,
@@ -175,11 +171,10 @@ async function _handleListDatabasesAsync(service: LiteSqlService): Promise<IQuer
 }
 
 async function _handleListTablesAsync(
-  service: LiteSqlService,
   databaseName?: string,
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -189,9 +184,9 @@ async function _handleListTablesAsync(
     };
   }
 
-  const exists: boolean = await service.databaseExistsAsync(databaseName);
+  const exists: boolean = await litesql.databaseExistsAsync(databaseName);
   if (!exists) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -201,7 +196,7 @@ async function _handleListTablesAsync(
     };
   }
 
-  const tables: string[] = await service.listTablesAsync(databaseName);
+  const tables: string[] = await litesql.listTablesAsync(databaseName);
 
   return {
     success: true,
@@ -212,7 +207,6 @@ async function _handleListTablesAsync(
 }
 
 async function _handleQueryTableAsync(
-  service: LiteSqlService,
   databaseName?: string,
   tableName?: string,
   where?: string,
@@ -221,7 +215,7 @@ async function _handleQueryTableAsync(
   columns?: string[],
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -232,7 +226,7 @@ async function _handleQueryTableAsync(
   }
 
   if (!tableName) {
-    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const allTables: string[] = await litesql.listTablesAsync(databaseName);
     const available: string = allTables.join(", ") || "(none)";
 
     return {
@@ -242,9 +236,9 @@ async function _handleQueryTableAsync(
     };
   }
 
-  const dbExists: boolean = await service.databaseExistsAsync(databaseName);
+  const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
   if (!dbExists) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -254,9 +248,9 @@ async function _handleQueryTableAsync(
     };
   }
 
-  const tableExists: boolean = await service.tableExistsAsync(databaseName, tableName);
+  const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
   if (!tableExists) {
-    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const allTables: string[] = await litesql.listTablesAsync(databaseName);
     const available: string = allTables.join(", ") || "(none)";
 
     return {
@@ -266,7 +260,7 @@ async function _handleQueryTableAsync(
     };
   }
 
-  const result: IQueryResult = await service.queryTableAsync(databaseName, tableName, {
+  const result: IQueryResult = await litesql.queryTableAsync(databaseName, tableName, {
     where,
     orderBy,
     limit: limit ?? 100,
@@ -285,12 +279,11 @@ async function _handleQueryTableAsync(
 }
 
 async function _handleShowSchemaAsync(
-  service: LiteSqlService,
   databaseName?: string,
   tableName?: string,
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -301,7 +294,7 @@ async function _handleShowSchemaAsync(
   }
 
   if (!tableName) {
-    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const allTables: string[] = await litesql.listTablesAsync(databaseName);
     const available: string = allTables.join(", ") || "(none)";
 
     return {
@@ -311,9 +304,9 @@ async function _handleShowSchemaAsync(
     };
   }
 
-  const dbExists: boolean = await service.databaseExistsAsync(databaseName);
+  const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
   if (!dbExists) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -323,9 +316,9 @@ async function _handleShowSchemaAsync(
     };
   }
 
-  const tableExists: boolean = await service.tableExistsAsync(databaseName, tableName);
+  const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
   if (!tableExists) {
-    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const allTables: string[] = await litesql.listTablesAsync(databaseName);
     const available: string = allTables.join(", ") || "(none)";
 
     return {
@@ -335,7 +328,7 @@ async function _handleShowSchemaAsync(
     };
   }
 
-  const schema = await service.getTableSchemaAsync(databaseName, tableName);
+  const schema = await litesql.getTableSchemaAsync(databaseName, tableName);
 
   return {
     success: true,
@@ -349,13 +342,12 @@ async function _handleShowSchemaAsync(
 }
 
 async function _handleInsertAsync(
-  service: LiteSqlService,
   databaseName?: string,
   tableName?: string,
   data?: Record<string, unknown>,
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -366,7 +358,7 @@ async function _handleInsertAsync(
   }
 
   if (!tableName) {
-    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const allTables: string[] = await litesql.listTablesAsync(databaseName);
     const available: string = allTables.join(", ") || "(none)";
 
     return {
@@ -384,9 +376,9 @@ async function _handleInsertAsync(
     };
   }
 
-  const dbExists: boolean = await service.databaseExistsAsync(databaseName);
+  const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
   if (!dbExists) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -396,9 +388,9 @@ async function _handleInsertAsync(
     };
   }
 
-  const tableExists: boolean = await service.tableExistsAsync(databaseName, tableName);
+  const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
   if (!tableExists) {
-    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const allTables: string[] = await litesql.listTablesAsync(databaseName);
     const available: string = allTables.join(", ") || "(none)";
 
     return {
@@ -408,7 +400,7 @@ async function _handleInsertAsync(
     };
   }
 
-  const result = await service.insertIntoTableAsync(databaseName, tableName, data);
+  const result = await litesql.insertIntoTableAsync(databaseName, tableName, data);
 
   return {
     success: true,
@@ -421,14 +413,13 @@ async function _handleInsertAsync(
 }
 
 async function _handleUpdateAsync(
-  service: LiteSqlService,
   databaseName?: string,
   tableName?: string,
   set?: Record<string, unknown>,
   where?: string,
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -439,7 +430,7 @@ async function _handleUpdateAsync(
   }
 
   if (!tableName) {
-    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const allTables: string[] = await litesql.listTablesAsync(databaseName);
     const available: string = allTables.join(", ") || "(none)";
 
     return {
@@ -465,9 +456,9 @@ async function _handleUpdateAsync(
     };
   }
 
-  const dbExists: boolean = await service.databaseExistsAsync(databaseName);
+  const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
   if (!dbExists) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -477,7 +468,7 @@ async function _handleUpdateAsync(
     };
   }
 
-  const result = await service.updateTableAsync(databaseName, tableName, set, where);
+  const result = await litesql.updateTableAsync(databaseName, tableName, set, where);
 
   return {
     success: true,
@@ -489,13 +480,12 @@ async function _handleUpdateAsync(
 }
 
 async function _handleDeleteAsync(
-  service: LiteSqlService,
   databaseName?: string,
   tableName?: string,
   where?: string,
 ): Promise<IQueryDatabaseResult> {
   if (!databaseName) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -506,7 +496,7 @@ async function _handleDeleteAsync(
   }
 
   if (!tableName) {
-    const allTables: string[] = await service.listTablesAsync(databaseName);
+    const allTables: string[] = await litesql.listTablesAsync(databaseName);
     const available: string = allTables.join(", ") || "(none)";
 
     return {
@@ -524,9 +514,9 @@ async function _handleDeleteAsync(
     };
   }
 
-  const dbExists: boolean = await service.databaseExistsAsync(databaseName);
+  const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
   if (!dbExists) {
-    const allDbs = await service.listDatabasesAsync();
+    const allDbs = await litesql.listDatabasesAsync();
     const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
     return {
@@ -536,7 +526,7 @@ async function _handleDeleteAsync(
     };
   }
 
-  const result = await service.deleteFromTableAsync(databaseName, tableName, where);
+  const result = await litesql.deleteFromTableAsync(databaseName, tableName, where);
 
   return {
     success: true,

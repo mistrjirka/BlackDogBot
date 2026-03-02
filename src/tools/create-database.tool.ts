@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { LiteSqlService } from "../services/litesql.service.js";
+import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 
 export const createDatabaseTool = tool({
@@ -17,11 +17,10 @@ export const createDatabaseTool = tool({
     message: string;
     error?: string;
   }> => {
-    const service: LiteSqlService = LiteSqlService.getInstance();
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const exists: boolean = await service.databaseExistsAsync(databaseName);
+      const exists: boolean = await litesql.databaseExistsAsync(databaseName);
       if (exists) {
         return {
           success: false,
@@ -31,7 +30,7 @@ export const createDatabaseTool = tool({
         };
       }
 
-      await service.createDatabaseAsync(databaseName);
+      await litesql.createDatabaseAsync(databaseName);
 
       return {
         success: true,

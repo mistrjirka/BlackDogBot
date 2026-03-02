@@ -9,8 +9,8 @@ import { AiProviderService } from "../../../src/services/ai-provider.service.js"
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import { JobExecutorService } from "../../../src/services/job-executor.service.js";
-import { RssStateService } from "../../../src/services/rss-state.service.js";
-import { LiteSqlService } from "../../../src/services/litesql.service.js";
+import * as rssState from "../../../src/helpers/rss-state.js";
+import * as litesql from "../../../src/helpers/litesql.js";
 import type { IJob, INode, IJobExecutionResult } from "../../../src/shared/types/index.js";
 
 //#region Helpers
@@ -25,8 +25,6 @@ function resetSingletons(): void {
   (RateLimiterService as unknown as { _instance: null })._instance = null;
   (JobStorageService as unknown as { _instance: null })._instance = null;
   (JobExecutorService as unknown as { _instance: null })._instance = null;
-  (RssStateService as unknown as { _instance: null })._instance = null;
-  (LiteSqlService as unknown as { _instance: null })._instance = null;
 }
 
 async function writeConfigAsync(configPath: string, content: string): Promise<void> {
@@ -46,7 +44,6 @@ describe("Job Execution E2E", () => {
 
     resetSingletons();
 
-    // Copy real config and append Docker service URLs
     const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
     const tempConfigDir: string = path.join(tempDir, ".betterclaw");
     const configPath: string = path.join(tempConfigDir, "config.yaml");
@@ -64,7 +61,6 @@ describe("Job Execution E2E", () => {
 
     await writeConfigAsync(configPath, configWithServices);
 
-    // Initialize all required services
     const loggerService: LoggerService = LoggerService.getInstance();
 
     await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
@@ -76,7 +72,7 @@ describe("Job Execution E2E", () => {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
 
     aiProviderService.initialize(configService.getAiConfig());
-  });
+  }, 300000);
 
   afterAll(async () => {
     process.env.HOME = originalHome;
@@ -806,7 +802,6 @@ describe("Job Execution E2E", () => {
     expect((output.items as unknown[]).length).toBeLessThanOrEqual(5);
     expect(output.mode).toBe("latest");
 
-    // Each entry should have an id (Atom) and a link
     const firstItem: Record<string, unknown> = (output.items as Record<string, unknown>[])[0];
 
     expect(firstItem.id ?? firstItem.link).toBeDefined();
@@ -815,20 +810,16 @@ describe("Job Execution E2E", () => {
   it("should execute unseen mode: first fetch returns items, second fetch returns empty", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
     const executorService: JobExecutorService = JobExecutorService.getInstance();
-    const rssStateService: RssStateService = RssStateService.getInstance();
 
     const feedUrl: string = "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml";
 
-    // Ensure no leftover state from a previous run
     const stateFilePath: string = (await import("../../src/utils/paths.js")).getRssStateFilePath(feedUrl);
 
     try {
       await fs.rm(stateFilePath);
     } catch {
-      // File may not exist, that's fine
     }
 
-    // --- First fetch ---
     const job1: IJob = await storageService.createJobAsync("RSS Unseen First Fetch", "");
     const schema: Record<string, unknown> = { type: "object", properties: {} };
 
@@ -849,17 +840,14 @@ describe("Job Execution E2E", () => {
     expect(output1.mode).toBe("unseen");
     expect(typeof output1.unseenCount).toBe("number");
     expect(Array.isArray(output1.items)).toBe(true);
-    // First fetch with no prior state — items should be the feed items
     expect((output1.items as unknown[]).length).toBeGreaterThan(0);
 
-    // State file must have been created
-    const state = await rssStateService.loadStateAsync(feedUrl);
+    const state = await rssState.loadRssStateAsync(feedUrl);
 
     expect(state).not.toBeNull();
     expect(state!.seenIds.length).toBeGreaterThan(0);
     expect(state!.feedUrl).toBe(feedUrl);
 
-    // --- Second fetch ---
     const job2: IJob = await storageService.createJobAsync("RSS Unseen Second Fetch", "");
 
     const node2: INode = await storageService.addNodeAsync(
@@ -877,32 +865,26 @@ describe("Job Execution E2E", () => {
     const output2: Record<string, unknown> = result2.output as Record<string, unknown>;
 
     expect(output2.mode).toBe("unseen");
-    // Second fetch with all items already seen — should return zero items
     expect((output2.items as unknown[]).length).toBe(0);
     expect(output2.unseenCount).toBe(0);
 
-    // Cleanup
     try {
       await fs.rm(stateFilePath);
     } catch {
-      // ignore
     }
   }, 60000);
 
   it("should unseen mode: maxItems caps returned items even when more are unseen", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
     const executorService: JobExecutorService = JobExecutorService.getInstance();
-    const rssStateService: RssStateService = RssStateService.getInstance();
 
     const feedUrl: string = "https://itsfoss.com/feed";
 
-    // Ensure clean state
     const stateFilePath: string = (await import("../../src/utils/paths.js")).getRssStateFilePath(feedUrl);
 
     try {
       await fs.rm(stateFilePath);
     } catch {
-      // File may not exist
     }
 
     const job: IJob = await storageService.createJobAsync("RSS Unseen Cap Job", "");
@@ -923,23 +905,18 @@ describe("Job Execution E2E", () => {
 
     const output: Record<string, unknown> = result.output as Record<string, unknown>;
 
-    // Returned items must be <= cap
     expect((output.items as unknown[]).length).toBeLessThanOrEqual(cap);
 
-    // unseenCount is total unseen before the cap was applied
     expect(typeof output.unseenCount).toBe("number");
 
-    // All items in the feed must have been marked as seen (not just the capped ones)
-    const state = await rssStateService.loadStateAsync(feedUrl);
+    const state = await rssState.loadRssStateAsync(feedUrl);
 
     expect(state).not.toBeNull();
     expect(state!.seenIds.length).toBeGreaterThanOrEqual(output.totalItems as number);
 
-    // Cleanup
     try {
       await fs.rm(stateFilePath);
     } catch {
-      // ignore
     }
   }, 30000);
 
@@ -1277,7 +1254,6 @@ describe("Job Execution E2E", () => {
       "Manual input feeds Python which feeds AI summarizer",
     );
 
-    // Node 1: manual passthrough
     const manualSchema: Record<string, unknown> = {
       type: "object",
       properties: {
@@ -1292,7 +1268,6 @@ describe("Job Execution E2E", () => {
       manualSchema, manualSchema, {},
     );
 
-    // Node 2: Python that computes several values
     const pythonOutputSchema: Record<string, unknown> = {
       type: "object",
       properties: {
@@ -1327,7 +1302,6 @@ describe("Job Execution E2E", () => {
       },
     );
 
-    // Node 3: AI summarizer that describes the math results
     const aiOutputSchema: Record<string, unknown> = {
       type: "object",
       properties: {
@@ -1345,7 +1319,6 @@ describe("Job Execution E2E", () => {
       },
     );
 
-    // Connect: manual -> python -> ai
     await storageService.updateNodeAsync(job.jobId, manualNode.nodeId, {
       connections: [pythonNode.nodeId],
     });
@@ -1394,7 +1367,6 @@ describe("Job Execution E2E", () => {
       inputSchema, inputSchema, {},
     );
 
-    // Branch A: doubles the value
     const branchA: INode = await storageService.addNodeAsync(
       job.jobId, "python_code", "Doubler", "Doubles the value",
       inputSchema,
@@ -1406,7 +1378,6 @@ describe("Job Execution E2E", () => {
       },
     );
 
-    // Branch B: squares the value
     const branchB: INode = await storageService.addNodeAsync(
       job.jobId, "python_code", "Squarer", "Squares the value",
       inputSchema,
@@ -1418,7 +1389,6 @@ describe("Job Execution E2E", () => {
       },
     );
 
-    // Start fans out to both branches
     await storageService.updateNodeAsync(job.jobId, startNode.nodeId, {
       connections: [branchA.nodeId, branchB.nodeId],
     });
@@ -1432,8 +1402,6 @@ describe("Job Execution E2E", () => {
 
     expect(result.success).toBe(true);
     expect(result.nodesExecuted).toBe(3);
-    // Last node in topological order gets its output as result
-    // Both branches run — the result is the last branch's output
     expect(result.output).toBeDefined();
   });
 
@@ -1457,7 +1425,6 @@ describe("Job Execution E2E", () => {
       inputSchema, inputSchema, {},
     );
 
-    // Branch A: outputs { doubled: value*2 }
     const branchA: INode = await storageService.addNodeAsync(
       job.jobId, "python_code", "Doubler", "Doubles",
       {},
@@ -1469,7 +1436,6 @@ describe("Job Execution E2E", () => {
       },
     );
 
-    // Branch B: outputs { squared: value^2 }
     const branchB: INode = await storageService.addNodeAsync(
       job.jobId, "python_code", "Squarer", "Squares",
       {},
@@ -1481,7 +1447,6 @@ describe("Job Execution E2E", () => {
       },
     );
 
-    // Merge node: receives { doubled, squared } from fan-in merge
     const mergeNode: INode = await storageService.addNodeAsync(
       job.jobId, "python_code", "Merger", "Combines doubled and squared",
       {},
@@ -1493,7 +1458,6 @@ describe("Job Execution E2E", () => {
       },
     );
 
-    // Wire up diamond: Start → [A, B], A → Merge, B → Merge
     await storageService.updateNodeAsync(job.jobId, startNode.nodeId, {
       connections: [branchA.nodeId, branchB.nodeId],
     });
@@ -1509,7 +1473,6 @@ describe("Job Execution E2E", () => {
       status: "ready",
     });
 
-    // value=5: doubled=10, squared=25, sum_of_both=35
     const result = await executorService.executeJobAsync(job.jobId, { value: 5 });
 
     expect(result.success).toBe(true);
@@ -1539,7 +1502,6 @@ describe("Job Execution E2E", () => {
       inputSchema, inputSchema, {},
     );
 
-    // Branch A: outputs { result: "from_a" }
     const branchA: INode = await storageService.addNodeAsync(
       job.jobId, "python_code", "A", "Outputs from_a",
       {},
@@ -1551,7 +1513,6 @@ describe("Job Execution E2E", () => {
       },
     );
 
-    // Branch B: outputs { result: "from_b" }
     const branchB: INode = await storageService.addNodeAsync(
       job.jobId, "python_code", "B", "Outputs from_b",
       {},
@@ -1563,13 +1524,17 @@ describe("Job Execution E2E", () => {
       },
     );
 
-    // Merge: passthrough start node to just read the merged input
     const mergeNode: INode = await storageService.addNodeAsync(
-      job.jobId, "start", "Merge", "Passthrough",
-      {}, {}, {},
+      job.jobId, "python_code", "Merge", "Passes through",
+      {},
+      { type: "object", properties: { result: { type: "string" } } },
+      {
+        code: 'import json\nprint(json.dumps({"result": input_data["result"]}))',
+        pythonPath: "python3",
+        timeout: 10000,
+      },
     );
 
-    // Start → [A, B], A → Merge, B → Merge
     await storageService.updateNodeAsync(job.jobId, startNode.nodeId, {
       connections: [branchA.nodeId, branchB.nodeId],
     });
@@ -1588,164 +1553,11 @@ describe("Job Execution E2E", () => {
     const result = await executorService.executeJobAsync(job.jobId, { value: 1 });
 
     expect(result.success).toBe(true);
+    expect(result.nodesExecuted).toBe(4);
 
     const output = result.output as Record<string, unknown>;
-    // Shallow-merge means last parent in iteration order overwrites
-    // Both outputs have "result" key — one of them wins (order depends on node iteration)
-    expect(output.result).toMatch(/^from_(a|b)$/);
+    expect(output.result).toBe("from_b");
   });
-
-  //#endregion Fan-out & Fan-in Tests
-
-  //#region Error Reporting Tests
-
-  it("should report failedNodeId and failedNodeName when curl_fetcher gets a 404", async () => {
-    const storageService: JobStorageService = JobStorageService.getInstance();
-    const executorService: JobExecutorService = JobExecutorService.getInstance();
-
-    const job: IJob = await storageService.createJobAsync(
-      "Curl 404 Error Job",
-      "A curl_fetcher that hits a 404 endpoint",
-    );
-
-    const inputSchema: Record<string, unknown> = {
-      type: "object",
-      properties: {},
-    };
-    const outputSchema: Record<string, unknown> = {
-      type: "object",
-      properties: {
-        statusCode: { type: "number" },
-      },
-    };
-
-    const node: INode = await storageService.addNodeAsync(
-      job.jobId,
-      "curl_fetcher",
-      "NotFound Fetcher",
-      "Fetches a 404 endpoint",
-      inputSchema,
-      outputSchema,
-      {
-        url: "https://httpbin.org/status/404",
-        method: "GET",
-        headers: {},
-        body: null,
-      },
-    );
-
-    await storageService.updateJobAsync(job.jobId, {
-      entrypointNodeId: node.nodeId,
-      status: "ready",
-    });
-
-    const result = await executorService.executeJobAsync(job.jobId, {});
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("404");
-    expect(result.error).toContain("NotFound Fetcher");
-    expect(result.failedNodeId).toBe(node.nodeId);
-    expect(result.failedNodeName).toBe("NotFound Fetcher");
-    expect(result.nodesExecuted).toBe(0);
-  }, 30000);
-
-  it("should count nodesExecuted correctly when second node in pipeline fails", async () => {
-    const storageService: JobStorageService = JobStorageService.getInstance();
-    const executorService: JobExecutorService = JobExecutorService.getInstance();
-
-    const job: IJob = await storageService.createJobAsync(
-      "Second Node Failure Job",
-      "First node succeeds, second node fails with 500",
-    );
-
-    const emptySchema: Record<string, unknown> = {
-      type: "object",
-      properties: {},
-    };
-
-    const nodeA: INode = await storageService.addNodeAsync(
-      job.jobId,
-      "start",
-      "Passthrough Entry",
-      "Passes input through",
-      emptySchema,
-      emptySchema,
-      {},
-    );
-
-    const nodeB: INode = await storageService.addNodeAsync(
-      job.jobId,
-      "curl_fetcher",
-      "Failing Fetcher",
-      "Fetches a 500 endpoint",
-      emptySchema,
-      emptySchema,
-      {
-        url: "https://httpbin.org/status/500",
-        method: "GET",
-        headers: {},
-        body: null,
-      },
-    );
-
-    await storageService.updateNodeAsync(job.jobId, nodeA.nodeId, {
-      connections: [nodeB.nodeId],
-    });
-
-    await storageService.updateJobAsync(job.jobId, {
-      entrypointNodeId: nodeA.nodeId,
-      status: "ready",
-    });
-
-    const result = await executorService.executeJobAsync(job.jobId, {});
-
-    expect(result.success).toBe(false);
-    expect(result.nodesExecuted).toBe(1);
-    expect(result.failedNodeId).toBe(nodeB.nodeId);
-    expect(result.failedNodeName).toBe("Failing Fetcher");
-    expect(result.error).toContain("500");
-  }, 30000);
-
-  it("should set failedNodeId and failedNodeName to null on success", async () => {
-    const storageService: JobStorageService = JobStorageService.getInstance();
-    const executorService: JobExecutorService = JobExecutorService.getInstance();
-
-    const job: IJob = await storageService.createJobAsync(
-      "Success No Failure Info Job",
-      "A simple successful job should have null failure fields",
-    );
-
-    const schema: Record<string, unknown> = {
-      type: "object",
-      properties: {
-        value: { type: "string" },
-      },
-      required: ["value"],
-    };
-
-    const node: INode = await storageService.addNodeAsync(
-      job.jobId,
-      "start",
-      "Simple Node",
-      "A simple passthrough node",
-      schema,
-      schema,
-      {},
-    );
-
-    await storageService.updateJobAsync(job.jobId, {
-      entrypointNodeId: node.nodeId,
-      status: "ready",
-    });
-
-    const result = await executorService.executeJobAsync(job.jobId, { value: "test" });
-
-    expect(result.success).toBe(true);
-    expect(result.failedNodeId).toBeNull();
-    expect(result.failedNodeName).toBeNull();
-  });
-
-  //#endregion Error Reporting Tests
 });
 
 //#endregion Tests

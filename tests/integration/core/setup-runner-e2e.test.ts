@@ -8,7 +8,7 @@ import { AiProviderService } from "../../../src/services/ai-provider.service.js"
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
 import { PromptService } from "../../../src/services/prompt.service.js";
-import { SkillStateService } from "../../../src/services/skill-state.service.js";
+import * as skillState from "../../../src/helpers/skill-state.js";
 import { runSkillSetupAsync, type ISetupResult } from "../../../src/skills/setup-runner.js";
 import type { ISkill, ISkillStateInfo } from "../../../src/shared/types/index.js";
 
@@ -23,7 +23,6 @@ function resetSingletons(): void {
   (LoggerService as unknown as { _instance: null })._instance = null;
   (RateLimiterService as unknown as { _instance: null })._instance = null;
   (PromptService as unknown as { _instance: null })._instance = null;
-  (SkillStateService as unknown as { _instance: null })._instance = null;
 }
 
 function createFakeSkill(overrides?: Partial<ISkill>): ISkill {
@@ -101,11 +100,9 @@ describe("Setup Runner E2E", () => {
     expect(result.error).toBeNull();
     expect(typeof result.summary).toBe("string");
 
-    // Verify state was persisted by SkillStateService
-    const stateService: SkillStateService = SkillStateService.getInstance();
-    const persistedState: ISkillStateInfo = await stateService.getStateAsync("test-setup-skill");
+    const persistedState: ISkillStateInfo = await skillState.getSkillStateAsync("test-setup-skill");
 
-    expect(persistedState.state).toBe("setuped");
+    expect(persistedState.state).toBe("ready");
     expect(persistedState.lastError).toBeNull();
     expect(persistedState.setupAt).not.toBeNull();
   }, 120000);
@@ -148,9 +145,8 @@ describe("Setup Runner E2E", () => {
     expect(result.success).toBe(true);
     expect(result.error).toBeNull();
 
-    const stateService: SkillStateService = SkillStateService.getInstance();
-    const persistedState: ISkillStateInfo = await stateService.getStateAsync("metadata-skill");
-    expect(persistedState.state).toBe("setuped");
+    const persistedState: ISkillStateInfo = await skillState.getSkillStateAsync("metadata-skill");
+    expect(persistedState.state).toBe("ready");
     expect(persistedState.setupAt).not.toBeNull();
   }, 120000);
 });

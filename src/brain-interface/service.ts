@@ -14,7 +14,8 @@ import { JobStorageService } from "../services/job-storage.service.js";
 import { JobExecutorService } from "../services/job-executor.service.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { StatusService, type IStatusState } from "../services/status.service.js";
-import { LiteSqlService, type IQueryResult } from "../services/litesql.service.js";
+import * as litesql from "../helpers/litesql.js";
+import type { IQueryResult } from "../helpers/litesql.js";
 import type { IJob, INode } from "../shared/types/index.js";
 import type { INodeProgressEvent, INodeTestCase, INodeTestResult } from "../shared/types/job.types.js";
 import type { IQueryDatabaseCommand } from "./types.js";
@@ -480,14 +481,13 @@ export class BrainInterfaceService {
 
         case "query_database": {
           const dbCommand: IQueryDatabaseCommand = command as IQueryDatabaseCommand;
-          const service: LiteSqlService = LiteSqlService.getInstance();
 
           try {
             let result: unknown;
 
             switch (dbCommand.action) {
               case "list_databases": {
-                const databases = await service.listDatabasesAsync();
+                const databases = await litesql.listDatabasesAsync();
                 result = {
                   success: true,
                   action: "list_databases",
@@ -503,7 +503,7 @@ export class BrainInterfaceService {
 
               case "list_tables": {
                 if (!dbCommand.databaseName) {
-                  const allDbs = await service.listDatabasesAsync();
+                  const allDbs = await litesql.listDatabasesAsync();
                   const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
                   result = {
                     success: false,
@@ -513,9 +513,9 @@ export class BrainInterfaceService {
                   break;
                 }
 
-                const exists: boolean = await service.databaseExistsAsync(dbCommand.databaseName);
+                const exists: boolean = await litesql.databaseExistsAsync(dbCommand.databaseName);
                 if (!exists) {
-                  const allDbs = await service.listDatabasesAsync();
+                  const allDbs = await litesql.listDatabasesAsync();
                   const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
                   result = {
                     success: false,
@@ -525,7 +525,7 @@ export class BrainInterfaceService {
                   break;
                 }
 
-                const tables: string[] = await service.listTablesAsync(dbCommand.databaseName);
+                const tables: string[] = await litesql.listTablesAsync(dbCommand.databaseName);
                 result = {
                   success: true,
                   action: "list_tables",
@@ -545,7 +545,7 @@ export class BrainInterfaceService {
                   break;
                 }
 
-                const dbExists: boolean = await service.databaseExistsAsync(dbCommand.databaseName);
+                const dbExists: boolean = await litesql.databaseExistsAsync(dbCommand.databaseName);
                 if (!dbExists) {
                   result = {
                     success: false,
@@ -555,7 +555,7 @@ export class BrainInterfaceService {
                   break;
                 }
 
-                const tableExists: boolean = await service.tableExistsAsync(dbCommand.databaseName, dbCommand.tableName);
+                const tableExists: boolean = await litesql.tableExistsAsync(dbCommand.databaseName, dbCommand.tableName);
                 if (!tableExists) {
                   result = {
                     success: false,
@@ -565,7 +565,7 @@ export class BrainInterfaceService {
                   break;
                 }
 
-                const queryResult: IQueryResult = await service.queryTableAsync(
+                const queryResult: IQueryResult = await litesql.queryTableAsync(
                   dbCommand.databaseName,
                   dbCommand.tableName,
                   {
@@ -598,7 +598,7 @@ export class BrainInterfaceService {
                   break;
                 }
 
-                const dbExists: boolean = await service.databaseExistsAsync(dbCommand.databaseName);
+                const dbExists: boolean = await litesql.databaseExistsAsync(dbCommand.databaseName);
                 if (!dbExists) {
                   result = {
                     success: false,
@@ -608,7 +608,7 @@ export class BrainInterfaceService {
                   break;
                 }
 
-                const schema = await service.getTableSchemaAsync(dbCommand.databaseName, dbCommand.tableName);
+                const schema = await litesql.getTableSchemaAsync(dbCommand.databaseName, dbCommand.tableName);
                 result = {
                   success: true,
                   action: "show_schema",

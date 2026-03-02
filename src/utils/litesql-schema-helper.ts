@@ -1,4 +1,4 @@
-import { IColumnInfo, ITableInfo } from "../services/litesql.service.js";
+import type { IColumnInfo, ITableInfo } from "../helpers/litesql.js";
 
 //#region Interfaces
 

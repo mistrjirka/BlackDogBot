@@ -10,11 +10,11 @@ import { RateLimiterService } from "../../../src/services/rate-limiter.service.j
 import { PromptService } from "../../../src/services/prompt.service.js";
 import { EmbeddingService } from "../../../src/services/embedding.service.js";
 import { VectorStoreService } from "../../../src/services/vector-store.service.js";
-import { KnowledgeService } from "../../../src/services/knowledge.service.js";
+import * as knowledge from "../../../src/helpers/knowledge.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import { JobExecutorService } from "../../../src/services/job-executor.service.js";
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
-import { LiteSqlService } from "../../../src/services/litesql.service.js";
+import * as litesql from "../../../src/helpers/litesql.js";
 import { MainAgent, type IAgentResult } from "../../../src/agent/main-agent.js";
 import type { IJob } from "../../../src/shared/types/index.js";
 import type { MessageSender, PhotoSender } from "../../../src/tools/index.js";
@@ -33,11 +33,9 @@ function resetSingletons(): void {
   (PromptService as unknown as { _instance: null })._instance = null;
   (EmbeddingService as unknown as { _instance: null })._instance = null;
   (VectorStoreService as unknown as { _instance: null })._instance = null;
-  (KnowledgeService as unknown as { _instance: null })._instance = null;
   (JobStorageService as unknown as { _instance: null })._instance = null;
   (JobExecutorService as unknown as { _instance: null })._instance = null;
   (SkillLoaderService as unknown as { _instance: null })._instance = null;
-  (LiteSqlService as unknown as { _instance: null })._instance = null;
   (MainAgent as unknown as { _instance: null })._instance = null;
 }
 
@@ -62,7 +60,6 @@ describe("AI-Driven Job Creation E2E", () => {
 
     resetSingletons();
 
-    // Copy real config
     const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
     const tempConfigDir: string = path.join(tempDir, ".betterclaw");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
@@ -70,7 +67,6 @@ describe("AI-Driven Job Creation E2E", () => {
     await fs.mkdir(tempConfigDir, { recursive: true });
     await fs.cp(realConfigPath, tempConfigPath);
 
-    // Initialize all services
     const loggerService: LoggerService = LoggerService.getInstance();
 
     await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
@@ -138,7 +134,6 @@ describe("AI-Driven Job Creation E2E", () => {
     expect(result).toBeDefined();
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
 
-    // Verify the job was actually created in storage
     const storageService: JobStorageService = JobStorageService.getInstance();
     const jobs: IJob[] = await storageService.listJobsAsync();
 

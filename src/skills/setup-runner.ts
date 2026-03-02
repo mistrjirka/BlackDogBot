@@ -3,7 +3,7 @@ import { ISkill } from "../shared/types/index.js";
 import { PROMPT_SKILL_SETUP } from "../shared/constants.js";
 import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
-import { SkillStateService } from "../services/skill-state.service.js";
+import * as skillState from "../helpers/skill-state.js";
 import { LoggerService } from "../services/logger.service.js";
 import { getForceThinkDirective } from "../utils/prepare-step.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
@@ -64,7 +64,7 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
       prompt: "Set up this skill according to the instructions.",
     });
 
-    await SkillStateService.getInstance().markSetupCompleteAsync(skill.name);
+    await skillState.markSkillSetupCompleteAsync(skill.name);
 
     return {
       success: true,
@@ -76,7 +76,7 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
 
     logger.error(`Skill setup failed for "${skill.name}": ${errorMessage}`);
 
-    await SkillStateService.getInstance().markSetupErrorAsync(skill.name, errorMessage);
+    await skillState.markSkillSetupErrorAsync(skill.name, errorMessage);
 
     return {
       success: false,

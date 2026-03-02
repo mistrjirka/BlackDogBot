@@ -80,7 +80,7 @@ import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
-import { ToolRegistryService } from "../services/tool-registry.service.js";
+import * as toolRegistry from "../helpers/tool-registry.js";
 import type { IJob, INode } from "../shared/types/index.js";
 import type { IToolCallSummary } from "./base-agent.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
@@ -309,7 +309,6 @@ export class MainAgent extends BaseAgentBase {
 
     // Filter tools based on channel permission
     const channelRegistry = ChannelRegistryService.getInstance();
-    const toolRegistry = ToolRegistryService.getInstance();
     const permission = channelRegistry.getPermission(platform, chatId);
     const skillNames = availableSkills.map((s) => s.name);
 

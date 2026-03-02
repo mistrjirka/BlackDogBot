@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
-import { SkillStateService } from "../../../src/services/skill-state.service.js";
+import * as skillState from "../../../src/helpers/skill-state.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import type { ISkill } from "../../../src/shared/types/index.js";
 
@@ -26,7 +26,6 @@ async function cleanupTempHomeAsync(): Promise<void> {
 
 function resetSingletons(): void {
   (SkillLoaderService as unknown as { _instance: null })._instance = null;
-  (SkillStateService as unknown as { _instance: null })._instance = null;
   (LoggerService as unknown as { _instance: null })._instance = null;
 }
 
@@ -49,7 +48,6 @@ describe("SkillLoaderService", () => {
     await setupTempHomeAsync();
     resetSingletons();
 
-    // Silence logger
     const logger: LoggerService = LoggerService.getInstance();
     vi.spyOn(logger, "debug").mockReturnValue(undefined);
     vi.spyOn(logger, "info").mockReturnValue(undefined);
@@ -117,14 +115,10 @@ describe("SkillLoaderService", () => {
   it("should return only available skills (setuped + model invocation enabled)", async () => {
     const skillsDir: string = path.join(tempDir, ".betterclaw", "skills");
 
-    // Create two skills: one that will be "setuped" and one that won't
     await createSkillOnDiskAsync(skillsDir, "ready-skill", "name: ready-skill\ndescription: Ready\ndisableModelInvocation: false", "Ready.");
     await createSkillOnDiskAsync(skillsDir, "disabled-skill", "name: disabled-skill\ndescription: Disabled\ndisableModelInvocation: true", "Disabled.");
 
-    // Mark ready-skill as setuped via state service
-    const stateService: SkillStateService = SkillStateService.getInstance();
-
-    await stateService.markSetupCompleteAsync("ready-skill");
+    await skillState.markSkillSetupCompleteAsync("ready-skill");
 
     const service: SkillLoaderService = SkillLoaderService.getInstance();
 
@@ -137,7 +131,6 @@ describe("SkillLoaderService", () => {
   });
 
   it("should handle missing skills directory gracefully", async () => {
-    // Default dir doesn't exist — should not throw
     const service: SkillLoaderService = SkillLoaderService.getInstance();
 
     await expect(service.loadAllSkillsAsync()).resolves.toBeUndefined();
@@ -150,10 +143,8 @@ describe("SkillLoaderService", () => {
   it("should skip directories without SKILL.md", async () => {
     const skillsDir: string = path.join(tempDir, ".betterclaw", "skills");
 
-    // Create a directory without a SKILL.md file
     await fs.mkdir(path.join(skillsDir, "no-skill-file"), { recursive: true });
 
-    // Also create a valid skill
     await createSkillOnDiskAsync(skillsDir, "valid-skill", "name: valid-skill\ndescription: Valid", "Valid.");
 
     const service: SkillLoaderService = SkillLoaderService.getInstance();
@@ -169,10 +160,8 @@ describe("SkillLoaderService", () => {
   it("should skip skills with invalid frontmatter and continue loading others", async () => {
     const skillsDir: string = path.join(tempDir, ".betterclaw", "skills");
 
-    // Create a skill with invalid frontmatter (missing name)
     await createSkillOnDiskAsync(skillsDir, "bad-skill", "description: No name here", "Bad.");
 
-    // Create a valid skill
     await createSkillOnDiskAsync(skillsDir, "good-skill", "name: good-skill\ndescription: Good", "Good.");
 
     const service: SkillLoaderService = SkillLoaderService.getInstance();

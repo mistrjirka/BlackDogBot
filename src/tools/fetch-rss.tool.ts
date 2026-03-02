@@ -3,7 +3,7 @@ import TurndownService from "turndown";
 
 import { fetchRssToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { parseRssFeed } from "../utils/rss-parser.js";
-import { RssStateService } from "../services/rss-state.service.js";
+import * as rssState from "../helpers/rss-state.js";
 import type { IRssState } from "../shared/types/index.js";
 
 // Initialize Turndown service for HTML to Markdown conversion
@@ -111,15 +111,14 @@ export const fetchRssTool = tool({
     let unseenCount: number | undefined;
 
     if (mode === "unseen") {
-      const rssStateService: RssStateService = RssStateService.getInstance();
-      const state: IRssState | null = await rssStateService.loadStateAsync(url);
-      const unseenItems: Record<string, unknown>[] = rssStateService.filterUnseenItems(transformedAllItems, state);
+      const state: IRssState | null = await rssState.loadRssStateAsync(url);
+      const unseenItems: Record<string, unknown>[] = rssState.filterUnseenRssItems(transformedAllItems, state);
 
       unseenCount = unseenItems.length;
       returnedItems = unseenItems.slice(0, maxItems);
 
-      const updatedSeenIds: string[] = rssStateService.mergeSeenIds(state?.seenIds ?? [], allItems);
-      await rssStateService.saveStateAsync(url, updatedSeenIds);
+      const updatedSeenIds: string[] = rssState.mergeRssSeenIds(state?.seenIds ?? [], allItems);
+      await rssState.saveRssStateAsync(url, updatedSeenIds);
     } else {
       returnedItems = transformedAllItems.slice(0, maxItems);
     }

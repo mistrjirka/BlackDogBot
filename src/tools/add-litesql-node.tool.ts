@@ -3,7 +3,8 @@ import { addLitesqlNodeToolInputSchema } from "../shared/schemas/tool-schemas.js
 import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
 import { ILiteSqlConfig, IJob, INode } from "../shared/types/index.js";
-import { LiteSqlService, ITableInfo } from "../services/litesql.service.js";
+import * as litesql from "../helpers/litesql.js";
+import type { ITableInfo } from "../helpers/litesql.js";
 import { deriveInputSchemaFromTable, validateSchemaHintAgainstTable, IJsonSchema } from "../utils/litesql-schema-helper.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { buildAsciiGraph } from "../utils/ascii-graph.js";
@@ -54,19 +55,16 @@ export function createAddLitesqlNodeTool(jobTracker: IJobActivityTracker) {
       inputSchemaHint?: Record<string, unknown>;
     }): Promise<ICreateNodeResult & { warning?: string; derivedInputSchema?: Record<string, unknown>; graphAscii?: string }> => {
       try {
-        const service: LiteSqlService = LiteSqlService.getInstance();
         let effectiveInputSchema: Record<string, unknown>;
         let warning: string | undefined;
 
-        const tableExists: boolean = await service.tableExistsAsync(databaseName, tableName).catch(() => false);
+        const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName).catch(() => false);
 
         if (tableExists) {
-          // Table exists: auto-derive schema from actual table
-          const tableInfo: ITableInfo = await service.getTableSchemaAsync(databaseName, tableName);
+          const tableInfo: ITableInfo = await litesql.getTableSchemaAsync(databaseName, tableName);
           const derivedSchema: IJsonSchema = deriveInputSchemaFromTable(tableInfo);
           effectiveInputSchema = derivedSchema as unknown as Record<string, unknown>;
 
-          // If caller also provided a hint, warn on mismatch but still use table schema
           if (inputSchemaHint) {
             const warnings: string[] = validateSchemaHintAgainstTable(inputSchemaHint, tableInfo);
             if (warnings.length > 0) {

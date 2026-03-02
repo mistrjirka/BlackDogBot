@@ -2,8 +2,8 @@ import { tool } from "ai";
 
 import { setupSkillToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
-import { SkillStateService } from "../services/skill-state.service.js";
-import { SkillInstallerService } from "../services/skill-installer.service.js";
+import * as skillState from "../helpers/skill-state.js";
+import * as skillInstaller from "../helpers/skill-installer.js";
 import { LoggerService } from "../services/logger.service.js";
 import type { ISkill, ISkillInstallStep } from "../shared/types/index.js";
 
@@ -30,8 +30,6 @@ export const createSetupSkillTool = (
     execute: async ({ skillName }: { skillName: string }): Promise<ISetupSkillResult> => {
       const logger = LoggerService.getInstance();
       const skillLoader = SkillLoaderService.getInstance();
-      const skillState = SkillStateService.getInstance();
-      const installer = SkillInstallerService.getInstance();
 
       const skill: ISkill | undefined = skillLoader.getSkill(skillName);
 
@@ -67,7 +65,7 @@ export const createSetupSkillTool = (
 
       if (skill.state.state === "missing-deps") {
         const missing = skill.state.missingDeps;
-        const manualInstructions = installer.getMissingDepsInstructions({
+        const manualInstructions = skillInstaller.getSkillMissingDepsInstructions({
           bins: missing?.bins || [],
           env: missing?.env || [],
           config: missing?.config || [],
@@ -92,12 +90,12 @@ export const createSetupSkillTool = (
         };
       }
 
-      await skillState.markSetupInProgressAsync(skillName);
+      await skillState.markSkillSetupInProgressAsync(skillName);
 
       const installSteps: ISkillInstallStep[] = skill.frontmatter.metadata?.openclaw?.install || [];
 
       if (installSteps.length === 0) {
-        await skillState.markNeedsSetupAsync(
+        await skillState.markSkillNeedsSetupAsync(
           skillName,
           skill.state.missingDeps,
           [],
@@ -114,10 +112,10 @@ export const createSetupSkillTool = (
 
       logger.info(`Starting setup for skill "${skillName}"`);
 
-      const result = await installer.executeInstallSteps(installSteps, allowedKinds as any, timeout);
+      const result = await skillInstaller.executeSkillInstallStepsAsync(installSteps, allowedKinds as any, timeout);
 
       if (result.success) {
-        await skillState.markSetupCompleteAsync(skillName);
+        await skillState.markSkillSetupCompleteAsync(skillName);
         logger.info(`Skill "${skillName}" setup completed successfully`);
 
         return {
@@ -130,7 +128,7 @@ export const createSetupSkillTool = (
       }
 
       if (result.manualStepsRequired.length > 0 && !result.error) {
-        await skillState.markNeedsSetupAsync(
+        await skillState.markSkillNeedsSetupAsync(
           skillName,
           skill.state.missingDeps,
           result.manualStepsRequired,
@@ -145,7 +143,7 @@ export const createSetupSkillTool = (
         };
       }
 
-      await skillState.markSetupErrorAsync(skillName, result.error || "Unknown error");
+      await skillState.markSkillSetupErrorAsync(skillName, result.error || "Unknown error");
       logger.error(`Skill "${skillName}" setup failed: ${result.error}`);
 
       return {

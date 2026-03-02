@@ -10,13 +10,13 @@ import { RateLimiterService } from "../../../src/services/rate-limiter.service.j
 import { PromptService } from "../../../src/services/prompt.service.js";
 import { EmbeddingService } from "../../../src/services/embedding.service.js";
 import { VectorStoreService } from "../../../src/services/vector-store.service.js";
-import { KnowledgeService } from "../../../src/services/knowledge.service.js";
+import * as knowledge from "../../../src/helpers/knowledge.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import { JobExecutorService } from "../../../src/services/job-executor.service.js";
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
-import { SkillStateService } from "../../../src/services/skill-state.service.js";
-import { RssStateService } from "../../../src/services/rss-state.service.js";
-import { LiteSqlService } from "../../../src/services/litesql.service.js";
+import * as skillState from "../../../src/helpers/skill-state.js";
+import * as rssState from "../../../src/helpers/rss-state.js";
+import * as litesql from "../../../src/helpers/litesql.js";
 import { MainAgent, type IAgentResult } from "../../../src/agent/main-agent.js";
 import type {
   IJob,
@@ -43,13 +43,9 @@ function resetSingletons(): void {
   (PromptService as unknown as { _instance: null })._instance = null;
   (EmbeddingService as unknown as { _instance: null })._instance = null;
   (VectorStoreService as unknown as { _instance: null })._instance = null;
-  (KnowledgeService as unknown as { _instance: null })._instance = null;
   (JobStorageService as unknown as { _instance: null })._instance = null;
   (JobExecutorService as unknown as { _instance: null })._instance = null;
   (SkillLoaderService as unknown as { _instance: null })._instance = null;
-  (SkillStateService as unknown as { _instance: null })._instance = null;
-  (RssStateService as unknown as { _instance: null })._instance = null;
-  (LiteSqlService as unknown as { _instance: null })._instance = null;
   (MainAgent as unknown as { _instance: null })._instance = null;
 }
 
@@ -149,7 +145,6 @@ describe("AI Job Pipeline E2E — RSS + Agent", () => {
     resetSingletons();
     sentMessages.length = 0;
 
-    // Copy real config
     const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
     const tempConfigDir: string = path.join(tempDir, ".betterclaw");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
@@ -157,7 +152,6 @@ describe("AI Job Pipeline E2E — RSS + Agent", () => {
     await fs.mkdir(tempConfigDir, { recursive: true });
     await fs.cp(realConfigPath, tempConfigPath);
 
-    // Initialize all services
     const loggerService: LoggerService = LoggerService.getInstance();
 
     await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
@@ -245,7 +239,6 @@ Then call done.`;
 
     const result: IAgentResult = await mainAgent.processMessageForChatAsync("test-chat", prompt);
 
-    // ── Agent response ──
     console.log("\n========== AGENT RESPONSE ==========");
     console.log("Steps count:", result.stepsCount);
     console.log("Agent text:", result.text);
@@ -254,7 +247,6 @@ Then call done.`;
     expect(result).toBeDefined();
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
 
-    // ── Job inspection ──
     const storageService: JobStorageService = JobStorageService.getInstance();
     const executorService: JobExecutorService = JobExecutorService.getInstance();
     const jobs: IJob[] = await storageService.listJobsAsync();
@@ -275,7 +267,6 @@ Then call done.`;
 
     expect(digestJob!.status).not.toBe("creating");
 
-    // ── Node inspection ──
     const nodes: INode[] = await storageService.listNodesAsync(digestJob!.jobId);
 
     const startNode: INode | undefined = nodes.find((n: INode) => n.type === "start");
@@ -327,7 +318,6 @@ Then call done.`;
     console.log("Config maxSteps:", agentConfig.maxSteps);
     console.log("================================\n");
 
-    // ── Graph wiring assertions ──
     if (startNode) {
       expect(startNode.connections).toContain(rssNode!.nodeId);
       expect(digestJob!.entrypointNodeId).toBe(startNode.nodeId);
@@ -338,7 +328,6 @@ Then call done.`;
     expect(rssNode!.connections).toContain(agentNode!.nodeId);
     expect(agentNode!.connections).toEqual([]);
 
-    // ── Test case inspection ──
     const rssTestCases: INodeTestCase[] = await storageService.getTestCasesAsync(digestJob!.jobId, rssNode!.nodeId);
     const agentTestCases: INodeTestCase[] = await storageService.getTestCasesAsync(digestJob!.jobId, agentNode!.nodeId);
 
@@ -356,7 +345,6 @@ Then call done.`;
     expect(rssTestCases.length).toBeGreaterThanOrEqual(1);
     expect(agentTestCases.length).toBeGreaterThanOrEqual(1);
 
-    // ── Re-run node tests to see actual outputs ──
     const rssTestResults: { results: INodeTestResult[]; allPassed: boolean } =
       await executorService.runNodeTestsAsync(digestJob!.jobId, rssNode!.nodeId);
 
@@ -387,8 +375,6 @@ Then call done.`;
 
     expect(agentTestResults.allPassed).toBe(true);
 
-    // ── Re-run full pipeline to see end-to-end output ──
-    // Reset status back to ready since the AI's run_job left it as "completed"
     await storageService.updateJobAsync(digestJob!.jobId, { status: "ready" });
 
     const pipelineResult: IJobExecutionResult = await executorService.executeJobAsync(digestJob!.jobId, {});
@@ -408,20 +394,17 @@ Then call done.`;
     expect(pipelineResult.nodesExecuted).toBeLessThanOrEqual(3);
     expect(pipelineResult.output).toBeDefined();
 
-    // The agent node should have produced titles
     const pipelineOutput: Record<string, unknown> = pipelineResult.output as Record<string, unknown>;
 
     expect(pipelineOutput).toHaveProperty("titles");
     expect(Array.isArray(pipelineOutput.titles)).toBe(true);
     expect((pipelineOutput.titles as string[]).length).toBeGreaterThanOrEqual(1);
 
-    // Each title should be a non-empty string
     for (const title of pipelineOutput.titles as string[]) {
       expect(typeof title).toBe("string");
       expect(title.length).toBeGreaterThan(0);
     }
 
-    // ── Messages sent via mockMessageSender ──
     console.log("\n========== SENT MESSAGES ==========");
     console.log("Total messages sent:", sentMessages.length);
     for (let i: number = 0; i < sentMessages.length; i++) {

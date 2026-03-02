@@ -11,11 +11,11 @@ import { RateLimiterService } from "../../../src/services/rate-limiter.service.j
 import { PromptService } from "../../../src/services/prompt.service.js";
 import { EmbeddingService } from "../../../src/services/embedding.service.js";
 import { VectorStoreService } from "../../../src/services/vector-store.service.js";
-import { KnowledgeService } from "../../../src/services/knowledge.service.js";
+import * as knowledge from "../../../src/helpers/knowledge.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import { JobExecutorService } from "../../../src/services/job-executor.service.js";
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
-import { LiteSqlService } from "../../../src/services/litesql.service.js";
+import * as litesql from "../../../src/helpers/litesql.js";
 import { MessagingService, type IPlatformAdapter } from "../../../src/services/messaging.service.js";
 import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
 import { MainAgent } from "../../../src/agent/main-agent.js";
@@ -37,11 +37,9 @@ function resetSingletons(): void {
   (PromptService as unknown as { _instance: null })._instance = null;
   (EmbeddingService as unknown as { _instance: null })._instance = null;
   (VectorStoreService as unknown as { _instance: null })._instance = null;
-  (KnowledgeService as unknown as { _instance: null })._instance = null;
   (JobStorageService as unknown as { _instance: null })._instance = null;
   (JobExecutorService as unknown as { _instance: null })._instance = null;
   (SkillLoaderService as unknown as { _instance: null })._instance = null;
-  (LiteSqlService as unknown as { _instance: null })._instance = null;
   (MessagingService as unknown as { _instance: null })._instance = null;
   (ChannelRegistryService as unknown as { _instance: null })._instance = null;
   (MainAgent as unknown as { _instance: null })._instance = null;
@@ -63,15 +61,11 @@ function createMockDeps(): IPlatformDeps {
     toolRegistry: {
       isToolAllowed: () => true,
       getAllowedToolNames: () => [],
-    } as any,
+    } as unknown,
     logger: LoggerService.getInstance(),
   };
 }
 
-/**
- * Builds a minimal grammY Context stub that satisfies the subset of fields
- * used by TelegramHandler.handleMessageAsync.
- */
 function makeCtx(overrides: {
   text?: string;
   chatId?: number;
@@ -103,10 +97,6 @@ function makeCtx(overrides: {
   } as unknown as Context;
 }
 
-/**
- * Creates a fake Telegram adapter that implements IPlatformAdapter
- * by capturing all sent messages/photos/actions into the provided arrays.
- */
 function createFakeAdapter(
   sentMessages: Array<{ text: string; userId: string }>,
   sentPhotos: Array<{ userId: string; caption: string | null }>,
@@ -144,7 +134,6 @@ describe("TelegramHandler", () => {
 
     resetSingletons();
 
-    // Copy real config
     const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
     const tempConfigDir: string = path.join(tempDir, ".betterclaw");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
@@ -152,7 +141,6 @@ describe("TelegramHandler", () => {
     await fs.mkdir(tempConfigDir, { recursive: true });
     await fs.cp(realConfigPath, tempConfigPath);
 
-    // Initialize services (same pattern as telegram-e2e.test.ts)
     const loggerService: LoggerService = LoggerService.getInstance();
 
     await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
@@ -194,16 +182,13 @@ describe("TelegramHandler", () => {
 
     await skillLoaderService.loadAllSkillsAsync([]);
 
-    // Register fake Telegram adapter on MessagingService
     const messagingService: MessagingService = MessagingService.getInstance();
 
     messagingService.registerAdapter(createFakeAdapter(sentMessages, sentPhotos, sentActions));
 
-    // Initialize ChannelRegistryService
     const channelRegistry = ChannelRegistryService.getInstance();
     await channelRegistry.initializeAsync();
 
-    // Initialize TelegramHandler with mock config
     const handler: TelegramHandler = TelegramHandler.getInstance();
     await handler.initializeAsync(createMockTelegramConfig(), createMockDeps());
   }, 350000);
@@ -219,17 +204,14 @@ describe("TelegramHandler", () => {
   });
 
   beforeEach(() => {
-    // Reset per-test state
     sentMessages.length = 0;
     sentPhotos.length = 0;
     sentActions.length = 0;
 
-    // Clear TelegramHandler's _processing set so each test starts clean
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
     (handler as unknown as { _processing: Set<string> })._processing.clear();
 
-    // Clear MainAgent sessions so each test gets a fresh conversation
     const mainAgent: MainAgent = MainAgent.getInstance();
 
     mainAgent.clearChatHistory("100");
@@ -241,19 +223,15 @@ describe("TelegramHandler", () => {
   });
 
   it("should process a normal message end-to-end without error", async () => {
-    // Arrange
     const handler: TelegramHandler = TelegramHandler.getInstance();
     const ctx: Context = makeCtx({ text: "Say 'pong' and call done." });
 
-    // Act — real LLM call via MainAgent
     await handler.handleMessageAsync(ctx);
 
-    // Assert — typing action was sent, no crash occurred
     expect(sentActions.some((a) => a.action === "typing")).toBe(true);
   }, 300000);
 
   it("should reply with agent text when the agent returns non-empty text", async () => {
-    // Arrange
     const replyTexts: string[] = [];
     const ctx: Context = makeCtx({
       text: "Say 'pong' and nothing else.",
@@ -264,44 +242,35 @@ describe("TelegramHandler", () => {
     });
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
-    // Act — real LLM call
     await handler.handleMessageAsync(ctx);
 
-    // Assert — ctx.reply was called with some non-empty text from the agent
     expect(replyTexts.length).toBeGreaterThan(0);
     expect(replyTexts[0].length).toBeGreaterThan(0);
   }, 300000);
 
   it("should skip processing when ctx.message is absent", async () => {
-    // Arrange — context has no message at all
     const ctx: Context = { message: undefined } as unknown as Context;
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
-    // Act
     await handler.handleMessageAsync(ctx);
 
-    // Assert — no typing actions were sent (agent was never touched)
     expect(sentActions.length).toBe(0);
   });
 
   it("should skip processing when message has no text", async () => {
-    // Arrange — message present but text is undefined (e.g. a photo message)
     const ctx: Context = {
       message: {
         message_id: 1,
         date: Date.now(),
         chat: { id: 1, type: "private" },
         from: { id: 1, is_bot: false, first_name: "user" },
-        // no text field
       },
     } as unknown as Context;
 
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
-    // Act
     await handler.handleMessageAsync(ctx);
 
-    // Assert — no typing actions were sent
     expect(sentActions.length).toBe(0);
   });
 
@@ -329,20 +298,15 @@ describe("TelegramHandler", () => {
     const ctx3: Context = makeCtx({ chatId: 100, text: "third", replyImpl: replySpy });
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
-    // Start first call (will block at processMessageForChatAsync)
     const firstCall: Promise<void> = handler.handleMessageAsync(ctx1);
 
-    // Wait for the mock to be called (proves first call reached the agent)
     await vi.waitUntil(() => callCount === 1, { timeout: 30000 });
 
-    // Additional calls should return immediately and be queued
     await handler.handleMessageAsync(ctx2);
     await handler.handleMessageAsync(ctx3);
 
-    // Agent should still have been called only once while first call is blocked
     expect(callCount).toBe(1);
 
-    // Let first call complete and ensure queued messages are processed as a single merged call
     resolveBlock!();
     await firstCall;
 
@@ -354,7 +318,6 @@ describe("TelegramHandler", () => {
   }, 120000);
 
   it("should send an error reply when the agent throws", async () => {
-    // Arrange — spy on processMessageForChatAsync to throw a controlled error
     const mainAgent: MainAgent = MainAgent.getInstance();
 
     vi
@@ -365,17 +328,14 @@ describe("TelegramHandler", () => {
     const ctx: Context = makeCtx({ text: "trigger error", replyImpl: replySpy });
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
-    // Act
     await handler.handleMessageAsync(ctx);
 
-    // Assert — error reply was sent with the error message
     expect(replySpy).toHaveBeenCalledWith(
       expect.stringContaining("agent boom"),
     );
   }, 120000);
 
   it("should include provider details in error reply when an APICallError is thrown", async () => {
-    // Arrange — spy on processMessageForChatAsync to throw an APICallError
     const mainAgent: MainAgent = MainAgent.getInstance();
     const apiError: APICallError = new APICallError({
       message: "User not found.",
@@ -392,11 +352,8 @@ describe("TelegramHandler", () => {
     const ctx: Context = makeCtx({ text: "trigger api error", replyImpl: replySpy });
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
-    // Act
     await handler.handleMessageAsync(ctx);
 
-    // Assert — user reply includes actionable provider info
-    // ctx.reply is also called for the progress message, so search all calls for the error reply
     const allReplies: string[] = replySpy.mock.calls.map((call: unknown[]): string => call[0] as string);
     const userReply: string | undefined = allReplies.find((r: string): boolean => r.includes("Authentication failed"));
 
@@ -407,7 +364,6 @@ describe("TelegramHandler", () => {
   }, 120000);
 
   it("should log but not throw when even the error reply fails", async () => {
-    // Arrange — spy on processMessageForChatAsync to throw AND ctx.reply also throws
     const mainAgent: MainAgent = MainAgent.getInstance();
 
     vi
@@ -423,7 +379,6 @@ describe("TelegramHandler", () => {
 
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
-    // Act — must NOT throw even though both the agent and the reply fail
     await expect(handler.handleMessageAsync(ctx)).resolves.toBeUndefined();
   }, 120000);
 });

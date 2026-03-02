@@ -10,7 +10,7 @@ import { RateLimiterService } from "../../../src/services/rate-limiter.service.j
 import { PromptService } from "../../../src/services/prompt.service.js";
 import { EmbeddingService } from "../../../src/services/embedding.service.js";
 import { VectorStoreService } from "../../../src/services/vector-store.service.js";
-import { KnowledgeService } from "../../../src/services/knowledge.service.js";
+import * as knowledge from "../../../src/helpers/knowledge.js";
 import { CronAgent } from "../../../src/agent/cron-agent.js";
 import type { IAgentResult } from "../../../src/agent/base-agent.js";
 import type { IScheduledTask } from "../../../src/shared/types/index.js";
@@ -30,7 +30,6 @@ function resetSingletons(): void {
   (PromptService as unknown as { _instance: null })._instance = null;
   (EmbeddingService as unknown as { _instance: null })._instance = null;
   (VectorStoreService as unknown as { _instance: null })._instance = null;
-  (KnowledgeService as unknown as { _instance: null })._instance = null;
   (CronAgent as unknown as { _instance: null })._instance = null;
 }
 
@@ -52,7 +51,6 @@ describe("CronAgent E2E", () => {
     resetSingletons();
     sentMessages.length = 0;
 
-    // Copy real config
     const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
     const tempConfigDir: string = path.join(tempDir, ".betterclaw");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
@@ -60,7 +58,6 @@ describe("CronAgent E2E", () => {
     await fs.mkdir(tempConfigDir, { recursive: true });
     await fs.cp(realConfigPath, tempConfigPath);
 
-    // Initialize services
     const loggerService: LoggerService = LoggerService.getInstance();
 
     await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
@@ -160,9 +157,7 @@ describe("CronAgent E2E", () => {
 
     expect(result).toBeDefined();
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
-    // The agent should have called send_message, which triggered our mock
     expect(sentMessages.length).toBeGreaterThan(0);
-    // At least one message should contain something about "hello" or "cron"
     const anyMessageMatchesCron: boolean = sentMessages.some(
       (msg: string) => msg.toLowerCase().includes("hello") || msg.toLowerCase().includes("cron"),
     );

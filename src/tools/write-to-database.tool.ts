@@ -1,8 +1,8 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { LiteSqlService } from "../services/litesql.service.js";
-import { type IInsertResult } from "../services/litesql.service.js";
+import * as litesql from "../helpers/litesql.js";
+import type { IInsertResult } from "../helpers/litesql.js";
 
 export const writeToDatabaseTool = tool({
   description: "Write a row of data into a table in a database",
@@ -32,11 +32,9 @@ export const writeToDatabaseTool = tool({
     lastRowId: number;
     message: string;
   }> => {
-    const service: LiteSqlService = LiteSqlService.getInstance();
-
-    const dbExists: boolean = await service.databaseExistsAsync(databaseName);
+    const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
     if (!dbExists) {
-      const allDbs = await service.listDatabasesAsync();
+      const allDbs = await litesql.listDatabasesAsync();
       const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
       throw new Error(
@@ -45,9 +43,9 @@ export const writeToDatabaseTool = tool({
       );
     }
 
-    const tableExists: boolean = await service.tableExistsAsync(databaseName, tableName);
+    const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
     if (!tableExists) {
-      const allTables: string[] = await service.listTablesAsync(databaseName);
+      const allTables: string[] = await litesql.listTablesAsync(databaseName);
       const available: string = allTables.join(", ") || "(none)";
 
       throw new Error(
@@ -56,7 +54,7 @@ export const writeToDatabaseTool = tool({
       );
     }
 
-    const result: IInsertResult = await service.insertIntoTableAsync(databaseName, tableName, data);
+    const result: IInsertResult = await litesql.insertIntoTableAsync(databaseName, tableName, data);
 
     const sampleRow: Record<string, unknown> = Array.isArray(data) ? (data[0] ?? {}) : data;
     const columns: string = Object.keys(sampleRow).join(", ");

@@ -7,15 +7,14 @@ import { AiProviderService } from "./services/ai-provider.service.js";
 import { PromptService } from "./services/prompt.service.js";
 import { EmbeddingService } from "./services/embedding.service.js";
 import { VectorStoreService } from "./services/vector-store.service.js";
-import { KnowledgeService } from "./services/knowledge.service.js";
 import { SkillLoaderService } from "./services/skill-loader.service.js";
-import { SkillInstallerService } from "./services/skill-installer.service.js";
-import { SkillStateService } from "./services/skill-state.service.js";
 import { SchedulerService } from "./services/scheduler.service.js";
 import { MessagingService } from "./services/messaging.service.js";
 import { JobStorageService } from "./services/job-storage.service.js";
 import { ChannelRegistryService } from "./services/channel-registry.service.js";
-import { ToolRegistryService } from "./services/tool-registry.service.js";
+import * as toolRegistry from "./helpers/tool-registry.js";
+import * as skillInstaller from "./helpers/skill-installer.js";
+import * as skillState from "./helpers/skill-state.js";
 import { CronAgent } from "./agent/cron-agent.js";
 import { MainAgent } from "./agent/main-agent.js";
 import { BrainInterfaceService } from "./brain-interface/service.js";
@@ -107,10 +106,7 @@ async function mainAsync(): Promise<void> {
 
   logger.info("Vector store initialized.");
 
-  // Initialize knowledge service
-  KnowledgeService.getInstance();
-
-  logger.info("Knowledge service initialized.");
+  logger.info("Knowledge helpers initialized.");
 
   // 6. Initialize skill loader
   const skillLoaderService: SkillLoaderService = SkillLoaderService.getInstance();
@@ -151,24 +147,21 @@ async function mainAsync(): Promise<void> {
     if (skillsNeedingSetup.length > 0) {
       logger.info(`Auto-setting up ${skillsNeedingSetup.length} skills...`);
 
-      const skillInstaller = SkillInstallerService.getInstance();
-      const skillState = SkillStateService.getInstance();
-
       for (const skill of skillsNeedingSetup) {
         try {
           logger.info(`Setting up skill "${skill.name}"...`);
 
-          await skillState.markSetupInProgressAsync(skill.name);
+          await skillState.markSkillSetupInProgressAsync(skill.name);
 
           const installSteps = skill.frontmatter.metadata?.openclaw?.install || [];
-          const result = await skillInstaller.executeInstallSteps(
+          const result = await skillInstaller.executeSkillInstallStepsAsync(
             installSteps,
             allowedInstallKinds as any,
             installTimeout
           );
 
           if (result.success) {
-            await skillState.markSetupCompleteAsync(skill.name);
+            await skillState.markSkillSetupCompleteAsync(skill.name);
             logger.info(`Skill "${skill.name}" setup completed`, { installed: result.installed });
 
             if (autoSetupNotify) {
@@ -189,7 +182,7 @@ async function mainAsync(): Promise<void> {
               }
             }
           } else if (result.manualStepsRequired.length > 0) {
-            await skillState.markNeedsSetupAsync(
+            await skillState.markSkillNeedsSetupAsync(
               skill.name,
               skill.state.missingDeps,
               result.manualStepsRequired
@@ -218,7 +211,7 @@ async function mainAsync(): Promise<void> {
               }
             }
           } else {
-            await skillState.markSetupErrorAsync(skill.name, result.error || "Unknown error");
+            await skillState.markSkillSetupErrorAsync(skill.name, result.error || "Unknown error");
             logger.error(`Skill "${skill.name}" setup failed`, { error: result.error });
 
             if (autoSetupNotify) {
@@ -242,7 +235,7 @@ async function mainAsync(): Promise<void> {
           }
         } catch (setupError) {
           const errorMsg = setupError instanceof Error ? setupError.message : String(setupError);
-          await skillState.markSetupErrorAsync(skill.name, errorMsg);
+          await skillState.markSkillSetupErrorAsync(skill.name, errorMsg);
           logger.error(`Skill "${skill.name}" setup threw error`, { error: errorMsg });
 
           if (autoSetupNotify) {
@@ -273,7 +266,7 @@ async function mainAsync(): Promise<void> {
     mainAgent: MainAgent.getInstance(),
     channelRegistry,
     messagingService,
-    toolRegistry: ToolRegistryService.getInstance(),
+    toolRegistry,
     logger,
   };
 

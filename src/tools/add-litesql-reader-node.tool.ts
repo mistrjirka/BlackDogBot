@@ -3,7 +3,8 @@ import { addLitesqlReaderNodeToolInputSchema } from "../shared/schemas/tool-sche
 import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
 import { ILiteSqlReaderConfig, IJob, INode } from "../shared/types/index.js";
-import { LiteSqlService, ITableInfo } from "../services/litesql.service.js";
+import * as litesql from "../helpers/litesql.js";
+import type { ITableInfo } from "../helpers/litesql.js";
 import { deriveOutputSchemaFromTable } from "../utils/litesql-schema-helper.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { buildAsciiGraph } from "../utils/ascii-graph.js";
@@ -40,9 +41,7 @@ export function createAddLitesqlReaderNodeTool(jobTracker: IJobActivityTracker) 
       limit: number | null;
     }): Promise<ICreateNodeResult & { derivedOutputSchema?: Record<string, unknown>; graphAscii?: string }> => {
       try {
-        const service: LiteSqlService = LiteSqlService.getInstance();
-
-        const tableExists: boolean = await service.tableExistsAsync(databaseName, tableName).catch(() => false);
+        const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName).catch(() => false);
         if (!tableExists) {
           return {
             nodeId: "",
@@ -56,7 +55,7 @@ export function createAddLitesqlReaderNodeTool(jobTracker: IJobActivityTracker) 
           };
         }
 
-        const tableInfo: ITableInfo = await service.getTableSchemaAsync(databaseName, tableName);
+        const tableInfo: ITableInfo = await litesql.getTableSchemaAsync(databaseName, tableName);
         const derivedOutputSchema: Record<string, unknown> = deriveOutputSchemaFromTable(tableInfo);
 
         // The node accepts any input (used for template substitution in WHERE)
