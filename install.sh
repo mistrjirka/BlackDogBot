@@ -407,6 +407,7 @@ create_config() {
     echo -e "${BLUE}AI Provider Configuration${NC}"
     echo "1) OpenRouter (recommended)"
     echo "2) OpenAI-compatible (Ollama, vLLM, etc.)"
+    echo "3) LM Studio (local)"
     echo ""
     prompt_input "Select AI provider" "1" provider_choice
     
@@ -416,13 +417,19 @@ create_config() {
         prompt_input "Model to use" "anthropic/claude-sonnet-4" OPENROUTER_MODEL
         prompt_input "Requests per minute (RPM)" "60" OPENROUTER_RPM
         prompt_input "Tokens per minute (TPM)" "100000" OPENROUTER_TPM
-    else
+    elif [ "$provider_choice" = "2" ]; then
         AI_PROVIDER="openai-compatible"
         prompt_input "Base URL" "http://localhost:11434/v1" OAI_BASE_URL
         prompt_input "API key (optional, press Enter to skip)" "" OAI_KEY
         prompt_input "Model name" "llama3" OAI_MODEL
         prompt_input "Requests per minute (RPM)" "120" OAI_RPM
         prompt_input "Tokens per minute (TPM)" "200000" OAI_TPM
+    else
+        AI_PROVIDER="lm-studio"
+        prompt_input "LM Studio base URL" "http://localhost:1234/v1" LMSTUDIO_BASE_URL
+        prompt_input "Model name (from LM Studio)" "" LMSTUDIO_MODEL
+        prompt_input "Requests per minute (RPM)" "120" LMSTUDIO_RPM
+        prompt_input "Tokens per minute (TPM)" "200000" LMSTUDIO_TPM
     fi
     
     echo ""
@@ -439,10 +446,25 @@ create_config() {
 
     echo ""
     echo -e "${BLUE}Scheduler Configuration${NC}"
+    
+    DETECTED_TZ=""
+    if command -v timedatectl &> /dev/null; then
+        DETECTED_TZ=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "")
+    fi
+    if [ -z "$DETECTED_TZ" ] && [ -f /etc/timezone ]; then
+        DETECTED_TZ=$(cat /etc/timezone 2>/dev/null || echo "")
+    fi
+    
     if prompt_yesno "Enable scheduler?" "y"; then
         SCHEDULER_ENABLED="true"
+        if [ -n "$DETECTED_TZ" ]; then
+            prompt_input "Scheduler timezone" "$DETECTED_TZ" SCHEDULER_TZ
+        else
+            prompt_input "Scheduler timezone (e.g., Europe/Prague)" "UTC" SCHEDULER_TZ
+        fi
     else
         SCHEDULER_ENABLED="false"
+        SCHEDULER_TZ="UTC"
     fi
     
     echo ""
@@ -451,6 +473,50 @@ create_config() {
         JOB_CREATION_ENABLED="true"
     else
         JOB_CREATION_ENABLED="false"
+    fi
+    
+    echo ""
+    echo -e "${BLUE}Embedding Configuration${NC}"
+    echo "Embeddings are used for knowledge search (RAG)."
+    echo ""
+    echo "1) Local (recommended - runs on your machine)"
+    echo "2) OpenRouter (uses cloud API)"
+    echo ""
+    prompt_input "Embedding provider" "1" embedding_choice
+    
+    if [ "$embedding_choice" = "1" ]; then
+        EMBEDDING_PROVIDER="local"
+        EMBEDDING_MODEL_PATH="onnx-community/Qwen3-Embedding-0.6B-ONNX"
+        echo ""
+        echo "Device selection:"
+        echo "1) auto (detect best available)"
+        echo "2) cpu (force CPU)"
+        echo "3) cuda (force NVIDIA GPU)"
+        prompt_input "Embedding device" "1" device_choice
+        case $device_choice in
+            2) EMBEDDING_DEVICE="cpu" ;;
+            3) EMBEDDING_DEVICE="cuda" ;;
+            *) EMBEDDING_DEVICE="auto" ;;
+        esac
+        echo ""
+        echo "Quantization (smaller = faster, slightly less accurate):"
+        echo "1) q8 (recommended - good balance)"
+        echo "2) fp16 (more accurate, larger)"
+        echo "3) fp32 (full precision, largest)"
+        prompt_input "Quantization type" "1" dtype_choice
+        case $dtype_choice in
+            2) EMBEDDING_DTYPE="fp16" ;;
+            3) EMBEDDING_DTYPE="fp32" ;;
+            *) EMBEDDING_DTYPE="q8" ;;
+        esac
+    else
+        EMBEDDING_PROVIDER="openrouter"
+        if [ "$AI_PROVIDER" = "openrouter" ] && [ -n "$OPENROUTER_KEY" ]; then
+            EMBEDDING_OR_KEY="$OPENROUTER_KEY"
+        else
+            prompt_required "OpenRouter API key for embeddings" EMBEDDING_OR_KEY
+        fi
+        prompt_input "Embedding model" "openai/text-embedding-3-small" EMBEDDING_OR_MODEL
     fi
     
     echo ""
@@ -478,7 +544,7 @@ EOF
       rpm: ${OPENROUTER_RPM}
       tpm: ${OPENROUTER_TPM}
 EOF
-    else
+    elif [ "$AI_PROVIDER" = "openai-compatible" ]; then
         cat >> "$CONFIG_FILE" << EOF
   openaiCompatible:
     baseUrl: ${OAI_BASE_URL}
@@ -487,6 +553,15 @@ EOF
     rateLimits:
       rpm: ${OAI_RPM}
       tpm: ${OAI_TPM}
+EOF
+    else
+        cat >> "$CONFIG_FILE" << EOF
+  lmStudio:
+    baseUrl: ${LMSTUDIO_BASE_URL}
+    model: ${LMSTUDIO_MODEL}
+    rateLimits:
+      rpm: ${LMSTUDIO_RPM}
+      tpm: ${LMSTUDIO_TPM}
 EOF
     fi
 
@@ -510,12 +585,29 @@ EOF
 
 scheduler:
   enabled: ${SCHEDULER_ENABLED}
+  timezone: ${SCHEDULER_TZ}
 
 jobCreation:
   enabled: ${JOB_CREATION_ENABLED}
 
 knowledge:
-  embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
+  embeddingProvider: ${EMBEDDING_PROVIDER}
+EOF
+
+    if [ "$EMBEDDING_PROVIDER" = "local" ]; then
+        cat >> "$CONFIG_FILE" << EOF
+  embeddingModelPath: ${EMBEDDING_MODEL_PATH}
+  embeddingDtype: ${EMBEDDING_DTYPE}
+  embeddingDevice: ${EMBEDDING_DEVICE}
+EOF
+    else
+        cat >> "$CONFIG_FILE" << EOF
+  embeddingOpenRouterApiKey: ${EMBEDDING_OR_KEY}
+  embeddingOpenRouterModel: ${EMBEDDING_OR_MODEL}
+EOF
+    fi
+
+    cat >> "$CONFIG_FILE" << EOF
   lancedbPath: ~/.betterclaw/knowledge/lancedb
 
 skills:
