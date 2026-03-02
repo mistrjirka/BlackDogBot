@@ -3,9 +3,13 @@ import {
   ToolSet,
   LanguageModel,
   hasToolCall,
+  APICallError,
   type ModelMessage,
   type Tool,
 } from "ai";
+import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
+import { encodingForModel } from "js-tiktoken";
 
 import { doneTool } from "../tools/done.tool.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -14,7 +18,6 @@ import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
 import { getForceThinkDirective } from "../utils/prepare-step.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
-import { encodingForModel } from "js-tiktoken";
 
 //#region Constants
 
@@ -38,7 +41,18 @@ const COMPACTION_KEEP_RECENT: number = 6;
  * How many times to retry the full agent generate call when the model
  * returns a completely empty response (no text, no useful tool calls).
  */
-export const AGENT_EMPTY_RESPONSE_RETRIES: number = 4 ;
+export const AGENT_EMPTY_RESPONSE_RETRIES: number = 4;
+
+/**
+ * How many times to retry with compaction when receiving 400 context exceeded errors.
+ */
+const CONTEXT_EXCEEDED_RETRIES: number = 2;
+
+/**
+ * Approximate JSON structure overhead per message in OpenAI format.
+ * Accounts for: {"role":"...","content":"..."} wrapper
+ */
+const MESSAGE_JSON_OVERHEAD_TOKENS: number = 15;
 
 //#endregion Constants
 
@@ -78,6 +92,7 @@ export abstract class BaseAgentBase {
   protected _contextWindow: number;
   protected _compactionTokenThreshold: number;
   protected _totalInputTokens: number = 0;
+  protected _forceCompactionOnNextStep: boolean = false;
 
   //#endregion Data members
 
@@ -111,7 +126,38 @@ export abstract class BaseAgentBase {
         // Reset token count so prepareStep doesn't use stale values from a failed attempt
         this._totalInputTokens = 0;
 
-        const result = await this._agent!.generate({ prompt: userMessage });
+        let result;
+
+        try {
+          result = await this._agent!.generate({ prompt: userMessage });
+        } catch (error: unknown) {
+          // Handle 400 context exceeded errors with reactive compaction
+          if (APICallError.isInstance(error) && error.statusCode === 400) {
+            const responseBody: string = error.responseBody ?? "";
+            const errorMessage: string = error.message ?? "";
+
+            const isContextError: boolean =
+              responseBody.toLowerCase().includes("context") ||
+              errorMessage.toLowerCase().includes("context size") ||
+              errorMessage.toLowerCase().includes("token limit") ||
+              responseBody.toLowerCase().includes("exceeded");
+
+            if (isContextError && attempt <= CONTEXT_EXCEEDED_RETRIES) {
+              this._logger.warn("Context size exceeded, triggering reactive compaction", {
+                attempt,
+                maxRetries: CONTEXT_EXCEEDED_RETRIES,
+                statusCode: error.statusCode,
+                responseBody: responseBody,
+                errorMessage: errorMessage,
+              });
+
+              this._forceCompactionOnNextStep = true;
+              continue;
+            }
+          }
+
+          throw error;
+        }
 
         let text: string = result.text ?? "";
 
@@ -326,13 +372,21 @@ export abstract class BaseAgentBase {
         const statusService: StatusService = StatusService.getInstance();
         statusService.setContextTokensWithThreshold(tokenCount, compactionTokenThreshold, self._contextWindow);
 
-        if (tokenCount > compactionTokenThreshold) {
+        // Check if compaction is needed (either threshold exceeded or forced by 400 error retry)
+        const shouldCompact: boolean =
+          tokenCount > compactionTokenThreshold ||
+          self._forceCompactionOnNextStep;
+
+        if (shouldCompact) {
+          self._forceCompactionOnNextStep = false;
+
           logger.info("Compacting agent history", {
             tokenCount,
             messageTokens,
             fixedOverhead: fixedOverheadTokens,
             threshold: compactionTokenThreshold,
             messageCount: messages.length,
+            forced: tokenCount <= compactionTokenThreshold,
           });
 
           const compactedMessages: ModelMessage[] = await _compactMessagesAsync(
@@ -407,22 +461,29 @@ function _countTextTokens(text: string): number {
 function _estimateFixedOverhead(instructions: string, allTools: ToolSet): number {
   let overhead: number = _countTextTokens(instructions);
 
-  // Estimate tool definition tokens by serializing what the API sends
   for (const [name, toolDef] of Object.entries(allTools)) {
-    // Tool name + overhead per tool (~10 tokens for JSON structure)
     overhead += _countTextTokens(name) + 10;
 
-    // Tool description
     if (toolDef && typeof toolDef === "object") {
       const desc: unknown = (toolDef as Record<string, unknown>).description;
       if (typeof desc === "string") {
         overhead += _countTextTokens(desc);
       }
 
-      // Tool input schema (JSON schema) — the biggest contributor
-      const params: unknown = (toolDef as Record<string, unknown>).parameters;
-      if (params && typeof params === "object") {
-        const schemaStr: string = JSON.stringify(params);
+      const inputSchema: unknown = (toolDef as Record<string, unknown>).inputSchema;
+
+      if (inputSchema) {
+        let schemaStr: string;
+
+        if (inputSchema instanceof z.ZodSchema) {
+          const jsonSchema = zodToJsonSchema(inputSchema);
+          schemaStr = JSON.stringify(jsonSchema);
+        } else if (typeof inputSchema === "object") {
+          schemaStr = JSON.stringify(inputSchema);
+        } else {
+          schemaStr = String(inputSchema);
+        }
+
         overhead += _countTextTokens(schemaStr);
       }
     }
@@ -434,15 +495,16 @@ function _estimateFixedOverhead(instructions: string, allTools: ToolSet): number
 /**
  * Count tokens across all messages using cl100k_base encoding (GPT-4/Claude compatible).
  * This provides a reasonable approximation for most LLM providers.
- * Note: This counts only message content, not system prompt or tool definitions.
+ * Note: This counts message content plus JSON structure overhead, not system prompt or tool definitions.
  */
 function _countTokens(messages: ModelMessage[]): number {
   const enc = _getTextEncoder();
   let totalTokens: number = 0;
 
   for (const msg of messages) {
-    const text: string = _extractTextContent(msg);
+    totalTokens += MESSAGE_JSON_OVERHEAD_TOKENS;
 
+    const text: string = _extractTextContent(msg);
     totalTokens += enc.encode(text).length;
   }
 
@@ -522,6 +584,31 @@ function _extractTextContent(message: ModelMessage): string {
     for (const part of message.content) {
       if ("text" in part && typeof part.text === "string") {
         parts.push(part.text);
+      } else if ("type" in part && part.type === "tool-call") {
+        const toolCall = part as {
+          toolCallId?: string;
+          toolName?: string;
+          args?: unknown;
+          input?: unknown;
+        };
+        parts.push(JSON.stringify({
+          type: "tool-call",
+          toolCallId: toolCall.toolCallId,
+          toolName: toolCall.toolName,
+          args: toolCall.args ?? toolCall.input,
+        }));
+      } else if ("result" in part || "output" in part) {
+        const resPart = part as {
+          result?: unknown;
+          output?: unknown;
+          toolCallId?: string;
+          isError?: boolean;
+        };
+        parts.push(JSON.stringify({
+          toolCallId: resPart.toolCallId,
+          result: resPart.result ?? resPart.output,
+          isError: resPart.isError,
+        }));
       } else if ("result" in part) {
         parts.push(JSON.stringify(part.result));
       }

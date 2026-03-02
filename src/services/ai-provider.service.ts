@@ -15,6 +15,7 @@ import {
 } from "../shared/types/index.js";
 import { RateLimiterService } from "./rate-limiter.service.js";
 import { ModelInfoService } from "./model-info.service.js";
+import { countRequestBodyTokens } from "../utils/request-token-counter.js";
 
 export class AiProviderService {
   //#region Data members
@@ -508,6 +509,22 @@ export class AiProviderService {
         supportsStructuredOutputs: config.supportsStructuredOutputs ?? false,
         fetch: async (url, init): Promise<Response> => {
           if (init?.body && typeof init.body === "string" && init.method === "POST") {
+            const tokenBreakdown = countRequestBodyTokens(init.body);
+            const logger: LoggerService = LoggerService.getInstance();
+
+            logger.info("LLM API request tokens", {
+              provider: "openai-compatible",
+              total: tokenBreakdown.total,
+              messages: tokenBreakdown.messages,
+              tools: tokenBreakdown.tools,
+              system: tokenBreakdown.system,
+              overhead: tokenBreakdown.overhead,
+              messageCount: tokenBreakdown.messageCount,
+              toolCount: tokenBreakdown.toolCount,
+              contextWindow: this._contextWindow,
+              utilization: `${((tokenBreakdown.total / this._contextWindow) * 100).toFixed(1)}%`,
+            });
+
             try {
               const body = JSON.parse(init.body);
               if (this._normalizeToolChoiceIfNeeded(body)) {
@@ -539,6 +556,22 @@ export class AiProviderService {
         supportsStructuredOutputs: config.supportsStructuredOutputs ?? true, // LM Studio supports response_format: json_schema by default
         fetch: async (url, init): Promise<Response> => {
           if (init?.body && typeof init.body === "string" && init.method === "POST") {
+            const tokenBreakdown = countRequestBodyTokens(init.body);
+            const logger: LoggerService = LoggerService.getInstance();
+
+            logger.info("LLM API request tokens", {
+              provider: "lm-studio",
+              total: tokenBreakdown.total,
+              messages: tokenBreakdown.messages,
+              tools: tokenBreakdown.tools,
+              system: tokenBreakdown.system,
+              overhead: tokenBreakdown.overhead,
+              messageCount: tokenBreakdown.messageCount,
+              toolCount: tokenBreakdown.toolCount,
+              contextWindow: this._contextWindow,
+              utilization: `${((tokenBreakdown.total / this._contextWindow) * 100).toFixed(1)}%`,
+            });
+
             try {
               const body = JSON.parse(init.body);
               let modified = false;
@@ -574,8 +607,9 @@ export class AiProviderService {
             const responseText = await response.text();
             logger.error("LM Studio request rejected", {
               status: response.status,
+              statusText: response.statusText,
               responseBody: responseText,
-              requestBody: typeof init?.body === "string" ? init.body.substring(0, 2000) : "(non-string body)",
+              requestBody: typeof init?.body === "string" ? init.body : "(non-string body)",
             });
             // Re-wrap in a new Response so the AI SDK can still read it
             return new Response(responseText, {
