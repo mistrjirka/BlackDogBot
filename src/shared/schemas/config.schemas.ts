@@ -104,7 +104,7 @@ const jobCreationConfigSchema = z.object({
 
 const knowledgeConfigSchema = z.object({
   embeddingProvider: z.enum(["local", "openrouter"])
-    .default("local")
+    .optional()
     .describe("Embedding backend provider: local Transformers.js model or OpenRouter embeddings API"),
   embeddingModelPath: z.string()
     .default("onnx-community/Qwen3-Embedding-0.6B-ONNX")

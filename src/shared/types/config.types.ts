@@ -66,7 +66,7 @@ export interface IJobCreationConfig {
 }
 
 export interface IKnowledgeConfig {
-  embeddingProvider: EmbeddingProvider;
+  embeddingProvider?: EmbeddingProvider;
   embeddingModelPath: string;
   embeddingDtype: EmbeddingDtype;
   embeddingDevice: EmbeddingDevice;

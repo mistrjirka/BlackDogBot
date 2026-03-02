@@ -82,32 +82,38 @@ async function mainAsync(): Promise<void> {
     contextWindow: aiProviderService.getContextWindow(),
   });
 
-  // 5. Initialize embeddings and vector store
-  const embeddingService: EmbeddingService = EmbeddingService.getInstance();
-  const embeddingOpenRouterApiKey: string | undefined =
-    config.knowledge.embeddingOpenRouterApiKey ?? config.ai.openrouter?.apiKey;
+  // 5. Initialize embeddings and vector store (only if embeddingProvider is explicitly configured)
+  const embeddingProvider = config.knowledge.embeddingProvider;
 
-  await embeddingService.initializeAsync(
-    config.knowledge.embeddingModelPath,
-    config.knowledge.embeddingDtype,
-    config.knowledge.embeddingDevice,
-    config.knowledge.embeddingProvider,
-    config.knowledge.embeddingOpenRouterModel,
-    embeddingOpenRouterApiKey,
-  );
+  if (embeddingProvider) {
+    const embeddingService: EmbeddingService = EmbeddingService.getInstance();
+    const embeddingOpenRouterApiKey: string | undefined =
+      config.knowledge.embeddingOpenRouterApiKey ?? config.ai.openrouter?.apiKey;
 
-  logger.info("Embedding service initialized.");
+    await embeddingService.initializeAsync(
+      config.knowledge.embeddingModelPath,
+      config.knowledge.embeddingDtype,
+      config.knowledge.embeddingDevice,
+      embeddingProvider,
+      config.knowledge.embeddingOpenRouterModel,
+      embeddingOpenRouterApiKey,
+    );
 
-  const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
+    logger.info("Embedding service initialized.");
 
-  await vectorStoreService.initializeAsync(
-    config.knowledge.lancedbPath,
-    embeddingService.getDimension(),
-  );
+    const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
 
-  logger.info("Vector store initialized.");
+    await vectorStoreService.initializeAsync(
+      config.knowledge.lancedbPath,
+      embeddingService.getDimension(),
+    );
 
-  logger.info("Knowledge helpers initialized.");
+    logger.info("Vector store initialized.");
+
+    logger.info("Knowledge helpers initialized.");
+  } else {
+    logger.info("Knowledge features disabled (embeddingProvider not configured).");
+  }
 
   // 6. Initialize skill loader
   const skillLoaderService: SkillLoaderService = SkillLoaderService.getInstance();

@@ -394,6 +394,11 @@ export class EmbeddingService {
     const seenFiles: Set<string> = new Set<string>();
     let lastLoggedPercent: number = -1;
 
+    const formatBytes = (bytes: number): string => {
+      const mb: number = bytes / (1024 * 1024);
+      return `${mb.toFixed(1)} MB`;
+    };
+
     this._pipeline = (await pipeline("feature-extraction", this._modelPath, {
       dtype: this._dtype,
       device: this._device,
@@ -417,9 +422,13 @@ export class EmbeddingService {
 
           if (milestone > lastLoggedPercent && milestone > 0) {
             lastLoggedPercent = milestone;
+            const loadedMb: string = progress.loaded !== undefined ? formatBytes(progress.loaded) : "";
+            const totalMb: string = progress.total !== undefined ? formatBytes(progress.total) : "";
+            const sizeInfo: string = loadedMb && totalMb ? ` (${loadedMb} / ${totalMb})` : "";
+
             logger.info("Downloading model file...", {
               file: progress.file,
-              percent: `${milestone}%`,
+              percent: `${milestone}%${sizeInfo}`,
             });
           }
         } else if (progress.status === "ready") {

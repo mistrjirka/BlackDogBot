@@ -4,6 +4,7 @@
 
 - Node.js >= 22
 - pnpm
+- Git (for updating)
 - Docker & Docker Compose (optional, for SearXNG and Crawl4AI services)
 
 ## Quick Install
@@ -13,6 +14,14 @@ Run the interactive install script:
 ```bash
 ./install.sh
 ```
+
+> **Tip:** For easiest updates, clone the repository instead of downloading a ZIP:
+> ```bash
+> git clone https://github.com/your-repo/better-claw.git
+> cd better-claw
+> ./install.sh
+> ```
+> Then later you can update with `git pull`.
 
 The script will:
 1. Check and install dependencies (Node.js, pnpm)
@@ -272,7 +281,7 @@ Enable these in the Discord Developer Portal:
 
 ### Embedding Model Download Fails
 
-The first run downloads the embedding model (~600MB). If it fails:
+The first run downloads the embedding model (several hundred MB depending on quantization). If it fails:
 1. Check internet connection
 2. Try clearing the cache: `rm -rf ~/.cache/huggingface/`
 3. Run again
