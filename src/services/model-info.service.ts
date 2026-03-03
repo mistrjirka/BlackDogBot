@@ -1,6 +1,11 @@
 import { LoggerService } from "./logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 
+function normalizeBaseUrl(url: string): string {
+  const trimmed: string = url.trim();
+  return trimmed.replace(/\/v1\/?$/, "");
+}
+
 //#region Interfaces
 
 interface IOpenRouterModel {
@@ -131,7 +136,8 @@ export class ModelInfoService {
     try {
       this._logger.debug("Fetching model info from LM Studio API", { baseUrl, modelId });
 
-      const response: Response = await fetch(`${baseUrl}/api/v0/models`, {
+      const normalizedBaseUrl: string = normalizeBaseUrl(baseUrl);
+      const response: Response = await fetch(`${normalizedBaseUrl}/api/v0/models`, {
         headers: {
           "Content-Type": "application/json",
         },

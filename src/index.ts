@@ -314,6 +314,9 @@ async function mainAsync(): Promise<void> {
 
         for (const channel of notificationChannels) {
           try {
+            if (!messagingService.hasAdapter(channel.platform)) {
+              continue;
+            }
             const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
             await sender(message);
           } catch (error) {
@@ -349,6 +352,9 @@ async function mainAsync(): Promise<void> {
       const notificationChannels = channelRegistry.getNotificationChannels();
       for (const channel of notificationChannels) {
         try {
+          if (!messagingService.hasAdapter(channel.platform)) {
+            continue;
+          }
           const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
           await sender(message);
         } catch (sendError) {

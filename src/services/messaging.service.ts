@@ -51,6 +51,10 @@ export class MessagingService {
     this._logger.info("Messaging adapter registered", { platform: adapter.platform });
   }
 
+  public hasAdapter(platform: MessagePlatform): boolean {
+    return this._adapters.has(platform);
+  }
+
   public async sendMessageAsync(message: IOutgoingMessage): Promise<string | null> {
     const adapter: IPlatformAdapter | undefined = this._adapters.get(message.platform);
 

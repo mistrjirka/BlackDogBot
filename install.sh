@@ -419,14 +419,14 @@ create_config() {
         prompt_input "Tokens per minute (TPM)" "100000" OPENROUTER_TPM
     elif [ "$provider_choice" = "2" ]; then
         AI_PROVIDER="openai-compatible"
-        prompt_input "Base URL" "http://localhost:11434/v1" OAI_BASE_URL
+        prompt_input "Base URL" "http://localhost:11434" OAI_BASE_URL
         prompt_input "API key (optional, press Enter to skip)" "" OAI_KEY
         prompt_input "Model name" "llama3" OAI_MODEL
         prompt_input "Requests per minute (RPM)" "120" OAI_RPM
         prompt_input "Tokens per minute (TPM)" "200000" OAI_TPM
     else
         AI_PROVIDER="lm-studio"
-        prompt_input "LM Studio base URL" "http://localhost:1234/v1" LMSTUDIO_BASE_URL
+        prompt_input "LM Studio base URL" "http://localhost:1234" LMSTUDIO_BASE_URL
         prompt_input "Model name (from LM Studio)" "" LMSTUDIO_MODEL
         prompt_input "Requests per minute (RPM)" "120" LMSTUDIO_RPM
         prompt_input "Tokens per minute (TPM)" "200000" LMSTUDIO_TPM

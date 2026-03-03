@@ -42,6 +42,22 @@ import {
 import type { MessageSender, TaskIdProvider } from "../tools/index.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 
+//#region Interfaces
+
+export interface IToolCallTrace {
+  step: number;
+  name: string;
+  input: Record<string, unknown>;
+  output: unknown;
+  isError: boolean;
+}
+
+export interface ITraceCollector {
+  addTrace(trace: IToolCallTrace): void;
+}
+
+//#endregion Interfaces
+
 export class CronAgent extends BaseAgentBase {
   //#region Data members
 
@@ -74,6 +90,7 @@ export class CronAgent extends BaseAgentBase {
     task: IScheduledTask,
     messageSender: MessageSender,
     taskIdProvider: TaskIdProvider,
+    traceCollector?: ITraceCollector,
   ): Promise<IAgentResult> {
     const basePrompt: string = await PromptService.getInstance().getPromptAsync(
       PROMPT_CRON_AGENT,
@@ -100,6 +117,16 @@ export class CronAgent extends BaseAgentBase {
           : "(pending)";
         this._logger.debug(`Step ${stepNumber}: tool_call ${tc.name} ${argsStr}`);
         this._logger.debug(`Step ${stepNumber}: tool_result ${tc.name} ${resultStr}`);
+
+        if (traceCollector) {
+          traceCollector.addTrace({
+            step: stepNumber,
+            name: tc.name,
+            input: tc.input,
+            output: tc.result,
+            isError: tc.isError ?? false,
+          });
+        }
       }
     };
 

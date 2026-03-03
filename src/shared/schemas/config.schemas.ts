@@ -49,7 +49,7 @@ const openAiCompatibleSchema = z.object({
 const lmStudioSchema = z.object({
   baseUrl: z.string()
     .url()
-    .describe("Base URL of the LM Studio endpoint (e.g., http://localhost:1234/v1)"),
+    .describe("Base URL of the LM Studio endpoint (e.g., http://localhost:1234)"),
   apiKey: z.string()
     .optional()
     .default("lm-studio")

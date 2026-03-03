@@ -18,6 +18,11 @@ import { ModelInfoService } from "./model-info.service.js";
 import { countRequestBodyTokens } from "../utils/request-token-counter.js";
 import { extractErrorMessage } from "../utils/error.js";
 
+function normalizeBaseUrl(url: string): string {
+  const trimmed: string = url.trim();
+  return trimmed.replace(/\/v1\/?$/, "");
+}
+
 export class AiProviderService {
   //#region Data members
 
@@ -324,7 +329,7 @@ export class AiProviderService {
 
     try {
       const config = this._getActiveProviderConfig();
-      const baseUrl = (config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234";
+      const baseUrl = normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
 
       const response = await fetch(`${baseUrl}/v1/chat/completions`, {
         method: "POST",
@@ -505,7 +510,7 @@ export class AiProviderService {
       const config: IOpenAiCompatibleConfig = this._aiConfig.openaiCompatible;
       const rawModel = createOpenAICompatible({
         name: "openai-compatible",
-        baseURL: config.baseUrl,
+        baseURL: normalizeBaseUrl(config.baseUrl) + "/v1",
         apiKey: config.apiKey,
         supportsStructuredOutputs: config.supportsStructuredOutputs ?? false,
         fetch: async (url, init): Promise<Response> => {
@@ -552,7 +557,7 @@ export class AiProviderService {
       const config: ILmStudioConfig = this._aiConfig.lmStudio;
       const rawModel = createOpenAICompatible({
         name: "lm-studio",
-        baseURL: config.baseUrl,
+        baseURL: normalizeBaseUrl(config.baseUrl) + "/v1",
         apiKey: config.apiKey || "lm-studio",
         supportsStructuredOutputs: config.supportsStructuredOutputs ?? true, // LM Studio supports response_format: json_schema by default
         fetch: async (url, init): Promise<Response> => {
