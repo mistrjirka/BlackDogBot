@@ -96,14 +96,14 @@ describe("BaseAgentBase", () => {
     expect(
       (agent as unknown as { _contextWindow: number })._contextWindow,
     ).toBe(128_000);
-    // Threshold should be 75% of context window: 128000 * 0.75 = 96000
+    // Threshold should be 70% of context window: 128000 * 0.70 = 89600
     expect(
       (agent as unknown as { _compactionTokenThreshold: number })._compactionTokenThreshold,
-    ).toBe(96_000);
+    ).toBe(89_600);
   });
 
   it("should accept custom maxSteps and contextWindow", () => {
-    // With contextWindow of 100000, threshold should be 75000 (75%)
+    // With contextWindow of 100000, threshold should be 70000 (70%)
     const agent: TestAgent = new TestAgent({ maxSteps: 5, contextWindow: 100_000 });
 
     expect(
@@ -112,10 +112,34 @@ describe("BaseAgentBase", () => {
     expect(
       (agent as unknown as { _contextWindow: number })._contextWindow,
     ).toBe(100_000);
-    // Threshold should be 75% of context window: 100000 * 0.75 = 75000
+    // Threshold should be 70% of context window: 100000 * 0.70 = 70000
     expect(
       (agent as unknown as { _compactionTokenThreshold: number })._compactionTokenThreshold,
-    ).toBe(75_000);
+    ).toBe(70_000);
+  });
+
+  it("should update contextWindow and recalculate compaction threshold", () => {
+    const agent: TestAgent = new TestAgent();
+
+    // Initial state
+    expect(
+      (agent as unknown as { _contextWindow: number })._contextWindow,
+    ).toBe(128_000);
+    expect(
+      (agent as unknown as { _compactionTokenThreshold: number })._compactionTokenThreshold,
+    ).toBe(89_600);
+
+    // Update context window
+    agent.updateContextWindow(200_000);
+
+    // Verify updated values
+    expect(
+      (agent as unknown as { _contextWindow: number })._contextWindow,
+    ).toBe(200_000);
+    // 200000 * 0.70 = 140000
+    expect(
+      (agent as unknown as { _compactionTokenThreshold: number })._compactionTokenThreshold,
+    ).toBe(140_000);
   });
 });
 

@@ -16,13 +16,20 @@ import {
 } from "../shared/types/index.js";
 import { RateLimiterService } from "./rate-limiter.service.js";
 import { ModelInfoService } from "./model-info.service.js";
-import { countRequestBodyTokens } from "../utils/request-token-counter.js";
+import { countRequestBodyTokens, IRequestTokenBreakdown } from "../utils/request-token-counter.js";
 import { extractErrorMessage } from "../utils/error.js";
 
 function normalizeBaseUrl(url: string): string {
   const trimmed: string = url.trim();
   return trimmed.replace(/\/v1\/?$/, "");
 }
+
+/**
+ * Hard gate threshold as a fraction of context window. Requests whose
+ * serialized body exceeds this fraction are rejected before reaching the
+ * API, triggering the compaction-retry logic in the agent.
+ */
+const HARD_GATE_THRESHOLD_PERCENTAGE: number = 0.85;
 
 export class AiProviderService {
   //#region Data members
@@ -228,6 +235,14 @@ export class AiProviderService {
 
   public getContextWindow(): number {
     return this._contextWindow;
+  }
+
+  /**
+   * Returns the token count at which the fetch-level hard gate rejects requests.
+   * Equal to contextWindow * HARD_GATE_THRESHOLD_PERCENTAGE (85%).
+   */
+  public getHardLimitTokens(): number {
+    return Math.floor(this._contextWindow * HARD_GATE_THRESHOLD_PERCENTAGE);
   }
 
   public supportsForcedToolChoice(): boolean {
@@ -502,6 +517,72 @@ export class AiProviderService {
     return wrappedModel as unknown as LanguageModel;
   }
 
+  /**
+   * Creates a fetch wrapper that:
+   * 1. Counts tokens of every POST request body (actual serialized size, not estimated).
+   * 2. Logs the breakdown (messages / tools / system / overhead / utilization).
+   * 3. Rejects requests whose total tokens exceed the hard gate (85% of context window)
+   *    by returning a synthetic 400 "context_length_exceeded" response — this triggers
+   *    the existing compaction-retry logic in BaseAgentBase.processMessageAsync.
+   */
+  private _createTokenGatedFetch(providerName: string): typeof fetch {
+    const logger: LoggerService = LoggerService.getInstance();
+
+    return async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (init?.body && typeof init.body === "string" && init.method === "POST") {
+        const tokenBreakdown: IRequestTokenBreakdown = countRequestBodyTokens(init.body);
+        const hardLimit: number = this.getHardLimitTokens();
+        const utilization: number = (tokenBreakdown.total / this._contextWindow) * 100;
+
+        logger.info("LLM API request tokens", {
+          provider: providerName,
+          total: tokenBreakdown.total,
+          messages: tokenBreakdown.messages,
+          tools: tokenBreakdown.tools,
+          system: tokenBreakdown.system,
+          overhead: tokenBreakdown.overhead,
+          messageCount: tokenBreakdown.messageCount,
+          toolCount: tokenBreakdown.toolCount,
+          contextWindow: this._contextWindow,
+          hardLimit,
+          utilization: `${utilization.toFixed(1)}%`,
+        });
+
+        if (tokenBreakdown.total > hardLimit) {
+          logger.warn("Context hard gate triggered — blocking request before API call", {
+            provider: providerName,
+            total: tokenBreakdown.total,
+            hardLimit,
+            contextWindow: this._contextWindow,
+            utilization: `${utilization.toFixed(1)}%`,
+          });
+
+          // Return a synthetic 400 that mimics a real context-length API error.
+          // The keywords "context" and "exceeded" are matched by BaseAgentBase to
+          // trigger compaction and retry.
+          const errorBody: string = JSON.stringify({
+            error: {
+              message:
+                `Context size exceeded: ${tokenBreakdown.total} tokens exceeds ` +
+                `hard limit of ${hardLimit} (${Math.round(HARD_GATE_THRESHOLD_PERCENTAGE * 100)}% ` +
+                `of ${this._contextWindow} context window). Compaction required.`,
+              type: "context_length_exceeded",
+              code: "context_length_exceeded",
+            },
+          });
+
+          return new Response(errorBody, {
+            status: 400,
+            statusText: "Bad Request",
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      return fetch(url, init);
+    };
+  }
+
   private _createModel(modelId: string): LanguageModel {
     if (!this._aiConfig) {
       throw new Error("AiProviderService not initialized");
@@ -517,7 +598,10 @@ export class AiProviderService {
       }
 
       const config: IOpenRouterConfig = this._aiConfig.openrouter;
-      const rawModel = createOpenRouter({ apiKey: config.apiKey }).chat(modelId);
+      const rawModel = createOpenRouter({
+        apiKey: config.apiKey,
+        fetch: this._createTokenGatedFetch("openrouter"),
+      }).chat(modelId);
       return this._wrapModelWithRateLimiter(rawModel, provider);
     }
 
@@ -529,39 +613,26 @@ export class AiProviderService {
       }
 
       const config: IOpenAiCompatibleConfig = this._aiConfig.openaiCompatible;
+      const tokenGatedFetch = this._createTokenGatedFetch("openai-compatible");
+
       const rawModel = createOpenAICompatible({
         name: "openai-compatible",
         baseURL: normalizeBaseUrl(config.baseUrl) + "/v1",
         apiKey: config.apiKey,
         supportsStructuredOutputs: config.supportsStructuredOutputs ?? false,
         fetch: async (url, init): Promise<Response> => {
+          // Apply transformations before calling token-gated fetch
           if (init?.body && typeof init.body === "string" && init.method === "POST") {
-            const tokenBreakdown = countRequestBodyTokens(init.body);
-            const logger: LoggerService = LoggerService.getInstance();
-
-            logger.info("LLM API request tokens", {
-              provider: "openai-compatible",
-              total: tokenBreakdown.total,
-              messages: tokenBreakdown.messages,
-              tools: tokenBreakdown.tools,
-              system: tokenBreakdown.system,
-              overhead: tokenBreakdown.overhead,
-              messageCount: tokenBreakdown.messageCount,
-              toolCount: tokenBreakdown.toolCount,
-              contextWindow: this._contextWindow,
-              utilization: `${((tokenBreakdown.total / this._contextWindow) * 100).toFixed(1)}%`,
-            });
-
             try {
               const body = JSON.parse(init.body);
               if (this._normalizeToolChoiceIfNeeded(body)) {
                 init.body = JSON.stringify(body);
               }
             } catch {
-              // Ignore parse errors, let the original fetch handle the bad payload
+              // Ignore parse errors
             }
           }
-          const response = await fetch(url, init);
+          const response = await tokenGatedFetch(url, init);
           return this._fixReasoningContentResponse(response);
         },
       }).chatModel(modelId);
@@ -576,34 +647,21 @@ export class AiProviderService {
       }
 
       const config: ILmStudioConfig = this._aiConfig.lmStudio;
+      const tokenGatedFetch = this._createTokenGatedFetch("lm-studio");
+
       const rawModel = createOpenAICompatible({
         name: "lm-studio",
         baseURL: normalizeBaseUrl(config.baseUrl) + "/v1",
         apiKey: config.apiKey || "lm-studio",
-        supportsStructuredOutputs: config.supportsStructuredOutputs ?? true, // LM Studio supports response_format: json_schema by default
+        supportsStructuredOutputs: config.supportsStructuredOutputs ?? true,
         fetch: async (url, init): Promise<Response> => {
+          // Apply transformations before calling token-gated fetch
           if (init?.body && typeof init.body === "string" && init.method === "POST") {
-            const tokenBreakdown = countRequestBodyTokens(init.body);
-            const logger: LoggerService = LoggerService.getInstance();
-
-            logger.info("LLM API request tokens", {
-              provider: "lm-studio",
-              total: tokenBreakdown.total,
-              messages: tokenBreakdown.messages,
-              tools: tokenBreakdown.tools,
-              system: tokenBreakdown.system,
-              overhead: tokenBreakdown.overhead,
-              messageCount: tokenBreakdown.messageCount,
-              toolCount: tokenBreakdown.toolCount,
-              contextWindow: this._contextWindow,
-              utilization: `${((tokenBreakdown.total / this._contextWindow) * 100).toFixed(1)}%`,
-            });
-
             try {
               const body = JSON.parse(init.body);
               let modified = false;
 
-              // Fix missing tool schema discriminator (LM Studio requires type: "object")
+              // Fix tool schemas: LM Studio requires explicit type: "object"
               if (body.tools && Array.isArray(body.tools)) {
                 for (const tool of body.tools) {
                   if (tool.type === "function" && tool.function?.parameters) {
@@ -623,32 +681,24 @@ export class AiProviderService {
                 init.body = JSON.stringify(body);
               }
             } catch {
-              // Ignore parse errors, let the original fetch handle the bad payload
+              // Ignore parse errors
             }
           }
-          const response = await fetch(url, init);
+          const response = await tokenGatedFetch(url, init);
 
           // Log failed requests to help debug LM Studio compatibility issues
           if (!response.ok) {
             const logger: LoggerService = LoggerService.getInstance();
-            const responseText = await response.text();
-            logger.error("LM Studio request rejected", {
+            logger.error("LM Studio API request failed", {
               status: response.status,
               statusText: response.statusText,
-              responseBody: responseText,
-              requestBody: typeof init?.body === "string" ? init.body : "(non-string body)",
-            });
-            // Re-wrap in a new Response so the AI SDK can still read it
-            return new Response(responseText, {
-              status: response.status,
-              statusText: response.statusText,
-              headers: response.headers,
+              url: url.toString(),
+              requestBody: init?.body ? JSON.parse(init.body as string) : null,
             });
           }
 
-          // Fix reasoning_content issue (content in wrong field)
           return this._fixReasoningContentResponse(response);
-        }
+        },
       }).chatModel(modelId);
       return this._wrapModelWithRateLimiter(rawModel, provider);
     }

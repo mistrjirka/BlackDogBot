@@ -104,7 +104,11 @@ export class CronAgent extends BaseAgentBase {
       `\n\n<task_context>\nTask: ${task.name}\nDescription: ${task.description}\nCurrent time: ${currentDateTime}\nInstructions: ${task.instructions}\n</task_context>`;
 
     const tools: ToolSet = this._resolveTools(task.tools, messageSender, taskIdProvider);
-    const model: LanguageModel = AiProviderService.getInstance().getModel();
+    
+    const aiProviderService: AiProviderService = AiProviderService.getInstance();
+    const model: LanguageModel = aiProviderService.getModel();
+    const contextWindow: number = aiProviderService.getContextWindow();
+    this.updateContextWindow(contextWindow);
 
     const onStepAsync = async (
       stepNumber: number,

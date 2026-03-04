@@ -42,6 +42,11 @@ const openAiCompatibleSchema = z.object({
   model: z.string()
     .min(1)
     .describe("Model identifier"),
+  contextWindow: z.number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Context window size in tokens. Required for accurate context management."),
   rateLimits: rateLimitSchema
     .default({ rpm: 120, tpm: 200000 }),
 });

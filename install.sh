@@ -171,6 +171,8 @@ setup_docker_services() {
     if [ "$HAS_DOCKER" = false ]; then
         print_warning "Skipping Docker services setup (Docker not installed)"
         START_SERVICES=false
+        SETUP_SEARXNG=false
+        SETUP_CRAWL4AI=false
         SEARXNG_URL=""
         CRAWL4AI_URL=""
         return
@@ -326,9 +328,6 @@ EOF
 
 EOF
     fi
-
-    echo "volumes:" >> "$COMPOSE_FILE"
-    # No named volumes needed - using bind mounts for configuration
     
     print_success "Created $COMPOSE_FILE"
     
@@ -615,11 +614,15 @@ skills:
 
 logging:
   level: ${LOG_LEVEL}
-
-services:
-  searxngUrl: ${SEARXNG_URL:-null}
-  crawl4aiUrl: ${CRAWL4AI_URL:-null}
 EOF
+
+    # Only write services block if at least one URL is set
+    if [ -n "$SEARXNG_URL" ] || [ -n "$CRAWL4AI_URL" ]; then
+        echo "" >> "$CONFIG_FILE"
+        echo "services:" >> "$CONFIG_FILE"
+        [ -n "$SEARXNG_URL" ] && echo "  searxngUrl: ${SEARXNG_URL}" >> "$CONFIG_FILE"
+        [ -n "$CRAWL4AI_URL" ] && echo "  crawl4aiUrl: ${CRAWL4AI_URL}" >> "$CONFIG_FILE"
+    fi
 
     print_success "Created $CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"

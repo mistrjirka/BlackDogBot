@@ -30,7 +30,14 @@ const DEFAULT_CONTEXT_WINDOW: number = 128_000;
  * Percentage of context window to use as compaction threshold.
  * When token count exceeds this percentage, older messages are summarized.
  */
-const COMPACTION_THRESHOLD_PERCENTAGE: number = 0.75;
+const COMPACTION_THRESHOLD_PERCENTAGE: number = 0.70;
+
+/**
+ * Hard gate threshold for blocking requests at the fetch level.
+ * Requests exceeding this percentage of context window are rejected
+ * with a synthetic 400 error to trigger compaction.
+ */
+export const HARD_GATE_THRESHOLD_PERCENTAGE: number = 0.85;
 
 /**
  * Number of recent messages to always keep verbatim during compaction.
@@ -46,7 +53,7 @@ export const AGENT_EMPTY_RESPONSE_RETRIES: number = 4;
 /**
  * How many times to retry with compaction when receiving 400 context exceeded errors.
  */
-const CONTEXT_EXCEEDED_RETRIES: number = 2;
+export const CONTEXT_EXCEEDED_RETRIES: number = 2;
 
 /**
  * Approximate JSON structure overhead per message in OpenAI format.
@@ -91,6 +98,7 @@ export abstract class BaseAgentBase {
   protected _maxSteps: number;
   protected _contextWindow: number;
   protected _compactionTokenThreshold: number;
+  protected _fixedOverheadTokens: number = 0;
   protected _totalInputTokens: number = 0;
   protected _forceCompactionOnNextStep: boolean = false;
 
@@ -110,6 +118,20 @@ export abstract class BaseAgentBase {
   //#endregion Constructors
 
   //#region Public methods
+
+  /**
+   * Update the context window size after initialization (e.g. once the real
+   * model context window is known from the provider). Recalculates the
+   * compaction threshold.
+   */
+  public updateContextWindow(contextWindow: number): void {
+    this._contextWindow = contextWindow;
+    this._compactionTokenThreshold = Math.floor(contextWindow * COMPACTION_THRESHOLD_PERCENTAGE);
+    this._logger.info("Context window updated", {
+      contextWindow,
+      compactionThreshold: this._compactionTokenThreshold,
+    });
+  }
 
   public async processMessageAsync(userMessage: string): Promise<IAgentResult> {
     this._ensureInitialized();
@@ -276,6 +298,7 @@ export abstract class BaseAgentBase {
     // but not in the messages array: system prompt + tool definitions.
     // This is critical for accurate context window tracking.
     const fixedOverheadTokens: number = _estimateFixedOverhead(instructions, allTools);
+    self._fixedOverheadTokens = fixedOverheadTokens;
     logger.debug("Computed fixed token overhead for context tracking", {
       systemPromptTokens: _countTextTokens(instructions),
       toolCount: Object.keys(allTools).length,
@@ -365,8 +388,18 @@ export abstract class BaseAgentBase {
 
         // Token-based history compaction: count message tokens + fixed overhead
         // (system prompt + tool definitions) for an accurate total.
+        // Also account for the dynamic creation-mode prompt which is injected
+        // into the system prompt on-the-fly but not counted in fixedOverheadTokens.
         const messageTokens: number = _countTokens(messages);
-        const tokenCount: number = messageTokens + fixedOverheadTokens;
+
+        const creationPrompt: string | null = (useExtraTools && getCreationModePrompt)
+          ? getCreationModePrompt()
+          : null;
+        const dynamicOverheadTokens: number = creationPrompt
+          ? fixedOverheadTokens + _countTextTokens(creationPrompt)
+          : fixedOverheadTokens;
+
+        const tokenCount: number = messageTokens + dynamicOverheadTokens;
 
         // Update status service with context info (including percentage for UI display)
         const statusService: StatusService = StatusService.getInstance();
@@ -384,6 +417,7 @@ export abstract class BaseAgentBase {
             tokenCount,
             messageTokens,
             fixedOverhead: fixedOverheadTokens,
+            dynamicOverhead: dynamicOverheadTokens - fixedOverheadTokens,
             threshold: compactionTokenThreshold,
             messageCount: messages.length,
             forced: tokenCount <= compactionTokenThreshold,
@@ -393,6 +427,8 @@ export abstract class BaseAgentBase {
             messages,
             compactionModel,
             logger,
+            self._fixedOverheadTokens,
+            self._compactionTokenThreshold,
           );
 
           return { messages: compactedMessages, activeTools: activeToolNames };
@@ -402,12 +438,8 @@ export abstract class BaseAgentBase {
         // and return activeTools so the LLM can see them; when not in creation mode and
         // there are no extra tools, return {} (no restriction).
         if (extraToolNames.length > 0) {
-          if (useExtraTools && getCreationModePrompt) {
-            const creationPrompt: string | null = getCreationModePrompt();
-
-            if (creationPrompt) {
-              return { system: `${instructions}\n\n${creationPrompt}`, activeTools: activeToolNames };
-            }
+          if (creationPrompt) {
+            return { system: `${instructions}\n\n${creationPrompt}`, activeTools: activeToolNames };
           }
 
           return { activeTools: activeToolNames };
@@ -515,6 +547,8 @@ async function _compactMessagesAsync(
   messages: ModelMessage[],
   model: LanguageModel,
   logger: LoggerService,
+  fixedOverheadTokens: number,
+  compactionTokenThreshold: number,
 ): Promise<ModelMessage[]> {
   const firstMessage: ModelMessage = messages[0];
   const recentMessages: ModelMessage[] = messages.slice(-COMPACTION_KEEP_RECENT);
@@ -569,6 +603,30 @@ async function _compactMessagesAsync(
     tokensAfter,
     summaryLength: summaryText.length,
   });
+
+  // Post-compaction validation: if still over threshold, do aggressive compaction
+  // keeping only 3 most recent messages to guarantee we fit.
+  const totalAfterCompaction: number = tokensAfter + fixedOverheadTokens;
+  if (totalAfterCompaction > compactionTokenThreshold) {
+    const aggressiveKeep: number = 3;
+    logger.warn("Post-compaction still over threshold, applying aggressive compaction", {
+      totalAfterCompaction,
+      compactionTokenThreshold,
+      aggressiveKeep,
+    });
+
+    if (compactedResult.length > aggressiveKeep + 1) {
+      const aggressiveRecent: ModelMessage[] = compactedResult.slice(-aggressiveKeep);
+      const aggressiveResult: ModelMessage[] = [compactedResult[0], ...aggressiveRecent];
+      const aggressiveTokens: number = _countTokens(aggressiveResult);
+      logger.info("Aggressive compaction applied", {
+        before: tokensAfter,
+        after: aggressiveTokens,
+        keptMessages: aggressiveResult.length,
+      });
+      return aggressiveResult;
+    }
+  }
 
   return compactedResult;
 }

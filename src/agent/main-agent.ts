@@ -1,9 +1,9 @@
-import { ToolSet, LanguageModel, type ModelMessage } from "ai";
+import { ToolSet, LanguageModel, type ModelMessage, APICallError } from "ai";
 
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { buildMainAgentPromptAsync } from "./system-prompt.js";
-import { BaseAgentBase, AGENT_EMPTY_RESPONSE_RETRIES, type IAgentResult, type OnStepCallback } from "./base-agent.js";
+import { BaseAgentBase, AGENT_EMPTY_RESPONSE_RETRIES, CONTEXT_EXCEEDED_RETRIES, type IAgentResult, type OnStepCallback } from "./base-agent.js";
 import { DEFAULT_AGENT_MAX_STEPS, PROMPT_JOB_CREATION_GUIDE } from "../shared/constants.js";
 import {
   thinkTool,
@@ -188,6 +188,9 @@ export class MainAgent extends BaseAgentBase {
 
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model: LanguageModel = aiProviderService.getModel();
+    const contextWindow: number = aiProviderService.getContextWindow();
+    this.updateContextWindow(contextWindow);
+
     const instructions: string = await buildMainAgentPromptAsync();
 
     const readTracker: FileReadTracker = new FileReadTracker();
@@ -438,54 +441,80 @@ export class MainAgent extends BaseAgentBase {
       // Set status to show AI is thinking (in-flight)
       statusService.beginInFlight("llm_request", "Thinking...", { chatId });
 
+      let contextRetries: number = 0;
+
       for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
         // Reset token count so prepareStep doesn't use stale values from a failed attempt
         this._totalInputTokens = 0;
 
-        const generateResult = await this._agent!.generate({
-          messages: messagesForCall,
-          abortSignal: abortController.signal,
-        });
+        try {
+          const generateResult = await this._agent!.generate({
+            messages: messagesForCall,
+            abortSignal: abortController.signal,
+          });
 
-        const stepsCount: number = generateResult.steps?.length ?? 1;
+          const stepsCount: number = generateResult.steps?.length ?? 1;
 
-        const inputTokens = generateResult.totalUsage?.inputTokens ?? generateResult.usage?.inputTokens;
-        if (inputTokens !== undefined) {
-          this._totalInputTokens = inputTokens;
-        } else {
-          this._totalInputTokens = 0;
-          this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
-        }
-
-        const brainInterfaceForOutput: BrainInterfaceService = BrainInterfaceService.getInstance();
-
-        if (generateResult.text) {
-          try {
-            await brainInterfaceForOutput.emitModelOutputAsync(chatId, stepsCount, generateResult.text);
-          } catch {
-            // Never let emit failures affect agent execution
+          const inputTokens = generateResult.totalUsage?.inputTokens ?? generateResult.usage?.inputTokens;
+          if (inputTokens !== undefined) {
+            this._totalInputTokens = inputTokens;
+          } else {
+            this._totalInputTokens = 0;
+            this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
           }
-        }
 
-        this._logger.debug("Agent response generated", { chatId, stepsCount, historyLength: session.messages.length });
+          const brainInterfaceForOutput: BrainInterfaceService = BrainInterfaceService.getInstance();
 
-        let text: string = generateResult.text ?? "";
-
-        if (!text && generateResult.steps) {
-          interface IToolCallLike { toolName: string; input: Record<string, unknown>; }
-          interface IStepLike { toolCalls?: IToolCallLike[]; }
-
-          const doneCall: IToolCallLike | undefined = (generateResult.steps as IStepLike[])
-            .flatMap((s: IStepLike): IToolCallLike[] => s.toolCalls ?? [])
-            .find((tc: IToolCallLike): boolean => tc.toolName === "done");
-
-          if (doneCall && typeof doneCall.input?.summary === "string") {
-            text = doneCall.input.summary;
+          if (generateResult.text) {
+            try {
+              await brainInterfaceForOutput.emitModelOutputAsync(chatId, stepsCount, generateResult.text);
+            } catch {
+              // Never let emit failures affect agent execution
+            }
           }
-        }
 
-        // If we got text, persist conversation and return
-        if (text.trim()) {
+          this._logger.debug("Agent response generated", { chatId, stepsCount, historyLength: session.messages.length });
+
+          let text: string = generateResult.text ?? "";
+
+          if (!text && generateResult.steps) {
+            interface IToolCallLike { toolName: string; input: Record<string, unknown>; }
+            interface IStepLike { toolCalls?: IToolCallLike[]; }
+
+            const doneCall: IToolCallLike | undefined = (generateResult.steps as IStepLike[])
+              .flatMap((s: IStepLike): IToolCallLike[] => s.toolCalls ?? [])
+              .find((tc: IToolCallLike): boolean => tc.toolName === "done");
+
+            if (doneCall && typeof doneCall.input?.summary === "string") {
+              text = doneCall.input.summary;
+            }
+          }
+
+          // If we got text, persist conversation and return
+          if (text.trim()) {
+            session.messages.push(userModelMessage);
+
+            if (generateResult.response?.messages) {
+              for (const responseMsg of generateResult.response.messages) {
+                session.messages.push(responseMsg as ModelMessage);
+              }
+            }
+
+            result = { text, stepsCount };
+            break;
+          }
+
+          // Empty response — retry if we have attempts left
+          if (attempt <= AGENT_EMPTY_RESPONSE_RETRIES) {
+            this._logger.warn("Model returned empty response for chat, retrying", {
+              chatId,
+              attempt,
+              maxRetries: AGENT_EMPTY_RESPONSE_RETRIES,
+            });
+            continue;
+          }
+
+          // All retries exhausted — persist conversation even on failure so history stays consistent
           session.messages.push(userModelMessage);
 
           if (generateResult.response?.messages) {
@@ -494,34 +523,42 @@ export class MainAgent extends BaseAgentBase {
             }
           }
 
-          result = { text, stepsCount };
-          break;
-        }
+          this._logger.error("Model returned empty response after all retries", { chatId, attempts: attempt });
+          result = {
+            text: "I was unable to complete your request — the model returned empty responses after multiple retries. Please try again.",
+            stepsCount,
+          };
+        } catch (genError: unknown) {
+          // Handle context size exceeded errors (from hard gate or real API errors)
+          if (
+            genError instanceof APICallError &&
+            genError.statusCode === 400 &&
+            contextRetries < CONTEXT_EXCEEDED_RETRIES
+          ) {
+            const errorBody: string = typeof genError.responseBody === "string"
+              ? genError.responseBody
+              : JSON.stringify(genError.responseBody ?? "");
+            const errorMessage: string = (genError.message + " " + errorBody).toLowerCase();
 
-        // Empty response — retry if we have attempts left
-        if (attempt <= AGENT_EMPTY_RESPONSE_RETRIES) {
-          this._logger.warn("Model returned empty response for chat, retrying", {
-            chatId,
-            attempt,
-            maxRetries: AGENT_EMPTY_RESPONSE_RETRIES,
-          });
-          continue;
-        }
-
-        // All retries exhausted — persist conversation even on failure so history stays consistent
-        session.messages.push(userModelMessage);
-
-        if (generateResult.response?.messages) {
-          for (const responseMsg of generateResult.response.messages) {
-            session.messages.push(responseMsg as ModelMessage);
+            if (
+              errorMessage.includes("context") ||
+              errorMessage.includes("token limit") ||
+              errorMessage.includes("exceeded")
+            ) {
+              contextRetries++;
+              this._logger.warn("Context size exceeded, forcing compaction on next step", {
+                chatId,
+                contextRetry: contextRetries,
+                maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
+              });
+              this._forceCompactionOnNextStep = true;
+              attempt--; // Don't count this against the empty-response retry limit
+              continue;
+            }
           }
+          // Re-throw non-context errors
+          throw genError;
         }
-
-        this._logger.error("Model returned empty response after all retries", { chatId, attempts: attempt });
-        result = {
-          text: "I was unable to complete your request — the model returned empty responses after multiple retries. Please try again.",
-          stepsCount,
-        };
       }
     } catch (error: unknown) {
       if (error instanceof Error && error.name === "AbortError") {
