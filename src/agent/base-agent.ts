@@ -351,7 +351,7 @@ export abstract class BaseAgentBase {
 
               return {
                 activeTools: ["done"] as (keyof typeof allTools)[],
-                toolChoice: { type: "tool" as const, toolName: "done" },
+                toolChoice: "required" as const,
               };
             }
           }
@@ -382,7 +382,7 @@ export abstract class BaseAgentBase {
 
           return {
             activeTools: ["done"] as (keyof typeof allTools)[],
-            toolChoice: { type: "tool" as const, toolName: "done" },
+            toolChoice: "required" as const,
           };
         }
 

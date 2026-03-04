@@ -4,11 +4,13 @@ import path from "node:path";
 import os from "node:os";
 
 import { BaseAgentBase } from "../../../src/agent/base-agent.js";
+import type { IAgentResult } from "../../../src/agent/base-agent.js";
 import { resetSingletons } from "../../utils/test-helpers.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
+import { thinkTool } from "../../../src/tools/think.tool.js";
 import type { ToolSet, LanguageModel } from "ai";
 
 
@@ -92,7 +94,7 @@ describe("BaseAgentBase", () => {
 
     expect(
       (agent as unknown as { _maxSteps: number })._maxSteps,
-    ).toBe(150);
+    ).toBe(300);
     expect(
       (agent as unknown as { _contextWindow: number })._contextWindow,
     ).toBe(128_000);
@@ -141,6 +143,52 @@ describe("BaseAgentBase", () => {
       (agent as unknown as { _compactionTokenThreshold: number })._compactionTokenThreshold,
     ).toBe(140_000);
   });
+
+  it("should force done via toolChoice required on max steps without provider error", async () => {
+    // Use maxSteps: 2 so the agent hits the force-done path on step 1 (>= maxSteps - 1).
+    // This verifies the fix: toolChoice: "required" + activeTools: ["done"] works
+    // even on providers that don't support forced tool choice ({ type: "tool", toolName: "..." }).
+    const model: LanguageModel = AiProviderService.getInstance().getModel();
+    const agent: TestAgent = new TestAgent({ maxSteps: 2 });
+
+    agent.buildAgentPublic(model, "You are a helpful assistant. Always use the think tool before responding.", {
+      think: thinkTool,
+    });
+
+    const result: IAgentResult = await agent.processMessageAsync(
+      "What is 2 + 2? Think about it step by step.",
+    );
+
+    // The agent should complete without throwing a toolChoice provider error.
+    // Step 0: model does something (think or text).
+    // Step 1: stepNumber (1) >= maxSteps - 1 (1) → force done with toolChoice: "required".
+    expect(result).toBeDefined();
+    expect(result.stepsCount).toBeGreaterThanOrEqual(1);
+    expect(result.text.length).toBeGreaterThan(0);
+  }, 120_000);
+
+  it("should force done via toolChoice required on silent exit without provider error", async () => {
+    // Give the model a prompt that encourages a plain text response without calling tools.
+    // If the model produces text without a tool call, the silent-exit detection fires
+    // and forces done with toolChoice: "required" + activeTools: ["done"].
+    // Either way (silent exit or normal done), the agent must complete without error.
+    const model: LanguageModel = AiProviderService.getInstance().getModel();
+    const agent: TestAgent = new TestAgent({ maxSteps: 10 });
+
+    agent.buildAgentPublic(model, "You are a simple chatbot. Reply briefly to the user.", {
+      think: thinkTool,
+    });
+
+    const result: IAgentResult = await agent.processMessageAsync("Say hello.");
+
+    // The agent should complete without throwing a toolChoice provider error.
+    // If the model tried to exit without calling done, the silent-exit handler fires
+    // and forces done with toolChoice: "required". If the model called done voluntarily,
+    // that also works. Either path must succeed.
+    expect(result).toBeDefined();
+    expect(result.stepsCount).toBeGreaterThanOrEqual(1);
+    expect(result.text.length).toBeGreaterThan(0);
+  }, 120_000);
 });
 
 //#endregion Tests

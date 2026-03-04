@@ -41,7 +41,7 @@ export const DEFAULT_MAX_SEARCH_RESULTS: number = 10;
 export const DEFAULT_RPM: number = 60;
 export const DEFAULT_TPM: number = 100000;
 
-export const DEFAULT_AGENT_MAX_STEPS: number = 150;
+export const DEFAULT_AGENT_MAX_STEPS: number = 300;
 export const FORCE_THINK_INTERVAL: number = 5;
 export const DEFAULT_CMD_TIMEOUT_MS: number = 30000;
 export const DEFAULT_PYTHON_TIMEOUT_MS: number = 30000;

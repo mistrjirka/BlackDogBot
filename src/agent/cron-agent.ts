@@ -68,7 +68,7 @@ export class CronAgent extends BaseAgentBase {
   //#region Constructors
 
   private constructor() {
-    const cronAgentDefaultMaxSteps: number = 100;
+    const cronAgentDefaultMaxSteps: number = 300;
     const rawSteps: number = parseInt(process.env.BETTERCLAW_CRON_AGENT_MAX_STEPS ?? "", 10);
 
     super({ maxSteps: isNaN(rawSteps) ? cronAgentDefaultMaxSteps : rawSteps });
