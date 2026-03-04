@@ -7,7 +7,7 @@ import type {
   MessagePlatform,
 } from "../../shared/types/messaging.types.js";
 import { splitTelegramMessage } from "../../utils/telegram-message.js";
-import { sanitizeTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
+import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 
 //#region TelegramAdapter
 
@@ -36,8 +36,8 @@ export class TelegramAdapter implements IPlatformAdapter {
 
   public async sendMessageAsync(message: IOutgoingMessage): Promise<string | null> {
     const chatId: string = message.userId;
-    const sanitizedText: string = sanitizeTelegramHtml(message.text);
-    const chunks: string[] = splitTelegramMessage(sanitizedText);
+    const htmlText: string = markdownToTelegramHtml(message.text);
+    const chunks: string[] = splitTelegramMessage(htmlText);
     let lastMessageId: string | null = null;
 
     for (const chunk of chunks) {

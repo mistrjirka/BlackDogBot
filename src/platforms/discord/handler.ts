@@ -14,7 +14,7 @@ import {
   formatAiErrorForUser,
   type IAiErrorDetails,
 } from "../../utils/ai-error.js";
-import { htmlToMarkdown } from "../../utils/discord-format.js";
+import { formatMarkdownForDiscord } from "../../utils/discord-format.js";
 
 //#region DiscordHandler
 
@@ -166,7 +166,7 @@ export class DiscordHandler {
 
         // Send response
         if (result.text) {
-          const markdownText: string = htmlToMarkdown(result.text);
+          const markdownText: string = formatMarkdownForDiscord(result.text);
           const chunks: string[] = this._splitMessage(markdownText, 2000);
           for (const chunk of chunks) {
             await message.reply(chunk);

@@ -20,7 +20,7 @@ import {
   type IAiErrorDetails,
 } from "../../utils/ai-error.js";
 import { extractErrorMessage } from "../../utils/error.js";
-import { sanitizeTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
+import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 
 //#region Constants
 
@@ -252,8 +252,8 @@ export class TelegramHandler {
 
         // Send response
         if (result.text) {
-          const sanitizedText: string = sanitizeTelegramHtml(result.text);
-          const chunks: string[] = splitTelegramMessage(sanitizedText);
+          const htmlText: string = markdownToTelegramHtml(result.text);
+          const chunks: string[] = splitTelegramMessage(htmlText);
           for (let i: number = 0; i < chunks.length; i++) {
             const options: Record<string, unknown> = {
               parse_mode: "HTML",

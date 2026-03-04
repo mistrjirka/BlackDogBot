@@ -10,22 +10,11 @@
 </output_format>
 
 <text_formatting>
-Format your text responses using HTML tags:
+Use standard Markdown for formatting. Avoid these incompatible patterns:
 
-**Text styling:**
-- Bold: `<b>text</b>`
-- Italic: `<i>text</i>`
-- Underline: `<u>text</u>`
-- Strikethrough: `<s>text</s>`
+- Do NOT use `__double underscores__` - use `**asterisks**` for bold instead
+- Do NOT use HTML tags (`<b>`, `<i>`, etc.) - use Markdown syntax
+- Do NOT use `||spoiler||` syntax - not universally supported
 
-**Code:**
-- Inline code: `<code>text</code>`
-- Code block: `<pre>code here</pre>`
-
-**Other:**
-- Links: `<a href="https://example.com">link text</a>`
-- Spoiler/hidden text: `<tg-spoiler>hidden text</tg-spoiler>`
-- Quote: `<blockquote>quoted text</blockquote>`
-
-Do NOT use Markdown syntax (`*bold*`, `_italic_`, etc.) for formatting. Always use HTML tags.
+Keep formatting minimal and readable.
 </text_formatting>
