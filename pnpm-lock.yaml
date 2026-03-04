@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@adriangalilea/tghtml':
+        specifier: jsr:^0.2.3
+        version: '@jsr/adriangalilea__tghtml@0.2.3'
       '@ai-sdk/openai':
         specifier: ^2.0.0
         version: 2.0.91(zod@3.25.76)
@@ -1163,6 +1166,30 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@jsr/adriangalilea__tghtml@0.2.3':
+    resolution: {integrity: sha512-K7+2NojIz/Tss0GF9tTcecMF+0rNY1bs2/aWJjCmzVYrAuIc7Z+Px3olfXEhzkP9/3qj7qgkwJsqSPFjHNmeTA==, tarball: https://npm.jsr.io/~/11/@jsr/adriangalilea__tghtml/0.2.3.tgz}
+
+  '@jsr/b-fuze__deno-dom@0.1.49':
+    resolution: {integrity: sha512-fXiAzMjTvkjrla4JUK5LPydeNogVyBIItTfyn8XutvOR06pxtVyFd8PAyi3XQaMETfs7jT9kM6zKBAK61VA9UQ==, tarball: https://npm.jsr.io/~/11/@jsr/b-fuze__deno-dom/0.1.49.tgz}
+
+  '@jsr/denosaurs__plug@1.0.3':
+    resolution: {integrity: sha512-L6QH5J5RL5RRAyHdoq5azKdnSXzHIN5ZA4nChF5Xqjgk+VdzmRiJ756C04Shuq3qNRbXjK/oQ63eOeSnSCnFTw==, tarball: https://npm.jsr.io/~/11/@jsr/denosaurs__plug/1.0.3.tgz}
+
+  '@jsr/std__assert@0.213.1':
+    resolution: {integrity: sha512-mbq7QHPHeAJiJJlwmjNI0uoZlvIU2rG89df8ceeJB1pgE5b54DkiNhjQmmfBft0/fYO8/d933rBYwcNzuLxhXA==, tarball: https://npm.jsr.io/~/11/@jsr/std__assert/0.213.1.tgz}
+
+  '@jsr/std__encoding@0.213.1':
+    resolution: {integrity: sha512-VW5Kxmaaj0fLjH1DNkycEgZs8awr75mRePwrP651rTSheG1DSKZK7wtxHMXWeIpj4aFlNWXZg78MQ+yjIHFwWQ==, tarball: https://npm.jsr.io/~/11/@jsr/std__encoding/0.213.1.tgz}
+
+  '@jsr/std__fmt@0.213.1':
+    resolution: {integrity: sha512-dFNL7NZoEb3dH8SlV2Ze1ZBPotEyTu/g5f6oawG79oxuMCUWE2xCTE1X+W7ySmZOYyAQuptVEplPnLsYgkc9PQ==, tarball: https://npm.jsr.io/~/11/@jsr/std__fmt/0.213.1.tgz}
+
+  '@jsr/std__fs@0.213.1':
+    resolution: {integrity: sha512-/JK8Qva6RovZ+r5rwYOfciu7Dcfe0keHkjhUVOQuF1lRiM556uAm8fM1SP89ByMjU7CV/p46CcE5KoNVJzCQew==, tarball: https://npm.jsr.io/~/11/@jsr/std__fs/0.213.1.tgz}
+
+  '@jsr/std__path@0.213.1':
+    resolution: {integrity: sha512-9DWJ/tE+iGHtAKB3NDJ8/wg+KLjPRX0I6CmrDwpzntwO/m9Qrhe9eFZ7zYGWpsP4Vai96eNDtigK2MzDucbc4g==, tarball: https://npm.jsr.io/~/11/@jsr/std__path/0.213.1.tgz}
 
   '@lancedb/lancedb-darwin-arm64@0.17.0':
     resolution: {integrity: sha512-lYzjA9ZX5VEr2TjSIVS2CutI+VjD0InnoyI2cbPESM3qIrjR+qOLG5dt2TFRzQZdzAbWHaB61Mr43yZv//KUag==}
@@ -4800,6 +4827,38 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@jsr/adriangalilea__tghtml@0.2.3':
+    dependencies:
+      '@jsr/b-fuze__deno-dom': 0.1.49
+
+  '@jsr/b-fuze__deno-dom@0.1.49':
+    dependencies:
+      '@jsr/denosaurs__plug': 1.0.3
+
+  '@jsr/denosaurs__plug@1.0.3':
+    dependencies:
+      '@jsr/std__encoding': 0.213.1
+      '@jsr/std__fmt': 0.213.1
+      '@jsr/std__fs': 0.213.1
+      '@jsr/std__path': 0.213.1
+
+  '@jsr/std__assert@0.213.1':
+    dependencies:
+      '@jsr/std__fmt': 0.213.1
+
+  '@jsr/std__encoding@0.213.1': {}
+
+  '@jsr/std__fmt@0.213.1': {}
+
+  '@jsr/std__fs@0.213.1':
+    dependencies:
+      '@jsr/std__assert': 0.213.1
+      '@jsr/std__path': 0.213.1
+
+  '@jsr/std__path@0.213.1':
+    dependencies:
+      '@jsr/std__assert': 0.213.1
 
   '@lancedb/lancedb-darwin-arm64@0.17.0':
     optional: true

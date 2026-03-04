@@ -6,6 +6,7 @@ import type {
   IOutgoingPhoto,
   MessagePlatform,
 } from "../../shared/types/messaging.types.js";
+import { htmlToMarkdown } from "../../utils/discord-format.js";
 
 //#region DiscordAdapter
 
@@ -40,8 +41,8 @@ export class DiscordAdapter implements IPlatformAdapter {
         return null;
       }
 
-      // Discord has a 2000 character limit per message
-      const chunks = this._splitMessage(message.text, 2000);
+      const markdownText: string = htmlToMarkdown(message.text);
+      const chunks: string[] = this._splitMessage(markdownText, 2000);
       let lastMessageId: string | null = null;
 
       for (const chunk of chunks) {

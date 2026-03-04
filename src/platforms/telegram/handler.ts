@@ -20,6 +20,7 @@ import {
   type IAiErrorDetails,
 } from "../../utils/ai-error.js";
 import { extractErrorMessage } from "../../utils/error.js";
+import { sanitizeTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 
 //#region Constants
 
@@ -251,8 +252,8 @@ export class TelegramHandler {
 
         // Send response
         if (result.text) {
-          const formattedText: string = this._formatThinkingBlocks(result.text);
-          const chunks: string[] = splitTelegramMessage(formattedText);
+          const sanitizedText: string = sanitizeTelegramHtml(result.text);
+          const chunks: string[] = splitTelegramMessage(sanitizedText);
           for (let i: number = 0; i < chunks.length; i++) {
             const options: Record<string, unknown> = {
               parse_mode: "HTML",
@@ -260,7 +261,18 @@ export class TelegramHandler {
             if (i === 0) {
               options.reply_parameters = { message_id: message.message_id };
             }
-            await ctx.reply(chunks[i], options);
+            try {
+              await ctx.reply(chunks[i], options);
+            } catch (parseError: unknown) {
+              this._logger.warn("Telegram HTML parse error, falling back to plain text", {
+                error: parseError instanceof Error ? parseError.message : String(parseError),
+              });
+              const plainText: string = stripAllHtml(chunks[i]);
+              const fallbackOptions: Record<string, unknown> =
+                i === 0 ? { reply_parameters: { message_id: message.message_id } } : {};
+              await ctx.reply("⚠️ Formatting error, showing plain text:", fallbackOptions);
+              await ctx.reply(plainText, fallbackOptions);
+            }
           }
         }
 
@@ -352,17 +364,6 @@ export class TelegramHandler {
         error: extractErrorMessage(error),
       });
     }
-  }
-
-  /**
-   * Formats thinking/reasoning blocks as collapsible blockquotes.
-   * Supports: <think</think, <thinking</thinking, [think][/think]
-   */
-  private _formatThinkingBlocks(text: string): string {
-    return text
-      .replace(/<think\b[^>]*>([\s\S]*?)<\/think>/gi, "<blockquote expandable>$1</blockquote>")
-      .replace(/<thinking\b[^>]*>([\s\S]*?)<\/thinking>/gi, "<blockquote expandable>$1</blockquote>")
-      .replace(/\[think\]([\s\S]*?)\[\/think\]/gi, "<blockquote expandable>$1</blockquote>");
   }
 
   private async _processMergedQueuedMessageAsync(chatId: string, mergedText: string): Promise<void> {

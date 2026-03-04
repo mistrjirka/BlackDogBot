@@ -24,6 +24,7 @@
   },
   "license": "GPL-2.0",
   "dependencies": {
+    "@adriangalilea/tghtml": "jsr:^0.2.3",
     "@ai-sdk/openai": "^2.0.0",
     "@ai-sdk/openai-compatible": "^2.0.30",
     "@ai-sdk/provider": "^3.0.8",

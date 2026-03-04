@@ -7,6 +7,7 @@ import type {
   MessagePlatform,
 } from "../../shared/types/messaging.types.js";
 import { splitTelegramMessage } from "../../utils/telegram-message.js";
+import { sanitizeTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 
 //#region TelegramAdapter
 
@@ -35,20 +36,22 @@ export class TelegramAdapter implements IPlatformAdapter {
 
   public async sendMessageAsync(message: IOutgoingMessage): Promise<string | null> {
     const chatId: string = message.userId;
-    const chunks: string[] = splitTelegramMessage(message.text);
+    const sanitizedText: string = sanitizeTelegramHtml(message.text);
+    const chunks: string[] = splitTelegramMessage(sanitizedText);
     let lastMessageId: string | null = null;
 
     for (const chunk of chunks) {
       try {
         const sentMessage = await this._bot.api.sendMessage(chatId, chunk, {
-          parse_mode: "Markdown",
+          parse_mode: "HTML",
         });
         lastMessageId = String(sentMessage.message_id);
       } catch (error: unknown) {
         const isParseError: boolean =
           error instanceof Error && error.message.includes("can't parse entities");
         if (isParseError) {
-          const sentMessage = await this._bot.api.sendMessage(chatId, chunk);
+          const plainText: string = stripAllHtml(chunk);
+          const sentMessage = await this._bot.api.sendMessage(chatId, plainText);
           lastMessageId = String(sentMessage.message_id);
         } else {
           throw error;

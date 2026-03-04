@@ -229,7 +229,7 @@ describe("TelegramAdapter", () => {
 
     expect(result).toBe("999");
     expect(sendMessageMock).toHaveBeenCalledWith("12345", "Test message", {
-      parse_mode: "Markdown",
+      parse_mode: "HTML",
     });
   });
 });
