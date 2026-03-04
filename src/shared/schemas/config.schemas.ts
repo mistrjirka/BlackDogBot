@@ -59,6 +59,11 @@ const lmStudioSchema = z.object({
     .describe("Model identifier"),
   rateLimits: rateLimitSchema
     .default({ rpm: 120, tpm: 200000 }),
+  contextWindow: z.number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Context window size. If not set, auto-detected from LM Studio via SDK."),
 });
 
 const aiConfigSchema = z.object({

@@ -4,6 +4,7 @@ import { LanguageModelV3 } from "@ai-sdk/provider";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
+import { LMStudioClient } from "@lmstudio/sdk";
 
 import { LoggerService } from "./logger.service.js";
 import {
@@ -73,29 +74,49 @@ export class AiProviderService {
     const logger = LoggerService.getInstance();
     const defaultLocalContextWindow = 32768;
 
-    // Priority: 1. Config value, 2. API detection, 3. Conservative default
+    // Priority: 1. Config value, 2. SDK detection (LM Studio) or API detection, 3. Conservative default
     if (activeConfig.contextWindow) {
       this._contextWindow = activeConfig.contextWindow;
       logger.info(`Using configured context window: ${this._contextWindow}`);
     } else if (providerKey === "lm-studio") {
       const lmConfig = activeConfig as ILmStudioConfig;
-      const lmInfo = await this._modelInfoService.fetchLmStudioContextWindowAsync(
-        lmConfig.baseUrl,
-        defaultModelId,
-      );
-
-      if (lmInfo.loaded) {
-        this._contextWindow = lmInfo.loaded;
-        logger.info(`Detected LM Studio context window: ${this._contextWindow} (loaded)`);
-      } else if (lmInfo.max) {
-        this._contextWindow = lmInfo.max;
-        logger.info(`Detected LM Studio context window: ${this._contextWindow} (max)`);
+      
+      // Use LM Studio SDK for detection with retry
+      const wsUrl: string = lmConfig.baseUrl.replace(/^http/, "ws");
+      let detectedContext: number | null = null;
+      
+      try {
+        const client = new LMStudioClient({ baseUrl: wsUrl });
+        
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const model = await client.llm.model(lmConfig.model);
+            detectedContext = await model.getContextLength();
+            break;
+          } catch (error: unknown) {
+            if (attempt < 3) {
+              logger.debug(`LM Studio SDK attempt ${attempt}/3 failed, retrying...`, {
+                error: error instanceof Error ? error.message : String(error),
+              });
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
+          }
+        }
+      } catch (error: unknown) {
+        logger.warn("Failed to initialize LM Studio SDK client", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      
+      if (detectedContext) {
+        this._contextWindow = detectedContext;
+        logger.info(`Detected LM Studio context window: ${this._contextWindow}`);
       } else {
         this._contextWindow = defaultLocalContextWindow;
-        logger.warn(
-          `Could not detect context window from LM Studio API. ` +
-          `Using conservative default: ${defaultLocalContextWindow}. ` +
-          `Set 'contextWindow' in config or ensure LM Studio server is running.`
+        logger.error(
+          `Failed to detect LM Studio context window after 3 attempts. ` +
+          `Using unsafe default: ${defaultLocalContextWindow}. ` +
+          `Please set 'contextWindow' in config to match your LM Studio settings.`
         );
       }
     } else if (providerKey === "openrouter") {
