@@ -8,6 +8,7 @@ import type {
 } from "../../shared/types/messaging.types.js";
 import { splitTelegramMessage } from "../../utils/telegram-message.js";
 import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
+import { ChatNotFoundError } from "../../utils/error.js";
 
 //#region TelegramAdapter
 
@@ -40,26 +41,41 @@ export class TelegramAdapter implements IPlatformAdapter {
     const chunks: string[] = splitTelegramMessage(htmlText);
     let lastMessageId: string | null = null;
 
-    for (const chunk of chunks) {
-      try {
-        const sentMessage = await this._bot.api.sendMessage(chatId, chunk, {
-          parse_mode: "HTML",
-        });
-        lastMessageId = String(sentMessage.message_id);
-      } catch (error: unknown) {
-        const isParseError: boolean =
-          error instanceof Error && error.message.includes("can't parse entities");
-        if (isParseError) {
-          const plainText: string = stripAllHtml(chunk);
-          const sentMessage = await this._bot.api.sendMessage(chatId, plainText);
+    try {
+      for (const chunk of chunks) {
+        try {
+          const sentMessage = await this._bot.api.sendMessage(chatId, chunk, {
+            parse_mode: "HTML",
+          });
           lastMessageId = String(sentMessage.message_id);
-        } else {
-          throw error;
+        } catch (error: unknown) {
+          const isParseError: boolean =
+            error instanceof Error && error.message.includes("can't parse entities");
+          if (isParseError) {
+            const plainText: string = stripAllHtml(chunk);
+            const sentMessage = await this._bot.api.sendMessage(chatId, plainText);
+            lastMessageId = String(sentMessage.message_id);
+          } else {
+            throw error;
+          }
         }
       }
-    }
 
-    return lastMessageId;
+      return lastMessageId;
+    } catch (error: unknown) {
+      if (this._isChatNotFoundError(error)) {
+        throw new ChatNotFoundError(chatId);
+      }
+      throw error;
+    }
+  }
+
+  private _isChatNotFoundError(error: unknown): boolean {
+    if (error instanceof Error) {
+      const msg: string = error.message.toLowerCase();
+      return msg.includes("chat not found") || msg.includes("bad request: chat not found");
+    }
+    return false;
   }
 
   public async sendPhotoAsync(photo: IOutgoingPhoto): Promise<string | null> {

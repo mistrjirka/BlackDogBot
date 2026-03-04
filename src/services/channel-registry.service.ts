@@ -204,7 +204,31 @@ export class ChannelRegistryService {
    * Used by CronTaskExecutor to broadcast messages.
    */
   public getNotificationChannels(): IRegisteredChannel[] {
-    return this._config.channels.filter((c) => c.receiveNotifications);
+    const channels = this._config.channels.filter((c) => c.receiveNotifications);
+
+    for (const channel of channels) {
+      this._validateChannelId(channel.platform, channel.channelId);
+    }
+
+    return channels;
+  }
+
+  /**
+   * Validate a channel ID and log a warning if invalid.
+   * Telegram chat IDs should be numeric (positive for private, negative for groups).
+   */
+  private _validateChannelId(platform: MessagePlatform, channelId: string): boolean {
+    if (platform === "telegram") {
+      const isValid: boolean = /^-?\d+$/.test(channelId);
+      if (!isValid) {
+        this._logger.warn("Invalid Telegram channel ID detected (should be numeric)", {
+          channelId,
+          hint: "Send a message to the bot to auto-register the correct chat ID",
+        });
+      }
+      return isValid;
+    }
+    return true;
   }
 
   /**
