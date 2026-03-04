@@ -11,10 +11,10 @@ import { generateId } from "../utils/id.js";
 
 interface IRunCronInput {
   taskId: string;
-  captureMessages?: boolean;
+  sendToUser?: boolean;
 }
 
-interface ICapturedMessage {
+interface ISentMessage {
   text: string;
   timestamp: string;
 }
@@ -46,19 +46,29 @@ class SimpleTraceCollector implements ITraceCollector {
 
 export const runCronTool = tool({
   description:
-    "Execute a scheduled task (cron job) immediately, bypassing its schedule. " +
-    "Returns detailed tool call trace with inputs and shortened outputs. " +
-    "By default, captures messages instead of sending them (dry-run mode).",
+    "Execute a scheduled task immediately. " +
+    "**Call ONCE per task** - it runs to completion. " +
+    "Returns tool call trace and messages. " +
+    "Default: sendToUser=false (dry-run, messages shown in output only). " +
+    "Set sendToUser=true to actually send messages to notification channels.",
   inputSchema: z.object({
     taskId: z
       .string()
       .min(1)
       .describe("ID of the scheduled task to run immediately"),
-    captureMessages: z
-      .boolean()
+    sendToUser: z
+      .preprocess(
+        (val) => {
+          if (typeof val === "string") {
+            return val.toLowerCase() === "true";
+          }
+          return val;
+        },
+        z.boolean()
+      )
       .optional()
-      .default(true)
-      .describe("If true (default), capture messages instead of sending them (dry-run mode)"),
+      .default(false)
+      .describe("If true, send messages to notification channels. If false (default), only show in output (dry-run)"),
   }),
   execute: async (input: IRunCronInput): Promise<IRunCronResult> => {
     const logger = LoggerService.getInstance();
@@ -75,15 +85,15 @@ export const runCronTool = tool({
       }
 
       const traceCollector = new SimpleTraceCollector();
-      const capturedMessages: ICapturedMessage[] = [];
+      const sentMessages: ISentMessage[] = [];
 
       const taskIdProvider = (): string | null => task.taskId;
 
       let messageSender: (message: string) => Promise<string | null>;
 
-      if (input.captureMessages !== false) {
+      if (!input.sendToUser) {
         messageSender = async (message: string): Promise<string | null> => {
-          capturedMessages.push({
+          sentMessages.push({
             text: message,
             timestamp: new Date().toISOString(),
           });
@@ -123,7 +133,15 @@ export const runCronTool = tool({
       );
 
       const traces = traceCollector.getTraces();
-      const markdown = formatResultMarkdown(task.name, result.text, traces, capturedMessages);
+      const sendMode = input.sendToUser === true;
+      const markdown = formatResultMarkdown(
+        task.name,
+        task.taskId,
+        result.text,
+        traces,
+        sentMessages,
+        sendMode,
+      );
 
       return {
         success: true,
@@ -145,16 +163,45 @@ export const runCronTool = tool({
 
 //#region Formatting
 
+const MAX_MESSAGE_PREVIEW = 200;
+
+function truncateTraceInput(trace: IToolCallTrace): Record<string, unknown> {
+  const input = trace.input as Record<string, unknown>;
+
+  if (trace.name === "send_message" && typeof input.message === "string") {
+    const message = input.message;
+    if (message.length > MAX_MESSAGE_PREVIEW) {
+      return {
+        ...input,
+        message: message.slice(0, MAX_MESSAGE_PREVIEW) + "\n\n[TRUNCATED - full message shown in Messages section]",
+      };
+    }
+  }
+
+  return input;
+}
+
 function formatResultMarkdown(
   taskName: string,
+  taskId: string,
   finalText: string,
   traces: IToolCallTrace[],
-  capturedMessages: ICapturedMessage[],
+  sentMessages: ISentMessage[],
+  sendMode: boolean,
 ): string {
   const lines: string[] = [];
 
-  lines.push(`## Task Executed: "${taskName}"`);
+  lines.push("## ✅ Task Completed");
   lines.push("");
+  lines.push(`- **Task:** "${taskName}"`);
+  lines.push(`- **Task ID:** \`${taskId}\``);
+  if (sendMode) {
+    lines.push(`- **Messages:** ${sentMessages.length} sent to notification channels`);
+  } else {
+    lines.push(`- **Messages:** ${sentMessages.length} (dry-run mode, not sent)`);
+  }
+  lines.push("");
+
   lines.push("### Final Result");
   lines.push("");
   lines.push(finalText || "(No final result)");
@@ -169,11 +216,12 @@ function formatResultMarkdown(
     lines.push("_No tool calls were made._");
   } else {
     for (const trace of traces) {
+      const truncatedInput = truncateTraceInput(trace);
       lines.push(`#### Step ${trace.step}: \`${trace.name}\`${trace.isError ? " **(error)**" : ""}`);
       lines.push("");
       lines.push("**Input:**");
       lines.push("```json");
-      lines.push(JSON.stringify(trace.input, null, 2));
+      lines.push(JSON.stringify(truncatedInput, null, 2));
       lines.push("```");
       lines.push("");
       lines.push("**Output (shortened):**");
@@ -184,18 +232,15 @@ function formatResultMarkdown(
     }
   }
 
-  if (capturedMessages.length > 0) {
-    lines.push("### Captured Messages");
-    lines.push("");
-    lines.push(`> Messages were captured instead of sent (dry-run mode).`);
+  if (sentMessages.length > 0) {
+    lines.push(sendMode ? "### Messages (sent to notification channels)" : "### Messages (captured, not sent)");
     lines.push("");
 
-    for (let i = 0; i < capturedMessages.length; i++) {
-      const msg = capturedMessages[i];
-      const preview = msg.text.length > 200 ? msg.text.slice(0, 200) + "..." : msg.text;
+    for (let i = 0; i < sentMessages.length; i++) {
+      const msg = sentMessages[i];
       lines.push(`**Message ${i + 1}:**`);
       lines.push("```");
-      lines.push(preview);
+      lines.push(msg.text);
       lines.push("```");
       lines.push("");
     }
