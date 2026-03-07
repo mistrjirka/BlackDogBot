@@ -61,6 +61,22 @@ export const CONTEXT_EXCEEDED_RETRIES: number = 2;
  */
 const MESSAGE_JSON_OVERHEAD_TOKENS: number = 15;
 
+/**
+ * Maximum tokens allowed per individual tool result during normal compaction.
+ * Tool results exceeding this are truncated to fit within context limits.
+ */
+const MAX_TOOL_RESULT_TOKENS: number = 8_000;
+
+/**
+ * Maximum tokens per tool result during aggressive compaction (post-threshold).
+ */
+const AGGRESSIVE_MAX_TOOL_RESULT_TOKENS: number = 2_000;
+
+/**
+ * Maximum tokens per tool result during emergency compaction (still over hard limit).
+ */
+const EMERGENCY_MAX_TOOL_RESULT_TOKENS: number = 500;
+
 //#endregion Constants
 
 //#region Interfaces
@@ -411,7 +427,24 @@ export abstract class BaseAgentBase {
           self._forceCompactionOnNextStep;
 
         if (shouldCompact) {
+          const wasForced: boolean = tokenCount <= compactionTokenThreshold;
           self._forceCompactionOnNextStep = false;
+
+          // If force-triggered but already under threshold, only truncate tool results
+          // to avoid a wasteful LLM summarization call.
+          if (wasForced) {
+            logger.info("Force compaction: truncating oversized tool results only", {
+              tokenCount,
+              threshold: compactionTokenThreshold,
+              messageCount: messages.length,
+            });
+
+            const truncated: ModelMessage[] = _truncateOversizedMessages(
+              messages, MAX_TOOL_RESULT_TOKENS, logger,
+            );
+
+            return { messages: truncated, activeTools: activeToolNames };
+          }
 
           logger.info("Compacting agent history", {
             tokenCount,
@@ -420,7 +453,7 @@ export abstract class BaseAgentBase {
             dynamicOverhead: dynamicOverheadTokens - fixedOverheadTokens,
             threshold: compactionTokenThreshold,
             messageCount: messages.length,
-            forced: tokenCount <= compactionTokenThreshold,
+            forced: false,
           });
 
           const compactedMessages: ModelMessage[] = await _compactMessagesAsync(
@@ -429,6 +462,7 @@ export abstract class BaseAgentBase {
             logger,
             self._fixedOverheadTokens,
             self._compactionTokenThreshold,
+            self._contextWindow,
           );
 
           return { messages: compactedMessages, activeTools: activeToolNames };
@@ -549,13 +583,17 @@ async function _compactMessagesAsync(
   logger: LoggerService,
   fixedOverheadTokens: number,
   compactionTokenThreshold: number,
+  contextWindow: number,
 ): Promise<ModelMessage[]> {
+  const hardLimitThreshold: number = Math.floor(contextWindow * HARD_GATE_THRESHOLD_PERCENTAGE);
+
   const firstMessage: ModelMessage = messages[0];
   const recentMessages: ModelMessage[] = messages.slice(-COMPACTION_KEEP_RECENT);
   const oldMessages: ModelMessage[] = messages.slice(1, -COMPACTION_KEEP_RECENT);
 
   if (oldMessages.length === 0) {
-    return messages;
+    // Can't separate old/recent — still truncate oversized tool results
+    return _truncateOversizedMessages(messages, MAX_TOOL_RESULT_TOKENS, logger);
   }
 
   const oldConversationText: string = oldMessages
@@ -583,6 +621,11 @@ async function _compactMessagesAsync(
 
   const summaryText: string = summaryResult.text || "No summary available.";
 
+  // Truncate tool results in kept recent messages before building compacted result
+  const truncatedRecent: ModelMessage[] = _truncateOversizedMessages(
+    recentMessages, MAX_TOOL_RESULT_TOKENS, logger,
+  );
+
   const tokensBefore: number = _countTokens(messages);
   const compactedResult: ModelMessage[] = [firstMessage, {
     role: "user",
@@ -592,7 +635,7 @@ async function _compactMessagesAsync(
         text: `[CONVERSATION SUMMARY - Earlier messages were compacted]\n\n${summaryText}\n\n[END OF SUMMARY - Recent conversation follows]`,
       },
     ],
-  }, ...recentMessages];
+  }, ...truncatedRecent];
 
   const tokensAfter: number = _countTokens(compactedResult);
 
@@ -605,7 +648,7 @@ async function _compactMessagesAsync(
   });
 
   // Post-compaction validation: if still over threshold, do aggressive compaction
-  // keeping only 3 most recent messages to guarantee we fit.
+  // keeping only 3 most recent messages with more aggressive truncation.
   const totalAfterCompaction: number = tokensAfter + fixedOverheadTokens;
   if (totalAfterCompaction > compactionTokenThreshold) {
     const aggressiveKeep: number = 3;
@@ -616,7 +659,9 @@ async function _compactMessagesAsync(
     });
 
     if (compactedResult.length > aggressiveKeep + 1) {
-      const aggressiveRecent: ModelMessage[] = compactedResult.slice(-aggressiveKeep);
+      const aggressiveRecent: ModelMessage[] = _truncateOversizedMessages(
+        compactedResult.slice(-aggressiveKeep), AGGRESSIVE_MAX_TOOL_RESULT_TOKENS, logger,
+      );
       const aggressiveResult: ModelMessage[] = [compactedResult[0], ...aggressiveRecent];
       const aggressiveTokens: number = _countTokens(aggressiveResult);
       logger.info("Aggressive compaction applied", {
@@ -624,11 +669,99 @@ async function _compactMessagesAsync(
         after: aggressiveTokens,
         keptMessages: aggressiveResult.length,
       });
+
+      // Final safety: if still over the hard limit, apply emergency truncation
+      const totalAfterAggressive: number = aggressiveTokens + fixedOverheadTokens;
+      if (totalAfterAggressive > hardLimitThreshold) {
+        logger.warn("Still over hard limit after aggressive compaction, applying emergency truncation", {
+          totalAfterAggressive,
+          hardLimitThreshold,
+        });
+        return _truncateOversizedMessages(aggressiveResult, EMERGENCY_MAX_TOOL_RESULT_TOKENS, logger);
+      }
+
       return aggressiveResult;
     }
   }
 
   return compactedResult;
+}
+
+/**
+ * Truncate oversized tool result content in messages.
+ * Processes the content array of each message and truncates any tool-result
+ * parts whose output/result field exceeds maxTokensPerResult.
+ */
+function _truncateOversizedMessages(
+  messages: ModelMessage[],
+  maxTokensPerResult: number,
+  logger: LoggerService,
+): ModelMessage[] {
+  const enc = _getTextEncoder();
+  let truncatedCount: number = 0;
+
+  const result: ModelMessage[] = messages.map((msg: ModelMessage): ModelMessage => {
+    if (!Array.isArray(msg.content)) return msg;
+
+    let modified: boolean = false;
+    const newContent: unknown[] = (msg.content as unknown[]).map((part: unknown): unknown => {
+      if (typeof part !== "object" || part === null) return part;
+      const p = part as Record<string, unknown>;
+
+      // Only truncate parts that look like tool results (have "result" or "output")
+      const field: string | null =
+        "result" in p ? "result" :
+        "output" in p ? "output" :
+        null;
+
+      if (!field) return part;
+
+      const value: unknown = p[field];
+      if (value === null || value === undefined) return part;
+
+      // Measure the token size of the value
+      let valueStr: string;
+      let isWrapped: boolean = false;
+
+      if (typeof value === "string") {
+        valueStr = value;
+      } else if (typeof value === "object" && value !== null && "value" in (value as Record<string, unknown>)) {
+        // Handle { type: "text", value: "..." } wrapper format
+        const inner: unknown = (value as Record<string, unknown>).value;
+        valueStr = typeof inner === "string" ? inner : JSON.stringify(inner);
+        isWrapped = true;
+      } else {
+        valueStr = JSON.stringify(value);
+      }
+
+      const tokens: number = enc.encode(valueStr).length;
+      if (tokens <= maxTokensPerResult) return part;
+
+      modified = true;
+      truncatedCount++;
+
+      // Truncate using character-based approximation (~4 chars per token)
+      const maxChars: number = maxTokensPerResult * 4;
+      const truncatedStr: string = valueStr.slice(0, maxChars) +
+        `\n\n[TRUNCATED: was ${tokens} tokens, kept ~${maxTokensPerResult}]`;
+
+      if (isWrapped) {
+        return { ...p, [field]: { ...(value as Record<string, unknown>), value: truncatedStr } };
+      }
+      return { ...p, [field]: truncatedStr };
+    });
+
+    return modified ? { ...msg, content: newContent } as ModelMessage : msg;
+  });
+
+  if (truncatedCount > 0) {
+    logger.info("Truncated oversized tool results during compaction", {
+      truncatedResults: truncatedCount,
+      maxTokensPerResult,
+    });
+  }
+
+  return result;
 }
 
 function _extractTextContent(message: ModelMessage): string {

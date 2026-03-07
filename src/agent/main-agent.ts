@@ -531,14 +531,15 @@ export class MainAgent extends BaseAgentBase {
         } catch (genError: unknown) {
           // Handle context size exceeded errors (from hard gate or real API errors)
           if (
-            genError instanceof APICallError &&
-            genError.statusCode === 400 &&
+            APICallError.isInstance(genError) &&
+            (genError as APICallError).statusCode === 400 &&
             contextRetries < CONTEXT_EXCEEDED_RETRIES
           ) {
-            const errorBody: string = typeof genError.responseBody === "string"
-              ? genError.responseBody
-              : JSON.stringify(genError.responseBody ?? "");
-            const errorMessage: string = (genError.message + " " + errorBody).toLowerCase();
+            const apiError = genError as APICallError;
+            const errorBody: string = typeof apiError.responseBody === "string"
+              ? apiError.responseBody
+              : JSON.stringify(apiError.responseBody ?? "");
+            const errorMessage: string = (apiError.message + " " + errorBody).toLowerCase();
 
             if (
               errorMessage.includes("context") ||
