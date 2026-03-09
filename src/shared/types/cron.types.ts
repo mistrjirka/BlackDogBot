@@ -44,4 +44,8 @@ export interface IScheduledTask {
   summaryGeneratedAt: string | null;
 }
 
+export interface IExecutionContext {
+  toolCallHistory: string[];
+}
+
 //#endregion Cron Types

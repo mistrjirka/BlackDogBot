@@ -22,7 +22,7 @@ import { StatusService } from "./services/status.service.js";
 import { telegramPlatform } from "./platforms/telegram/index.js";
 import { discordPlatform } from "./platforms/discord/index.js";
 import type { IPlatformDeps } from "./platforms/types.js";
-import type { IConfig, IScheduledTask } from "./shared/types/index.js";
+import type { IConfig, IScheduledTask, IExecutionContext } from "./shared/types/index.js";
 import { getJobLogsDir } from "./utils/paths.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
 import { extractErrorMessage, ChatNotFoundError } from "./utils/error.js";
@@ -352,12 +352,15 @@ async function mainAsync(): Promise<void> {
         }
       };
 
+      const executionContext: IExecutionContext = { toolCallHistory: [] };
+
       await executeCronTaskAsync(task, {
         broadcastToNotificationChannelsAsync,
         broadcastCronMessage: (name: string, msg: string) =>
           BrainInterfaceService.getInstance().broadcastCronMessage(name, msg),
         logInfo: (msg: string, meta?: Record<string, unknown>) => logger.info(msg, meta),
-        executeTaskAsync: (t, sender, taskIdProvider) => cronAgent.executeTaskAsync(t, sender, taskIdProvider),
+        executeTaskAsync: (t, sender, taskIdProvider) =>
+          cronAgent.executeTaskAsync(t, sender, taskIdProvider, executionContext),
         openJobLogAsync: (key, path) => logger.openJobLogAsync(key, path),
         closeJobLog: (key) => logger.closeJobLog(key),
         getJobLogPath: (name, ts) =>

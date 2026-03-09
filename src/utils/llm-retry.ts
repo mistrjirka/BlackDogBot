@@ -1,4 +1,4 @@
-import { generateText, generateObject, type LanguageModel } from "ai";
+import { generateText, Output, type LanguageModel } from "ai";
 import type { z } from "zod";
 
 import { LoggerService } from "../services/logger.service.js";
@@ -98,12 +98,14 @@ export async function generateTextWithRetryAsync(
 }
 
 /**
- * Generates structured output using generateObject with retry logic and rate limiting.
- * Guarantees valid JSON matching the provided Zod schema.
+ * Generates structured output using generateText + Output.object() with retry logic
+ * and rate limiting. Guarantees valid JSON matching the provided Zod schema.
  *
- * For LM Studio, the provider is configured with supportsStructuredOutputs: true,
- * which makes the AI SDK send response_format: json_schema — natively supported
- * by LM Studio via grammar-based sampling (GGUF) or Outlines (MLX).
+ * Uses generateText with Output.object() instead of generateObject — this extracts
+ * structured JSON from the model's text response rather than relying on the provider
+ * to support response_format: json_schema or tool-based JSON extraction. This makes
+ * it compatible with all providers including llama.cpp, LM Studio, and OpenRouter,
+ * while keeping full Zod schema validation.
  */
 export async function generateObjectWithRetryAsync<T extends z.ZodType>(
   options: IGenerateObjectOptions<T>,
@@ -126,14 +128,21 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
     for (let attempt: number = 1; attempt <= LLM_MAX_RETRIES; attempt++) {
       try {
       const callFn = async (): Promise<{ object: z.infer<T> }> => {
-        const result = await generateObject({
+        const result = await generateText({
           model: options.model,
           prompt: options.prompt,
-          schema: options.schema,
           ...(options.system ? { system: options.system } : {}),
+          output: Output.object({ schema: options.schema }),
         });
 
-        return { object: result.object };
+        if (result.output === undefined || result.output === null) {
+          throw new Error(
+            "No structured output generated: model did not return parseable JSON matching the schema." +
+            (result.text ? ` Raw text: ${result.text.substring(0, 200)}` : ""),
+          );
+        }
+
+        return { object: result.output };
       };
 
       const result: { object: z.infer<T> } = limiter
@@ -172,5 +181,3 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
 }
 
 //#endregion Public functions
-
-

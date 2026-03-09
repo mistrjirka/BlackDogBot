@@ -1,6 +1,5 @@
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
 import { LoggerService } from "./logger.service.js";
-import { SchedulerService } from "./scheduler.service.js";
 import { AiProviderService } from "./ai-provider.service.js";
 import { generateId } from "../utils/id.js";
 import type { ICronMessageHistory } from "../shared/types/index.js";
@@ -31,6 +30,7 @@ export class CronMessageHistoryService {
   //#region Data members
 
   private static _instance: CronMessageHistoryService | null;
+  private static _sharedHistory: ICronMessageHistory[] = [];
   private _logger: LoggerService;
 
   //#endregion Data members
@@ -53,36 +53,18 @@ export class CronMessageHistoryService {
     return CronMessageHistoryService._instance;
   }
 
-  public async getHistoryAsync(taskId: string): Promise<ICronHistoryResult> {
-    const task = await SchedulerService.getInstance().getTaskAsync(taskId);
-
-    if (!task) {
-      this._logger.warn("Task not found for history lookup", { taskId });
-      return {
-        messages: [],
-        summary: null,
-        summaryGeneratedAt: null,
-        totalMessageCount: 0,
-      };
-    }
+  public async getHistoryAsync(): Promise<ICronHistoryResult> {
+    const history: ICronMessageHistory[] = CronMessageHistoryService._sharedHistory.slice(-MAX_KEEP_MESSAGES);
 
     return {
-      messages: task.messageHistory ?? [],
-      summary: task.messageSummary,
-      summaryGeneratedAt: task.summaryGeneratedAt,
-      totalMessageCount: (task.messageHistory?.length ?? 0) + (task.messageSummary ? 1 : 0),
+      messages: history,
+      summary: null,
+      summaryGeneratedAt: null,
+      totalMessageCount: history.length,
     };
   }
 
   public async recordMessageAsync(taskId: string, content: string): Promise<string> {
-    const scheduler = SchedulerService.getInstance();
-    const task = await scheduler.getTaskAsync(taskId);
-
-    if (!task) {
-      this._logger.warn("Task not found for message recording", { taskId });
-      return "";
-    }
-
     const messageId: string = generateId();
     const now: string = new Date().toISOString();
 
@@ -92,15 +74,11 @@ export class CronMessageHistoryService {
       sentAt: now,
     };
 
-    const messageHistory: ICronMessageHistory[] = [...(task.messageHistory ?? []), newMessage];
-
-    await scheduler.updateTaskAsync(taskId, {
-      messageHistory,
-    });
+    CronMessageHistoryService._sharedHistory.push(newMessage);
 
     this._logger.debug("Recorded cron message", { taskId, messageId });
 
-    const totalChars: number = this._calculateTotalChars(messageHistory, task.messageSummary);
+    const totalChars: number = this._calculateTotalChars(CronMessageHistoryService._sharedHistory.slice(-MAX_KEEP_MESSAGES), null);
 
     if (totalChars > MAX_SUMMARY_CHARS) {
       this._logger.info("Message history exceeds threshold, compacting", {
@@ -134,22 +112,12 @@ export class CronMessageHistoryService {
   }
 
   private async _summarizeAndCompactAsync(taskId: string): Promise<void> {
-    const scheduler = SchedulerService.getInstance();
-    const task = await scheduler.getTaskAsync(taskId);
-
-    if (!task) {
-      this._logger.warn("Task not found for compaction", { taskId });
+    if (CronMessageHistoryService._sharedHistory.length <= MAX_KEEP_MESSAGES) {
       return;
     }
 
-    const messageHistory: ICronMessageHistory[] = task.messageHistory ?? [];
-
-    if (messageHistory.length <= MAX_KEEP_MESSAGES) {
-      return;
-    }
-
-    const messagesToSummarize: ICronMessageHistory[] = messageHistory.slice(0, -MAX_KEEP_MESSAGES);
-    const recentMessages: ICronMessageHistory[] = messageHistory.slice(-MAX_KEEP_MESSAGES);
+    const messagesToSummarize: ICronMessageHistory[] = CronMessageHistoryService._sharedHistory.slice(0, -MAX_KEEP_MESSAGES);
+    const recentMessages: ICronMessageHistory[] = CronMessageHistoryService._sharedHistory.slice(-MAX_KEEP_MESSAGES);
 
     if (messagesToSummarize.length === 0) {
       return;
@@ -159,19 +127,7 @@ export class CronMessageHistoryService {
       .map((msg: ICronMessageHistory) => `[${msg.sentAt}]: ${msg.content}`)
       .join("\n\n");
 
-    const existingSummary: string = task.messageSummary ?? "";
-
-    const prompt: string = existingSummary
-      ? `Summarize the following cron message history and existing summary. Focus on key information sent to the user. Be concise but preserve important details. The summary should help the agent avoid sending duplicate or repetitive messages.
-
-Existing summary:
-${existingSummary}
-
-New messages to incorporate:
-${historyText}
-
-Output a single concise summary paragraph.`
-      : `Summarize the following cron message history. Focus on key information sent to the user. Be concise but preserve important details. The summary should help the agent avoid sending duplicate or repetitive messages.
+    const prompt: string = `Summarize the following cron message history. Focus on key information sent to the user. Be concise but preserve important details. The summary should help the agent avoid sending duplicate or repetitive messages.
 
 Messages:
 ${historyText}
@@ -187,13 +143,8 @@ Output a single concise summary paragraph.`;
       });
 
       const newSummary: string = result.text ?? "";
-      const now: string = new Date().toISOString();
 
-      await scheduler.updateTaskAsync(taskId, {
-        messageHistory: recentMessages,
-        messageSummary: newSummary,
-        summaryGeneratedAt: now,
-      });
+      CronMessageHistoryService._sharedHistory = recentMessages;
 
       this._logger.info("Compacted cron message history", {
         taskId,

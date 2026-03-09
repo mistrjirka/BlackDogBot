@@ -41,6 +41,7 @@ export class AiProviderService {
   private _defaultModel: LanguageModel | null;
   private _contextWindow: number;
   private _supportsForcedToolChoice: boolean | null = null;
+  private _supportsStructuredOutputs: boolean = false;
 
   //#endregion Data members
 
@@ -155,6 +156,29 @@ export class AiProviderService {
     // Test response format to detect reasoning_content issue
     const responseFormat = await this.testResponseFormatAsync();
     logger.info(`Model ${defaultModelId} response format: ${responseFormat.ok ? "OK" : `ISSUE - ${responseFormat.reason}`}`);
+
+    // Autodetect structured output support when not explicitly configured
+    if (providerKey === "openai-compatible" || providerKey === "lm-studio") {
+      const explicitValue = providerKey === "openai-compatible"
+        ? (aiConfig.openaiCompatible?.supportsStructuredOutputs)
+        : (aiConfig.lmStudio?.supportsStructuredOutputs);
+
+      if (explicitValue !== undefined) {
+        this._supportsStructuredOutputs = explicitValue;
+        logger.info(`Using configured supportsStructuredOutputs: ${explicitValue}`);
+      } else {
+        const detected = await this.testStructuredOutputsAsync();
+        this._supportsStructuredOutputs = detected;
+        logger.info(`Autodetected structured output support: ${detected ? "SUPPORTED" : "NOT SUPPORTED"}`);
+
+        // If detected as supported, re-create the model with the flag enabled
+        // so AI SDK can use native response_format: json_schema
+        if (detected) {
+          this._defaultModel = this._createModel(defaultModelId);
+          logger.info("Re-created model with supportsStructuredOutputs: true");
+        }
+      }
+    }
   }
 
   public initialize(aiConfig: IAiConfig): void {
@@ -355,13 +379,82 @@ export class AiProviderService {
    * Tests if the model returns content in the correct field.
    * Some LM Studio configurations put content in reasoning_content instead of content.
    */
-  public async testResponseFormatAsync(): Promise<{ ok: boolean; reason?: string }> {
+   public async testResponseFormatAsync(): Promise<{ ok: boolean; reason?: string }> {
+     if (!this._aiConfig) {
+       return { ok: false, reason: "Service not initialized" };
+     }
+ 
+     const logger = LoggerService.getInstance();
+     logger.info("Testing model response format...");
+ 
+     try {
+       const config = this._getActiveProviderConfig();
+       const baseUrl = normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
+ 
+       const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify({
+           model: config.model,
+           messages: [{ role: "user", content: "Reply with: hello" }],
+           max_tokens: 20,
+         }),
+       });
+ 
+       if (!response.ok) {
+         return { ok: false, reason: `HTTP ${response.status}` };
+       }
+ 
+       const json = await response.json() as {
+         choices?: Array<{
+           message?: {
+             content?: string;
+             reasoning_content?: string;
+           };
+         }>;
+       };
+       const message = json.choices?.[0]?.message;
+ 
+       if (!message) {
+         return { ok: false, reason: "No message in response" };
+       }
+ 
+       const hasEmptyContent = !message.content || message.content === "";
+       const hasReasoningContent = !!message.reasoning_content;
+ 
+       if (hasEmptyContent && hasReasoningContent) {
+         logger.warn(
+           "Model response format issue detected: content is empty but reasoning_content has data. " +
+           "This is usually caused by LM Studio artificially dividing reasoning content and content. " +
+           "Please disable the automatic division of reasoning and non-reasoning content in LM Studio settings. " +
+           "See: https://lmstudio.ai/docs/developer/openai-compat/structured-output"
+         );
+         return {
+           ok: false,
+           reason: "Content is in reasoning_content field - please disable LM Studio reasoning division",
+         };
+       }
+ 
+       return { ok: true };
+     } catch (error) {
+       logger.warn("Model response format test failed", {
+         error: extractErrorMessage(error),
+       });
+       return { ok: false, reason: extractErrorMessage(error) };
+     }
+   }
+
+  /**
+   * Tests if the endpoint supports response_format: json_schema by sending
+   * a small probe request. Returns true if the server handles it correctly.
+   */
+  public async testStructuredOutputsAsync(): Promise<boolean> {
     if (!this._aiConfig) {
-      return { ok: false, reason: "Service not initialized" };
+      return false;
     }
 
     const logger = LoggerService.getInstance();
-    logger.info("Testing model response format...");
+    logger.info("Testing endpoint structured output (response_format: json_schema) support...");
 
     try {
       const config = this._getActiveProviderConfig();
@@ -372,13 +465,33 @@ export class AiProviderService {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: config.model,
-          messages: [{ role: "user", content: "Reply with: hello" }],
-          max_tokens: 20,
+          messages: [{ role: "user", content: 'Reply with: {"ok": true}' }],
+          max_tokens: 50,
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "probe",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  ok: { type: "boolean" },
+                },
+                required: ["ok"],
+                additionalProperties: false,
+              },
+            },
+          },
         }),
       });
 
       if (!response.ok) {
-        return { ok: false, reason: `HTTP ${response.status}` };
+        const body = await response.text();
+        logger.debug("Structured output probe: server returned error", {
+          status: response.status,
+          body: body.substring(0, 200),
+        });
+        return false;
       }
 
       const json = await response.json() as {
@@ -389,34 +502,28 @@ export class AiProviderService {
           };
         }>;
       };
-      const message = json.choices?.[0]?.message;
 
-      if (!message) {
-        return { ok: false, reason: "No message in response" };
+      const content = json.choices?.[0]?.message?.content
+        || json.choices?.[0]?.message?.reasoning_content
+        || "";
+
+      // Try to parse the response as JSON to verify the server constrained the output
+      try {
+        const parsed = JSON.parse(content) as Record<string, unknown>;
+        const isValid = typeof parsed.ok === "boolean";
+        logger.info(`Structured output probe result: ${isValid ? "SUPPORTED" : "response not schema-conformant"}`);
+        return isValid;
+      } catch {
+        logger.debug("Structured output probe: response was not valid JSON", {
+          content: content.substring(0, 200),
+        });
+        return false;
       }
-
-      const hasEmptyContent = !message.content || message.content === "";
-      const hasReasoningContent = !!message.reasoning_content;
-
-      if (hasEmptyContent && hasReasoningContent) {
-        logger.warn(
-          "Model response format issue detected: content is empty but reasoning_content has data. " +
-          "This is usually caused by LM Studio artificially dividing reasoning content and content. " +
-          "Please disable the automatic division of reasoning and non-reasoning content in LM Studio settings. " +
-          "See: https://lmstudio.ai/docs/developer/openai-compat/structured-output"
-        );
-        return {
-          ok: false,
-          reason: "Content is in reasoning_content field - please disable LM Studio reasoning division",
-        };
-      }
-
-      return { ok: true };
     } catch (error) {
-      logger.warn("Model response format test failed", {
+      logger.debug("Structured output probe failed", {
         error: extractErrorMessage(error),
       });
-      return { ok: false, reason: extractErrorMessage(error) };
+      return false;
     }
   }
 
@@ -619,13 +726,27 @@ export class AiProviderService {
         name: "openai-compatible",
         baseURL: normalizeBaseUrl(config.baseUrl) + "/v1",
         apiKey: config.apiKey,
-        supportsStructuredOutputs: config.supportsStructuredOutputs ?? false,
+        supportsStructuredOutputs: this._supportsStructuredOutputs,
         fetch: async (url, init): Promise<Response> => {
           // Apply transformations before calling token-gated fetch
           if (init?.body && typeof init.body === "string" && init.method === "POST") {
             try {
               const body = JSON.parse(init.body);
+              let modified = false;
+
+              // Strip response_format when endpoint doesn't support it.
+              // When _supportsStructuredOutputs is true (autodetected or configured),
+              // we let response_format through for native JSON schema support.
+              if (body.response_format && !this._supportsStructuredOutputs) {
+                delete body.response_format;
+                modified = true;
+              }
+
               if (this._normalizeToolChoiceIfNeeded(body)) {
+                modified = true;
+              }
+
+              if (modified) {
                 init.body = JSON.stringify(body);
               }
             } catch {

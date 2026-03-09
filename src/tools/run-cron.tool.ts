@@ -3,6 +3,7 @@ import { z } from "zod";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { CronAgent, type IToolCallTrace, type ITraceCollector } from "../agent/cron-agent.js";
 import { LoggerService } from "../services/logger.service.js";
+import type { IExecutionContext } from "../shared/types/index.js";
 import { summarizeJson } from "../utils/json-summarize.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { generateId } from "../utils/id.js";
@@ -86,6 +87,7 @@ export const runCronTool = tool({
 
       const traceCollector = new SimpleTraceCollector();
       const sentMessages: ISentMessage[] = [];
+      const executionContext: IExecutionContext = { toolCallHistory: [] };
 
       const taskIdProvider = (): string | null => task.taskId;
 
@@ -129,6 +131,7 @@ export const runCronTool = tool({
         task,
         messageSender,
         taskIdProvider,
+        executionContext,
         traceCollector,
       );
 

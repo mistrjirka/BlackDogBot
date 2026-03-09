@@ -26,6 +26,7 @@ describe("get_previous_message tool", () => {
   let mockHistoryService: {
     getHistoryAsync: ReturnType<typeof vi.fn>;
   };
+  let context: { toolCallHistory: string[] };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -35,23 +36,28 @@ describe("get_previous_message tool", () => {
     vi.mocked(CronMessageHistoryService.getInstance).mockReturnValue(
       mockHistoryService as unknown as CronMessageHistoryService,
     );
+    context = { toolCallHistory: [] };
   });
 
-  it("returns empty result when no task id", async () => {
-    const taskIdProvider = (): string | null => null;
-    const tool = createGetPreviousMessageTool(taskIdProvider);
+  it("returns empty result and tracks tool call", async () => {
+    mockHistoryService.getHistoryAsync.mockResolvedValue({
+      messages: [],
+      summary: null,
+      summaryGeneratedAt: null,
+      totalMessageCount: 0,
+    });
+
+    const tool = createGetPreviousMessageTool(context);
 
     const result = await execTool(tool);
 
     expect(result.messages).toEqual([]);
     expect(result.summary).toBeNull();
     expect(result.totalMessageCount).toBe(0);
+    expect(context.toolCallHistory).toContain("get_previous_message");
   });
 
-  it("returns history from service", async () => {
-    const taskIdProvider = (): string | null => "task-123";
-    const tool = createGetPreviousMessageTool(taskIdProvider);
-
+  it("returns history from service and tracks tool call", async () => {
     mockHistoryService.getHistoryAsync.mockResolvedValue({
       messages: [
         { messageId: "msg-1", content: "Hello", sentAt: "2024-01-01T10:00:00Z" },
@@ -62,17 +68,20 @@ describe("get_previous_message tool", () => {
       totalMessageCount: 3,
     });
 
+    const tool = createGetPreviousMessageTool(context);
     const result = await execTool(tool);
 
-    expect(mockHistoryService.getHistoryAsync).toHaveBeenCalledWith("task-123");
+    expect(mockHistoryService.getHistoryAsync).toHaveBeenCalledOnce();
     expect(result.messages).toHaveLength(2);
     expect(result.summary).toBe("Previous summary");
     expect(result.totalMessageCount).toBe(3);
+    expect(context.toolCallHistory).toContain("get_previous_message");
   });
 
-  it("has correct description emphasizing duplicate prevention", () => {
-    const tool = createGetPreviousMessageTool(() => null);
+  it("has correct description emphasizing shared history", () => {
+    const tool = createGetPreviousMessageTool({ toolCallHistory: [] });
 
+    expect(tool.description).toContain("any cron task in the system");
     expect(tool.description).toContain("IMPORTANT");
     expect(tool.description).toContain("duplicate");
   });

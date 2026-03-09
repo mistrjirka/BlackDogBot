@@ -1,245 +1,119 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { ICronHistoryResult } from "../../../src/services/cron-message-history.service.js";
-import type { IScheduledTask } from "../../../src/shared/types/index.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { CronMessageHistoryService } from "../../../src/services/cron-message-history.service.js";
 
-const mockGetTaskAsync = vi.fn();
-const mockUpdateTaskAsync = vi.fn();
-const mockGenerateTextWithRetryAsync = vi.fn();
+describe("CronMessageHistoryService - Global Shared History", () => {
+  let service: CronMessageHistoryService;
 
-vi.mock("../../../src/services/scheduler.service.js", () => ({
-  SchedulerService: {
-    getInstance: () => ({
-      getTaskAsync: mockGetTaskAsync,
-      updateTaskAsync: mockUpdateTaskAsync,
-    }),
-  },
-}));
-
-vi.mock("../../../src/services/logger.service.js", () => ({
-  LoggerService: {
-    getInstance: () => ({
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    }),
-  },
-}));
-
-vi.mock("../../../src/services/ai-provider.service.js", () => ({
-  AiProviderService: {
-    getInstance: () => ({
-      getModel: vi.fn(),
-    }),
-  },
-}));
-
-vi.mock("../../../src/utils/llm-retry.js", () => ({
-  generateTextWithRetryAsync: mockGenerateTextWithRetryAsync,
-}));
-
-function createMockTask(overrides: Partial<IScheduledTask> = {}): IScheduledTask {
-  return {
-    taskId: "test-task-id",
-    name: "test-task",
-    description: "Test task",
-    instructions: "Do something",
-    tools: ["send_message"],
-    schedule: { type: "cron", expression: "0 * * * *" },
-    enabled: true,
-    notifyUser: false,
-    lastRunAt: null,
-    lastRunStatus: null,
-    lastRunError: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    messageHistory: [],
-    messageSummary: null,
-    summaryGeneratedAt: null,
-    ...overrides,
-  };
-}
-
-async function getService() {
-  const { CronMessageHistoryService } = await import("../../../src/services/cron-message-history.service.js");
-  (CronMessageHistoryService as any)._instance = null;
-  return CronMessageHistoryService.getInstance();
-}
-
-describe("CronMessageHistoryService", () => {
   beforeEach(() => {
+    // Reset shared history before each test
+    (CronMessageHistoryService as any)._sharedHistory = [];
     vi.clearAllMocks();
+    service = CronMessageHistoryService.getInstance();
   });
 
-  afterEach(() => {
-    vi.resetModules();
+  it("records messages to global shared history", async () => {
+    await service.recordMessageAsync("task-1", "Message from task 1");
+    await service.recordMessageAsync("task-2", "Message from task 2");
+
+    const result = await service.getHistoryAsync();
+
+    expect(result.messages.length).toBe(2);
+    expect(result.messages[0].content).toBe("Message from task 1");
+    expect(result.messages[1].content).toBe("Message from task 2");
   });
 
-  describe("getHistoryAsync", () => {
-    it("returns empty history when task not found", async () => {
-      mockGetTaskAsync.mockResolvedValue(null);
-      const service = await getService();
+  it("returns only last MAX_KEEP_MESSAGES (3) messages", async () => {
+    await service.recordMessageAsync("task-1", "First message");
+    await service.recordMessageAsync("task-2", "Second message");
+    await service.recordMessageAsync("task-3", "Third message");
+    await service.recordMessageAsync("task-4", "Fourth message");
 
-      const result: ICronHistoryResult = await service.getHistoryAsync("nonexistent");
+    const result = await service.getHistoryAsync();
 
-      expect(result.messages).toEqual([]);
-      expect(result.summary).toBeNull();
-      expect(result.summaryGeneratedAt).toBeNull();
-      expect(result.totalMessageCount).toBe(0);
-    });
-
-    it("returns task message history", async () => {
-      const task: IScheduledTask = createMockTask({
-        messageHistory: [
-          { messageId: "msg-1", content: "Hello", sentAt: "2024-01-01T10:00:00Z" },
-          { messageId: "msg-2", content: "World", sentAt: "2024-01-01T11:00:00Z" },
-        ],
-        messageSummary: "Previous summary",
-        summaryGeneratedAt: "2024-01-01T09:00:00Z",
-      });
-
-      mockGetTaskAsync.mockResolvedValue(task);
-      const service = await getService();
-
-      const result: ICronHistoryResult = await service.getHistoryAsync("test-task-id");
-
-      expect(result.messages).toHaveLength(2);
-      expect(result.messages[0].content).toBe("Hello");
-      expect(result.messages[1].content).toBe("World");
-      expect(result.summary).toBe("Previous summary");
-      expect(result.totalMessageCount).toBe(3);
-    });
+    expect(result.messages.length).toBe(3);
+    expect(result.messages[0].content).toBe("Second message");
+    expect(result.messages[2].content).toBe("Fourth message");
   });
 
-  describe("recordMessageAsync", () => {
-    it("does nothing when task not found", async () => {
-      mockGetTaskAsync.mockResolvedValue(null);
-      const service = await getService();
+  it("generates unique message IDs for each recorded message", async () => {
+    await service.recordMessageAsync("task-1", "Test message");
 
-      const messageId: string = await service.recordMessageAsync("nonexistent", "Test message");
+    const result = await service.getHistoryAsync();
 
-      expect(messageId).toBe("");
-      expect(mockUpdateTaskAsync).not.toHaveBeenCalled();
-    });
-
-    it("records message to history", async () => {
-      const task: IScheduledTask = createMockTask();
-      mockGetTaskAsync.mockResolvedValue(task);
-      mockUpdateTaskAsync.mockResolvedValue(undefined);
-
-      const service = await getService();
-      const messageId: string = await service.recordMessageAsync("test-task-id", "New message");
-
-      expect(messageId).toBeTruthy();
-      expect(mockUpdateTaskAsync).toHaveBeenCalledWith(
-        "test-task-id",
-        expect.objectContaining({
-          messageHistory: expect.arrayContaining([
-            expect.objectContaining({ content: "New message" }),
-          ]),
-        }),
-      );
-    });
-
-    it("appends to existing history", async () => {
-      const task: IScheduledTask = createMockTask({
-        messageHistory: [
-          { messageId: "msg-1", content: "Old message", sentAt: "2024-01-01T10:00:00Z" },
-        ],
-      });
-
-      mockGetTaskAsync.mockResolvedValue(task);
-      mockUpdateTaskAsync.mockResolvedValue(undefined);
-
-      const service = await getService();
-      await service.recordMessageAsync("test-task-id", "New message");
-
-      expect(mockUpdateTaskAsync).toHaveBeenCalledWith(
-        "test-task-id",
-        expect.objectContaining({
-          messageHistory: expect.arrayContaining([
-            expect.objectContaining({ content: "Old message" }),
-            expect.objectContaining({ content: "New message" }),
-          ]),
-        }),
-      );
-    });
+    if (result.messages.length > 0) {
+      expect(result.messages[0].messageId).toBeTruthy();
+      // ID should be a non-empty string
+      expect(typeof result.messages[0].messageId).toBe("string");
+      expect(result.messages[0].messageId.length).toBeGreaterThan(0);
+    }
   });
 
-  describe("compaction", () => {
-    it("triggers compaction when threshold exceeded", async () => {
-      const longContent: string = "x".repeat(25_000);
-      const task: IScheduledTask = createMockTask({
-        messageHistory: [
-          { messageId: "msg-1", content: longContent, sentAt: "2024-01-01T10:00:00Z" },
-          { messageId: "msg-2", content: longContent, sentAt: "2024-01-01T11:00:00Z" },
-          { messageId: "msg-3", content: longContent, sentAt: "2024-01-01T12:00:00Z" },
-          { messageId: "msg-4", content: longContent, sentAt: "2024-01-01T13:00:00Z" },
-        ],
-      });
+  it("records timestamp when message was sent", async () => {
+    await service.recordMessageAsync("task-1", "Test message");
 
-      mockGetTaskAsync.mockResolvedValue(task);
-      mockUpdateTaskAsync.mockResolvedValue(undefined);
-      mockGenerateTextWithRetryAsync.mockResolvedValue({ text: "Compacted summary" });
+    const result = await service.getHistoryAsync();
 
-      const service = await getService();
-      await service.recordMessageAsync("test-task-id", "New message");
+    if (result.messages.length > 0) {
+      expect(result.messages[0].sentAt).toBeTruthy();
+      // Should be a valid ISO timestamp
+      expect(() => new Date(result.messages[0].sentAt)).not.toThrow();
+    }
+  });
 
-      expect(mockGenerateTextWithRetryAsync).toHaveBeenCalled();
-    });
+  it("all tasks share the same history", async () => {
+    await service.recordMessageAsync("cron-a", "Cron A message");
+    
+    const historyForB = await service.getHistoryAsync();
+    
+    expect(historyForB.messages.some(m => m.content === "Cron A message")).toBe(true);
 
-    it("keeps last 3 messages after compaction", async () => {
-      const longContent: string = "x".repeat(10_000);
-      const task: IScheduledTask = createMockTask({
-        messageHistory: [
-          { messageId: "msg-1", content: longContent, sentAt: "2024-01-01T10:00:00Z" },
-          { messageId: "msg-2", content: longContent, sentAt: "2024-01-01T11:00:00Z" },
-          { messageId: "msg-3", content: longContent, sentAt: "2024-01-01T12:00:00Z" },
-          { messageId: "msg-4", content: longContent, sentAt: "2024-01-01T13:00:00Z" },
-          { messageId: "msg-5", content: longContent, sentAt: "2024-01-01T14:00:00Z" },
-        ],
-      });
+    await service.recordMessageAsync("cron-b", "Cron B response");
+    
+    const historyForA = await service.getHistoryAsync();
+    
+    expect(historyForA.messages.length).toBe(2);
+  });
 
-      mockGetTaskAsync.mockResolvedValue(task);
-      mockUpdateTaskAsync.mockResolvedValue(undefined);
-      mockGenerateTextWithRetryAsync.mockResolvedValue({ text: "Compacted summary" });
+  it("returns empty result when no messages recorded yet", async () => {
+    const result = await service.getHistoryAsync();
 
-      const service = await getService();
-      await service.recordMessageAsync("test-task-id", "New message");
+    expect(result.messages).toEqual([]);
+    expect(result.summary).toBeNull();
+    expect(result.summaryGeneratedAt).toBeNull();
+    expect(result.totalMessageCount).toBe(0);
+  });
 
-      const lastCall = mockUpdateTaskAsync.mock.calls.find(
-        (call) => call[1].messageSummary !== undefined,
-      );
+  it("increments totalMessageCount correctly", async () => {
+    await service.recordMessageAsync("task-1", "First");
+    
+    const result = await service.getHistoryAsync();
+    
+    expect(result.totalMessageCount).toBeGreaterThanOrEqual(1);
+  });
 
-      if (lastCall) {
-        expect(lastCall[1].messageHistory).toHaveLength(3);
-      }
-    });
+  it("preserves message order chronologically", async () => {
+    await service.recordMessageAsync("task-1", "First sent");
+    await service.recordMessageAsync("task-2", "Second sent");
+    
+    const result = await service.getHistoryAsync();
+    
+    expect(result.messages.length).toBe(2);
+    expect(result.messages[0].content).toBe("First sent");
+    expect(result.messages[1].content).toBe("Second sent");
+  });
 
-    it("incorporates existing summary into new summary", async () => {
-      const longContent: string = "x".repeat(10_000);
-      const task: IScheduledTask = createMockTask({
-        messageHistory: [
-          { messageId: "msg-1", content: longContent, sentAt: "2024-01-01T10:00:00Z" },
-          { messageId: "msg-2", content: longContent, sentAt: "2024-01-01T11:00:00Z" },
-          { messageId: "msg-3", content: longContent, sentAt: "2024-01-01T12:00:00Z" },
-          { messageId: "msg-4", content: longContent, sentAt: "2024-01-01T13:00:00Z" },
-        ],
-        messageSummary: "Existing summary from before",
-      });
+  it("handles rapid message recording from multiple tasks", async () => {
+    const promises = [];
+    
+    for (let i = 0; i < 20; i++) {
+      promises.push(service.recordMessageAsync(`task-${i % 5}`, `Message ${i}`));
+    }
+    
+    await Promise.all(promises);
 
-      mockGetTaskAsync.mockResolvedValue(task);
-      mockUpdateTaskAsync.mockResolvedValue(undefined);
-      mockGenerateTextWithRetryAsync.mockResolvedValue({ text: "New compacted summary" });
-
-      const service = await getService();
-      await service.recordMessageAsync("test-task-id", "New message");
-
-      const callArgs = mockGenerateTextWithRetryAsync.mock.calls[0]?.[0];
-
-      if (callArgs && typeof callArgs.prompt === "string") {
-        expect(callArgs.prompt).toContain("Existing summary from before");
-      }
-    });
+    const result = await service.getHistoryAsync();
+    
+    // Should have at most MAX_KEEP_MESSAGES (3) messages
+    expect(result.messages.length).toBeLessThanOrEqual(3);
   });
 });

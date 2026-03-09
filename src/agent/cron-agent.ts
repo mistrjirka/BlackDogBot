@@ -3,7 +3,7 @@ import type { Tool } from "ai";
 
 import { BaseAgentBase } from "./base-agent.js";
 import type { IAgentResult, IToolCallSummary } from "./base-agent.js";
-import type { IScheduledTask } from "../shared/types/index.js";
+import type { IScheduledTask, IExecutionContext } from "../shared/types/index.js";
 import { PROMPT_CRON_AGENT } from "../shared/constants.js";
 import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
@@ -90,6 +90,7 @@ export class CronAgent extends BaseAgentBase {
     task: IScheduledTask,
     messageSender: MessageSender,
     taskIdProvider: TaskIdProvider,
+    executionContext: IExecutionContext,
     traceCollector?: ITraceCollector,
   ): Promise<IAgentResult> {
     const basePrompt: string = await PromptService.getInstance().getPromptAsync(
@@ -103,7 +104,7 @@ export class CronAgent extends BaseAgentBase {
       basePrompt +
       `\n\n<task_context>\nTask: ${task.name}\nDescription: ${task.description}\nCurrent time: ${currentDateTime}\nInstructions: ${task.instructions}\n</task_context>`;
 
-    const tools: ToolSet = this._resolveTools(task.tools, messageSender, taskIdProvider);
+    const tools: ToolSet = this._resolveTools(task.tools, messageSender, taskIdProvider, executionContext);
     
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model: LanguageModel = aiProviderService.getModel();
@@ -149,6 +150,7 @@ export class CronAgent extends BaseAgentBase {
     toolNames: string[],
     messageSender: MessageSender,
     taskIdProvider: TaskIdProvider,
+    executionContext: IExecutionContext,
   ): ToolSet {
     const readTracker: FileReadTracker = new FileReadTracker();
     const jobTracker: JobActivityTracker = new JobActivityTracker();
@@ -159,8 +161,8 @@ export class CronAgent extends BaseAgentBase {
       search_knowledge: searchKnowledgeTool,
       add_knowledge: addKnowledgeTool,
       edit_knowledge: editKnowledgeTool,
-      send_message: createSendMessageToolWithHistory(messageSender, taskIdProvider),
-      get_previous_message: createGetPreviousMessageTool(taskIdProvider),
+      send_message: createSendMessageToolWithHistory(messageSender, taskIdProvider, executionContext),
+      get_previous_message: createGetPreviousMessageTool(executionContext),
       read_file: createReadFileTool(readTracker),
       write_file: createWriteFileTool(readTracker),
       append_file: appendFileTool,
