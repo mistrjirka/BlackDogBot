@@ -231,6 +231,24 @@ ai:
     baseUrl: http://localhost:11434/v1
     apiKey: ollama
     model: llama3
+    contextWindow: 8192  # Optional: specify context window size
+    rateLimits:
+      rpm: 120
+      tpm: 200000
+```
+
+**LM Studio:**
+```yaml
+ai:
+  provider: lm-studio
+  lmStudio:
+    baseUrl: http://localhost:1234/v1
+    apiKey: lm-studio  # Default API key for LM Studio
+    model: models/YourModelName  # Model identifier as shown in LM Studio
+    contextWindow: 8192  # Optional: auto-detected if not specified
+    rateLimits:
+      rpm: 120
+      tpm: 200000
 ```
 
 ### Messaging Platforms
@@ -256,6 +274,8 @@ discord:
 knowledge:
   embeddingProvider: local
   embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
+  embeddingDevice: auto  # Options: auto, cpu, cuda
+  embeddingDtype: q8     # Options: fp32, fp16, q8, q4, q4f16
 ```
 
 **OpenRouter:**
@@ -263,6 +283,77 @@ knowledge:
 knowledge:
   embeddingProvider: openrouter
   embeddingOpenRouterModel: nvidia/llama-nemotron-embed-vl-1b-v2:free
+```
+
+#### Embedding Device Configuration
+
+For local embeddings, you can control the compute device:
+- `auto` (default): Automatically detects and uses GPU (CUDA) if available, falls back to CPU
+- `cpu`: Force CPU usage regardless of GPU availability
+- `cuda`: Force CUDA (NVIDIA GPU) usage
+
+To force CPU usage (e.g., on systems without CUDA 12 libraries or to reduce memory usage):
+```yaml
+knowledge:
+  embeddingProvider: local
+  embeddingDevice: cpu
+```
+
+### Scheduler
+
+Configure the cron-like scheduler:
+```yaml
+scheduler:
+  enabled: true  # Enable/disable the scheduler
+  timezone: Europe/Prague  # Optional: timezone for cron expressions
+```
+
+### Job Creation
+
+Configure job creation behavior:
+```yaml
+jobCreation:
+  enabled: true  # Enable/disable job creation feature
+  requirePassingNodeTests: true  # Require all node tests to pass before finish_job_creation
+  requireSuccessfulRunBeforeFinish: true  # Require successful job execution before marking ready
+```
+
+### Skills
+
+Configure skill loading and setup:
+```yaml
+skills:
+  directories:
+    - ~/.betterclaw/skills  # Directories to scan for skills
+  autoSetup: true  # Automatically set up skills with missing dependencies
+  autoSetupNotify: true  # Send notifications when skill setup completes/fails
+  installTimeout: 300000  # Timeout in milliseconds for each install step (5 minutes)
+  allowedInstallKinds:
+    - brew
+    - node
+    - go
+    - uv
+    # - pacman  # Requires manual steps
+    # - apt     # Requires manual steps
+    # - download  # Requires manual steps
+  skipOsCheck: false  # Skip OS compatibility check for skills
+```
+
+### Logging
+
+Configure logging behavior:
+```yaml
+logging:
+  level: info  # Options: debug, info, warn, error
+```
+
+### Services
+
+Configure external services:
+```yaml
+services:
+  searxngUrl: http://localhost:18731  # SearXNG instance URL
+  crawl4aiUrl: http://localhost:18732  # Crawl4AI instance URL
 ```
 
 ## Troubleshooting
