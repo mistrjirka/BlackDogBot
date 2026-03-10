@@ -29,7 +29,8 @@ export function preprocessThinkTags(text: string): string {
   return text
     .replace(SELF_CLOSING_THINK, "\n> *Thinking...*\n")
     .replace(THINK_TAG_PATTERN, "\n> $3\n")
-    .replace(MD_THINK_PATTERN, "\n> $1\n");
+    .replace(MD_THINK_PATTERN, "\n> $1\n")
+    .replace(/<\/(think|thinking|reasoning)>/gi, "");
 }
 
 export function markdownToTelegramHtml(markdown: string): string {

@@ -42,6 +42,7 @@ export class AiProviderService {
   private _contextWindow: number;
   private _supportsForcedToolChoice: boolean | null = null;
   private _supportsStructuredOutputs: boolean = false;
+  private _supportsReasoningFormat: boolean = false;
 
   //#endregion Data members
 
@@ -157,6 +158,14 @@ export class AiProviderService {
     const responseFormat = await this.testResponseFormatAsync();
     logger.info(`Model ${defaultModelId} response format: ${responseFormat.ok ? "OK" : `ISSUE - ${responseFormat.reason}`}`);
 
+    // Autodetect reasoning_format support (llama.cpp specific)
+    if (providerKey === "openai-compatible") {
+      this._supportsReasoningFormat = await this._testReasoningFormatSupportAsync();
+      if (this._supportsReasoningFormat) {
+        logger.info("Will use reasoning_format: 'none' with client-side think-tag extraction");
+      }
+    }
+
     // Autodetect structured output support when not explicitly configured
     if (providerKey === "openai-compatible" || providerKey === "lm-studio") {
       const explicitValue = providerKey === "openai-compatible"
@@ -170,14 +179,16 @@ export class AiProviderService {
         const detected = await this.testStructuredOutputsAsync();
         this._supportsStructuredOutputs = detected;
         logger.info(`Autodetected structured output support: ${detected ? "SUPPORTED" : "NOT SUPPORTED"}`);
-
-        // If detected as supported, re-create the model with the flag enabled
-        // so AI SDK can use native response_format: json_schema
-        if (detected) {
-          this._defaultModel = this._createModel(defaultModelId);
-          logger.info("Re-created model with supportsStructuredOutputs: true");
-        }
       }
+    }
+
+    // Re-create model if any capability was detected that affects model creation
+    if (this._supportsReasoningFormat || this._supportsStructuredOutputs) {
+      this._defaultModel = this._createModel(defaultModelId);
+      logger.info(
+        "Re-created model with detected capabilities: " +
+        `reasoningFormat=${this._supportsReasoningFormat}, structuredOutputs=${this._supportsStructuredOutputs}`,
+      );
     }
   }
 
@@ -588,6 +599,51 @@ export class AiProviderService {
   }
 
   /**
+   * Tests if the endpoint supports the reasoning_format parameter (llama.cpp specific).
+   * Sends a minimal probe with reasoning_format: "none" — if the server accepts it,
+   * we know we can use it to disable server-side think-tag extraction.
+   */
+  private async _testReasoningFormatSupportAsync(): Promise<boolean> {
+    if (!this._aiConfig || !this._aiConfig.openaiCompatible) {
+      return false;
+    }
+
+    const logger: LoggerService = LoggerService.getInstance();
+    logger.info("Testing endpoint reasoning_format support...");
+
+    try {
+      const config: IOpenAiCompatibleConfig = this._aiConfig.openaiCompatible;
+      const baseUrl: string = normalizeBaseUrl(config.baseUrl);
+
+      const response: Response = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: config.model,
+          messages: [{ role: "user", content: "Say OK" }],
+          max_tokens: 5,
+          reasoning_format: "none",
+        }),
+      });
+
+      if (response.ok) {
+        logger.info("Endpoint supports reasoning_format parameter (llama.cpp detected)");
+        return true;
+      }
+
+      logger.debug("Endpoint does not support reasoning_format parameter", {
+        status: response.status,
+      });
+      return false;
+    } catch (error: unknown) {
+      logger.debug("reasoning_format probe failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  /**
    * Normalizes tool_choice in request body if the provider doesn't support object format.
    * Returns true if the body was modified.
    */
@@ -744,6 +800,32 @@ export class AiProviderService {
 
               if (this._normalizeToolChoiceIfNeeded(body)) {
                 modified = true;
+              }
+
+              // Inject reasoning_format: "none" for llama.cpp servers
+              // This disables server-side think-tag extraction so we can handle it client-side
+              if (this._supportsReasoningFormat && !body.reasoning_format) {
+                body.reasoning_format = "none";
+                modified = true;
+              }
+
+              // Strip empty content from assistant messages with tool_calls.
+              // The SDK sends content: "" which confuses llama.cpp and causes
+              // subsequent tool calls to fail (~66% failure rate).
+              // Removing the empty string entirely gives 100% success rate.
+              if (body.messages && Array.isArray(body.messages)) {
+                for (const msg of body.messages) {
+                  if (
+                    msg.role === "assistant" &&
+                    msg.tool_calls &&
+                    Array.isArray(msg.tool_calls) &&
+                    msg.tool_calls.length > 0 &&
+                    msg.content === ""
+                  ) {
+                    delete (msg as Record<string, unknown>).content;
+                    modified = true;
+                  }
+                }
               }
 
               if (modified) {
