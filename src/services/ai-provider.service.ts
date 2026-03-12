@@ -644,15 +644,18 @@ export class AiProviderService {
   }
 
   /**
-   * Normalizes tool_choice in request body if the provider doesn't support object format.
+   * Normalizes tool_choice in request body to avoid forced tool usage.
+   * We enforce tool behavior by limiting the tools sent to the model,
+   * not by forcing tool_choice.
    * Returns true if the body was modified.
    */
   private _normalizeToolChoiceIfNeeded(body: Record<string, unknown>): boolean {
-    if (this._supportsForcedToolChoice === true) {
-      return false;
+    if (body.tool_choice && typeof body.tool_choice === "object") {
+      body.tool_choice = "auto";
+      return true;
     }
 
-    if (body.tool_choice && typeof body.tool_choice === "object") {
+    if (body.tool_choice === "required") {
       body.tool_choice = "auto";
       return true;
     }
@@ -781,6 +784,44 @@ export class AiProviderService {
       // Make the actual API request
       let response: Response = await fetch(url, init);
 
+      // OpenRouter compatibility fallback: retry once with tool_choice:auto when
+      // the route rejects forced tool_choice values.
+      if (!response.ok && this._aiConfig?.provider === "openrouter" && init?.body && typeof init.body === "string") {
+        try {
+          const errorBody: string = await response.clone().text();
+          const lowerErrorBody: string = errorBody.toLowerCase();
+          const looksLikeToolChoiceRoutingError: boolean =
+            lowerErrorBody.includes("tool_choice") &&
+            (lowerErrorBody.includes("no endpoints found") ||
+             lowerErrorBody.includes("support the provided"));
+
+          if (looksLikeToolChoiceRoutingError) {
+            const retryBody: Record<string, unknown> = JSON.parse(init.body);
+            const wasModified: boolean = this._normalizeToolChoiceIfNeeded(retryBody);
+
+            if (wasModified) {
+              logger.warn("OpenRouter rejected tool_choice; retrying request with tool_choice:auto", {
+                provider: providerName,
+                status: response.status,
+                url: url.toString(),
+              });
+
+              const retryInit: RequestInit = {
+                ...init,
+                body: JSON.stringify(retryBody),
+              };
+
+              response = await fetch(url, retryInit);
+              if (response.ok) {
+                return response;
+              }
+            }
+          }
+        } catch {
+          // Ignore parse/retry errors and return original response
+        }
+      }
+
       // LM Studio self-healing: if model is unavailable/crashed, auto-load and retry up to 3 times.
       if (!response.ok && this._aiConfig?.provider === "lm-studio") {
         for (let attempt: number = 1; attempt <= LM_STUDIO_MODEL_RECOVERY_RETRIES; attempt++) {
@@ -873,9 +914,23 @@ export class AiProviderService {
       }
 
       const config: IOpenRouterConfig = this._aiConfig.openrouter;
+      const tokenGatedFetch = this._createTokenGatedFetch("openrouter");
       const rawModel = createOpenRouter({
         apiKey: config.apiKey,
-        fetch: this._createTokenGatedFetch("openrouter"),
+        fetch: async (url, init): Promise<Response> => {
+          if (init?.body && typeof init.body === "string" && init.method === "POST") {
+            try {
+              const body: Record<string, unknown> = JSON.parse(init.body);
+              if (this._normalizeToolChoiceIfNeeded(body)) {
+                init.body = JSON.stringify(body);
+              }
+            } catch {
+              // Ignore parse errors
+            }
+          }
+
+          return tokenGatedFetch(url, init);
+        },
       }).chat(modelId);
       return this._wrapModelWithRateLimiter(rawModel, provider);
     }

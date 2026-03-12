@@ -6,13 +6,11 @@ import { FORCE_THINK_INTERVAL } from "../shared/constants.js";
 
 /**
  * Return type for directives that force the think tool.
- * Removes all tools except think via `activeTools` and sets
- * `toolChoice: "required"` so the model must call it.
- * Works universally regardless of provider support for forced tool choice.
+ * Removes all tools except think via `activeTools`.
+ * Enforcement is done by limiting available tools only.
  */
 export interface IForceThinkDirective {
   activeTools: string[];
-  toolChoice: "required";
 }
 
 //#endregion Types
@@ -155,14 +153,11 @@ function _lastAssistantStepIsThink(messages: ModelMessage[]): boolean {
 /**
  * Builds a universal force-think directive by limiting available tools
  * to only think. The `activeTools` filter works at the Vercel AI SDK
- * level (controls which tools are serialized into the API request),
- * and the string `"required"` passes through provider-level
- * `_normalizeToolChoiceIfNeeded` without being downgraded to `"auto"`.
+ * level (controls which tools are serialized into the API request).
  */
 function _buildForceThinkDirective(): IForceThinkDirective {
   return {
     activeTools: ["think"],
-    toolChoice: "required" as const,
   };
 }
 

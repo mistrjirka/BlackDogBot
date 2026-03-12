@@ -144,10 +144,10 @@ describe("BaseAgentBase", () => {
     ).toBe(140_000);
   });
 
-  it("should force done via toolChoice required on max steps without provider error", async () => {
+  it("should force done by limiting activeTools on max steps without provider error", async () => {
     // Use maxSteps: 2 so the agent hits the force-done path on step 1 (>= maxSteps - 1).
-    // This verifies the fix: toolChoice: "required" + activeTools: ["done"] works
-    // even on providers that don't support forced tool choice ({ type: "tool", toolName: "..." }).
+    // This verifies the fix: enforce done by limiting activeTools to ["done"],
+    // without sending forced toolChoice values.
     const model: LanguageModel = AiProviderService.getInstance().getModel();
     const agent: TestAgent = new TestAgent({ maxSteps: 2 });
 
@@ -159,18 +159,18 @@ describe("BaseAgentBase", () => {
       "What is 2 + 2? Think about it step by step.",
     );
 
-    // The agent should complete without throwing a toolChoice provider error.
+    // The agent should complete without throwing a tool_choice provider error.
     // Step 0: model does something (think or text).
-    // Step 1: stepNumber (1) >= maxSteps - 1 (1) → force done with toolChoice: "required".
+    // Step 1: stepNumber (1) >= maxSteps - 1 (1) → force done by restricting activeTools.
     expect(result).toBeDefined();
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
     expect(result.text.length).toBeGreaterThan(0);
   }, 120_000);
 
-  it("should force done via toolChoice required on silent exit without provider error", async () => {
+  it("should force done by limiting activeTools on silent exit without provider error", async () => {
     // Give the model a prompt that encourages a plain text response without calling tools.
     // If the model produces text without a tool call, the silent-exit detection fires
-    // and forces done with toolChoice: "required" + activeTools: ["done"].
+    // and forces done by restricting activeTools to ["done"].
     // Either way (silent exit or normal done), the agent must complete without error.
     const model: LanguageModel = AiProviderService.getInstance().getModel();
     const agent: TestAgent = new TestAgent({ maxSteps: 10 });
@@ -181,9 +181,9 @@ describe("BaseAgentBase", () => {
 
     const result: IAgentResult = await agent.processMessageAsync("Say hello.");
 
-    // The agent should complete without throwing a toolChoice provider error.
+    // The agent should complete without throwing a tool_choice provider error.
     // If the model tried to exit without calling done, the silent-exit handler fires
-    // and forces done with toolChoice: "required". If the model called done voluntarily,
+    // and forces done by restricting activeTools. If the model called done voluntarily,
     // that also works. Either path must succeed.
     expect(result).toBeDefined();
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
