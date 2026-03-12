@@ -13,6 +13,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+DIAGNOSTIC_DIR="$PROJECT_DIR/.diagnostics/node"
+
+mkdir -p "$DIAGNOSTIC_DIR"
 
 # ---------- CUDA 12 library detection ----------
 
@@ -53,6 +56,16 @@ if [[ -n "$cuda12_dir" ]]; then
     echo "[launch.sh] Prepended CUDA 12 libraries to LD_LIBRARY_PATH: $cuda12_dir"
 fi
 
+# ---------- Memory diagnostics ----------
+
+# Enable durable diagnostics:
+# - SIGUSR2 writes a V8 heap snapshot on demand.
+# - near-heap-limit snapshots capture the lead-up to V8 OOM.
+# - diagnostic reports are written on fatal errors, uncaught exceptions, and SIGQUIT.
+# - all artifacts go into a dedicated diagnostics directory.
+# Also cap V8 heap at 4 GB to reduce the chance of the whole system being pushed
+# into the kernel OOM killer before Node can write diagnostics.
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--diagnostic-dir=${DIAGNOSTIC_DIR} --heapsnapshot-signal=SIGUSR2 --heapsnapshot-near-heap-limit=3 --heap-prof --heap-prof-dir=${DIAGNOSTIC_DIR} --max-old-space-size=4096 --report-compact --report-dir=${DIAGNOSTIC_DIR} --report-on-fatalerror --report-on-signal --report-signal=SIGQUIT --report-uncaught-exception --report-exclude-env --report-exclude-network"
 # ---------- Launch BetterClaw ----------
 
 cd "$PROJECT_DIR"

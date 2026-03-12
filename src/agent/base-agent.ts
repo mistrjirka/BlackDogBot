@@ -16,7 +16,7 @@ import { LoggerService } from "../services/logger.service.js";
 import { StatusService } from "../services/status.service.js";
 import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
-import { getForceThinkDirective } from "../utils/prepare-step.js";
+import { getForceThinkDirective, getDuplicateToolCallDirective } from "../utils/prepare-step.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 
 //#region Constants
@@ -330,6 +330,18 @@ export abstract class BaseAgentBase {
       ],
       experimental_repairToolCall: repairToolCallJsonAsync,
       prepareStep: async ({ stepNumber, messages }) => {
+        // Memory diagnostics: log heap/RSS at every step to track leaks
+        const mem = process.memoryUsage();
+        logger.info("Memory usage at prepareStep", {
+          stepNumber,
+          messageCount: messages.length,
+          heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
+          heapTotalMB: Math.round(mem.heapTotal / 1024 / 1024),
+          rssMB: Math.round(mem.rss / 1024 / 1024),
+          externalMB: Math.round(mem.external / 1024 / 1024),
+          arrayBuffersMB: Math.round(mem.arrayBuffers / 1024 / 1024),
+        });
+
         // Determine whether extra tools should be active this step
         const activeExtraTools: ToolSet | null = getExtraTools ? getExtraTools() : null;
         const useExtraTools: boolean = activeExtraTools !== null && extraToolNames.length > 0;
@@ -373,8 +385,27 @@ export abstract class BaseAgentBase {
           }
         }
 
+        // Detect duplicate tool calls (loop prevention) — checked first
+        // because loops are more urgent than periodic think enforcement.
+        const duplicateDirective = getDuplicateToolCallDirective(stepNumber, messages);
+
+        if (duplicateDirective) {
+          logger.warn("Duplicate tool call detected — forcing think to break loop", {
+            stepNumber,
+            directive: JSON.stringify(duplicateDirective),
+          });
+          return duplicateDirective;
+        }
+
         // Force think tool every N steps to ensure the agent reflects periodically
         const forceThink = getForceThinkDirective(stepNumber, messages);
+
+        if (forceThink) {
+          logger.debug("Force think directive triggered", {
+            stepNumber,
+            directive: JSON.stringify(forceThink),
+          });
+        }
 
         // Check for pause — await the promise if the agent has been paused
         const pausePromise: Promise<void> | null = getPausePromise ? getPausePromise() : null;

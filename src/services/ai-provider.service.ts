@@ -30,6 +30,7 @@ function normalizeBaseUrl(url: string): string {
  * API, triggering the compaction-retry logic in the agent.
  */
 const HARD_GATE_THRESHOLD_PERCENTAGE: number = 0.85;
+const LM_STUDIO_MODEL_RECOVERY_RETRIES: number = 3;
 
 export class AiProviderService {
   //#region Data members
@@ -99,7 +100,13 @@ export class AiProviderService {
         
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
-            const model = await client.llm.model(lmConfig.model);
+            // Load or get the model with the configured context length.
+            // If contextWindow is set in config, pass it to ensure the model loads with that length.
+            // If model is already loaded, this just returns the handle.
+            const model = await client.llm.model(lmConfig.model, {
+              config: lmConfig.contextWindow ? { contextLength: lmConfig.contextWindow } : undefined,
+              verbose: true,
+            });
             detectedContext = await model.getContextLength();
             break;
           } catch (error: unknown) {
@@ -281,18 +288,11 @@ export class AiProviderService {
   }
 
   public supportsForcedToolChoice(): boolean {
-    if (!this._aiConfig) {
-      return false;
-    }
-
-    // OpenRouter models - some support forced tool choice, some don't
-    // Default to false to be safe, can be overridden in config
-    if (this._aiConfig.provider === "openrouter") {
-      return this._aiConfig.openrouter?.supportsForcedToolChoice ?? false;
-    }
-
-    // LM Studio and OpenAI-compatible should generally work
-    return true;
+    // Use the actual test result from testForcedToolChoiceAsync() which runs at startup.
+    // This must agree with _normalizeToolChoiceIfNeeded() which also uses the field
+    // directly — otherwise the directive gets silently downgraded to "auto" in the
+    // fetch interceptor while the caller believes it was sent as-is.
+    return this._supportsForcedToolChoice === true;
   }
 
   /**
@@ -660,6 +660,42 @@ export class AiProviderService {
     return false;
   }
 
+  /**
+   * Ensures the model is loaded in LM Studio with the configured context length.
+   * This is a get-or-load operation: if the model is already loaded, returns immediately.
+   * If not loaded, loads it with the contextWindow from config.
+   * Only runs for lm-studio provider; no-op for other providers.
+   */
+  private async _ensureModelLoadedAsync(): Promise<void> {
+    if (this._aiConfig?.provider !== "lm-studio") {
+      return;
+    }
+
+    const logger = LoggerService.getInstance();
+    const lmConfig = this._getActiveProviderConfig() as ILmStudioConfig;
+    const wsUrl: string = lmConfig.baseUrl.replace(/^http/, "ws");
+
+    try {
+      const client = new LMStudioClient({ baseUrl: wsUrl });
+
+      await client.llm.model(lmConfig.model, {
+        config: lmConfig.contextWindow ? { contextLength: lmConfig.contextWindow } : undefined,
+        verbose: true,
+      });
+
+      logger.info("LM Studio model loaded successfully", {
+        model: lmConfig.model,
+        contextLength: lmConfig.contextWindow,
+      });
+    } catch (error: unknown) {
+      logger.error("Failed to load LM Studio model", {
+        model: lmConfig.model,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
   private _wrapModelWithRateLimiter(model: LanguageModel, providerKey: string): LanguageModel {
     const originalModel: LanguageModelV3 = model as unknown as LanguageModelV3;
 
@@ -742,7 +778,83 @@ export class AiProviderService {
         }
       }
 
-      return fetch(url, init);
+      // Make the actual API request
+      let response: Response = await fetch(url, init);
+
+      // LM Studio self-healing: if model is unavailable/crashed, auto-load and retry up to 3 times.
+      if (!response.ok && this._aiConfig?.provider === "lm-studio") {
+        for (let attempt: number = 1; attempt <= LM_STUDIO_MODEL_RECOVERY_RETRIES; attempt++) {
+          try {
+            const body: string = await response.clone().text();
+
+            let parsedRequestBody: unknown = null;
+            if (init?.body && typeof init.body === "string") {
+              try {
+                parsedRequestBody = JSON.parse(init.body);
+              } catch {
+                parsedRequestBody = init.body;
+              }
+            }
+
+            // Log the full response body for debugging
+            logger.warn("LM Studio API error response", {
+              provider: providerName,
+              status: response.status,
+              statusText: response.statusText,
+              url: url.toString(),
+              body: body.substring(0, 500), // Log first 500 chars to avoid huge logs
+              requestBody: parsedRequestBody,
+              attempt,
+              maxRetries: LM_STUDIO_MODEL_RECOVERY_RETRIES,
+            });
+
+            // Check for various "model not loaded" / crash error patterns
+            const lowerBody: string = body.toLowerCase();
+            const isModelNotLoaded: boolean =
+              lowerBody.includes("no models loaded") ||
+              lowerBody.includes("no model is loaded") ||
+              lowerBody.includes("model not loaded") ||
+              lowerBody.includes("failed to load model") ||
+              lowerBody.includes("unable to find model");
+            const isModelCrashed: boolean =
+              lowerBody.includes("model has crashed") ||
+              lowerBody.includes("has crashed without additional information");
+
+            if (!isModelNotLoaded && !isModelCrashed) {
+              return response;
+            }
+
+            logger.warn("LM Studio model unavailable — attempting auto-load and retry...", {
+              provider: providerName,
+              reason: isModelCrashed ? "model_crashed" : "model_not_loaded",
+              attempt,
+              maxRetries: LM_STUDIO_MODEL_RECOVERY_RETRIES,
+            });
+
+            await this._ensureModelLoadedAsync();
+
+            logger.info("Model loaded successfully, retrying original request...", {
+              provider: providerName,
+              attempt,
+              maxRetries: LM_STUDIO_MODEL_RECOVERY_RETRIES,
+            });
+
+            response = await fetch(url, init);
+            if (response.ok) {
+              return response;
+            }
+          } catch (interceptError: unknown) {
+            logger.debug("Failed to handle LM Studio auto-recovery", {
+              error: interceptError instanceof Error ? interceptError.message : String(interceptError),
+              attempt,
+              maxRetries: LM_STUDIO_MODEL_RECOVERY_RETRIES,
+            });
+            return response;
+          }
+        }
+      }
+
+      return response;
     };
   }
 

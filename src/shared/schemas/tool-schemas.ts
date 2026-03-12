@@ -436,6 +436,7 @@ const CRON_VALID_TOOL_NAMES = [
   "add_knowledge",
   "edit_knowledge",
   "send_message",
+  "get_previous_message",
   "read_file",
   "write_file",
   "append_file",

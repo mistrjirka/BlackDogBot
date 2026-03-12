@@ -428,8 +428,6 @@ export class MainAgent extends BaseAgentBase {
       content: [{ type: "text", text: userMessage }],
     };
 
-    const messagesForCall: ModelMessage[] = [...session.messages, userModelMessage];
-
     const abortController: AbortController = new AbortController();
     session.abortController = abortController;
 
@@ -446,6 +444,9 @@ export class MainAgent extends BaseAgentBase {
       for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
         // Reset token count so prepareStep doesn't use stale values from a failed attempt
         this._totalInputTokens = 0;
+
+        // Create messagesForCall inside the loop so retries use updated session messages
+        const messagesForCall: ModelMessage[] = [...session.messages, userModelMessage];
 
         try {
           const generateResult = await this._agent!.generate({
