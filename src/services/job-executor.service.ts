@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
-import { ToolLoopAgent, ToolSet, LanguageModel, hasToolCall, stepCountIs, tool, ModelMessage } from "ai";
+import { ToolLoopAgent, ToolSet, LanguageModel, hasToolCall, stepCountIs, tool } from "ai";
 import { z } from "zod";
 
 import {
@@ -41,8 +41,8 @@ import { ConfigService } from "./config.service.js";
 import { getCurrentDateTime } from "../utils/time.js";
 import { validateDataAgainstSchema, ISchemaCompatResult } from "../jobs/schema-compat.js";
 import { generateTextWithRetryAsync, generateObjectWithRetryAsync } from "../utils/llm-retry.js";
-import { getForceThinkDirective } from "../utils/prepare-step.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
+import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { parseRssFeed } from "../utils/rss-parser.js";
 import { createOutputZodSchema } from "../utils/json-schema-to-zod.js";
 import { thinkTool } from "../tools/index.js";
@@ -884,24 +884,17 @@ export class JobExecutorService {
 
     this._logger.debug("Executing agent node", { nodeId: node.nodeId, toolCount: Object.keys(selectedTools).length, maxSteps, reasoningEffort: config.reasoningEffort });
 
+    const wrappedTools: ToolSet = wrapToolSetWithReasoning(selectedTools);
+
     const agent: ToolLoopAgent = new ToolLoopAgent({
       model,
       instructions,
-      tools: selectedTools,
+      tools: wrappedTools,
       stopWhen: [
         hasToolCall("done"),
         stepCountIs(maxSteps),
       ],
       experimental_repairToolCall: repairToolCallJsonAsync,
-      prepareStep: async ({ stepNumber, messages }: { stepNumber: number; messages: ModelMessage[] }) => {
-        const forceThink = getForceThinkDirective(stepNumber, messages);
-
-        if (forceThink) {
-          return forceThink;
-        }
-
-        return {};
-      },
       maxRetries: config.reasoningEffort === "high" ? 3 : config.reasoningEffort === "medium" ? 2 : 1,
     });
 

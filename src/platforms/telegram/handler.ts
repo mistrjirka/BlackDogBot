@@ -456,15 +456,36 @@ export class TelegramHandler {
 
 function _formatToolCall(name: string, input: Record<string, unknown>): string {
   const key: string | undefined = TOOL_PRIMARY_KEY[name];
+  const reasoningSuffix: string = _formatReasoningSuffix(input);
 
   if (!key || !(key in input)) {
-    return name;
+    return reasoningSuffix.length > 0 ? `${name} ${reasoningSuffix}` : name;
   }
 
   const val: string = String(input[key] ?? "");
   const truncated: string = val.length > 60 ? val.slice(0, 60) + "…" : val;
 
-  return `${name}(${truncated})`;
+  return reasoningSuffix.length > 0
+    ? `${name}(${truncated}) ${reasoningSuffix}`
+    : `${name}(${truncated})`;
+}
+
+function _formatReasoningSuffix(input: Record<string, unknown>): string {
+  const reasoningValue: unknown = input.reasoning;
+
+  if (typeof reasoningValue !== "string") {
+    return "";
+  }
+
+  const trimmed: string = reasoningValue.trim();
+
+  if (trimmed.length === 0) {
+    return "";
+  }
+
+  const preview: string = trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
+
+  return `[reasoning: ${preview}]`;
 }
 
 //#endregion Private Functions

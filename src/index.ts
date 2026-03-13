@@ -478,17 +478,4 @@ mainAsync().catch((error: unknown): void => {
   console.error("Fatal error starting BetterClaw:", error);
   process.exit(1);
 });
-setInterval(() => {
-  const m = process.memoryUsage();
-  console.error(
-    JSON.stringify({
-      t: new Date().toISOString(),
-      rssMB: Math.round(m.rss / 1024 / 1024),
-      heapTotalMB: Math.round(m.heapTotal / 1024 / 1024),
-      heapUsedMB: Math.round(m.heapUsed / 1024 / 1024),
-      externalMB: Math.round(m.external / 1024 / 1024),
-      arrayBuffersMB: Math.round(m.arrayBuffers / 1024 / 1024),
-    })
-  );
-}, 5000).unref();
 //#endregion Main

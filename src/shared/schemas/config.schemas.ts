@@ -27,9 +27,6 @@ const openRouterSchema = z.object({
     .positive()
     .optional()
     .describe("Model context window size (optional, auto-detected for known models)"),
-  supportsForcedToolChoice: z.boolean()
-    .default(false)
-    .describe("Whether the model supports forcing specific tool usage via tool_choice"),
 });
 
 const openAiCompatibleSchema = z.object({

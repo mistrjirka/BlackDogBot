@@ -4,8 +4,8 @@ import { callSkillToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
-import { getForceThinkDirective } from "../utils/prepare-step.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
+import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { thinkTool } from "./think.tool.js";
 import { doneTool } from "./done.tool.js";
 import { runCmdTool } from "./run-cmd.tool.js";
@@ -75,21 +75,14 @@ export function createCallSkillTool(availableSkillNames: string[]) {
           add_knowledge: addKnowledgeTool,
         };
 
+        const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools);
+
         const agent: ToolLoopAgent = new ToolLoopAgent({
           model,
           instructions: skill.instructions,
-          tools,
+          tools: wrappedTools,
           stopWhen: [hasToolCall("done"), stepCountIs(MAX_SKILL_STEPS)],
           experimental_repairToolCall: repairToolCallJsonAsync,
-          prepareStep: async ({ stepNumber, messages }) => {
-            const forceThink = getForceThinkDirective(stepNumber, messages);
-
-            if (forceThink) {
-              return forceThink;
-            }
-
-            return {};
-          },
         });
 
         const result = await agent.generate({ prompt: input });
@@ -107,4 +100,3 @@ export function createCallSkillTool(availableSkillNames: string[]) {
     },
   });
 }
-

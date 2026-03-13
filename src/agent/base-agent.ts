@@ -16,8 +16,9 @@ import { LoggerService } from "../services/logger.service.js";
 import { StatusService } from "../services/status.service.js";
 import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
-import { getForceThinkDirective, getDuplicateToolCallDirective } from "../utils/prepare-step.js";
+import { getDuplicateToolCallDirective } from "../utils/prepare-step.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
+import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 
 //#region Constants
 
@@ -299,11 +300,13 @@ export abstract class BaseAgentBase {
     const logger: LoggerService = this._logger;
     const compactionModel: LanguageModel = model;
 
-    const allTools: ToolSet = {
+    const rawTools: ToolSet = {
       ...tools,
       ...(extraTools ?? {}),
       done: customDoneTool ?? doneTool,
     };
+
+    const allTools: ToolSet = wrapToolSetWithReasoning(rawTools);
 
     /** Names of the base tools (always visible). */
     const baseToolNames: string[] = Object.keys({ ...tools, done: customDoneTool ?? doneTool });
@@ -384,8 +387,8 @@ export abstract class BaseAgentBase {
           }
         }
 
-        // Detect duplicate tool calls (loop prevention) — checked first
-        // because loops are more urgent than periodic think enforcement.
+        // Detect duplicate tool calls (loop prevention) early to break
+        // repeated non-productive tool loops with a forced think step.
         const duplicateDirective = getDuplicateToolCallDirective(stepNumber, messages);
 
         if (duplicateDirective) {
@@ -396,16 +399,6 @@ export abstract class BaseAgentBase {
           return duplicateDirective;
         }
 
-        // Force think tool every N steps to ensure the agent reflects periodically
-        const forceThink = getForceThinkDirective(stepNumber, messages);
-
-        if (forceThink) {
-          logger.debug("Force think directive triggered", {
-            stepNumber,
-            directive: JSON.stringify(forceThink),
-          });
-        }
-
         // Check for pause — await the promise if the agent has been paused
         const pausePromise: Promise<void> | null = getPausePromise ? getPausePromise() : null;
 
@@ -413,10 +406,6 @@ export abstract class BaseAgentBase {
           logger.info("Agent paused, waiting for resume...");
           await pausePromise;
           logger.info("Agent resumed.");
-        }
-
-        if (forceThink) {
-          return forceThink;
         }
 
         // Force done tool on last step

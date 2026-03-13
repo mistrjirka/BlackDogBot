@@ -3,7 +3,6 @@ import { LanguageModel } from "ai";
 import { LanguageModelV3 } from "@ai-sdk/provider";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { z } from "zod";
 import { LMStudioClient } from "@lmstudio/sdk";
 
 import { LoggerService } from "./logger.service.js";
@@ -41,7 +40,6 @@ export class AiProviderService {
   private _modelInfoService: ModelInfoService;
   private _defaultModel: LanguageModel | null;
   private _contextWindow: number;
-  private _supportsForcedToolChoice: boolean | null = null;
   private _supportsStructuredOutputs: boolean = false;
   private _supportsReasoningFormat: boolean = false;
 
@@ -155,11 +153,6 @@ export class AiProviderService {
         `Set 'contextWindow' in config for accurate compaction.`
       );
     }
-
-    // Test forced tool choice capability and log result
-    const supportsForced = await this.testForcedToolChoiceAsync();
-    this._supportsForcedToolChoice = supportsForced;
-    logger.info(`Model ${defaultModelId} forced tool choice: ${supportsForced ? "SUPPORTED" : "NOT SUPPORTED"}`);
 
     // Test response format to detect reasoning_content issue
     const responseFormat = await this.testResponseFormatAsync();
@@ -285,105 +278,6 @@ export class AiProviderService {
    */
   public getHardLimitTokens(): number {
     return Math.floor(this._contextWindow * HARD_GATE_THRESHOLD_PERCENTAGE);
-  }
-
-  public supportsForcedToolChoice(): boolean {
-    // Use the actual test result from testForcedToolChoiceAsync() which runs at startup.
-    // This must agree with _normalizeToolChoiceIfNeeded() which also uses the field
-    // directly — otherwise the directive gets silently downgraded to "auto" in the
-    // fetch interceptor while the caller believes it was sent as-is.
-    return this._supportsForcedToolChoice === true;
-  }
-
-  /**
-   * Tests if the model supports forced tool choice by forcing a specific tool
-   * and verifying the full flow works correctly (tool call + execution + result).
-   * Returns true only if:
-   * - Model returns a tool call with the correct tool name
-   * - Tool executes without crashing
-   * - Tool returns the expected result
-   */
-  public async testForcedToolChoiceAsync(): Promise<boolean> {
-    if (!this._aiConfig || !this._defaultModel) {
-      return false;
-    }
-
-    const logger = LoggerService.getInstance();
-    logger.info("Testing model forced tool choice capability...");
-
-    try {
-      const { generateText, tool } = await import("ai");
-
-      const calculatorTool = tool({
-        description: "Performs basic arithmetic",
-        inputSchema: z.object({
-          a: z.number(),
-          b: z.number(),
-          operation: z.enum(["add", "subtract", "multiply", "divide"]),
-        }),
-        execute: async ({ a, b, operation }): Promise<string> => {
-          switch (operation) {
-            case "add":
-              return String(a + b);
-            case "subtract":
-              return String(a - b);
-            case "multiply":
-              return String(a * b);
-            case "divide":
-              return b !== 0 ? String(a / b) : "Error: divide by zero";
-          }
-        },
-      });
-
-      const weatherTool = tool({
-        description: "Gets weather for a city",
-        inputSchema: z.object({ city: z.string() }),
-        execute: async ({ city }): Promise<string> => `Weather in ${city}: sunny, 72°F`,
-      });
-
-      const result = await generateText({
-        model: this._defaultModel,
-        messages: [{ role: "user", content: "What is 5 + 3?" }],
-        tools: { calculator: calculatorTool, weather: weatherTool },
-        toolChoice: { type: "tool" as const, toolName: "calculator" },
-        maxOutputTokens: 200,
-      });
-
-      const hasToolCalls = result.toolCalls && result.toolCalls.length > 0;
-      const hasCorrectTool = hasToolCalls && result.toolCalls.some(
-        (tc) => tc.toolName === "calculator"
-      );
-
-      const toolResultRaw = result.toolResults?.[0];
-      let hasCorrectResult = false;
-      if (toolResultRaw && typeof toolResultRaw === "object") {
-        const tr = toolResultRaw as Record<string, unknown>;
-        if (tr.output !== undefined) {
-          const outputObj = tr.output as Record<string, unknown>;
-          if (outputObj && typeof outputObj === "object" && "value" in outputObj) {
-            hasCorrectResult = String(outputObj.value).includes("8");
-          }
-        }
-      }
-
-      logger.info("Model forced tool choice test result", {
-        hasToolCalls,
-        hasCorrectTool,
-        hasCorrectResult,
-        finishReason: result.finishReason,
-        text: result.text?.substring(0, 100),
-        toolCallsCount: result.toolCalls?.length ?? 0,
-        toolName: result.toolCalls?.[0]?.toolName,
-        toolResult: hasCorrectResult ? "8" : "not matched",
-      });
-
-      return hasCorrectTool && hasCorrectResult;
-    } catch (error) {
-      logger.warn("Model forced tool choice test failed", {
-        error: extractErrorMessage(error),
-      });
-      return false;
-    }
   }
 
   /**
@@ -644,26 +538,6 @@ export class AiProviderService {
   }
 
   /**
-   * Normalizes tool_choice in request body to avoid forced tool usage.
-   * We enforce tool behavior by limiting the tools sent to the model,
-   * not by forcing tool_choice.
-   * Returns true if the body was modified.
-   */
-  private _normalizeToolChoiceIfNeeded(body: Record<string, unknown>): boolean {
-    if (body.tool_choice && typeof body.tool_choice === "object") {
-      body.tool_choice = "auto";
-      return true;
-    }
-
-    if (body.tool_choice === "required") {
-      body.tool_choice = "auto";
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
    * Ensures the model is loaded in LM Studio with the configured context length.
    * This is a get-or-load operation: if the model is already loaded, returns immediately.
    * If not loaded, loads it with the contextWindow from config.
@@ -784,44 +658,6 @@ export class AiProviderService {
       // Make the actual API request
       let response: Response = await fetch(url, init);
 
-      // OpenRouter compatibility fallback: retry once with tool_choice:auto when
-      // the route rejects forced tool_choice values.
-      if (!response.ok && this._aiConfig?.provider === "openrouter" && init?.body && typeof init.body === "string") {
-        try {
-          const errorBody: string = await response.clone().text();
-          const lowerErrorBody: string = errorBody.toLowerCase();
-          const looksLikeToolChoiceRoutingError: boolean =
-            lowerErrorBody.includes("tool_choice") &&
-            (lowerErrorBody.includes("no endpoints found") ||
-             lowerErrorBody.includes("support the provided"));
-
-          if (looksLikeToolChoiceRoutingError) {
-            const retryBody: Record<string, unknown> = JSON.parse(init.body);
-            const wasModified: boolean = this._normalizeToolChoiceIfNeeded(retryBody);
-
-            if (wasModified) {
-              logger.warn("OpenRouter rejected tool_choice; retrying request with tool_choice:auto", {
-                provider: providerName,
-                status: response.status,
-                url: url.toString(),
-              });
-
-              const retryInit: RequestInit = {
-                ...init,
-                body: JSON.stringify(retryBody),
-              };
-
-              response = await fetch(url, retryInit);
-              if (response.ok) {
-                return response;
-              }
-            }
-          }
-        } catch {
-          // Ignore parse/retry errors and return original response
-        }
-      }
-
       // LM Studio self-healing: if model is unavailable/crashed, auto-load and retry up to 3 times.
       if (!response.ok && this._aiConfig?.provider === "lm-studio") {
         for (let attempt: number = 1; attempt <= LM_STUDIO_MODEL_RECOVERY_RETRIES; attempt++) {
@@ -914,23 +750,9 @@ export class AiProviderService {
       }
 
       const config: IOpenRouterConfig = this._aiConfig.openrouter;
-      const tokenGatedFetch = this._createTokenGatedFetch("openrouter");
       const rawModel = createOpenRouter({
         apiKey: config.apiKey,
-        fetch: async (url, init): Promise<Response> => {
-          if (init?.body && typeof init.body === "string" && init.method === "POST") {
-            try {
-              const body: Record<string, unknown> = JSON.parse(init.body);
-              if (this._normalizeToolChoiceIfNeeded(body)) {
-                init.body = JSON.stringify(body);
-              }
-            } catch {
-              // Ignore parse errors
-            }
-          }
-
-          return tokenGatedFetch(url, init);
-        },
+        fetch: this._createTokenGatedFetch("openrouter"),
       }).chat(modelId);
       return this._wrapModelWithRateLimiter(rawModel, provider);
     }
@@ -962,10 +784,6 @@ export class AiProviderService {
               // we let response_format through for native JSON schema support.
               if (body.response_format && !this._supportsStructuredOutputs) {
                 delete body.response_format;
-                modified = true;
-              }
-
-              if (this._normalizeToolChoiceIfNeeded(body)) {
                 modified = true;
               }
 
@@ -1041,10 +859,6 @@ export class AiProviderService {
                     }
                   }
                 }
-              }
-
-              if (this._normalizeToolChoiceIfNeeded(body)) {
-                modified = true;
               }
 
               if (modified) {

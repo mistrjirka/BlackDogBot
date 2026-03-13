@@ -18,32 +18,18 @@ export interface IForceThinkDirective {
 //#region Public functions
 
 /**
- * Determines whether the agent should be forced to use the think tool
- * on this step. The think tool is forced if the agent hasn't used it
- * in the last {@link FORCE_THINK_INTERVAL} steps (rolling window).
+ * Returns whether non-think/non-done tool calls must include a non-empty
+ * `reasoning` argument based on the rolling window policy.
  *
- * Forces think by removing all tools except think via `activeTools`,
- * which works at the SDK level on every provider — no dependency on
- * provider-specific forced tool choice support.
- *
- * Returns a `prepareStep`-compatible partial result when forcing is needed,
- * or `null` when no forcing is required.
+ * Reasoning is required when there were at least
+ * {@link FORCE_THINK_INTERVAL} consecutive assistant tool-call steps without:
+ * - a `think` tool call, and
+ * - a non-think/non-done tool call containing non-empty `reasoning`.
  */
-export function getForceThinkDirective(
-  stepNumber: number,
-  messages: ModelMessage[],
-): IForceThinkDirective | null {
-  if (stepNumber <= 0) {
-    return null;
-  }
+export function isReasoningRequired(messages: ModelMessage[]): boolean {
+  const stepsSinceReasoningOrThink: number = _stepsSinceLastReasoningOrThink(messages);
 
-  const stepsSinceThink: number = _stepsSinceLastThink(messages);
-
-  if (stepsSinceThink >= FORCE_THINK_INTERVAL) {
-    return _buildForceThinkDirective();
-  }
-
-  return null;
+  return stepsSinceReasoningOrThink >= FORCE_THINK_INTERVAL;
 }
 
 /**
@@ -161,15 +147,16 @@ function _buildForceThinkDirective(): IForceThinkDirective {
   };
 }
 
-function _stepsSinceLastThink(messages: ModelMessage[]): number {
+function _stepsSinceLastReasoningOrThink(messages: ModelMessage[]): number {
   let stepsCount: number = 0;
 
   for (let i: number = messages.length - 1; i >= 0; i--) {
     const msg: ModelMessage = messages[i];
 
     if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      let hasToolCalls: boolean = false;
+      let hasRelevantToolCalls: boolean = false;
       let hasThink: boolean = false;
+      let hasReasoning: boolean = false;
 
       for (const part of msg.content) {
         if (
@@ -178,23 +165,75 @@ function _stepsSinceLastThink(messages: ModelMessage[]): number {
           "type" in part &&
           (part as { type: string }).type === "tool-call"
         ) {
-          hasToolCalls = true;
-          if ("toolName" in part && (part as { toolName: string }).toolName === "think") {
+          if (!("toolName" in part)) {
+            continue;
+          }
+
+          const toolName: string = (part as { toolName: string }).toolName;
+
+          if (toolName === "done") {
+            continue;
+          }
+
+          hasRelevantToolCalls = true;
+
+          if (toolName === "think") {
             hasThink = true;
+            continue;
+          }
+
+          const toolArgs: unknown = _extractToolCallArgs(part);
+          if (_hasNonEmptyReasoning(toolArgs)) {
+            hasReasoning = true;
           }
         }
       }
 
-      if (hasToolCalls) {
-        if (hasThink) {
+      if (hasRelevantToolCalls) {
+        if (hasThink || hasReasoning) {
           return stepsCount;
         }
+
         stepsCount++;
       }
     }
   }
 
   return stepsCount;
+}
+
+function _extractToolCallArgs(part: unknown): unknown {
+  if (typeof part !== "object" || part === null) {
+    return {};
+  }
+
+  const partObject: Record<string, unknown> = part as Record<string, unknown>;
+
+  if ("args" in partObject) {
+    return partObject.args;
+  }
+
+  if ("input" in partObject) {
+    return partObject.input;
+  }
+
+  return {};
+}
+
+function _hasNonEmptyReasoning(toolArgs: unknown): boolean {
+  if (typeof toolArgs !== "object" || toolArgs === null) {
+    return false;
+  }
+
+  const argsObject: Record<string, unknown> = toolArgs as Record<string, unknown>;
+
+  if (!("reasoning" in argsObject)) {
+    return false;
+  }
+
+  const reasoningValue: unknown = argsObject.reasoning;
+
+  return typeof reasoningValue === "string" && reasoningValue.trim().length > 0;
 }
 
 /**

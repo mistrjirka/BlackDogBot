@@ -167,6 +167,7 @@ export const runCronTool = tool({
 //#region Formatting
 
 const MAX_MESSAGE_PREVIEW = 200;
+const MAX_REASONING_PREVIEW = 280;
 
 function truncateTraceInput(trace: IToolCallTrace): Record<string, unknown> {
   const input = trace.input as Record<string, unknown>;
@@ -182,6 +183,30 @@ function truncateTraceInput(trace: IToolCallTrace): Record<string, unknown> {
   }
 
   return input;
+}
+
+function extractReasoningPreview(input: Record<string, unknown>): string | null {
+  if (!("reasoning" in input)) {
+    return null;
+  }
+
+  const reasoningValue: unknown = input.reasoning;
+
+  if (typeof reasoningValue !== "string") {
+    return null;
+  }
+
+  const trimmedReasoning: string = reasoningValue.trim();
+
+  if (trimmedReasoning.length === 0) {
+    return null;
+  }
+
+  if (trimmedReasoning.length <= MAX_REASONING_PREVIEW) {
+    return trimmedReasoning;
+  }
+
+  return trimmedReasoning.slice(0, MAX_REASONING_PREVIEW) + "…";
 }
 
 function formatResultMarkdown(
@@ -220,8 +245,15 @@ function formatResultMarkdown(
   } else {
     for (const trace of traces) {
       const truncatedInput = truncateTraceInput(trace);
+      const reasoningPreview: string | null = extractReasoningPreview(truncatedInput);
       lines.push(`#### Step ${trace.step}: \`${trace.name}\`${trace.isError ? " **(error)**" : ""}`);
       lines.push("");
+      if (reasoningPreview) {
+        lines.push("**Reasoning:**");
+        lines.push("");
+        lines.push(reasoningPreview);
+        lines.push("");
+      }
       lines.push("**Input:**");
       lines.push("```json");
       lines.push(JSON.stringify(truncatedInput, null, 2));

@@ -154,6 +154,7 @@ export interface ToolCalledEvent {
   chatId: string;
   toolName: string;
   input: Record<string, unknown>;
+  reasoning?: string;
 }
 
 export interface ToolResultEvent {

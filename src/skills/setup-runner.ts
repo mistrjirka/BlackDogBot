@@ -5,8 +5,8 @@ import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import * as skillState from "../helpers/skill-state.js";
 import { LoggerService } from "../services/logger.service.js";
-import { getForceThinkDirective } from "../utils/prepare-step.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
+import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { thinkTool, doneTool, runCmdTool } from "../tools/index.js";
 
 //#region Interfaces
@@ -43,21 +43,14 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
       run_cmd: runCmdTool,
     };
 
+    const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools);
+
     const agent: ToolLoopAgent = new ToolLoopAgent({
       model,
       instructions: `${setupPrompt}\n\n${context}`,
-      tools,
+      tools: wrappedTools,
       stopWhen: [hasToolCall("done"), stepCountIs(10)],
       experimental_repairToolCall: repairToolCallJsonAsync,
-      prepareStep: async ({ stepNumber, messages }) => {
-        const forceThink = getForceThinkDirective(stepNumber, messages);
-
-        if (forceThink) {
-          return forceThink;
-        }
-
-        return {};
-      },
     });
 
     const result = await agent.generate({

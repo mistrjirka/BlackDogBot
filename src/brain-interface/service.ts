@@ -114,9 +114,14 @@ export class BrainInterfaceService {
     toolName: string,
     input: Record<string, unknown>,
   ): Promise<void> {
+    const reasoning: string | undefined =
+      typeof input.reasoning === "string" && input.reasoning.trim().length > 0
+        ? input.reasoning
+        : undefined;
+
     this._emit({
       type: "tool_called",
-      data: { stepNumber, chatId, toolName, input },
+      data: { stepNumber, chatId, toolName, input, reasoning },
     });
   }
 
