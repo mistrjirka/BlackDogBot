@@ -103,7 +103,12 @@ function _wrapSingleTool(
 
       // Apply result compaction if enabled
       if (enableCompaction && result !== null && result !== undefined) {
-        const compactionResult = await compactToolResultAsync(result, compactionOptions);
+        const mergedCompactionOptions: ICompactionOptions = {
+          ...(compactionOptions ?? {}),
+          abortSignal: options.abortSignal,
+        };
+
+        const compactionResult = await compactToolResultAsync(result, mergedCompactionOptions);
         if (compactionResult.wasCompacted) {
           logger?.info("Tool result compacted", {
             toolName,

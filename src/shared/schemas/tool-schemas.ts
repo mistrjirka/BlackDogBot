@@ -937,9 +937,9 @@ export const addLitesqlNodeToolInputSchema = z.object({
   tableName: z.string()
     .min(1)
     .describe("Table name to write to"),
-  inputSchemaHint: z.object({})
-    .passthrough()
-    .optional()
+  inputSchemaHint: z.record(z.string(), z.unknown())
+    .nullable()
+    .default(null)
     .describe(
       "JSON Schema for table input. REQUIRED if the table does not exist yet. " +
       "Get this from create_table output (inputSchema field) or get_table_schema.",

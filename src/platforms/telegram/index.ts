@@ -7,6 +7,10 @@ import { TelegramHandler } from "./handler.js";
 import { setupTelegramCommands } from "./commands.js";
 import type { ITelegramConfig } from "./types.js";
 
+interface ITelegramPlatformState {
+  _bot?: Bot;
+}
+
 //#region Telegram Platform
 
 export const telegramPlatform: IPlatform<ITelegramConfig> = {
@@ -41,9 +45,17 @@ export const telegramPlatform: IPlatform<ITelegramConfig> = {
     // Set up commands
     setupTelegramCommands(bot);
 
-    // Set up message handler
-    bot.on("message:text", async (ctx) => {
-      await handler.handleMessageAsync(ctx);
+    // Set up message handler (fire-and-forget).
+    // Do NOT await handleMessageAsync — it runs long-running LLM calls and would
+    // block grammY's sequential update loop, preventing /cancel from being processed.
+    // The handler manages its own try/catch/finally and uses _processing guard per chat.
+    bot.on("message:text", (ctx) => {
+      handler.handleMessageAsync(ctx).catch((err: unknown): void => {
+        deps.logger.error("Unhandled error in Telegram message handler", {
+          chatId: String(ctx.chat?.id),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     });
 
     // Start bot
@@ -54,16 +66,17 @@ export const telegramPlatform: IPlatform<ITelegramConfig> = {
     });
 
     // Store bot for cleanup
-    (this as any)._bot = bot;
+    (this as ITelegramPlatformState)._bot = bot;
 
     deps.logger.info("Telegram platform initialized");
   },
 
   async stop(): Promise<void> {
-    const bot = (this as any)._bot;
+    const state: ITelegramPlatformState = this as ITelegramPlatformState;
+    const bot: Bot | undefined = state._bot;
     if (bot) {
       bot.stop();
-      (this as any)._bot = undefined;
+      state._bot = undefined;
     }
   },
 

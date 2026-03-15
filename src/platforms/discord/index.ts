@@ -6,6 +6,10 @@ import { DiscordAdapter } from "./adapter.js";
 import { DiscordHandler } from "./handler.js";
 import type { IDiscordConfig } from "../../shared/types/discord.types.js";
 
+interface IDiscordPlatformState {
+  _client?: Client;
+}
+
 //#region Discord Platform
 
 export const discordPlatform: IPlatform<IDiscordConfig> = {
@@ -58,7 +62,7 @@ export const discordPlatform: IPlatform<IDiscordConfig> = {
     await handler.initializeAsync(client, config, deps);
 
     // Store client for cleanup
-    (this as any)._client = client;
+    (this as IDiscordPlatformState)._client = client;
 
     deps.logger.info("Discord platform initialized");
 
@@ -69,10 +73,11 @@ export const discordPlatform: IPlatform<IDiscordConfig> = {
   },
 
   async stop(): Promise<void> {
-    const client = (this as any)._client as Client | undefined;
+    const state: IDiscordPlatformState = this as IDiscordPlatformState;
+    const client: Client | undefined = state._client;
     if (client) {
       await client.destroy();
-      (this as any)._client = undefined;
+      state._client = undefined;
     }
   },
 

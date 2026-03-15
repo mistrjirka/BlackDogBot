@@ -7,8 +7,10 @@ import type { LanguageModel } from "ai";
 
 /**
  * Default maximum tokens for a tool result before it gets compacted.
+ * Kept generous because modern models have 90K+ context windows —
+ * a 3K-token tool result is only ~3% of context and should not be compacted.
  */
-const DEFAULT_MAX_TOOL_RESULT_TOKENS: number = 2_000;
+const DEFAULT_MAX_TOOL_RESULT_TOKENS: number = 10_000;
 
 /**
  * Number of representative array items to keep when compacting arrays.
@@ -46,6 +48,8 @@ export interface ICompactionOptions {
   representativeArraySize?: number;
   /** Logger for debugging. */
   logger?: LoggerService;
+  /** Abort signal for cancellation. */
+  abortSignal?: AbortSignal;
 }
 
 export interface ICompactionResult {
@@ -101,7 +105,7 @@ export async function compactToolResultAsync(
     isArray: Array.isArray(value),
   });
 
-  const context = new CompactionContext(representativeArraySize, logger);
+  const context = new CompactionContext(representativeArraySize, logger, options.abortSignal);
   const compactedValue = await compactValueRecursive(value, maxTokens, context);
 
   const compactedTokens: number = estimateTokenCount(compactedValue);
@@ -144,6 +148,7 @@ class CompactionContext {
   constructor(
     public readonly representativeArraySize: number,
     public readonly logger: LoggerService,
+    public readonly abortSignal?: AbortSignal,
   ) {}
 
   public incrementSummarized(): void {
@@ -154,6 +159,12 @@ class CompactionContext {
 //#endregion Private Classes
 
 //#region Private Functions
+
+function _createAbortError(message: string): Error {
+  const error: Error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
 
 /**
  * Recursively compact a value while preserving shape.
@@ -202,7 +213,7 @@ async function compactStringField(
   }
 
   // Summarize the string
-  const summary = await summarizeText(value, maxTokens, context.logger);
+  const summary = await summarizeText(value, maxTokens, context.logger, context.abortSignal);
   context.incrementSummarized();
   return `${COMPACTION_SUMMARY_MARKER} ${summary}`;
 }
@@ -287,7 +298,7 @@ async function compactObjectField(
 
     // If it's an array, add companion summary fields
     if (Array.isArray(fieldValue) && fieldValue.length > context.representativeArraySize) {
-      const arraySummary = await summarizeArray(fieldValue, context.logger);
+      const arraySummary = await summarizeArray(fieldValue, context.logger, context.abortSignal);
       result[`${key}${ARRAY_SUMMARY_FIELD_SUFFIX}`] = `${COMPACTION_SUMMARY_MARKER} ${arraySummary}`;
       result[`${key}${ARRAY_ORIGINAL_COUNT_FIELD_SUFFIX}`] = fieldValue.length;
     }
@@ -323,13 +334,35 @@ function isIdentityField(key: string): boolean {
 }
 
 /**
+ * Truncates text to approximately `maxChars` characters while preserving
+ * the beginning and end so the model can still extract useful information
+ * (e.g., URLs, identifiers). Used as a structural fallback when LLM
+ * summarization times out or fails.
+ */
+function _truncateTextPreservingEnds(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const half: number = Math.floor(maxChars / 2);
+  const start: string = text.slice(0, half);
+  const end: string = text.slice(text.length - half);
+  return `${start}\n\n[...truncated ${text.length - maxChars} chars...]\n\n${end}`;
+}
+
+/**
  * Summarize text using the LLM.
  */
 async function summarizeText(
   text: string,
   maxTokens: number,
   logger: LoggerService,
+  abortSignal?: AbortSignal,
 ): Promise<string> {
+  // Check for abort before starting
+  if (abortSignal?.aborted) {
+    throw _createAbortError("Compaction aborted");
+  }
+
   try {
     const model: LanguageModel = AiProviderService.getInstance().getModel();
     const targetLength = Math.max(100, maxTokens * 4); // Convert back to characters
@@ -342,21 +375,33 @@ Text to summarize:
 ${text}
 
 Provide a concise summary that captures the essential information.`,
+      retryOptions: { callType: "tool_compaction", abortSignal },
     });
 
     return result.text || "Summary unavailable.";
   } catch (error: unknown) {
+    // Distinguish user /cancel (real abort) from LLM timeout (fake abort).
+    // Only re-throw if the original abort signal was explicitly fired by /cancel.
+    // Timeout-driven AbortErrors should fall back gracefully instead of killing
+    // the entire tool result.
+    if (abortSignal?.aborted) {
+      logger.info("Text summarization aborted (user cancel)", { textLength: text.length });
+      throw _createAbortError("Compaction aborted");
+    }
+
+    // Timeout or other LLM failure — fall back to structural truncation
+    if (error instanceof Error && error.name === "AbortError") {
+      logger.warn("Text summarization timed out, using structural fallback", {
+        textLength: text.length,
+      });
+      return _truncateTextPreservingEnds(text, maxTokens * 4);
+    }
+
     logger.warn("Failed to summarize text field", {
       error: error instanceof Error ? error.message : String(error),
       textLength: text.length,
     });
-    // Summary-only fallback: do not include truncated source text
-    const lineCount: number = text.split("\n").length;
-    const wordCount: number = text.trim().length > 0
-      ? text.trim().split(/\s+/).length
-      : 0;
-
-    return `Summary unavailable (source text length=${text.length} chars, words=${wordCount}, lines=${lineCount}).`;
+    return _truncateTextPreservingEnds(text, maxTokens * 4);
   }
 }
 
@@ -366,7 +411,13 @@ Provide a concise summary that captures the essential information.`,
 async function summarizeArray(
   array: unknown[],
   logger: LoggerService,
+  abortSignal?: AbortSignal,
 ): Promise<string> {
+  // Check for abort before starting
+  if (abortSignal?.aborted) {
+    throw _createAbortError("Compaction aborted");
+  }
+
   try {
     const model: LanguageModel = AiProviderService.getInstance().getModel();
     const arrayPreview = JSON.stringify(array.slice(0, 2), null, 2);
@@ -380,10 +431,25 @@ Array preview (first 2 items):
 ${arrayPreview}
 
 Provide a concise summary of the array contents.`,
+      retryOptions: { callType: "tool_compaction", abortSignal },
     });
 
     return result.text || `Array with ${array.length} items.`;
   } catch (error: unknown) {
+    // Distinguish user /cancel (real abort) from LLM timeout (fake abort).
+    if (abortSignal?.aborted) {
+      logger.info("Array summarization aborted (user cancel)", { arrayLength: array.length });
+      throw _createAbortError("Compaction aborted");
+    }
+
+    // Timeout or other LLM failure — fall back to structural summary
+    if (error instanceof Error && error.name === "AbortError") {
+      logger.warn("Array summarization timed out, using structural fallback", {
+        arrayLength: array.length,
+      });
+      return `Array with ${array.length} items: [${array.slice(0, 3).map((item) => JSON.stringify(item)).join(", ")}${array.length > 3 ? ", ..." : ""}]`;
+    }
+
     logger.warn("Failed to summarize array", {
       error: error instanceof Error ? error.message : String(error),
       arrayLength: array.length,

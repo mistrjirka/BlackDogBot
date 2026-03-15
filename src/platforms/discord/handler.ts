@@ -15,6 +15,8 @@ import {
   type IAiErrorDetails,
 } from "../../utils/ai-error.js";
 import { formatMarkdownForDiscord } from "../../utils/discord-format.js";
+import { splitMessageByLength } from "../../utils/message-split.js";
+import { isCancelCommand } from "../../utils/command-utils.js";
 
 //#region DiscordHandler
 
@@ -125,7 +127,7 @@ export class DiscordHandler {
       return;
     }
 
-    if (_isCancelCommand(message.content)) {
+    if (isCancelCommand(message.content)) {
       await this._handleCancelForChannelAsync(channelId, message);
       return;
     }
@@ -141,9 +143,7 @@ export class DiscordHandler {
 
     try {
       // Show typing indicator
-      if (message.channel.isTextBased() && "sendTyping" in message.channel) {
-        (message.channel as any).sendTyping().catch(() => {});
-      }
+      await this._messagingService.sendChatActionAsync("discord", channelId, "typing").catch(() => {});
 
       // Build incoming message
       const incoming: IIncomingMessage = {
@@ -187,7 +187,7 @@ export class DiscordHandler {
         // Send response
         if (result.text) {
           const markdownText: string = formatMarkdownForDiscord(result.text);
-          const chunks: string[] = this._splitMessage(markdownText, 2000);
+          const chunks: string[] = splitMessageByLength(markdownText, 2000);
           for (const chunk of chunks) {
             await message.reply(chunk);
           }
@@ -307,38 +307,7 @@ export class DiscordHandler {
     }
   }
 
-  private _splitMessage(text: string, maxLength: number): string[] {
-    if (text.length <= maxLength) {
-      return [text];
-    }
-
-    const chunks: string[] = [];
-    let remaining = text;
-
-    while (remaining.length > 0) {
-      let splitIndex = maxLength;
-
-      const lastNewline = remaining.lastIndexOf("\n", maxLength);
-      const lastSpace = remaining.lastIndexOf(" ", maxLength);
-
-      if (lastNewline > maxLength * 0.5) {
-        splitIndex = lastNewline + 1;
-      } else if (lastSpace > maxLength * 0.5) {
-        splitIndex = lastSpace + 1;
-      }
-
-      chunks.push(remaining.substring(0, splitIndex));
-      remaining = remaining.substring(splitIndex);
-    }
-
-    return chunks;
-  }
-
   //#endregion Private Methods
-}
-
-function _isCancelCommand(text: string): boolean {
-  return text.trim().toLowerCase() === "/cancel";
 }
 
 //#endregion DiscordHandler

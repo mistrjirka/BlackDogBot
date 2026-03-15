@@ -666,6 +666,7 @@ export class JobExecutorService {
           model,
           prompt: `${config.extractionPrompt}\n\nContent:\n${crawlResult.markdown}`,
           schema: createOutputZodSchema(extractedSchema),
+          retryOptions: { callType: "job_execution" },
         });
 
         output.extracted = extractionResult.object as Record<string, unknown>;
@@ -673,6 +674,7 @@ export class JobExecutorService {
         const extractionResult = await generateTextWithRetryAsync({
           model,
           prompt: `${config.extractionPrompt}\n\nContent:\n${crawlResult.markdown}`,
+          retryOptions: { callType: "job_execution" },
         });
 
         output.extracted = extractionResult.text;
@@ -809,6 +811,7 @@ export class JobExecutorService {
       model,
       prompt: fullPrompt,
       schema: zodSchema,
+      retryOptions: { callType: "job_execution" },
     });
 
     return result.object as Record<string, unknown>;
@@ -888,7 +891,7 @@ export class JobExecutorService {
     const wrappedTools: ToolSet = wrapToolSetWithReasoning(selectedTools, {
       enableResultCompaction: true,
       compactionOptions: {
-        maxTokens: 2000,
+        maxTokens: 10000,
         representativeArraySize: 5,
       },
       logger: this._logger,

@@ -232,6 +232,7 @@ async function _summarizeTextAsync(
         `Keep key decisions, actions, concrete facts, identifiers, and pending tasks. ` +
         `Target length: about ${targetChars} characters.\n\n` +
         `Conversation excerpt:\n${sourceText}`,
+      retryOptions: { callType: "summarization" },
     });
 
     return result.text && result.text.trim().length > 0

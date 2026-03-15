@@ -53,7 +53,7 @@ export function createAddLitesqlNodeTool(jobTracker: IJobActivityTracker) {
       outputSchema?: Record<string, unknown>;
       databaseName: string;
       tableName: string;
-      inputSchemaHint?: Record<string, unknown>;
+      inputSchemaHint: Record<string, unknown> | null;
     }): Promise<ICreateNodeResult & { warning?: string; derivedInputSchema?: Record<string, unknown>; graphAscii?: string }> => {
       try {
         let effectiveInputSchema: Record<string, unknown>;

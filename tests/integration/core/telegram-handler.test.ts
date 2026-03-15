@@ -316,7 +316,7 @@ describe("TelegramHandler", () => {
     );
   }, 120000);
 
-  it("should cancel in-flight run, delete prompt, and drop latest queued message on /cancel", async () => {
+  it("should cancel in-flight run, delete prompt, and clear all queued messages on /cancel", async () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
 
     let resolveBlock: () => void;
@@ -354,6 +354,14 @@ describe("TelegramHandler", () => {
     });
     (queuedCtx as unknown as { api?: unknown }).api = { deleteMessage: deleteSpy, editMessageText: vi.fn().mockResolvedValue(undefined) };
 
+    const queuedCtx2: Context = makeCtx({
+      chatId: 100,
+      messageId: 104,
+      text: "queued3",
+      replyImpl: async (): Promise<{ message_id: number }> => ({ message_id: 5004 }),
+    });
+    (queuedCtx2 as unknown as { api?: unknown }).api = { deleteMessage: deleteSpy, editMessageText: vi.fn().mockResolvedValue(undefined) };
+
     const cancelReplies: string[] = [];
     const cancelCtx: Context = makeCtx({
       chatId: 100,
@@ -372,6 +380,7 @@ describe("TelegramHandler", () => {
     await vi.waitUntil(() => processCallCount === 1, { timeout: 30000 });
 
     await handler.handleMessageAsync(queuedCtx);
+    await handler.handleMessageAsync(queuedCtx2);
     await handler.handleMessageAsync(cancelCtx);
 
     resolveBlock!();
@@ -380,7 +389,9 @@ describe("TelegramHandler", () => {
     expect(stopSpy).toHaveBeenCalledWith("100");
     expect(deleteSpy).toHaveBeenCalledWith("100", 101);
     expect(deleteSpy).toHaveBeenCalledWith("100", 102);
+    expect(deleteSpy).toHaveBeenCalledWith("100", 104);
     expect(cancelReplies.some((reply: string): boolean => reply.toLowerCase().includes("cancelled"))).toBe(true);
+    expect(cancelReplies.some((reply: string): boolean => reply.toLowerCase().includes("cleared 2 queued messages"))).toBe(true);
   }, 120000);
 
   it("should include provider details in error reply when an APICallError is thrown", async () => {

@@ -21,6 +21,7 @@ import {
 } from "../../utils/ai-error.js";
 import { extractErrorMessage } from "../../utils/error.js";
 import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
+import { isCancelCommand } from "../../utils/command-utils.js";
 
 //#region Constants
 
@@ -138,7 +139,7 @@ export class TelegramHandler {
       return;
     }
 
-    if (_isCancelCommand(message.text)) {
+    if (isCancelCommand(message.text)) {
       await this.handleCancelCommandAsync(ctx);
       return;
     }
@@ -334,15 +335,9 @@ export class TelegramHandler {
         });
       }
     } finally {
+      await this._drainQueuedMessagesAsync(chatId);
       this._processing.delete(chatId);
       this._inFlightMessageIdByChat.delete(chatId);
-
-      const pendingForChat: IPendingTelegramMessage[] | undefined = this._pendingMessages.get(chatId);
-
-      if (pendingForChat && pendingForChat.length > 0) {
-        this._pendingMessages.delete(chatId);
-        void this._processMergedQueuedMessageAsync(chatId, pendingForChat);
-      }
     }
   }
 
@@ -357,7 +352,7 @@ export class TelegramHandler {
 
     const stopped: boolean = this._mainAgent.stopChat(chatId);
     let deletedInFlightMessage: boolean = false;
-    let droppedQueuedMessage: boolean = false;
+    let droppedQueuedMessages: number = 0;
 
     const inFlightMessageId: number | undefined = this._inFlightMessageIdByChat.get(chatId);
     if (inFlightMessageId !== undefined) {
@@ -365,25 +360,28 @@ export class TelegramHandler {
       this._inFlightMessageIdByChat.delete(chatId);
     }
 
+    // Clear ALL queued messages (not just drop the latest)
     const pendingForChat: IPendingTelegramMessage[] = this._pendingMessages.get(chatId) ?? [];
     if (pendingForChat.length > 0) {
-      const droppedMessage: IPendingTelegramMessage | undefined = pendingForChat.pop();
-      if (pendingForChat.length > 0) {
-        this._pendingMessages.set(chatId, pendingForChat);
-      } else {
-        this._pendingMessages.delete(chatId);
+      // Delete all queued prompt messages best-effort
+      for (const queuedMessage of pendingForChat) {
+        const deleted = await this._tryDeleteTelegramMessageAsync(ctx, chatId, queuedMessage.messageId);
+        if (deleted) {
+          droppedQueuedMessages++;
+        }
       }
-
-      if (droppedMessage) {
-        droppedQueuedMessage = await this._tryDeleteTelegramMessageAsync(
-          ctx,
-          chatId,
-          droppedMessage.messageId,
-        );
-      }
+      // Clear the entire queue
+      this._pendingMessages.delete(chatId);
     }
 
-    const responseText: string = _buildCancelResponseText(stopped, deletedInFlightMessage, droppedQueuedMessage);
+    this._logger.info("Cancel processed", {
+      chatId,
+      stopped,
+      deletedInFlightMessage,
+      droppedQueuedMessages,
+    });
+
+    const responseText: string = _buildCancelResponseText(stopped, deletedInFlightMessage, droppedQueuedMessages);
     await ctx.reply(responseText);
   }
 
@@ -425,18 +423,10 @@ export class TelegramHandler {
     chatId: string,
     queuedMessages: IPendingTelegramMessage[],
   ): Promise<void> {
-    if (this._processing.has(chatId)) {
-      const pendingForChat: IPendingTelegramMessage[] = this._pendingMessages.get(chatId) ?? [];
-      pendingForChat.push(...queuedMessages);
-      this._pendingMessages.set(chatId, pendingForChat);
-      return;
-    }
-
     if (queuedMessages.length === 0) {
       return;
     }
 
-    this._processing.add(chatId);
     const lastQueuedMessage: IPendingTelegramMessage = queuedMessages[queuedMessages.length - 1];
     this._inFlightMessageIdByChat.set(chatId, lastQueuedMessage.messageId);
 
@@ -458,10 +448,7 @@ export class TelegramHandler {
       const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(chatId, mergedText);
 
       if (result.text) {
-        const chunks: string[] = splitTelegramMessage(result.text);
-        for (const chunk of chunks) {
-          await sender(chunk);
-        }
+        await sender(result.text);
       }
 
       this._logger.info("Merged queued Telegram messages processed", {
@@ -481,16 +468,19 @@ export class TelegramHandler {
         model: errorDetails.model,
         retryable: errorDetails.isRetryable,
       });
-    } finally {
-      this._processing.delete(chatId);
-      this._inFlightMessageIdByChat.delete(chatId);
+    }
+  }
 
+  private async _drainQueuedMessagesAsync(chatId: string): Promise<void> {
+    while (true) {
       const pendingForChat: IPendingTelegramMessage[] | undefined = this._pendingMessages.get(chatId);
 
-      if (pendingForChat && pendingForChat.length > 0) {
-        this._pendingMessages.delete(chatId);
-        void this._processMergedQueuedMessageAsync(chatId, pendingForChat);
+      if (!pendingForChat || pendingForChat.length === 0) {
+        return;
       }
+
+      this._pendingMessages.delete(chatId);
+      await this._processMergedQueuedMessageAsync(chatId, pendingForChat);
     }
   }
 
@@ -554,16 +544,12 @@ function _formatToolCall(name: string, input: Record<string, unknown>): string {
     : `${name}(${truncated})`;
 }
 
-function _isCancelCommand(text: string): boolean {
-  return text.trim().toLowerCase() === "/cancel";
-}
-
 function _buildCancelResponseText(
   stopped: boolean,
   deletedInFlightMessage: boolean,
-  droppedQueuedMessage: boolean,
+  droppedQueuedMessages: number,
 ): string {
-  if (!stopped && !deletedInFlightMessage && !droppedQueuedMessage) {
+  if (!stopped && !deletedInFlightMessage && droppedQueuedMessages === 0) {
     return "Nothing to cancel.";
   }
 
@@ -574,8 +560,8 @@ function _buildCancelResponseText(
   if (deletedInFlightMessage) {
     details.push("deleted in-flight prompt message");
   }
-  if (droppedQueuedMessage) {
-    details.push("dropped latest queued message");
+  if (droppedQueuedMessages > 0) {
+    details.push(`cleared ${droppedQueuedMessages} queued message${droppedQueuedMessages > 1 ? "s" : ""}`);
   }
 
   return `Cancelled: ${details.join(", ")}.`;

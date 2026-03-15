@@ -1,6 +1,7 @@
 import Bottleneck from "bottleneck";
 
 import { IRateLimitConfig } from "../shared/types/index.js";
+import { LoggerService } from "./logger.service.js";
 
 interface IProviderState {
   limiter: Bottleneck;
@@ -15,6 +16,7 @@ export class RateLimiterService {
   //#region Data members
 
   private static _instance: RateLimiterService | null;
+  private _logger: LoggerService;
   private _providers: Map<string, IProviderState>;
 
   //#endregion Data members
@@ -22,6 +24,7 @@ export class RateLimiterService {
   //#region Constructors
 
   private constructor() {
+    this._logger = LoggerService.getInstance();
     this._providers = new Map();
   }
 
@@ -126,9 +129,10 @@ export class RateLimiterService {
     const rpmUsed: number = state.requestsUsedThisMinute;
     const tpmUsed: number = state.tokensUsedThisMinute;
 
-    console.log(
-      `📊 Rate Limit Budget: RPM ${rpmUsed}/${state.rpmLimit} (${Math.round((rpmUsed / state.rpmLimit) * 100)}%), ` +
+    this._logger.info(
+      `Rate limit budget: RPM ${rpmUsed}/${state.rpmLimit} (${Math.round((rpmUsed / state.rpmLimit) * 100)}%), ` +
       `TPM ${tpmUsed.toLocaleString()}/${state.tpmLimit.toLocaleString()} (${Math.round((tpmUsed / state.tpmLimit) * 100)}%)`,
+      { providerKey },
     );
   }
 

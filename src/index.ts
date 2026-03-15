@@ -27,6 +27,7 @@ import { getJobLogsDir } from "./utils/paths.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
 import { extractErrorMessage, ChatNotFoundError } from "./utils/error.js";
 import { TelegramHandler } from "./platforms/telegram/handler.js";
+import type { SkillInstallKind } from "./helpers/skill-installer.js";
 
 const BRAIN_INTERFACE_PORT: number = parseInt(process.env.BRAIN_INTERFACE_PORT ?? "3001", 10);
 
@@ -164,7 +165,7 @@ async function mainAsync(): Promise<void> {
           const installSteps = skill.frontmatter.metadata?.openclaw?.install || [];
           const result = await skillInstaller.executeSkillInstallStepsAsync(
             installSteps,
-            allowedInstallKinds as any,
+            allowedInstallKinds as SkillInstallKind[],
             installTimeout
           );
 

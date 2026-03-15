@@ -319,6 +319,7 @@ export abstract class BaseAgentBase {
     extraTools?: ToolSet,
     getPausePromise?: () => Promise<void> | null,
     getCreationModePrompt?: () => string | null,
+    getAbortSignal?: () => AbortSignal | null,
   ): void {
     const self = this; // Capture this for use in callbacks
     const maxSteps: number = this._maxSteps;
@@ -332,11 +333,14 @@ export abstract class BaseAgentBase {
       done: customDoneTool ?? doneTool,
     };
 
-    // Enable tool result compaction to prevent oversized tool results from causing context overflow
+    // Enable tool result compaction to prevent oversized tool results from causing context overflow.
+    // Threshold is 15% of context window — generous enough that a 3K-token cron config
+    // (3% of 90K) is never compacted, but still protects against truly massive results.
+    const toolCompactionMaxTokens: number = Math.floor(this._contextWindow * 0.15);
     const allTools: ToolSet = wrapToolSetWithReasoning(rawTools, {
       enableResultCompaction: true,
       compactionOptions: {
-        maxTokens: 2000,
+        maxTokens: toolCompactionMaxTokens,
         representativeArraySize: 5,
       },
       logger: this._logger,
@@ -355,18 +359,28 @@ export abstract class BaseAgentBase {
     logger.debug("Computed fixed token overhead for context tracking", {
       systemPromptTokens: _countTextTokens(instructions),
       toolCount: Object.keys(allTools).length,
+      toolNames: Object.keys(allTools),
       totalOverhead: fixedOverheadTokens,
     });
 
     this._agent = new ToolLoopAgent({
       model,
       instructions,
+      maxRetries: 0,
       tools: allTools,
       stopWhen: [
         hasToolCall("done"),
       ],
       experimental_repairToolCall: repairToolCallJsonAsync,
       prepareStep: async ({ stepNumber, messages }) => {
+        // Early abort check: if the abort signal is already fired, throw immediately.
+        // This prevents wasted work during compaction, pause-waiting, or tool execution
+        // when /cancel has been called.
+        const abortSignal: AbortSignal | null = getAbortSignal ? getAbortSignal() : null;
+        if (abortSignal?.aborted) {
+          throw Object.assign(new Error("Operation was stopped."), { name: "AbortError" });
+        }
+
         // Memory diagnostics: log heap/RSS at every step to track leaks
         const mem = process.memoryUsage();
         logger.info("Memory usage at prepareStep", {

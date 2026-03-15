@@ -140,6 +140,7 @@ Output a single concise summary paragraph.`;
       const result = await generateTextWithRetryAsync({
         model,
         prompt,
+        retryOptions: { callType: "cron_history" },
       });
 
       const newSummary: string = result.text ?? "";

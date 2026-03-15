@@ -115,5 +115,24 @@ describe("tool-result-compaction", () => {
       expect(compacted.summarizedFields).toBeGreaterThan(0);
       expect(compacted.originalTokens).toBeGreaterThan(compacted.compactedTokens);
     });
+
+    it("should not compact a cron-like config (~3K tokens) with generous threshold", async () => {
+      // Simulates the real-world scenario: cron JSON with ~3K tokens
+      // should pass through untouched when threshold is 10K+
+      const cronConfig = {
+        taskId: "abc123",
+        name: "RSS Monitor",
+        schedule: "0 * * * *",
+        instructions: "x".repeat(12000), // ~3000 tokens
+        tools: ["fetch_rss", "send_message"],
+        channels: [{ id: "chat-1", platform: "telegram" }],
+      };
+
+      const result = await compactToolResultAsync(cronConfig, { maxTokens: 10000 });
+
+      expect(result.wasCompacted).toBe(false);
+      expect(result.value).toEqual(cronConfig);
+      expect(result.summarizedFields).toBe(0);
+    });
   });
 });

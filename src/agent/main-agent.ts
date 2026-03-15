@@ -174,7 +174,9 @@ export class MainAgent extends BaseAgentBase {
   ): Promise<void> {
     this._currentChatId = chatId;
 
-    // Ensure session exists FIRST — before any async operations that might throw
+    // Ensure session exists FIRST — before any async operations that might throw.
+    // Create the AbortController immediately so /cancel can abort during initialization
+    // (prompt building, tool loading, model setup) before processMessageForChatAsync runs.
     if (!this._sessions.has(chatId)) {
       this._sessions.set(chatId, {
         messages: [],
@@ -182,7 +184,7 @@ export class MainAgent extends BaseAgentBase {
         jobCreationMode: null,
         paused: false,
         resumeResolve: null,
-        abortController: null,
+        abortController: new AbortController(),
       });
     }
 
@@ -324,6 +326,15 @@ export class MainAgent extends BaseAgentBase {
       }
     }
 
+    // Log registered tools for diagnostics (especially useful for local models)
+    this._logger.info("Tools registered for agent", {
+      chatId,
+      toolCount: Object.keys(filteredTools).length,
+      toolNames: Object.keys(filteredTools),
+      permission,
+      jobCreationEnabled: config.jobCreation.enabled,
+    });
+
     const trackedDoneTool = createDoneTool(jobTracker);
 
     const combinedOnStepAsync = async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
@@ -403,6 +414,8 @@ export class MainAgent extends BaseAgentBase {
       // getCreationModePrompt: injects the job creation guide into the system prompt
       // dynamically when the agent is in job creation mode
       (): string | null => session.jobCreationMode !== null ? jobCreationGuide : null,
+      // getAbortSignal: provides the current abort signal so prepareStep can check it early
+      (): AbortSignal | null => session.abortController?.signal ?? null,
     );
 
     this._logger.info("MainAgent initialized for chat.", { chatId, permission });
@@ -428,7 +441,9 @@ export class MainAgent extends BaseAgentBase {
       content: [{ type: "text", text: userMessage }],
     };
 
-    const abortController: AbortController = new AbortController();
+    // Reuse the AbortController from initializeForChatAsync (created during session
+    // setup so /cancel works during initialization). If one doesn't exist, create it.
+    let abortController: AbortController = session.abortController ?? new AbortController();
     session.abortController = abortController;
 
     let result: IAgentResult = { text: "Unexpected error.", stepsCount: 0 };

@@ -147,6 +147,7 @@ Output a JSON object with:
           missingContext: z.string(),
         }),
         prompt: verifierPrompt,
+        retryOptions: { callType: "schema_extraction" },
       });
 
       if (!verificationResult.object.isClear) {

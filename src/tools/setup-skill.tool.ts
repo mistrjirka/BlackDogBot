@@ -6,6 +6,7 @@ import * as skillState from "../helpers/skill-state.js";
 import * as skillInstaller from "../helpers/skill-installer.js";
 import { LoggerService } from "../services/logger.service.js";
 import type { ISkill, ISkillInstallStep } from "../shared/types/index.js";
+import type { SkillInstallKind } from "../helpers/skill-installer.js";
 
 interface ISetupSkillResult {
   success: boolean;
@@ -15,10 +16,10 @@ interface ISetupSkillResult {
   error: string | null;
 }
 
-const DEFAULT_ALLOWED_KINDS = ["brew", "node", "go", "uv"];
+const DEFAULT_ALLOWED_KINDS: SkillInstallKind[] = ["brew", "node", "go", "uv"];
 
 export const createSetupSkillTool = (
-  allowedKinds: string[] = DEFAULT_ALLOWED_KINDS,
+  allowedKinds: SkillInstallKind[] = DEFAULT_ALLOWED_KINDS,
   timeout: number = 300000,
 ) => {
   return tool({
@@ -112,7 +113,7 @@ export const createSetupSkillTool = (
 
       logger.info(`Starting setup for skill "${skillName}"`);
 
-      const result = await skillInstaller.executeSkillInstallStepsAsync(installSteps, allowedKinds as any, timeout);
+      const result = await skillInstaller.executeSkillInstallStepsAsync(installSteps, allowedKinds, timeout);
 
       if (result.success) {
         await skillState.markSkillSetupCompleteAsync(skillName);

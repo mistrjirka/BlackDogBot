@@ -78,7 +78,7 @@ export function createCallSkillTool(availableSkillNames: string[]) {
         const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools, {
           enableResultCompaction: true,
           compactionOptions: {
-            maxTokens: 2000,
+            maxTokens: 10000,
             representativeArraySize: 5,
           },
           logger,

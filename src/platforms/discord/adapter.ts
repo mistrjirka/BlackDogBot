@@ -7,6 +7,7 @@ import type {
   MessagePlatform,
 } from "../../shared/types/messaging.types.js";
 import { formatMarkdownForDiscord } from "../../utils/discord-format.js";
+import { splitMessageByLength } from "../../utils/message-split.js";
 
 //#region DiscordAdapter
 
@@ -42,7 +43,7 @@ export class DiscordAdapter implements IPlatformAdapter {
       }
 
       const markdownText: string = formatMarkdownForDiscord(message.text);
-      const chunks: string[] = this._splitMessage(markdownText, 2000);
+      const chunks: string[] = splitMessageByLength(markdownText, 2000);
       let lastMessageId: string | null = null;
 
       for (const chunk of chunks) {
@@ -98,36 +99,6 @@ export class DiscordAdapter implements IPlatformAdapter {
 
   //#endregion Public Methods
 
-  //#region Private Methods
-
-  private _splitMessage(text: string, maxLength: number): string[] {
-    if (text.length <= maxLength) {
-      return [text];
-    }
-
-    const chunks: string[] = [];
-    let remaining = text;
-
-    while (remaining.length > 0) {
-      let splitIndex = maxLength;
-
-      const lastNewline = remaining.lastIndexOf("\n", maxLength);
-      const lastSpace = remaining.lastIndexOf(" ", maxLength);
-
-      if (lastNewline > maxLength * 0.5) {
-        splitIndex = lastNewline + 1;
-      } else if (lastSpace > maxLength * 0.5) {
-        splitIndex = lastSpace + 1;
-      }
-
-      chunks.push(remaining.substring(0, splitIndex));
-      remaining = remaining.substring(splitIndex);
-    }
-
-    return chunks;
-  }
-
-  //#endregion Private Methods
 }
 
 //#endregion DiscordAdapter

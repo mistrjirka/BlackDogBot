@@ -10,6 +10,7 @@ import { clearDependencyCache, checkBinaryAsync } from "./dependency-checker.js"
 const execAsync = promisify(exec);
 
 type AllowedInstallKind = "brew" | "node" | "go" | "uv" | "pacman" | "apt" | "download";
+export type SkillInstallKind = AllowedInstallKind;
 
 interface IInstallStepResult {
   success: boolean;

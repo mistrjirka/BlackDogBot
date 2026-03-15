@@ -17,6 +17,7 @@ import { RateLimiterService } from "./rate-limiter.service.js";
 import { ModelInfoService } from "./model-info.service.js";
 import { countRequestBodyTokens, IRequestTokenBreakdown } from "../utils/request-token-counter.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { createHash } from "node:crypto";
 
 function normalizeBaseUrl(url: string): string {
   const trimmed: string = url.trim();
@@ -609,7 +610,11 @@ export class AiProviderService {
         provider: providerName,
         url: typeof url === 'string' ? url : url.toString(),
         method: init?.method ?? 'GET',
-        requestSizeBytes: init?.body && typeof init.body === "string" ? init.body.length : 0,
+        requestSizeBytes: init?.body && typeof init.body === "string" ? Buffer.byteLength(init.body, "utf8") : 0,
+        requestBodyHash:
+          init?.body && typeof init.body === "string"
+            ? createHash("sha256").update(init.body).digest("hex").slice(0, 16)
+            : null,
       });
 
       if (init?.body && typeof init.body === "string" && init.method === "POST") {
@@ -629,7 +634,7 @@ export class AiProviderService {
           contextWindow: this._contextWindow,
           hardLimit,
           utilization: `${utilization.toFixed(1)}%`,
-          requestSizeBytes: init.body.length,
+          requestSizeBytes: Buffer.byteLength(init.body, "utf8"),
           requestSizeEstimate: `(~${Math.ceil(init.body.length / 4)} tokens est.)`,
         });
 
