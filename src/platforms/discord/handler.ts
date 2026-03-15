@@ -1,4 +1,4 @@
-import type { Client, Message } from "discord.js";
+import { ApplicationCommandType, type ChatInputCommandInteraction, type Client, type Message, type TextBasedChannel } from "discord.js";
 
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
@@ -35,6 +35,7 @@ export class DiscordHandler {
   private _mainAgent: MainAgent;
   private _channelRegistry: ChannelRegistryService;
   private _processing: Set<string>;
+  private _inFlightMessageIdByChannel: Map<string, string>;
 
   //#endregion Data Members
 
@@ -46,6 +47,7 @@ export class DiscordHandler {
     this._mainAgent = MainAgent.getInstance();
     this._channelRegistry = ChannelRegistryService.getInstance();
     this._processing = new Set<string>();
+    this._inFlightMessageIdByChannel = new Map<string, string>();
   }
 
   //#endregion Constructor
@@ -77,6 +79,18 @@ export class DiscordHandler {
     // Set up message handler
     client.on("messageCreate", async (message: Message) => {
       await this._handleMessageAsync(message);
+    });
+
+    client.on("interactionCreate", async (interaction) => {
+      if (!interaction.isChatInputCommand()) {
+        return;
+      }
+
+      if (interaction.commandType !== ApplicationCommandType.ChatInput || interaction.commandName !== "cancel") {
+        return;
+      }
+
+      await this._handleCancelSlashCommandAsync(interaction);
     });
 
     this._logger.info("DiscordHandler initialized");
@@ -111,6 +125,11 @@ export class DiscordHandler {
       return;
     }
 
+    if (_isCancelCommand(message.content)) {
+      await this._handleCancelForChannelAsync(channelId, message);
+      return;
+    }
+
     // Prevent concurrent processing
     if (this._processing.has(channelId)) {
       this._logger.debug("Already processing, skipping", { channelId });
@@ -118,6 +137,7 @@ export class DiscordHandler {
     }
 
     this._processing.add(channelId);
+    this._inFlightMessageIdByChannel.set(channelId, message.id);
 
     try {
       // Show typing indicator
@@ -203,6 +223,87 @@ export class DiscordHandler {
       }
     } finally {
       this._processing.delete(channelId);
+      this._inFlightMessageIdByChannel.delete(channelId);
+    }
+  }
+
+  private async _handleCancelSlashCommandAsync(interaction: ChatInputCommandInteraction): Promise<void> {
+    const channelId: string = interaction.channelId;
+    const channel = this._channelRegistry.getChannel("discord", channelId);
+
+    if (!channel || channel.permission === "ignore") {
+      await interaction.reply({
+        content: "This channel is not registered for BetterClaw.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const responseText: string = await this._cancelChannelWorkAsync(channelId, interaction.channel as TextBasedChannel | null);
+    await interaction.reply({
+      content: responseText,
+      ephemeral: true,
+    });
+  }
+
+  private async _handleCancelForChannelAsync(
+    channelId: string,
+    message: Message,
+  ): Promise<void> {
+    const responseText: string = await this._cancelChannelWorkAsync(channelId, message.channel);
+
+    await message.reply(responseText);
+  }
+
+  private async _cancelChannelWorkAsync(channelId: string, channel: TextBasedChannel | null): Promise<string> {
+    const stopped: boolean = this._mainAgent.stopChat(channelId);
+    let deletedInFlightPrompt: boolean = false;
+
+    const inFlightMessageId: string | undefined = this._inFlightMessageIdByChannel.get(channelId);
+    if (inFlightMessageId !== undefined) {
+      deletedInFlightPrompt = await this._tryDeleteDiscordMessageAsync(channelId, inFlightMessageId, channel);
+      this._inFlightMessageIdByChannel.delete(channelId);
+    }
+
+    if (!stopped && !deletedInFlightPrompt) {
+      return "Nothing to cancel.";
+    }
+
+    const details: string[] = [];
+    if (stopped) {
+      details.push("stopped current generation");
+    }
+    if (deletedInFlightPrompt) {
+      details.push("deleted in-flight prompt message");
+    }
+
+    return `Cancelled: ${details.join(", ")}.`;
+  }
+
+  private async _tryDeleteDiscordMessageAsync(
+    channelId: string,
+    messageId: string,
+    channel: TextBasedChannel | null,
+  ): Promise<boolean> {
+    if (!channel || !("messages" in channel)) {
+      return false;
+    }
+
+    try {
+      const toDelete = await channel.messages.fetch(messageId).catch(() => null);
+      if (!toDelete) {
+        return false;
+      }
+
+      await toDelete.delete();
+      return true;
+    } catch (error: unknown) {
+      this._logger.warn("Failed to delete Discord message during /cancel", {
+        channelId,
+        messageId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
     }
   }
 
@@ -234,6 +335,10 @@ export class DiscordHandler {
   }
 
   //#endregion Private Methods
+}
+
+function _isCancelCommand(text: string): boolean {
+  return text.trim().toLowerCase() === "/cancel";
 }
 
 //#endregion DiscordHandler

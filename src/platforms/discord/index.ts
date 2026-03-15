@@ -45,6 +45,15 @@ export const discordPlatform: IPlatform<IDiscordConfig> = {
       client.login(config.botToken);
     });
 
+    await client.application?.commands.create({
+      name: "cancel",
+      description: "Stop current generation and delete the active prompt.",
+    }).catch((error: unknown) => {
+      deps.logger.warn("Failed to register Discord /cancel command", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
     // Initialize handler after client is ready
     await handler.initializeAsync(client, config, deps);
 

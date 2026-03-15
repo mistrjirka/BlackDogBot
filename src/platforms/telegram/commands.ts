@@ -4,6 +4,7 @@ import { LoggerService } from "../../services/logger.service.js";
 import { PromptService } from "../../services/prompt.service.js";
 import { MainAgent } from "../../agent/main-agent.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
+import { TelegramHandler } from "./handler.js";
 import { factoryResetAsync, type IFactoryResetResult } from "../../services/factory-reset.service.js";
 import { extractErrorMessage } from "../../utils/error.js";
 
@@ -18,6 +19,7 @@ export function setupTelegramCommands(bot: Bot): void {
   const channelRegistry = ChannelRegistryService.getInstance();
   const promptService = PromptService.getInstance();
   const mainAgent = MainAgent.getInstance();
+  const telegramHandler = TelegramHandler.getInstance();
 
   // /start command
   bot.command("start", async (ctx: Context): Promise<void> => {
@@ -33,6 +35,7 @@ export function setupTelegramCommands(bot: Bot): void {
       "/clear — Clear conversation history for this chat",
       "/reset [name|all] — Reset prompt(s) to factory defaults",
       "/factory_reset — Full nuclear reset: delete all jobs, knowledge, tasks, skills, prompts, workspace, logs, and chat history",
+      "/cancel — Stop current generation and delete the active prompt",
       "/notifications_enable — Enable cron notifications for this chat",
       "/notifications_disable — Disable cron notifications for this chat",
       "/status — Show current chat status",
@@ -48,6 +51,11 @@ export function setupTelegramCommands(bot: Bot): void {
     mainAgent.clearChatHistory(chatId);
     await ctx.reply("Conversation history cleared.");
     logger.info("Chat history cleared via /clear command.", { chatId });
+  });
+
+  // /cancel command
+  bot.command("cancel", async (ctx: Context): Promise<void> => {
+    await telegramHandler.handleCancelCommandAsync(ctx);
   });
 
   // /reset command

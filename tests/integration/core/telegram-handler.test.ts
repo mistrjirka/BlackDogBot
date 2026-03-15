@@ -24,6 +24,7 @@ import { TelegramHandler } from "../../../src/platforms/telegram/handler.js";
 import type { ITelegramConfig } from "../../../src/platforms/telegram/types.js";
 import type { IPlatformDeps } from "../../../src/platforms/types.js";
 import type { Context } from "grammy";
+import * as toolRegistry from "../../../src/helpers/tool-registry.js";
 
 
 let tempDir: string;
@@ -42,10 +43,7 @@ function createMockDeps(): IPlatformDeps {
     mainAgent: MainAgent.getInstance(),
     messagingService: MessagingService.getInstance(),
     channelRegistry: ChannelRegistryService.getInstance(),
-    toolRegistry: {
-      isToolAllowed: () => true,
-      getAllowedToolNames: () => [],
-    } as unknown,
+    toolRegistry,
     logger: LoggerService.getInstance(),
   };
 }
@@ -316,6 +314,73 @@ describe("TelegramHandler", () => {
     expect(replySpy).toHaveBeenCalledWith(
       expect.stringContaining("agent boom"),
     );
+  }, 120000);
+
+  it("should cancel in-flight run, delete prompt, and drop latest queued message on /cancel", async () => {
+    const mainAgent: MainAgent = MainAgent.getInstance();
+
+    let resolveBlock: () => void;
+    const blockPromise: Promise<void> = new Promise<void>((resolve) => {
+      resolveBlock = resolve;
+    });
+
+    let processCallCount: number = 0;
+
+    vi.spyOn(mainAgent, "processMessageForChatAsync").mockImplementation(async (_chatId, text) => {
+      processCallCount++;
+      if (processCallCount === 1) {
+        await blockPromise;
+        return { text: "Operation was stopped.", stepsCount: 0 };
+      }
+      return { text, stepsCount: 1 };
+    });
+
+    const stopSpy = vi.spyOn(mainAgent, "stopChat").mockReturnValue(true);
+    const deleteSpy: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined);
+
+    const firstCtx: Context = makeCtx({
+      chatId: 100,
+      messageId: 101,
+      text: "prompt1",
+      replyImpl: async (): Promise<{ message_id: number }> => ({ message_id: 5001 }),
+    });
+    (firstCtx as unknown as { api?: unknown }).api = { deleteMessage: deleteSpy, editMessageText: vi.fn().mockResolvedValue(undefined) };
+
+    const queuedCtx: Context = makeCtx({
+      chatId: 100,
+      messageId: 102,
+      text: "queued2",
+      replyImpl: async (): Promise<{ message_id: number }> => ({ message_id: 5002 }),
+    });
+    (queuedCtx as unknown as { api?: unknown }).api = { deleteMessage: deleteSpy, editMessageText: vi.fn().mockResolvedValue(undefined) };
+
+    const cancelReplies: string[] = [];
+    const cancelCtx: Context = makeCtx({
+      chatId: 100,
+      messageId: 103,
+      text: "/cancel",
+      replyImpl: async (text: string): Promise<{ message_id: number }> => {
+        cancelReplies.push(text);
+        return { message_id: 5003 };
+      },
+    });
+    (cancelCtx as unknown as { api?: unknown }).api = { deleteMessage: deleteSpy, editMessageText: vi.fn().mockResolvedValue(undefined) };
+
+    const handler: TelegramHandler = TelegramHandler.getInstance();
+
+    const firstCall: Promise<void> = handler.handleMessageAsync(firstCtx);
+    await vi.waitUntil(() => processCallCount === 1, { timeout: 30000 });
+
+    await handler.handleMessageAsync(queuedCtx);
+    await handler.handleMessageAsync(cancelCtx);
+
+    resolveBlock!();
+    await firstCall;
+
+    expect(stopSpy).toHaveBeenCalledWith("100");
+    expect(deleteSpy).toHaveBeenCalledWith("100", 101);
+    expect(deleteSpy).toHaveBeenCalledWith("100", 102);
+    expect(cancelReplies.some((reply: string): boolean => reply.toLowerCase().includes("cancelled"))).toBe(true);
   }, 120000);
 
   it("should include provider details in error reply when an APICallError is thrown", async () => {
