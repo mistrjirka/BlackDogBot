@@ -102,19 +102,27 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Drop (permanently delete) a table from a database. Use just the database name, not a file path. " +
     "Args: databaseName (string, required); tableName (string, required).",
 
-  query_database:
-    "Run queries or modify a SQLite database using an action-based interface. " +
-    "IMPORTANT: The database must already exist. Never use sqlite3 via run_cmd — always use these database tools instead. " +
-    "Use just the database name (e.g. 'mydb'), never a file path. " +
-    "Actions: " +
-    "  - list_databases: list all databases " +
-    "  - list_tables: list tables in a database " +
-    "  - query_table: SELECT rows (requires where, tableName, databaseName) " +
-    "  - show_schema: get table schema " +
-    "  - insert: INSERT a row (requires data: {col: value, ...}) " +
-    "  - update: UPDATE rows (requires set: {col: value, ...}, where is REQUIRED for safety) " +
-    "  - delete: DELETE rows (where is REQUIRED for safety) " +
-    "Args: action (required); databaseName; tableName; where; limit; orderBy; columns; data; set.",
+  read_from_database:
+    "Read rows from a database table with optional filtering, ordering, and column selection. " +
+    "Use just the database name, not a file path. " +
+    "Args: databaseName (string, required); tableName (string, required); " +
+    "where (string, optional SQL WHERE); orderBy (string, optional); limit (number, optional, default 100); columns (string[], optional).",
+
+  write_to_database:
+    "Insert rows into a database table. Use just the database name, not a file path. " +
+    "Args: databaseName (string, required); tableName (string, required); " +
+    "data (array of row objects, required, e.g. [{title: 'Hello', score: 5}]).",
+
+  update_database:
+    "Update rows in a database table. Requires a WHERE clause for safety. " +
+    "Use just the database name, not a file path. " +
+    "Args: databaseName (string, required); tableName (string, required); " +
+    "set (object of column-value pairs, required); where (string, required).",
+
+  delete_from_database:
+    "Delete rows from a database table. Requires a WHERE clause for safety. " +
+    "Use just the database name, not a file path. " +
+    "Args: databaseName (string, required); tableName (string, required); where (string, required).",
 
   call_skill:
     "Invoke a named skill agent with the given input and return its output. " +

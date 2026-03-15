@@ -27,7 +27,10 @@ async function execAddCronTool(args: {
   description: string;
   instructions: string;
   tools: string[];
-  schedule: { type: "once" | "interval" | "cron"; runAt?: string; intervalMs?: number; expression?: string };
+  scheduleType: "once" | "interval" | "cron";
+  scheduleRunAt?: string;
+  scheduleIntervalMs?: number;
+  scheduleCron?: string;
   notifyUser: boolean;
 }): Promise<IAddCronResult> {
   return await (addCronTool as any).execute(
@@ -90,7 +93,8 @@ describe("addCronTool", () => {
       description: "test",
       instructions: "Use the think tool to think about the number 42, then finish.",
       tools: ["think"],
-      schedule: { type: "interval", intervalMs: 60000 },
+      scheduleType: "interval",
+      scheduleIntervalMs: 60000,
       notifyUser: false,
     });
 
@@ -111,22 +115,21 @@ describe("addCronTool", () => {
     expect(task.schedule.type).toBe("interval");
   });
 
-  it("should reject invalid tool names at schema level", () => {
-    const parseResult = addCronToolInputSchema.safeParse({
+  it("should reject invalid tool names at runtime", async () => {
+    const result = await execAddCronTool({
       name: "Bad Task",
       description: "",
       instructions: "Search the web for news.",
       tools: ["websearch", "fake_tool"],
-      schedule: { type: "cron", expression: "0 * * * *" },
+      scheduleType: "cron",
+      scheduleCron: "0 * * * *",
       notifyUser: false,
     });
 
-    expect(parseResult.success).toBe(false);
-
-    if (!parseResult.success) {
-      const errorMessages: string = parseResult.error.issues.map((i) => i.message).join(" ");
-      expect(errorMessages).toContain("Invalid enum value");
-    }
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Invalid tool name(s)");
+    expect(result.error).toContain("websearch");
+    expect(result.error).toContain("fake_tool");
   });
 
   it("should accept all valid tool names", async () => {
@@ -137,10 +140,11 @@ describe("addCronTool", () => {
         "1. Use think to plan the execution order. " +
         "2. Use searxng to search the web for 'artificial intelligence 2026'. Take the top 3 result titles and URLs from the search output. " +
         "3. Use fetch_rss to fetch the Hacker News RSS feed at https://news.ycombinator.com/rss. Take the top 3 item titles and URLs from the feed. " +
-        "4. Use query_database to insert each article into the 'news' database with databaseName='news' and tableName='articles' (columns: id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL, source TEXT NOT NULL, fetched_at TEXT NOT NULL). Use source='searxng' for searxng results and source='rss' for RSS items. Set fetched_at to the current ISO timestamp. " +
+        "4. Use write_to_database to insert each article into the 'news' database with databaseName='news' and tableName='articles' (columns: id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL, source TEXT NOT NULL, fetched_at TEXT NOT NULL). Use source='searxng' for searxng results and source='rss' for RSS items. Set fetched_at to the current ISO timestamp. " +
         "5. Use send_message to send the user a numbered list of all stored article titles.",
-      tools: ["think", "searxng", "fetch_rss", "query_database", "send_message"],
-      schedule: { type: "cron", expression: "0 * * * *" },
+      tools: ["think", "searxng", "fetch_rss", "write_to_database", "send_message"],
+      scheduleType: "cron",
+      scheduleCron: "0 * * * *",
       notifyUser: false,
     });
 
@@ -156,7 +160,8 @@ describe("addCronTool", () => {
       description: "",
       instructions: "Do what we discussed earlier",
       tools: ["think"],
-      schedule: { type: "interval", intervalMs: 60000 },
+      scheduleType: "interval",
+      scheduleIntervalMs: 60000,
       notifyUser: false,
     });
 
@@ -169,7 +174,8 @@ describe("addCronTool", () => {
       name: "x",
       instructions: "y",
       tools: ["think"],
-      schedule: { type: "cron", expression: "* * * * *" },
+      scheduleType: "cron",
+      scheduleCron: "* * * * *",
     });
 
     expect(parseResult.success).toBe(false);
@@ -182,7 +188,8 @@ describe("addCronTool", () => {
       description: "",
       instructions: "Think about the word hello.",
       tools: ["think"],
-      schedule: { type: "interval", intervalMs: 60000 },
+      scheduleType: "interval",
+      scheduleIntervalMs: 60000,
       notifyUser: true,
     });
 

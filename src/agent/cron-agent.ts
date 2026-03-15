@@ -36,7 +36,10 @@ import {
   createDatabaseTool,
   createTableTool,
   dropTableTool,
-  queryDatabaseTool,
+  readFromDatabaseTool,
+  writeToDatabaseTool,
+  updateDatabaseTool,
+  deleteFromDatabaseTool,
   FileReadTracker,
   JobActivityTracker,
 } from "../tools/index.js";
@@ -197,7 +200,10 @@ export class CronAgent extends BaseAgentBase {
       create_database: createDatabaseTool,
       create_table: createTableTool,
       drop_table: dropTableTool,
-      query_database: queryDatabaseTool,
+      read_from_database: readFromDatabaseTool,
+      write_to_database: writeToDatabaseTool,
+      update_database: updateDatabaseTool,
+      delete_from_database: deleteFromDatabaseTool,
     };
 
     // Only include skill tools if skills are loaded

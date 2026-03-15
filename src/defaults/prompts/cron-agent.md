@@ -48,7 +48,7 @@ You do NOT need to specify a destination — just call send_message and the syst
 - Database files live in `~/.betterclaw/databases/<name>.db` — use just the name, never the full path.
 - Use `create_database` to create a new database (e.g. databaseName: "mydb", NOT "mydb.db").
 - Use `create_table` to create tables with proper schemas.
-- Use `query_database` for all queries — NEVER use sqlite3 via run_cmd.
+- Use `read_from_database` to query rows, `write_to_database` to insert, `update_database` to update, and `delete_from_database` to delete — NEVER use sqlite3 via run_cmd.
 - The database must exist before you query it — the main agent should have created it before scheduling this task.
 </database_usage>
 

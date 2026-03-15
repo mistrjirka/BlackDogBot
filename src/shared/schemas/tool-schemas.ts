@@ -429,7 +429,7 @@ export const renderGraphToolOutputSchema = z.object({
 
 //#region Cron Tools
 
-const CRON_VALID_TOOL_NAMES = [
+export const CRON_VALID_TOOL_NAMES = [
   "think",
   "run_cmd",
   "search_knowledge",
@@ -454,6 +454,10 @@ const CRON_VALID_TOOL_NAMES = [
   "create_table",
   "drop_table",
   "query_database",
+  "read_from_database",
+  "write_to_database",
+  "update_database",
+  "delete_from_database",
   "call_skill",
   "get_skill_file",
 ] as const;
@@ -468,20 +472,22 @@ export const addCronToolInputSchema = z.object({
   instructions: z.string()
     .min(1)
     .describe("Detailed task instructions for the agent"),
-  tools: z.enum(CRON_VALID_TOOL_NAMES)
+  tools: z.string()
+    .min(1)
     .array()
     .min(1)
-    .describe("Tools available to the task agent"),
-  schedule: z.object({
-    type: z.enum(["once", "interval", "cron"]),
-    runAt: z.string()
-      .optional(),
-    intervalMs: z.number()
-      .optional(),
-    expression: z.string()
-      .optional(),
-  })
-    .describe("Schedule configuration"),
+    .describe("Tool names available to the task agent"),
+  scheduleType: z.enum(["once", "interval", "cron"])
+    .describe("Schedule type: once, interval, or cron"),
+  scheduleRunAt: z.string()
+    .optional()
+    .describe("ISO 8601 datetime for 'once' schedule (e.g. '2025-06-01T10:00:00Z')"),
+  scheduleIntervalMs: z.number()
+    .optional()
+    .describe("Interval in milliseconds for 'interval' schedule"),
+  scheduleCron: z.string()
+    .optional()
+    .describe("Cron expression for 'cron' schedule (e.g. '0 */6 * * *')"),
   notifyUser: z.boolean()
     .describe("Whether to send a Telegram notification when this task completes. Set true for tasks whose results are important to the user, false for silent background tasks."),
 });
@@ -532,22 +538,24 @@ export const editCronToolInputSchema = z.object({
     .min(1)
     .optional()
     .describe("Updated instructions for the agent. If changed, the instructions will be re-verified."),
-  tools: z.enum(CRON_VALID_TOOL_NAMES)
+  tools: z.string()
+    .min(1)
     .array()
     .min(1)
     .optional()
-    .describe("Updated list of available tools"),
-  schedule: z.object({
-    type: z.enum(["once", "interval", "cron"]),
-    runAt: z.string()
-      .optional(),
-    intervalMs: z.number()
-      .optional(),
-    expression: z.string()
-      .optional(),
-  })
+    .describe("Updated list of available tool names"),
+  scheduleType: z.enum(["once", "interval", "cron"])
     .optional()
-    .describe("Updated schedule configuration"),
+    .describe("Updated schedule type: once, interval, or cron"),
+  scheduleRunAt: z.string()
+    .optional()
+    .describe("ISO 8601 datetime for 'once' schedule"),
+  scheduleIntervalMs: z.number()
+    .optional()
+    .describe("Interval in milliseconds for 'interval' schedule"),
+  scheduleCron: z.string()
+    .optional()
+    .describe("Cron expression for 'cron' schedule"),
   notifyUser: z.boolean()
     .optional()
     .describe("Whether to send a Telegram notification"),
@@ -1000,7 +1008,7 @@ export const finishJobCreationToolOutputSchema = z.object({
 
 //#endregion Phase 2 Job Creation Tools
 
-const editablePromptNames = [
+export const EDITABLE_PROMPT_NAMES: readonly string[] = [
   "main-agent",
   "cron-agent",
   "job-agent",
@@ -1017,8 +1025,9 @@ const editablePromptNames = [
 ] as const;
 
 export const modifyPromptToolInputSchema = z.object({
-  promptName: z.enum(editablePromptNames)
-    .describe("Prompt file name without .md extension"),
+  promptName: z.string()
+    .min(1)
+    .describe("Prompt name without .md extension. Use list_prompts to see available names."),
   action: z.enum(["read", "write", "append"])
     .describe("Action to perform"),
   content: z.string()

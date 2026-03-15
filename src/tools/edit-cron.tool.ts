@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { editCronToolInputSchema, TOOL_PREREQUISITES } from "../shared/schemas/tool-schemas.js";
+import { editCronToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { CRON_TOOL_DESCRIPTIONS } from "../shared/constants/cron-descriptions.js";
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
 import { SchedulerService } from "../services/scheduler.service.js";
@@ -42,7 +42,10 @@ const executeEditCron = async (
     description?: string;
     instructions?: string;
     tools?: string[];
-    schedule?: { type: "once" | "interval" | "cron"; runAt?: string; intervalMs?: number; expression?: string };
+    scheduleType?: "once" | "interval" | "cron";
+    scheduleRunAt?: string;
+    scheduleIntervalMs?: number;
+    scheduleCron?: string;
     notifyUser?: boolean;
     enabled?: boolean;
   },
@@ -52,6 +55,20 @@ const executeEditCron = async (
   const scheduler: SchedulerService = SchedulerService.getInstance();
 
   try {
+    // 0. Validate tool names at runtime (if provided)
+    if (patch.tools !== undefined) {
+      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
+      const invalidTools: string[] = patch.tools.filter(
+        (t) => !validToolSet.has(t),
+      );
+      if (invalidTools.length > 0) {
+        return {
+          success: false,
+          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}`,
+        };
+      }
+    }
+
     const existingTask = await scheduler.getTaskAsync(taskId);
     if (!existingTask) {
       return { success: false, error: `Cron task with ID '${taskId}' not found.` };
@@ -137,8 +154,19 @@ Output a JSON object with:
       }
     }
 
-    // 2. Update the task
-    const updatedTask = await scheduler.updateTaskAsync(taskId, patch as any);
+    // 2. Build update payload — reconstruct schedule object from flat params
+    const { scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron, ...restPatch } = patch;
+    const updatePayload: Record<string, unknown> = { ...restPatch };
+
+    if (scheduleType !== undefined) {
+      const schedule: Record<string, unknown> = { type: scheduleType };
+      if (scheduleRunAt !== undefined) schedule.runAt = scheduleRunAt;
+      if (scheduleIntervalMs !== undefined) schedule.intervalMs = scheduleIntervalMs;
+      if (scheduleCron !== undefined) schedule.expression = scheduleCron;
+      updatePayload.schedule = schedule;
+    }
+
+    const updatedTask = await scheduler.updateTaskAsync(taskId, updatePayload as any);
 
     return {
       success: true,

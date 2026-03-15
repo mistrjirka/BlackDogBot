@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { addCronToolInputSchema } from "../shared/schemas/tool-schemas.js";
+import { addCronToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { CRON_TOOL_DESCRIPTIONS } from "../shared/constants/cron-descriptions.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -31,22 +31,27 @@ const TOOL_DESCRIPTION: string =
 
 //#region Private methods
 
-function _buildSchedule(input: { type: "once" | "interval" | "cron"; runAt?: string; intervalMs?: number; expression?: string }): Schedule {
-  switch (input.type) {
+function _buildSchedule(input: {
+  scheduleType: "once" | "interval" | "cron";
+  scheduleRunAt?: string;
+  scheduleIntervalMs?: number;
+  scheduleCron?: string;
+}): Schedule {
+  switch (input.scheduleType) {
     case "once":
       return {
         type: "once",
-        runAt: input.runAt!,
+        runAt: input.scheduleRunAt!,
       };
     case "interval":
       return {
         type: "interval",
-        intervalMs: input.intervalMs!,
+        intervalMs: input.scheduleIntervalMs!,
       };
     case "cron":
       return {
         type: "cron",
-        expression: input.expression!,
+        expression: input.scheduleCron!,
       };
   }
 }
@@ -63,19 +68,38 @@ export const addCronTool = tool({
     description,
     instructions,
     tools,
-    schedule,
+    scheduleType,
+    scheduleRunAt,
+    scheduleIntervalMs,
+    scheduleCron,
     notifyUser,
   }: {
     name: string;
     description: string;
     instructions: string;
     tools: string[];
-    schedule: { type: "once" | "interval" | "cron"; runAt?: string; intervalMs?: number; expression?: string };
+    scheduleType: "once" | "interval" | "cron";
+    scheduleRunAt?: string;
+    scheduleIntervalMs?: number;
+    scheduleCron?: string;
     notifyUser: boolean;
   }): Promise<IAddCronResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
+      // 0. Validate tool names at runtime
+      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
+      const invalidTools: string[] = tools.filter(
+        (t) => !validToolSet.has(t),
+      );
+      if (invalidTools.length > 0) {
+        return {
+          taskId: "",
+          success: false,
+          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}`,
+        };
+      }
+
       // 1. Verify instructions using LLM
       logger.debug(`[${TOOL_NAME}] Verifying cron instructions for: ${name}`);
 
@@ -159,7 +183,7 @@ Output a JSON object with:
       // 2. Schedule the task
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
-      const builtSchedule: Schedule = _buildSchedule(schedule);
+      const builtSchedule: Schedule = _buildSchedule({ scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron });
 
       const task: IScheduledTask = {
         taskId,

@@ -81,6 +81,6 @@ describe("add_python_code_node (unit)", () => {
     expect(result.message).toMatch(/sqlite/i);
     expect(result.message).toMatch(/create_table/i);
     expect(result.message).toMatch(/write_to_database/i);
-    expect(result.message).toMatch(/query_database/i);
+    expect(result.message).toMatch(/read_from_database/i);
   });
 });

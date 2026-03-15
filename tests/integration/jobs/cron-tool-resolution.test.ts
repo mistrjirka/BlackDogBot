@@ -143,7 +143,7 @@ describe("CronAgent tool resolution", () => {
 
   it("should work with all valid tool names without warnings", async () => {
     const task: IScheduledTask = createTask({
-      tools: ["think", "run_cmd", "searxng", "crawl4ai", "fetch_rss", "query_database", "send_message"],
+      tools: ["think", "run_cmd", "searxng", "crawl4ai", "fetch_rss", "read_from_database", "send_message"],
     });
 
     const mockSender: MessageSender = async (): Promise<string | null> => {
