@@ -531,9 +531,13 @@ export class MainAgent extends BaseAgentBase {
           };
         } catch (genError: unknown) {
           // Handle context size exceeded errors (from hard gate or real API errors)
+          // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
           if (
             APICallError.isInstance(genError) &&
-            (genError as APICallError).statusCode === 400 &&
+            ((genError as APICallError).statusCode === 400 ||
+             (genError as APICallError).statusCode === 500 ||
+             (genError as APICallError).statusCode === 413 ||
+             (genError as APICallError).statusCode === 422) &&
             contextRetries < CONTEXT_EXCEEDED_RETRIES
           ) {
             const apiError = genError as APICallError;
@@ -545,13 +549,16 @@ export class MainAgent extends BaseAgentBase {
             if (
               errorMessage.includes("context") ||
               errorMessage.includes("token limit") ||
-              errorMessage.includes("exceeded")
+              errorMessage.includes("exceeded") ||
+              errorMessage.includes("too long") ||
+              errorMessage.includes("length")
             ) {
               contextRetries++;
               this._logger.warn("Context size exceeded, forcing compaction on next step", {
                 chatId,
                 contextRetry: contextRetries,
                 maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
+                statusCode: apiError.statusCode,
               });
               this._forceCompactionOnNextStep = true;
               attempt--; // Don't count this against the empty-response retry limit

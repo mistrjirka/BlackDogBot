@@ -14,7 +14,7 @@ import { VectorStoreService } from "../../../src/services/vector-store.service.j
 import * as knowledge from "../../../src/helpers/knowledge.js";
 import { CronAgent } from "../../../src/agent/cron-agent.js";
 import type { IAgentResult } from "../../../src/agent/base-agent.js";
-import type { IScheduledTask } from "../../../src/shared/types/index.js";
+import type { IScheduledTask, IExecutionContext } from "../../../src/shared/types/index.js";
 import type { MessageSender } from "../../../src/tools/index.js";
 
 
@@ -27,6 +27,10 @@ const mockMessageSender: MessageSender = async (message: string): Promise<string
   sentMessages.push(message);
   return "mock-message-id";
 };
+
+function createExecutionContext(): IExecutionContext {
+  return { toolCallHistory: [] };
+}
 
 
 //#region Tests
@@ -112,9 +116,20 @@ describe("CronAgent E2E", () => {
       lastRunError: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      messageHistory: [],
+      messageSummary: null,
+      summaryGeneratedAt: null,
     };
 
-    const result: IAgentResult = await cronAgent.executeTaskAsync(task, mockMessageSender);
+    const executionContext: IExecutionContext = createExecutionContext();
+    const taskIdProvider = (): string | null => task.taskId;
+
+    const result: IAgentResult = await cronAgent.executeTaskAsync(
+      task,
+      mockMessageSender,
+      taskIdProvider,
+      executionContext,
+    );
 
     expect(result).toBeDefined();
     expect(typeof result.text).toBe("string");
@@ -140,9 +155,20 @@ describe("CronAgent E2E", () => {
       lastRunError: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      messageHistory: [],
+      messageSummary: null,
+      summaryGeneratedAt: null,
     };
 
-    const result: IAgentResult = await cronAgent.executeTaskAsync(task, mockMessageSender);
+    const executionContext: IExecutionContext = createExecutionContext();
+    const taskIdProvider = (): string | null => task.taskId;
+
+    const result: IAgentResult = await cronAgent.executeTaskAsync(
+      task,
+      mockMessageSender,
+      taskIdProvider,
+      executionContext,
+    );
 
     expect(result).toBeDefined();
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);

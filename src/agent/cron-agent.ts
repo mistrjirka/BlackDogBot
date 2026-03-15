@@ -11,6 +11,7 @@ import { ConfigService } from "../services/config.service.js";
 import { getCurrentDateTime } from "../utils/time.js";
 import {
   thinkTool,
+  thinkTracker,
   runCmdTool,
   searxngTool,
   crawl4aiTool,
@@ -93,6 +94,9 @@ export class CronAgent extends BaseAgentBase {
     executionContext: IExecutionContext,
     traceCollector?: ITraceCollector,
   ): Promise<IAgentResult> {
+    // Reset think operation tracker at the start of each task
+    thinkTracker.reset();
+    
     const basePrompt: string = await PromptService.getInstance().getPromptAsync(
       PROMPT_CRON_AGENT,
     );
@@ -115,6 +119,20 @@ export class CronAgent extends BaseAgentBase {
       stepNumber: number,
       toolCalls: IToolCallSummary[],
     ): Promise<void> => {
+      // Log token usage at each step to track accumulation during long-running tasks
+      if (this._totalInputTokens > 0) {
+        const hardLimit = Math.floor(this._contextWindow * 0.85);
+        const utilization = (this._totalInputTokens / this._contextWindow) * 100;
+        
+        this._logger.info(`Step ${stepNumber}: Token usage tracking`, {
+          totalInputTokens: this._totalInputTokens,
+          contextWindow: this._contextWindow,
+          utilization: `${utilization.toFixed(1)}%`,
+          hardLimit: hardLimit,
+          remainingTokens: Math.max(0, hardLimit - this._totalInputTokens),
+        });
+      }
+
       for (const tc of toolCalls) {
         const argsStr = JSON.stringify(tc.input).slice(0, 500);
         const resultStr = tc.result !== undefined 

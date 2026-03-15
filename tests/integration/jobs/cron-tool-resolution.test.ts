@@ -10,7 +10,7 @@ import { LoggerService } from "../../../src/services/logger.service.js";
 import { SchedulerService } from "../../../src/services/scheduler.service.js";
 import { PromptService } from "../../../src/services/prompt.service.js";
 import { CronAgent } from "../../../src/agent/cron-agent.js";
-import type { IScheduledTask } from "../../../src/shared/types/index.js";
+import type { IScheduledTask, IExecutionContext } from "../../../src/shared/types/index.js";
 import type { MessageSender } from "../../../src/tools/index.js";
 
 let tempDir: string;
@@ -34,12 +34,20 @@ function createTask(overrides?: Partial<IScheduledTask>): IScheduledTask {
     createdAt: now,
     updatedAt: now,
     notifyUser: false,
+    messageHistory: [],
+    messageSummary: null,
+    summaryGeneratedAt: null,
     ...overrides,
   };
 }
 
+function createExecutionContext(): IExecutionContext {
+  return { toolCallHistory: [] };
+}
+
 describe("CronAgent tool resolution", () => {
   let logger: LoggerService;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-cron-tool-res-"));
@@ -51,8 +59,8 @@ describe("CronAgent tool resolution", () => {
     logger = LoggerService.getInstance();
     vi.spyOn(logger, "debug").mockReturnValue(undefined);
     vi.spyOn(logger, "info").mockReturnValue(undefined);
-    vi.spyOn(logger, "warn").mockReturnValue(undefined);
     vi.spyOn(logger, "error").mockReturnValue(undefined);
+    warnSpy = vi.spyOn(LoggerService.prototype, "warn").mockReturnValue(undefined);
 
     const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
     const tempConfigDir: string = path.join(tempDir, ".betterclaw");
@@ -99,11 +107,16 @@ describe("CronAgent tool resolution", () => {
 
     const agent: CronAgent = CronAgent.getInstance();
 
-    await agent.executeTaskAsync(task, mockSender);
+    const executionContext: IExecutionContext = createExecutionContext();
+    const taskIdProvider = (): string | null => task.taskId;
 
-    expect(logger.warn).not.toHaveBeenCalledWith(
-      expect.objectContaining({ }),
-    );
+    await agent.executeTaskAsync(task, mockSender, taskIdProvider, executionContext);
+
+    const unknownToolWarnings = warnSpy.mock.calls
+      .map((call: unknown[]): string => String(call[0]))
+      .filter((msg: string): boolean => msg.includes("Unknown tool name"));
+
+    expect(unknownToolWarnings.length).toBe(0);
   });
 
   it("should log a warning and skip unknown tool names", async () => {
@@ -117,14 +130,15 @@ describe("CronAgent tool resolution", () => {
 
     const agent: CronAgent = CronAgent.getInstance();
 
-    await agent.executeTaskAsync(task, mockSender);
+    const executionContext: IExecutionContext = createExecutionContext();
+    const taskIdProvider = (): string | null => task.taskId;
 
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("websearch"),
-    );
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("fake_tool"),
-    );
+    await agent.executeTaskAsync(task, mockSender, taskIdProvider, executionContext);
+
+    const warnMessages: string[] = warnSpy.mock.calls.map((call: unknown[]): string => String(call[0]));
+
+    expect(warnMessages.some((msg: string): boolean => msg.includes("Unknown tool name \"websearch\""))).toBe(true);
+    expect(warnMessages.some((msg: string): boolean => msg.includes("Unknown tool name \"fake_tool\""))).toBe(true);
   });
 
   it("should work with all valid tool names without warnings", async () => {
@@ -138,11 +152,14 @@ describe("CronAgent tool resolution", () => {
 
     const agent: CronAgent = CronAgent.getInstance();
 
-    await agent.executeTaskAsync(task, mockSender);
+    const executionContext: IExecutionContext = createExecutionContext();
+    const taskIdProvider = (): string | null => task.taskId;
 
-    const warnCalls = (logger.warn as any).mock.calls;
-    const toolWarnings = warnCalls.filter((call: any[]) => 
-      call[0] && typeof call[0] === "string" && call[0].includes("Unknown tool")
+    await agent.executeTaskAsync(task, mockSender, taskIdProvider, executionContext);
+
+    const warnCalls = warnSpy.mock.calls;
+    const toolWarnings = warnCalls.filter((call: unknown[]): boolean =>
+      typeof call[0] === "string" && (call[0] as string).includes("Unknown tool")
     );
     expect(toolWarnings.length).toBe(0);
   });

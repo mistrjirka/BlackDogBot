@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { markdownToTelegramHtml, stripAllHtml, preprocessThinkTags } from "../../src/utils/telegram-format.js";
+import { markdownToTelegramHtml, stripAllHtml, preprocessThinkTags, wrapMarkdownTablesInCodeBlocks, convertTablesToBulletLists } from "../../src/utils/telegram-format.js";
 
 describe("preprocessThinkTags", () => {
   it("should convert self-closing <think/> to blockquote", () => {
@@ -156,5 +156,261 @@ describe("stripAllHtml", () => {
 
   it("should handle empty input", () => {
     expect(stripAllHtml("")).toBe("");
+  });
+});
+
+describe("wrapMarkdownTablesInCodeBlocks", () => {
+  it("should wrap a simple markdown table in code blocks", () => {
+    const input = `| Header1 | Header2 |
+|---------|---------|
+| Cell1   | Cell2   |`;
+    const result = wrapMarkdownTablesInCodeBlocks(input);
+    expect(result).toBe("```\n| Header1 | Header2 |\n|---------|---------|\n| Cell1   | Cell2   |\n```");
+  });
+
+  it("should not wrap tables already inside code blocks", () => {
+    const input = "```\n| Header1 | Header2 |\n|---------|---------|\n| Cell1   | Cell2   |\n```";
+    const result = wrapMarkdownTablesInCodeBlocks(input);
+    expect(result).toBe(input); // Should remain unchanged
+  });
+
+  it("should handle multiple tables", () => {
+    const input = `| A | B |
+|---|---|
+| 1 | 2 |
+
+Some text
+
+| C | D |
+|---|---|
+| 3 | 4 |`;
+    const result = wrapMarkdownTablesInCodeBlocks(input);
+    const lines = result.split('\n');
+    // Should have two code blocks
+    const codeBlockCount = lines.filter(line => line.trim() === '```').length;
+    expect(codeBlockCount).toBe(4); // Opening and closing for each table
+  });
+
+  it("should not treat spoiler delimiters as table rows", () => {
+    const input = "||hidden text||";
+    const result = wrapMarkdownTablesInCodeBlocks(input);
+    expect(result).toBe(input);
+  });
+
+  it("should handle tables with extra spaces", () => {
+    const input = `  | Col1 | Col2 |
+  |------|------|
+  | A    | B    |`;
+    const result = wrapMarkdownTablesInCodeBlocks(input);
+    expect(result).toContain("```");
+    expect(result).toContain("| Col1 | Col2 |");
+  });
+
+  it("should not wrap single line that looks like table row", () => {
+    const input = "| Just one row |";
+    const result = wrapMarkdownTablesInCodeBlocks(input);
+    expect(result).toBe(input);
+  });
+
+  it("should handle tables at start and end of text", () => {
+    const input = `| Start | Table |
+|-------|-------|
+| data  | here  |
+
+Middle text
+
+| End | Table |
+|-----|-------|
+| foo | bar   |`;
+    const result = wrapMarkdownTablesInCodeBlocks(input);
+    expect(result).toContain("```");
+    // Ensure both tables are wrapped: each table adds 2 backtick fences (opening and closing)
+    const codeBlocks = result.split('```').length - 1;
+    expect(codeBlocks).toBe(4); // 2 per table = 4 total
+  });
+});
+
+describe("convertTablesToBulletLists", () => {
+  it("should convert a simple markdown table to bullet list", () => {
+    const input = `| Header1 | Header2 |
+|---------|---------|
+| Cell1   | Cell2   |`;
+    const result = convertTablesToBulletLists(input);
+    // Should contain bullet points
+    expect(result).toContain("•");
+    // Should contain headers
+    expect(result).toContain("Header1");
+    expect(result).toContain("Header2");
+    // Should contain cells
+    expect(result).toContain("Cell1");
+    expect(result).toContain("Cell2");
+    // Should not contain pipe characters (original table format)
+    expect(result).not.toContain("|");
+  });
+
+  it("should not convert tables already inside code blocks", () => {
+    const input = "```\n| Header1 | Header2 |\n|---------|---------|\n| Cell1   | Cell2   |\n```";
+    const result = convertTablesToBulletLists(input);
+    // Should remain unchanged
+    expect(result).toBe(input);
+  });
+
+  it("should handle multiple tables", () => {
+    const input = `| A | B |
+|---|---|
+| 1 | 2 |
+
+Some text
+
+| C | D |
+|---|---|
+| 3 | 4 |`;
+    const result = convertTablesToBulletLists(input);
+    // Should contain bullet points for both tables
+    const bulletCount = (result.match(/•/g) || []).length;
+    expect(bulletCount).toBeGreaterThanOrEqual(2);
+    // Should contain all cell content
+    expect(result).toContain("A");
+    expect(result).toContain("B");
+    expect(result).toContain("C");
+    expect(result).toContain("D");
+  });
+
+  it("should not treat spoiler delimiters as table rows", () => {
+    const input = "||hidden text||";
+    const result = convertTablesToBulletLists(input);
+    // Should remain unchanged
+    expect(result).toBe(input);
+  });
+
+  it("should handle tables with extra spaces", () => {
+    const input = `  | Col1 | Col2 |
+  |------|------|
+  | A    | B    |`;
+    const result = convertTablesToBulletLists(input);
+    // Should contain bullet points
+    expect(result).toContain("•");
+    // Should contain column headers
+    expect(result).toContain("Col1");
+    expect(result).toContain("Col2");
+  });
+
+  it("should not convert single line that looks like table row", () => {
+    const input = "| Just one row |";
+    const result = convertTablesToBulletLists(input);
+    // Should remain unchanged (not a valid table)
+    expect(result).toBe(input);
+  });
+
+  it("should handle tables at start and end of text", () => {
+    const input = `| Start | Table |
+|-------|-------|
+| data  | here  |
+
+Middle text
+
+| End | Table |
+|-----|-------|
+| foo | bar   |`;
+    const result = convertTablesToBulletLists(input);
+    // Should contain bullet points for both tables
+    const bulletCount = (result.match(/•/g) || []).length;
+    expect(bulletCount).toBeGreaterThanOrEqual(2);
+    // Should contain all cell content
+    expect(result).toContain("Start");
+    expect(result).toContain("Table");
+    expect(result).toContain("data");
+    expect(result).toContain("here");
+    expect(result).toContain("End");
+    expect(result).toContain("foo");
+    expect(result).toContain("bar");
+  });
+
+  it("should preserve inline formatting in table cells", () => {
+    const input = `| Name | Status |
+|------|--------|
+| **Bold** | *Italic* |`;
+    const result = convertTablesToBulletLists(input);
+    // Should contain formatting markers
+    expect(result).toContain("**Bold**");
+    expect(result).toContain("*Italic*");
+  });
+});
+
+describe("markdownToTelegramHtml with tables", () => {
+  it("should convert markdown table to bullet list in Telegram HTML", () => {
+    const input = `| Name | Age |
+|------|-----|
+| Alice | 30 |
+| Bob | 25 |`;
+    const result = markdownToTelegramHtml(input);
+    // Should contain bullet points
+    expect(result).toContain("•");
+    // Should contain the table text
+    expect(result).toContain("Name");
+    expect(result).toContain("Age");
+    expect(result).toContain("Alice");
+    expect(result).toContain("Bob");
+    // Should not contain <table> tag
+    expect(result).not.toContain("<table>");
+    expect(result).not.toContain("<tr>");
+    expect(result).not.toContain("<td>");
+    // Should not contain code block (pre tag) for simple tables
+    expect(result).not.toContain("<pre>");
+  });
+
+  it("should preserve tables inside existing code blocks", () => {
+    const input = "```\n| Header | Data |\n|--------|------|\n| foo    | bar  |\n```";
+    const result = markdownToTelegramHtml(input);
+    // Should still be a code block (pre tag)
+    expect(result).toContain("<pre>");
+    // Should contain the table text
+    expect(result).toContain("Header");
+    expect(result).toContain("Data");
+  });
+
+  it("should handle RSS summary table as bullet list without garbling", () => {
+    const input = `📊 Summary
+
+| Feed | URL | Mode | Items Found | Status |
+|------|-----|------|-------------|--------|
+| Second Source | http://127.0.0.1:8080/i/lists/1482337753052426240/rss | unseen | 101 | ✅ Working |
+| RageIntel Telegram | http://10.8.0.9:8080/telegram/channel/rageintel | unseen | 18 | ✅ Working |`;
+    const result = markdownToTelegramHtml(input);
+    // Should contain bullet points
+    expect(result).toContain("•");
+    // Should contain the table content
+    expect(result).toContain("Feed");
+    expect(result).toContain("URL");
+    expect(result).toContain("Second Source");
+    expect(result).toContain("RageIntel Telegram");
+    // Should NOT contain garbled table tag text
+    expect(result).not.toContain("table thead tr th");
+    expect(result).not.toContain("/tr /thead tbody");
+    // Should NOT contain HTML table tags
+    expect(result).not.toContain("<table>");
+    expect(result).not.toContain("<thead>");
+    expect(result).not.toContain("<tbody>");
+  });
+
+  it("should handle multiple tables in one message as bullet lists", () => {
+    const input = `First table:
+| A | B |
+|---|---|
+| 1 | 2 |
+
+Second table:
+| C | D |
+|---|---|
+| 3 | 4 |`;
+    const result = markdownToTelegramHtml(input);
+    // Should contain bullet points for each table
+    const bulletCount = (result.match(/•/g) || []).length;
+    expect(bulletCount).toBeGreaterThanOrEqual(2);
+    // Should contain all cell content
+    expect(result).toContain("A");
+    expect(result).toContain("B");
+    expect(result).toContain("C");
+    expect(result).toContain("D");
   });
 });

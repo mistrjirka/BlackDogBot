@@ -75,7 +75,14 @@ export function createCallSkillTool(availableSkillNames: string[]) {
           add_knowledge: addKnowledgeTool,
         };
 
-        const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools);
+        const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools, {
+          enableResultCompaction: true,
+          compactionOptions: {
+            maxTokens: 2000,
+            representativeArraySize: 5,
+          },
+          logger,
+        });
 
         const agent: ToolLoopAgent = new ToolLoopAgent({
           model,

@@ -43,7 +43,14 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
       run_cmd: runCmdTool,
     };
 
-    const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools);
+    const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools, {
+      enableResultCompaction: true,
+      compactionOptions: {
+        maxTokens: 2000,
+        representativeArraySize: 5,
+      },
+      logger,
+    });
 
     const agent: ToolLoopAgent = new ToolLoopAgent({
       model,

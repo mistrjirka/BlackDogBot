@@ -71,6 +71,19 @@ describe("formatMarkdownForDiscord", () => {
       const input = "- item1\n- item2";
       expect(formatMarkdownForDiscord(input)).toBe(input);
     });
+
+    it("should preserve markdown tables as raw pipe-delimited text", () => {
+      const input = `| Header1 | Header2 |
+|---------|---------|
+| Cell1   | Cell2   |`;
+      const result = formatMarkdownForDiscord(input);
+      // Should remain unchanged (raw markdown table)
+      expect(result).toBe(input);
+      // Should NOT be wrapped in code blocks
+      expect(result).not.toContain("```");
+      // Should contain pipe characters
+      expect(result).toContain("|");
+    });
   });
 
   describe("edge cases", () => {

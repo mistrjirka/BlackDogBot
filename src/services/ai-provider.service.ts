@@ -605,6 +605,13 @@ export class AiProviderService {
     const logger: LoggerService = LoggerService.getInstance();
 
     return async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      logger.info("Making API request to provider", {
+        provider: providerName,
+        url: typeof url === 'string' ? url : url.toString(),
+        method: init?.method ?? 'GET',
+        requestSizeBytes: init?.body && typeof init.body === "string" ? init.body.length : 0,
+      });
+
       if (init?.body && typeof init.body === "string" && init.method === "POST") {
         const tokenBreakdown: IRequestTokenBreakdown = countRequestBodyTokens(init.body);
         const hardLimit: number = this.getHardLimitTokens();
@@ -622,15 +629,27 @@ export class AiProviderService {
           contextWindow: this._contextWindow,
           hardLimit,
           utilization: `${utilization.toFixed(1)}%`,
+          requestSizeBytes: init.body.length,
+          requestSizeEstimate: `(~${Math.ceil(init.body.length / 4)} tokens est.)`,
         });
 
         if (tokenBreakdown.total > hardLimit) {
+          const excessTokens = tokenBreakdown.total - hardLimit;
+          const excessPercentage = (excessTokens / hardLimit * 100).toFixed(1);
+          
           logger.warn("Context hard gate triggered — blocking request before API call", {
             provider: providerName,
             total: tokenBreakdown.total,
             hardLimit,
             contextWindow: this._contextWindow,
             utilization: `${utilization.toFixed(1)}%`,
+            triggerReason: "token_count_exceeds_hard_limit",
+            excessTokens,
+            excessPercentage: `${excessPercentage}%`,
+            // Log key message statistics that contributed to the overflow
+            messageCount: tokenBreakdown.messageCount,
+            toolCount: tokenBreakdown.toolCount,
+            largestComponent: this._getLargestComponent(tokenBreakdown),
           });
 
           // Return a synthetic 400 that mimics a real context-length API error.
@@ -657,6 +676,40 @@ export class AiProviderService {
 
       // Make the actual API request
       let response: Response = await fetch(url, init);
+      
+      // Log response status for debugging
+      logger.info("Received response from provider", {
+        provider: providerName,
+        status: response.status,
+        statusText: response.statusText,
+        url: typeof url === 'string' ? url : url.toString(),
+        responseSizeApprox: response.headers.get('content-length') ?? 'unknown',
+      });
+
+      // Enhanced error logging for non-OK responses (before LM Studio self-healing)
+      if (!response.ok) {
+        try {
+          const errorBody = await response.clone().text();
+          logger.warn("Provider API returned error status", {
+            provider: providerName,
+            status: response.status,
+            statusText: response.statusText,
+            url: typeof url === 'string' ? url : url.toString(),
+            errorBodyPreview: errorBody.substring(0, Math.min(1000, errorBody.length)) + 
+                             (errorBody.length > 1000 ? "..." : ""),
+            requestBodySample: init?.body && typeof init.body === "string"
+              ? init.body.substring(0, Math.min(500, init.body.length)) + 
+                (init.body.length > 500 ? "..." : "")
+              : null,
+          });
+        } catch (bodyError) {
+          logger.warn("Failed to read error response body", {
+            provider: providerName,
+            status: response.status,
+            error: bodyError instanceof Error ? bodyError.message : String(bodyError),
+          });
+        }
+      }
 
       // LM Studio self-healing: if model is unavailable/crashed, auto-load and retry up to 3 times.
       if (!response.ok && this._aiConfig?.provider === "lm-studio") {
@@ -937,6 +990,17 @@ export class AiProviderService {
     throw new Error(
       `No configuration found for provider: ${provider as string}`,
     );
+  }
+
+  private _getLargestComponent(breakdown: IRequestTokenBreakdown): string {
+    const components = [
+      { name: 'messages', value: breakdown.messages },
+      { name: 'tools', value: breakdown.tools },
+      { name: 'system', value: breakdown.system },
+      { name: 'overhead', value: breakdown.overhead },
+    ];
+    const largest = components.reduce((max, comp) => comp.value > max.value ? comp : max);
+    return `${largest.name} (${largest.value} tokens)`;
   }
 
   //#endregion Private methods

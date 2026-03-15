@@ -71,10 +71,10 @@ describe("tool-reasoning-wrapper", () => {
     const wrapped: ToolSet = wrapToolSetWithReasoning(tools);
     const execute = wrapped.run_cmd.execute!;
 
-    expect(() => execute(
+    await expect(execute(
       { command: "pwd" },
       _buildOptions(_messagesAtReasoningThreshold()),
-    )).toThrow(/requires non-empty reasoning/i);
+    )).rejects.toThrow(/requires non-empty reasoning/i);
   });
 
   it("should allow non-exempt tools with reasoning when threshold is reached", async () => {

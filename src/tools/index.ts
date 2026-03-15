@@ -1,4 +1,4 @@
-export { thinkTool } from "./think.tool.js";
+export { thinkTool, thinkTracker } from "./think.tool.js";
 export { doneTool, createDoneTool } from "./done.tool.js";
 export { runCmdTool } from "./run-cmd.tool.js";
 export { createSendMessageTool, createSendMessageToolWithHistory, type MessageSender, type TaskIdProvider } from "./send-message.tool.js";

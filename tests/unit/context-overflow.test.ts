@@ -297,7 +297,7 @@ describe("Context Overflow Prevention", () => {
       // to limit the number of retry attempts on context errors
     });
 
-    it("should demonstrate context error detection pattern", () => {
+    it("should demonstrate context error detection pattern for 400 errors", () => {
       // This test documents the error detection pattern used in processMessageForChatAsync
       
       // Arrange
@@ -331,6 +331,45 @@ describe("Context Overflow Prevention", () => {
       
       // In the actual implementation, if all three are true and contextRetries < CONTEXT_EXCEEDED_RETRIES,
       // the agent sets _forceCompactionOnNextStep=true and retries
+    });
+
+    it("should detect 500 errors with context keywords as context overflow", () => {
+      // Arrange - Provider returns 500 with context error
+      const error = new APICallError({
+        message: "Context size has been exceeded",
+        url: "http://localhost:2345/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 500,
+        responseBody: JSON.stringify({ 
+          error: { 
+            code: 500,
+            message: "Context size has been exceeded.",
+            type: "server_error"
+          } 
+        }),
+        cause: new Error("Internal Server Error"),
+        isRetryable: false,
+      });
+
+      // Act - Updated pattern that now includes 500
+      const isApiCallError: boolean = APICallError.isInstance(error);
+      const isContextStatusCode: boolean = error.statusCode === 400 || 
+                                           error.statusCode === 500 || 
+                                           error.statusCode === 413 || 
+                                           error.statusCode === 422;
+      const errorMessage: string = (error.message + " " + (error.responseBody ?? "")).toLowerCase();
+      const hasContextKeyword: boolean = errorMessage.includes("context") || 
+                                         errorMessage.includes("token limit") || 
+                                         errorMessage.includes("exceeded") ||
+                                         errorMessage.includes("too long") ||
+                                         errorMessage.includes("length");
+
+      // Assert
+      expect(isApiCallError).toBe(true);
+      expect(isContextStatusCode).toBe(true);
+      expect(hasContextKeyword).toBe(true);
+      
+      // This ensures 500 errors with context keywords trigger compaction
     });
   });
 });
