@@ -1,5 +1,5 @@
 import Bottleneck from "bottleneck";
-import { LanguageModel } from "ai";
+import { LanguageModel, wrapLanguageModel, extractReasoningMiddleware } from "ai";
 import { LanguageModelV3 } from "@ai-sdk/provider";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -171,7 +171,7 @@ export class AiProviderService {
     if (providerKey === "openai-compatible") {
       this._supportsReasoningFormat = await this._testReasoningFormatSupportAsync();
       if (this._supportsReasoningFormat) {
-        logger.info("Will use reasoning_format: 'none' with client-side think-tag extraction");
+        logger.info("Will use reasoning_format: 'none' with AI SDK client-side think-tag extraction middleware");
       }
     }
 
@@ -489,16 +489,66 @@ export class AiProviderService {
   /**
    * Fixes responses where content is in reasoning_content instead of content.
    * Logs a warning and copies reasoning_content to content.
+   *
+   * Important: for tool-call responses, keep reasoning_content separate so the
+   * AI SDK can round-trip it in history as reasoning_content (client-side
+   * think-tag extraction flow).
    */
   private async _fixReasoningContentResponse(response: Response): Promise<Response> {
     if (!response.ok) return response;
 
     try {
+      const parseToolCallReasoningFromContent = (originalContent: string): {
+        reasoningContent: string | null;
+        cleanedContent: string;
+      } => {
+        const thinkTagRegex: RegExp = /<think>([\s\S]*?)<\/think>/g;
+        const matches: RegExpMatchArray[] = Array.from(originalContent.matchAll(thinkTagRegex));
+
+        if (matches.length > 0) {
+          const reasoningParts: string[] = matches
+            .map((match: RegExpMatchArray): string => (match[1] ?? "").trim())
+            .filter((part: string): boolean => part.length > 0);
+
+          const cleanedContent: string = originalContent
+            .replace(/<think>[\s\S]*?<\/think>/g, "")
+            .trim();
+
+          return {
+            reasoningContent: reasoningParts.length > 0 ? reasoningParts.join("\n\n") : null,
+            cleanedContent,
+          };
+        }
+
+        const closingTag: string = "</think>";
+        const closingIndex: number = originalContent.indexOf(closingTag);
+
+        if (closingIndex !== -1) {
+          const reasoningContent: string = originalContent
+            .slice(0, closingIndex)
+            .trim();
+          const cleanedContent: string = originalContent
+            .slice(closingIndex + closingTag.length)
+            .trim();
+
+          return {
+            reasoningContent: reasoningContent.length > 0 ? reasoningContent : null,
+            cleanedContent,
+          };
+        }
+
+        return {
+          reasoningContent: null,
+          cleanedContent: originalContent,
+        };
+      };
+
       const json = await response.clone().json() as {
         choices?: Array<{
           message?: {
             content?: string;
             reasoning_content?: string;
+            tool_calls?: unknown[];
           };
         }>;
       };
@@ -509,8 +559,30 @@ export class AiProviderService {
         for (const choice of json.choices) {
           const hasReasoningContent = choice.message?.reasoning_content;
           const hasEmptyContent = !choice.message?.content || choice.message.content === "";
+          const hasToolCalls =
+            Array.isArray(choice.message?.tool_calls) &&
+            choice.message.tool_calls.length > 0;
 
-          if (hasReasoningContent && hasEmptyContent) {
+          const rawContent: string | undefined = choice.message?.content;
+          if (hasToolCalls && typeof rawContent === "string" && rawContent.trim().length > 0) {
+            const parsed = parseToolCallReasoningFromContent(rawContent);
+            const existingReasoning: string = choice.message?.reasoning_content?.trim() ?? "";
+
+            if (existingReasoning.length === 0 && parsed.reasoningContent) {
+              choice.message!.reasoning_content = parsed.reasoningContent;
+              modified = true;
+            }
+
+            if (parsed.cleanedContent.length === 0) {
+              delete choice.message!.content;
+              modified = true;
+            } else if (parsed.cleanedContent !== rawContent) {
+              choice.message!.content = parsed.cleanedContent;
+              modified = true;
+            }
+          }
+
+          if (hasReasoningContent && hasEmptyContent && !hasToolCalls) {
             if (!modified) {
               const logger = LoggerService.getInstance();
               logger.warn(
@@ -1137,15 +1209,19 @@ export class AiProviderService {
               // Strip empty content from assistant messages with tool_calls.
               // The SDK sends content: "" which confuses llama.cpp and causes
               // subsequent tool calls to fail (~66% failure rate).
-              // Removing the empty string entirely gives 100% success rate.
+              // Removing empty/whitespace-only content gives 100% success rate.
               if (body.messages && Array.isArray(body.messages)) {
                 for (const msg of body.messages) {
+                  const contentIsEmptyOrWhitespace: boolean =
+                    typeof msg.content === "string" &&
+                    msg.content.trim().length === 0;
+
                   if (
                     msg.role === "assistant" &&
                     msg.tool_calls &&
                     Array.isArray(msg.tool_calls) &&
                     msg.tool_calls.length > 0 &&
-                    msg.content === ""
+                    contentIsEmptyOrWhitespace
                   ) {
                     delete (msg as Record<string, unknown>).content;
                     modified = true;
@@ -1164,7 +1240,15 @@ export class AiProviderService {
           return this._fixReasoningContentResponse(response);
         },
       }).chatModel(modelId);
-      return this._wrapModelWithRateLimiter(rawModel, provider);
+
+      const modelWithReasoningExtraction: LanguageModel = this._supportsReasoningFormat
+        ? wrapLanguageModel({
+          model: rawModel,
+          middleware: extractReasoningMiddleware({ tagName: "think" }),
+        })
+        : rawModel;
+
+      return this._wrapModelWithRateLimiter(modelWithReasoningExtraction, provider);
     }
 
     if (provider === "lm-studio") {
