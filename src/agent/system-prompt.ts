@@ -22,17 +22,32 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
   // Build dynamic context about capabilities
   const contextParts: string[] = [`Current date and time: ${dateString}`];
 
-  // Web search capability
+  // Web search and crawling capability
   const searxngUrl: string | undefined = config.services?.searxngUrl;
-  if (searxngUrl) {
+  const crawl4aiUrl: string | undefined = config.services?.crawl4aiUrl;
+
+  if (searxngUrl && crawl4aiUrl) {
     contextParts.push(
-      `Web search: available via run_cmd. Example: curl '${searxngUrl}/search?q=QUERY&format=json&categories=general' ` +
-      `— Do NOT use call_skill for web search. Use run_cmd with curl to SearXNG directly.`,
+      `Web search and scraping: use the searxng tool for search and the crawl4ai tool for page fetching. ` +
+      `Do NOT use run_cmd, curl, wget, or call_skill for web research. ` +
+      `Configured services: SearXNG (${searxngUrl}), Crawl4AI (${crawl4aiUrl}).`,
+    );
+  } else if (!searxngUrl && !crawl4aiUrl) {
+    contextParts.push(
+      `Web search and scraping tools are unavailable because both SearXNG and Crawl4AI are not configured. ` +
+      `If the user asks for web research, explain that services.searxngUrl and services.crawl4aiUrl must be configured.`,
+    );
+  } else if (!searxngUrl) {
+    contextParts.push(
+      `Web search via searxng is unavailable because SearXNG is not configured. ` +
+      `Do not attempt web search with run_cmd/curl; explain that services.searxngUrl must be configured. ` +
+      `Crawl4AI is configured at ${crawl4aiUrl}.`,
     );
   } else {
     contextParts.push(
-      `Web search: SearXNG is not configured. You cannot perform web searches directly. ` +
-      `If the user asks you to search the web, let them know SearXNG is not set up.`,
+      `Web page crawling via crawl4ai is unavailable because Crawl4AI is not configured. ` +
+      `Use searxng for search only and explain that services.crawl4aiUrl must be configured for page fetching. ` +
+      `SearXNG is configured at ${searxngUrl}.`,
     );
   }
 
@@ -53,4 +68,3 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
 }
 
 //#endregion Public functions
-

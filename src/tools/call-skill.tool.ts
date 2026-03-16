@@ -43,7 +43,7 @@ export function createCallSkillTool(availableSkillNames: string[]) {
       `Invoke a skill by name. The skill agent will execute with the given input and return its output. ` +
       `${skillListStr} ` +
       `Do NOT call this tool with any skill name not listed above. ` +
-      `Web search is NOT a skill — use run_cmd with curl to SearXNG or create a job with add_searxng_node instead.`,
+      `Web search is NOT a skill — use the searxng tool for search and crawl4ai for page fetching.`,
     inputSchema: callSkillToolInputSchema,
     execute: async ({ skillName, input }: { skillName: string; input: string }): Promise<ICallSkillResult> => {
       const logger: LoggerService = LoggerService.getInstance();
@@ -57,7 +57,7 @@ export function createCallSkillTool(availableSkillNames: string[]) {
           return {
             success: false,
             output: "",
-            error: `Skill "${skillName}" not found. Currently loaded skills: ${names}. Web search is available via run_cmd with curl to SearXNG, not as a skill.`,
+            error: `Skill "${skillName}" not found. Currently loaded skills: ${names}. Web search is available via the searxng tool (and crawl4ai for page fetching), not as a skill.`,
           };
         }
 
