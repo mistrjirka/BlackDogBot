@@ -10,7 +10,7 @@ import { extractAiErrorDetails, formatAiErrorForLog } from "./ai-error.js";
 
 //#region Types
 
-export type LlmCallType = "agent_primary" | "tool_compaction" | "summarization" | "schema_extraction" | "cron_history" | "job_execution";
+export type LlmCallType = "agent_primary" | "summarization" | "schema_extraction" | "cron_history" | "job_execution";
 
 export interface ILlmRetryOptions {
   maxAttempts?: number;
@@ -25,8 +25,7 @@ const DEFAULT_TIMEOUT_MS = 120000; // 120 seconds
 // Policy defaults per call type
 const CALL_TYPE_POLICY: Record<LlmCallType, { maxAttempts: number; timeoutMs: number }> = {
   agent_primary: { maxAttempts: 3, timeoutMs: 120000 },
-  tool_compaction: { maxAttempts: 2, timeoutMs: 45000 },
-  summarization: { maxAttempts: 2, timeoutMs: 60000 },
+  summarization: { maxAttempts: 2, timeoutMs: 600000 },
   schema_extraction: { maxAttempts: 2, timeoutMs: 60000 },
   cron_history: { maxAttempts: 1, timeoutMs: 30000 },
   job_execution: { maxAttempts: 2, timeoutMs: 60000 },

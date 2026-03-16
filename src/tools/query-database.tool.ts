@@ -41,12 +41,12 @@ const inputSchema = z.object({
     .array()
     .optional()
     .describe("Specific columns to select for query_table (defaults to all)"),
-  data: z.record(z.unknown())
+  data: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
     .optional()
-    .describe("Data to insert as a single row object for insert action (e.g. {title: 'Hello', score: 5})"),
-  set: z.record(z.unknown())
+    .describe("Data to insert as a single row object for insert action (e.g. {title: 'Hello', score: 5}). Values must be flat primitives — no nested objects."),
+  set: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
     .optional()
-    .describe("Column-value pairs to set for update action (e.g. {isInteresting: 1, score: 10})"),
+    .describe("Column-value pairs to set for update action (e.g. {isInteresting: 1, score: 10}). Values must be flat primitives — no nested objects."),
 });
 
 type QueryDatabaseInput = z.infer<typeof inputSchema>;

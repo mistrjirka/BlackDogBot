@@ -333,16 +333,8 @@ export abstract class BaseAgentBase {
       done: customDoneTool ?? doneTool,
     };
 
-    // Enable tool result compaction to prevent oversized tool results from causing context overflow.
-    // Threshold is 15% of context window — generous enough that a 3K-token cron config
-    // (3% of 90K) is never compacted, but still protects against truly massive results.
-    const toolCompactionMaxTokens: number = Math.floor(this._contextWindow * 0.15);
+    // Wrap tools with reasoning field augmentation and enforcement.
     const allTools: ToolSet = wrapToolSetWithReasoning(rawTools, {
-      enableResultCompaction: true,
-      compactionOptions: {
-        maxTokens: toolCompactionMaxTokens,
-        representativeArraySize: 5,
-      },
       logger: this._logger,
     });
 

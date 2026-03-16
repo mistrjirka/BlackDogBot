@@ -5,6 +5,7 @@ import { CronScheduler } from "./cron-scheduler.js";
 
 import { IScheduledTask } from "../shared/types/index.js";
 import { scheduledTaskSchema } from "../shared/schemas/index.js";
+import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
 import {
   getCronDir,
   getCronFilePath,
@@ -13,6 +14,22 @@ import {
 import { LoggerService } from "./logger.service.js";
 import { ConfigService } from "./config.service.js";
 import { extractErrorMessage } from "../utils/error.js";
+
+//#region Const
+
+const DEFAULT_MAX_PARALLEL_CRONS: number = 1;
+const DEFAULT_CRON_QUEUE_SIZE: number = 3;
+
+//#endregion Const
+
+//#region Interfaces
+
+interface IQueuedTask {
+  task: IScheduledTask;
+  executeCallback: () => Promise<void>;
+}
+
+//#endregion Interfaces
 
 export class SchedulerService {
   //#region Data members
@@ -23,8 +40,15 @@ export class SchedulerService {
   private _tasks: Map<string, IScheduledTask>;
   private _taskExecutor: ((task: IScheduledTask) => Promise<void>) | null;
   private _onTaskFailure: ((task: IScheduledTask, error: string) => Promise<void>) | null;
+  private _onTaskSkipped: ((task: IScheduledTask, reason: string) => Promise<void>) | null;
   private _intervals: Map<string, NodeJS.Timeout>;
   private _timeouts: Map<string, NodeJS.Timeout>;
+
+  // Concurrency control
+  private _maxParallelCrons: number;
+  private _cronQueueSize: number;
+  private _runningTaskCount: number;
+  private _taskQueue: IQueuedTask[];
 
   //#endregion Data members
 
@@ -36,8 +60,15 @@ export class SchedulerService {
     this._tasks = new Map();
     this._taskExecutor = null;
     this._onTaskFailure = null;
+    this._onTaskSkipped = null;
     this._intervals = new Map();
     this._timeouts = new Map();
+
+    // Concurrency control — defaults, overridden in startAsync from config
+    this._maxParallelCrons = DEFAULT_MAX_PARALLEL_CRONS;
+    this._cronQueueSize = DEFAULT_CRON_QUEUE_SIZE;
+    this._runningTaskCount = 0;
+    this._taskQueue = [];
   }
 
   //#endregion Constructors
@@ -64,9 +95,30 @@ export class SchedulerService {
     this._onTaskFailure = callback;
   }
 
+  public setOnTaskSkipped(
+    callback: (task: IScheduledTask, reason: string) => Promise<void>,
+  ): void {
+    this._onTaskSkipped = callback;
+  }
+
+  /** Number of cron tasks currently executing. */
+  public getRunningTaskCount(): number {
+    return this._runningTaskCount;
+  }
+
+  /** Number of cron tasks waiting in the queue. */
+  public getQueuedTaskCount(): number {
+    return this._taskQueue.length;
+  }
+
   public async startAsync(): Promise<void> {
     await ensureDirectoryExistsAsync(getCronDir());
     await this._loadAllTasksAsync();
+
+    // Read concurrency settings from config
+    const config = ConfigService.getInstance().getConfig();
+    this._maxParallelCrons = config.scheduler.maxParallelCrons ?? DEFAULT_MAX_PARALLEL_CRONS;
+    this._cronQueueSize = config.scheduler.cronQueueSize ?? DEFAULT_CRON_QUEUE_SIZE;
 
     this._cronScheduler.start();
 
@@ -79,6 +131,8 @@ export class SchedulerService {
     this._logger.info("Scheduler started", {
       totalTasks: this._tasks.size,
       enabledTasks: this.getTasksByEnabled(true).length,
+      maxParallelCrons: this._maxParallelCrons,
+      cronQueueSize: this._cronQueueSize,
     });
   }
 
@@ -98,6 +152,9 @@ export class SchedulerService {
     this._intervals.clear();
     this._timeouts.clear();
 
+    // Clear the queue on stop — queued tasks are abandoned
+    this._taskQueue = [];
+
     this._logger.info("Scheduler stopped");
   }
 
@@ -115,6 +172,11 @@ export class SchedulerService {
   public async removeTaskAsync(taskId: string): Promise<void> {
     this._unscheduleTask(taskId);
     this._tasks.delete(taskId);
+
+    // Remove any queued instances of this task
+    this._taskQueue = this._taskQueue.filter(
+      (queued: IQueuedTask) => queued.task.taskId !== taskId,
+    );
 
     const filePath: string = getCronFilePath(taskId);
 
@@ -235,6 +297,8 @@ export class SchedulerService {
       entry.endsWith(".json"),
     );
 
+    const migratedTasks: string[] = [];
+
     for (const fileName of jsonFiles) {
       const filePath: string = path.join(cronDir, fileName);
 
@@ -242,6 +306,14 @@ export class SchedulerService {
         const content: string = await fs.readFile(filePath, "utf-8");
         const parsed: unknown = JSON.parse(content);
         const task: IScheduledTask = scheduledTaskSchema.parse(parsed);
+
+        // Check for deprecated tool names
+        const deprecatedTools: string[] = task.tools.filter(
+          (name: string) => name in CRON_TOOL_ALIASES,
+        );
+        if (deprecatedTools.length > 0) {
+          migratedTasks.push(`${task.name} (${task.taskId}): ${deprecatedTools.join(", ")}`);
+        }
 
         this._tasks.set(task.taskId, task);
       } catch (error: unknown) {
@@ -251,6 +323,13 @@ export class SchedulerService {
         });
       }
     }
+
+    if (migratedTasks.length > 0) {
+      this._logger.warn(
+        `${migratedTasks.length} cron task(s) use deprecated tool names that will be auto-expanded at runtime:`,
+        { tasks: migratedTasks },
+      );
+    }
   }
 
   private async _saveTaskAsync(task: IScheduledTask): Promise<void> {
@@ -258,6 +337,104 @@ export class SchedulerService {
 
     await ensureDirectoryExistsAsync(getCronDir());
     await fs.writeFile(filePath, JSON.stringify(task, null, 2), "utf-8");
+  }
+
+  /**
+   * Attempts to run the callback immediately if below concurrency limit,
+   * otherwise enqueues it. If the queue is full, the task is skipped
+   * and the onTaskSkipped callback is fired.
+   */
+  private _dispatchOrEnqueue(task: IScheduledTask, executeCallback: () => Promise<void>): void {
+    if (this._runningTaskCount < this._maxParallelCrons) {
+      this._executeWithConcurrencyTracking(task, executeCallback);
+      return;
+    }
+
+    // At concurrency limit — try to enqueue
+    if (this._taskQueue.length < this._cronQueueSize) {
+      this._taskQueue.push({ task, executeCallback });
+
+      this._logger.warn("Task queued (concurrency limit reached)", {
+        taskId: task.taskId,
+        name: task.name,
+        runningTasks: this._runningTaskCount,
+        queueLength: this._taskQueue.length,
+        maxParallelCrons: this._maxParallelCrons,
+        cronQueueSize: this._cronQueueSize,
+      });
+      return;
+    }
+
+    // Queue is full — skip the task
+    const reason: string =
+      `Concurrency limit reached (${this._runningTaskCount}/${this._maxParallelCrons} running, ` +
+      `${this._taskQueue.length}/${this._cronQueueSize} queued). Task skipped.`;
+
+    this._logger.warn("Task skipped (queue full)", {
+      taskId: task.taskId,
+      name: task.name,
+      runningTasks: this._runningTaskCount,
+      queueLength: this._taskQueue.length,
+      maxParallelCrons: this._maxParallelCrons,
+      cronQueueSize: this._cronQueueSize,
+    });
+
+    if (this._onTaskSkipped) {
+      this._onTaskSkipped(task, reason).catch((error: unknown) => {
+        this._logger.error("Failed to send task-skipped notification", {
+          taskId: task.taskId,
+          error: extractErrorMessage(error),
+        });
+      });
+    }
+  }
+
+  /**
+   * Wraps executeCallback with running-task tracking.
+   * On completion (success or failure), decrements the counter and drains the queue.
+   */
+  private _executeWithConcurrencyTracking(
+    task: IScheduledTask,
+    executeCallback: () => Promise<void>,
+  ): void {
+    this._runningTaskCount++;
+
+    this._logger.info("Task dispatched", {
+      taskId: task.taskId,
+      name: task.name,
+      runningTasks: this._runningTaskCount,
+      queueLength: this._taskQueue.length,
+    });
+
+    executeCallback()
+      .finally(() => {
+        this._runningTaskCount--;
+
+        this._logger.info("Task finished", {
+          taskId: task.taskId,
+          name: task.name,
+          runningTasks: this._runningTaskCount,
+          queueLength: this._taskQueue.length,
+        });
+
+        // Drain the queue
+        this._drainQueue();
+      });
+  }
+
+  /** Dequeues and dispatches tasks while below the concurrency limit. */
+  private _drainQueue(): void {
+    while (this._runningTaskCount < this._maxParallelCrons && this._taskQueue.length > 0) {
+      const next: IQueuedTask = this._taskQueue.shift()!;
+
+      this._logger.info("Dequeuing task", {
+        taskId: next.task.taskId,
+        name: next.task.name,
+        remainingQueue: this._taskQueue.length,
+      });
+
+      this._executeWithConcurrencyTracking(next.task, next.executeCallback);
+    }
   }
 
   private _scheduleTask(task: IScheduledTask): void {
@@ -316,7 +493,7 @@ export class SchedulerService {
           schedule.expression,
           timezone,
           () => {
-            void executeCallback();
+            this._dispatchOrEnqueue(task, executeCallback);
           },
         );
 
@@ -331,7 +508,7 @@ export class SchedulerService {
 
       case "interval": {
         const intervalId: NodeJS.Timeout = setInterval(() => {
-          void executeCallback();
+          this._dispatchOrEnqueue(task, executeCallback);
         }, schedule.intervalMs);
 
         this._intervals.set(task.taskId, intervalId);
@@ -355,7 +532,7 @@ export class SchedulerService {
         }
 
         const timeoutId: NodeJS.Timeout = setTimeout(() => {
-          void executeCallback();
+          this._dispatchOrEnqueue(task, executeCallback);
           this._timeouts.delete(task.taskId);
         }, delayMs);
 

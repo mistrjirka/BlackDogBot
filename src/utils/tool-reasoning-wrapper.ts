@@ -2,7 +2,6 @@ import { type Tool, type ToolCallOptions, type ToolSet } from "ai";
 import { z } from "zod";
 
 import { isReasoningRequired } from "./prepare-step.js";
-import { compactToolResultAsync, type ICompactionOptions } from "./tool-result-compaction.js";
 import { LoggerService } from "../services/logger.service.js";
 
 //#region Constants
@@ -18,10 +17,6 @@ const _ReasoningDescription: string =
 //#region Interfaces
 
 export interface IToolWrapperOptions {
-  /** Enable compaction of oversized tool results. */
-  enableResultCompaction?: boolean;
-  /** Options for tool result compaction. */
-  compactionOptions?: ICompactionOptions;
   /** Logger for debugging. */
   logger?: LoggerService;
 }
@@ -34,15 +29,12 @@ export interface IToolWrapperOptions {
  * Wraps a ToolSet so every non-think/non-done tool:
  * - accepts an optional `reasoning` input field in schema, and
  * - enforces non-empty `reasoning` at runtime when reasoning policy requires it.
- * - optionally compacts oversized tool results to preserve shape while reducing tokens.
  */
 export function wrapToolSetWithReasoning(
   tools: ToolSet,
-  options?: IToolWrapperOptions,
+  _options?: IToolWrapperOptions,
 ): ToolSet {
   const wrapped: ToolSet = {};
-  const logger: LoggerService = options?.logger ?? LoggerService.getInstance();
-  const enableCompaction: boolean = options?.enableResultCompaction ?? false;
 
   for (const [toolName, rawTool] of Object.entries(tools)) {
     if (_ReasoningExemptToolNames.has(toolName)) {
@@ -53,9 +45,6 @@ export function wrapToolSetWithReasoning(
     wrapped[toolName] = _wrapSingleTool(
       toolName,
       rawTool as Tool<unknown, unknown>,
-      enableCompaction,
-      options?.compactionOptions,
-      logger,
     );
   }
 
@@ -69,9 +58,6 @@ export function wrapToolSetWithReasoning(
 function _wrapSingleTool(
   toolName: string,
   toolDef: Tool<unknown, unknown>,
-  enableCompaction: boolean,
-  compactionOptions?: ICompactionOptions,
-  logger?: LoggerService,
 ): Tool<unknown, unknown> {
   const execute = toolDef.execute;
   const inputSchema = _augmentSchemaWithReasoning(toolDef.inputSchema);
@@ -99,28 +85,7 @@ function _wrapSingleTool(
       const sanitizedInput: unknown = _stripReasoning(input);
 
       // Execute the original tool
-      const result: unknown = await execute(sanitizedInput as never, options);
-
-      // Apply result compaction if enabled
-      if (enableCompaction && result !== null && result !== undefined) {
-        const mergedCompactionOptions: ICompactionOptions = {
-          ...(compactionOptions ?? {}),
-          abortSignal: options.abortSignal,
-        };
-
-        const compactionResult = await compactToolResultAsync(result, mergedCompactionOptions);
-        if (compactionResult.wasCompacted) {
-          logger?.info("Tool result compacted", {
-            toolName,
-            originalTokens: compactionResult.originalTokens,
-            compactedTokens: compactionResult.compactedTokens,
-            summarizedFields: compactionResult.summarizedFields,
-          });
-        }
-        return compactionResult.value;
-      }
-
-      return result;
+      return execute(sanitizedInput as never, options);
     },
   } as Tool<unknown, unknown>;
 }

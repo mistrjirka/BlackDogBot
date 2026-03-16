@@ -171,7 +171,6 @@ export class TelegramHandler {
     }
 
     this._processing.add(chatId);
-    this._inFlightMessageIdByChat.set(chatId, message.message_id);
 
     // Progress message state
     let progressMsgId: number | null = null;
@@ -209,6 +208,7 @@ export class TelegramHandler {
       try {
         const progressMsg = await ctx.reply("⚙️ Working...", { parse_mode: "HTML" });
         progressMsgId = progressMsg.message_id;
+        this._inFlightMessageIdByChat.set(chatId, progressMsgId);
       } catch {
         // Continue without progress message
       }
@@ -280,15 +280,36 @@ export class TelegramHandler {
             }
             try {
               await ctx.reply(chunks[i], options);
-            } catch (parseError: unknown) {
-              this._logger.warn("Telegram HTML parse error, falling back to plain text", {
-                error: parseError instanceof Error ? parseError.message : String(parseError),
-              });
-              const plainText: string = stripAllHtml(chunks[i]);
-              const fallbackOptions: Record<string, unknown> =
-                i === 0 ? { reply_parameters: { message_id: message.message_id } } : {};
-              await ctx.reply("⚠️ Formatting error, showing plain text:", fallbackOptions);
-              await ctx.reply(plainText, fallbackOptions);
+            } catch (replyError: unknown) {
+              const errorMsg: string = replyError instanceof Error ? replyError.message : String(replyError);
+
+              // If the replied-to message was deleted (e.g. by /cancel), retry without reply_parameters
+              if (errorMsg.includes("message to be replied not found") && options.reply_parameters) {
+                delete options.reply_parameters;
+                try {
+                  await ctx.reply(chunks[i], options);
+                } catch {
+                  // Last resort: try plain text without reply
+                  const plainText: string = stripAllHtml(chunks[i]);
+                  await ctx.reply(plainText).catch(() => {});
+                }
+              } else {
+                // HTML parse error or other issue — fall back to plain text
+                this._logger.warn("Telegram HTML parse error, falling back to plain text", {
+                  error: errorMsg,
+                });
+                const plainText: string = stripAllHtml(chunks[i]);
+                const fallbackOptions: Record<string, unknown> =
+                  i === 0 ? { reply_parameters: { message_id: message.message_id } } : {};
+                try {
+                  await ctx.reply("⚠️ Formatting error, showing plain text:", fallbackOptions);
+                  await ctx.reply(plainText, fallbackOptions);
+                } catch {
+                  // If even fallback fails (deleted message), send without reply
+                  await ctx.reply("⚠️ Formatting error, showing plain text:").catch(() => {});
+                  await ctx.reply(plainText).catch(() => {});
+                }
+              }
             }
           }
         }
@@ -427,9 +448,6 @@ export class TelegramHandler {
       return;
     }
 
-    const lastQueuedMessage: IPendingTelegramMessage = queuedMessages[queuedMessages.length - 1];
-    this._inFlightMessageIdByChat.set(chatId, lastQueuedMessage.messageId);
-
     const mergedText: string = queuedMessages.map((queuedMessage: IPendingTelegramMessage): string => queuedMessage.text).join("\n");
 
     try {
@@ -558,7 +576,7 @@ function _buildCancelResponseText(
     details.push("stopped current generation");
   }
   if (deletedInFlightMessage) {
-    details.push("deleted in-flight prompt message");
+    details.push("deleted progress message");
   }
   if (droppedQueuedMessages > 0) {
     details.push(`cleared ${droppedQueuedMessages} queued message${droppedQueuedMessages > 1 ? "s" : ""}`);

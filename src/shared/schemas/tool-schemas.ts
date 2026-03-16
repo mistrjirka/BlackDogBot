@@ -429,6 +429,11 @@ export const renderGraphToolOutputSchema = z.object({
 
 //#region Cron Tools
 
+/** Maps deprecated tool names to their replacement(s). */
+export const CRON_TOOL_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  query_database: ["read_from_database", "write_to_database", "update_database", "delete_from_database"],
+};
+
 export const CRON_VALID_TOOL_NAMES = [
   "think",
   "run_cmd",
@@ -453,7 +458,6 @@ export const CRON_VALID_TOOL_NAMES = [
   "create_database",
   "create_table",
   "drop_table",
-  "query_database",
   "read_from_database",
   "write_to_database",
   "update_database",

@@ -6,6 +6,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { LMStudioClient } from "@lmstudio/sdk";
 
 import { LoggerService } from "./logger.service.js";
+import { SchedulerService } from "./scheduler.service.js";
 import {
   IAiConfig,
   AiProvider,
@@ -31,6 +32,10 @@ function normalizeBaseUrl(url: string): string {
  */
 const HARD_GATE_THRESHOLD_PERCENTAGE: number = 0.85;
 const LM_STUDIO_MODEL_RECOVERY_RETRIES: number = 3;
+const PARALLEL_TOOL_CALL_PROBE_TIMEOUT_MS: number = 60000;
+const DEFAULT_REQUEST_TIMEOUT_MS: number = 500_000; // 500 seconds
+const REQUEST_TIMEOUT_RETRY_MULTIPLIER: number = 2;
+const REQUEST_TIMEOUT_MAX_ATTEMPTS: number = 2; // initial + 1 retry
 
 export class AiProviderService {
   //#region Data members
@@ -43,6 +48,8 @@ export class AiProviderService {
   private _contextWindow: number;
   private _supportsStructuredOutputs: boolean = false;
   private _supportsReasoningFormat: boolean = false;
+  private _supportsParallelToolCalls: boolean = false;
+  private _requestTimeoutMs: number;
 
   //#endregion Data members
 
@@ -54,6 +61,7 @@ export class AiProviderService {
     this._modelInfoService = ModelInfoService.getInstance();
     this._defaultModel = null;
     this._contextWindow = 128000; // Default context window
+    this._requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
   //#endregion Constructors
@@ -181,6 +189,19 @@ export class AiProviderService {
         this._supportsStructuredOutputs = detected;
         logger.info(`Autodetected structured output support: ${detected ? "SUPPORTED" : "NOT SUPPORTED"}`);
       }
+
+      // Autodetect parallel tool call support (local openai-compatible endpoints)
+      this._supportsParallelToolCalls = await this._testParallelToolCallSupportAsync();
+      logger.info(
+        `Autodetected parallel tool call support: ${this._supportsParallelToolCalls ? "SUPPORTED" : "NOT SUPPORTED"}`,
+      );
+
+      // Resolve per-request timeout from config (local providers only)
+      const configuredTimeout: number | undefined = providerKey === "openai-compatible"
+        ? aiConfig.openaiCompatible?.requestTimeout
+        : aiConfig.lmStudio?.requestTimeout;
+      this._requestTimeoutMs = configuredTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS;
+      logger.info(`Per-request timeout: ${this._requestTimeoutMs / 1000}s (retry at ${(this._requestTimeoutMs * REQUEST_TIMEOUT_RETRY_MULTIPLIER) / 1000}s)`);
     }
 
     // Re-create model if any capability was detected that affects model creation
@@ -271,6 +292,10 @@ export class AiProviderService {
 
   public getContextWindow(): number {
     return this._contextWindow;
+  }
+
+  public get supportsParallelToolCalls(): boolean {
+    return this._supportsParallelToolCalls;
   }
 
   /**
@@ -366,29 +391,38 @@ export class AiProviderService {
       const config = this._getActiveProviderConfig();
       const baseUrl = normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
 
+      // Build probe request body — include reasoning_format: "none" when supported
+      // to prevent thinking models from wasting tokens on reasoning instead of
+      // producing the constrained JSON output directly in content.
+      const probeBody: Record<string, unknown> = {
+        model: config.model,
+        messages: [{ role: "user", content: 'Reply with: {"ok": true}' }],
+        max_tokens: 50,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "probe",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                ok: { type: "boolean" },
+              },
+              required: ["ok"],
+              additionalProperties: false,
+            },
+          },
+        },
+      };
+
+      if (this._supportsReasoningFormat) {
+        probeBody.reasoning_format = "none";
+      }
+
       const response = await fetch(`${baseUrl}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: config.model,
-          messages: [{ role: "user", content: 'Reply with: {"ok": true}' }],
-          max_tokens: 50,
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "probe",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  ok: { type: "boolean" },
-                },
-                required: ["ok"],
-                additionalProperties: false,
-              },
-            },
-          },
-        }),
+        body: JSON.stringify(probeBody),
       });
 
       if (!response.ok) {
@@ -409,22 +443,37 @@ export class AiProviderService {
         }>;
       };
 
-      const content = json.choices?.[0]?.message?.content
-        || json.choices?.[0]?.message?.reasoning_content
-        || "";
+      // Try to extract valid JSON from content or reasoning_content.
+      // Some models/servers put structured output in reasoning_content instead of content,
+      // or content may contain non-JSON think tags. Try both fields robustly.
+      const message = json.choices?.[0]?.message;
+      const candidates: string[] = [
+        message?.content ?? "",
+        message?.reasoning_content ?? "",
+      ].filter((s: string): boolean => s.length > 0);
 
-      // Try to parse the response as JSON to verify the server constrained the output
-      try {
-        const parsed = JSON.parse(content) as Record<string, unknown>;
-        const isValid = typeof parsed.ok === "boolean";
-        logger.info(`Structured output probe result: ${isValid ? "SUPPORTED" : "response not schema-conformant"}`);
-        return isValid;
-      } catch {
-        logger.debug("Structured output probe: response was not valid JSON", {
-          content: content.substring(0, 200),
-        });
-        return false;
+      for (const candidate of candidates) {
+        // Strip think tags that some models wrap around their output
+        const stripped: string = candidate.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+        const textToParse: string = stripped.length > 0 ? stripped : candidate;
+
+        try {
+          const parsed = JSON.parse(textToParse) as Record<string, unknown>;
+          const isValid: boolean = typeof parsed.ok === "boolean";
+          if (isValid) {
+            logger.info("Structured output probe result: SUPPORTED");
+            return true;
+          }
+        } catch {
+          // Not valid JSON in this candidate, try next
+        }
       }
+
+      logger.debug("Structured output probe: no candidate contained valid schema-conformant JSON", {
+        content: (message?.content ?? "").substring(0, 200),
+        reasoningContent: (message?.reasoning_content ?? "").substring(0, 200),
+      });
+      return false;
     } catch (error) {
       logger.debug("Structured output probe failed", {
         error: extractErrorMessage(error),
@@ -533,6 +582,146 @@ export class AiProviderService {
     } catch (error: unknown) {
       logger.debug("reasoning_format probe failed", {
         error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Tests whether the endpoint/model can return multiple tool calls in one response
+   * when parallel_tool_calls is enabled.
+   *
+   * Probe strategy (A/B):
+   * - Request A: parallel_tool_calls=true
+   * - Request B: parallel_tool_calls=false
+   *
+   * Success criteria:
+   * - A returns >=2 tool calls to get_weather
+   * - B returns <=1 tool call to get_weather
+   */
+  private async _testParallelToolCallSupportAsync(): Promise<boolean> {
+    if (!this._aiConfig) {
+      return false;
+    }
+
+    const logger: LoggerService = LoggerService.getInstance();
+    logger.info("Testing endpoint parallel tool call support...");
+
+    try {
+      const config = this._getActiveProviderConfig();
+      const baseUrl: string = normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
+
+      type IToolCall = {
+        function?: {
+          name?: string;
+          arguments?: string;
+        };
+      };
+
+      type IProbeResponse = {
+        choices?: Array<{
+          message?: {
+            tool_calls?: IToolCall[];
+          };
+        }>;
+      };
+
+      const makeProbeRequestAsync = async (parallelToolCalls: boolean): Promise<Response> => {
+        const controller: AbortController = new AbortController();
+        const timeoutId: NodeJS.Timeout = setTimeout(
+          () => controller.abort(),
+          PARALLEL_TOOL_CALL_PROBE_TIMEOUT_MS,
+        );
+
+        try {
+          return await fetch(`${baseUrl}/v1/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({
+              model: config.model,
+              messages: [
+                {
+                  role: "system",
+                  content: "Call tools. Do not answer in natural language.",
+                },
+                {
+                  role: "user",
+                  content: "Get the weather for Prague and Brno.",
+                },
+              ],
+              tools: [
+                {
+                  type: "function",
+                  function: {
+                    name: "get_weather",
+                    description: "Get weather for a city",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        city: { type: "string" },
+                      },
+                      required: ["city"],
+                    },
+                  },
+                },
+              ],
+              tool_choice: "required",
+              parallel_tool_calls: parallelToolCalls,
+              max_tokens: 200,
+            }),
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      };
+
+      const responseWithParallel: Response = await makeProbeRequestAsync(true);
+      if (!responseWithParallel.ok) {
+        const body: string = await responseWithParallel.text();
+        logger.debug("Parallel tool call probe (parallel=true) returned error", {
+          status: responseWithParallel.status,
+          body: body.substring(0, 300),
+        });
+        return false;
+      }
+
+      const responseWithoutParallel: Response = await makeProbeRequestAsync(false);
+      if (!responseWithoutParallel.ok) {
+        const body: string = await responseWithoutParallel.text();
+        logger.debug("Parallel tool call probe (parallel=false) returned error", {
+          status: responseWithoutParallel.status,
+          body: body.substring(0, 300),
+        });
+        return false;
+      }
+
+      const jsonWithParallel = await responseWithParallel.json() as IProbeResponse;
+      const jsonWithoutParallel = await responseWithoutParallel.json() as IProbeResponse;
+
+      const toolCallsWithParallel: IToolCall[] = jsonWithParallel.choices?.[0]?.message?.tool_calls ?? [];
+      const toolCallsWithoutParallel: IToolCall[] = jsonWithoutParallel.choices?.[0]?.message?.tool_calls ?? [];
+
+      const getWeatherCallsWithParallel: number = toolCallsWithParallel.filter(
+        (toolCall: IToolCall) => toolCall.function?.name === "get_weather",
+      ).length;
+      const getWeatherCallsWithoutParallel: number = toolCallsWithoutParallel.filter(
+        (toolCall: IToolCall) => toolCall.function?.name === "get_weather",
+      ).length;
+
+      const looksSupported: boolean =
+        getWeatherCallsWithParallel >= 2 && getWeatherCallsWithoutParallel <= 1;
+
+      logger.info("Parallel tool call probe result", {
+        supported: looksSupported,
+        callsWithParallel: getWeatherCallsWithParallel,
+        callsWithoutParallel: getWeatherCallsWithoutParallel,
+      });
+
+      return looksSupported;
+    } catch (error: unknown) {
+      logger.debug("Parallel tool call probe failed", {
+        error: extractErrorMessage(error),
       });
       return false;
     }
@@ -679,8 +868,90 @@ export class AiProviderService {
         }
       }
 
-      // Make the actual API request
-      let response: Response = await fetch(url, init);
+      // Make the actual API request with progressive timeout for local providers
+      const isLocalProvider: boolean = providerName === "openai-compatible" || providerName === "lm-studio";
+      let response!: Response;
+
+      if (isLocalProvider && init?.method === "POST") {
+        // Progressive timeout retry: on timeout, retry once with 2x timeout.
+        // This handles local LLM servers that occasionally take longer than
+        // expected to generate a response (non-streaming mode buffers entire
+        // response before sending headers).
+        let lastError: unknown;
+        let succeeded: boolean = false;
+
+        for (let timeoutAttempt: number = 0; timeoutAttempt < REQUEST_TIMEOUT_MAX_ATTEMPTS; timeoutAttempt++) {
+          const timeoutMs: number = this._requestTimeoutMs * Math.pow(REQUEST_TIMEOUT_RETRY_MULTIPLIER, timeoutAttempt);
+          const controller: AbortController = new AbortController();
+          let wasOurTimeout: boolean = false;
+          const timeoutId: ReturnType<typeof setTimeout> = setTimeout(() => {
+            wasOurTimeout = true;
+            controller.abort();
+          }, timeoutMs);
+
+          // Forward caller's abort signal so cancellation still works
+          if (init.signal) {
+            if (init.signal.aborted) {
+              clearTimeout(timeoutId);
+              throw init.signal.reason ?? new DOMException("Aborted", "AbortError");
+            }
+            init.signal.addEventListener("abort", () => {
+              clearTimeout(timeoutId);
+              controller.abort(init.signal!.reason);
+            }, { once: true });
+          }
+
+          try {
+            response = await fetch(url, { ...init, signal: controller.signal });
+            clearTimeout(timeoutId);
+            succeeded = true;
+            break;
+          } catch (error: unknown) {
+            clearTimeout(timeoutId);
+            lastError = error;
+
+            // If caller aborted (not our timeout), propagate immediately
+            if (!wasOurTimeout) {
+              throw error;
+            }
+
+            const isLastAttempt: boolean = timeoutAttempt >= REQUEST_TIMEOUT_MAX_ATTEMPTS - 1;
+            const nextTimeoutMs: number = timeoutMs * REQUEST_TIMEOUT_RETRY_MULTIPLIER;
+
+            if (isLastAttempt) {
+              const schedulerService: SchedulerService = SchedulerService.getInstance();
+              logger.error("API request timed out after all timeout retries", {
+                provider: providerName,
+                timeoutMs,
+                totalAttempts: REQUEST_TIMEOUT_MAX_ATTEMPTS,
+                url: typeof url === "string" ? url : url.toString(),
+                concurrentCronTasks: schedulerService.getRunningTaskCount(),
+                queuedCronTasks: schedulerService.getQueuedTaskCount(),
+              });
+              throw new Error(
+                `Cannot connect to API: request timed out after ${timeoutMs / 1000}s ` +
+                `(attempt ${timeoutAttempt + 1}/${REQUEST_TIMEOUT_MAX_ATTEMPTS})`,
+              );
+            }
+
+            logger.warn("API request timed out, retrying with longer timeout", {
+              provider: providerName,
+              timeoutAttempt: timeoutAttempt + 1,
+              timeoutMs,
+              nextTimeoutMs,
+              url: typeof url === "string" ? url : url.toString(),
+              concurrentCronTasks: SchedulerService.getInstance().getRunningTaskCount(),
+              queuedCronTasks: SchedulerService.getInstance().getQueuedTaskCount(),
+            });
+          }
+        }
+
+        if (!succeeded) {
+          throw lastError ?? new Error("All timeout retry attempts exhausted");
+        }
+      } else {
+        response = await fetch(url, init);
+      }
       
       // Log response status for debugging
       logger.info("Received response from provider", {
@@ -849,6 +1120,17 @@ export class AiProviderService {
               // This disables server-side think-tag extraction so we can handle it client-side
               if (this._supportsReasoningFormat && !body.reasoning_format) {
                 body.reasoning_format = "none";
+                modified = true;
+              }
+
+              // Inject parallel_tool_calls: true for servers that support it.
+              // The @ai-sdk/openai-compatible provider never sends this parameter,
+              // so without injection llama.cpp defaults to single tool call mode.
+              if (
+                this._supportsParallelToolCalls &&
+                body.parallel_tool_calls === undefined
+              ) {
+                body.parallel_tool_calls = true;
                 modified = true;
               }
 

@@ -416,6 +416,47 @@ async function mainAsync(): Promise<void> {
       }
     });
 
+    schedulerService.setOnTaskSkipped(async (task, reason) => {
+      const timestamp: string = new Date().toISOString();
+      const message: string =
+        `**Task Skipped**: \`${task.name}\`\n\n` +
+        `**Time:** ${timestamp}\n` +
+        `**Task ID:** \`${task.taskId}\`\n\n` +
+        `**Reason:** ${reason}`;
+
+      const notificationChannels = channelRegistry.getNotificationChannels();
+      for (const channel of notificationChannels) {
+        try {
+          if (!messagingService.hasAdapter(channel.platform)) {
+            continue;
+          }
+          const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
+          await sender(message);
+        } catch (sendError) {
+          if (sendError instanceof ChatNotFoundError && channel.platform === "telegram") {
+            const telegramHandler = TelegramHandler.getInstance();
+            const knownChatIds = telegramHandler.getKnownChatIds();
+
+            for (const fallbackChatId of knownChatIds) {
+              try {
+                const fallbackSender = messagingService.createSenderForChat("telegram", fallbackChatId);
+                await fallbackSender(message);
+              } catch (fallbackError) {
+                logger.error("Fallback send for task-skipped notification failed", {
+                  fallbackChatId,
+                  error: extractErrorMessage(fallbackError),
+                });
+              }
+            }
+          } else {
+            logger.error(`Failed to send task-skipped notification to ${channel.platform}:${channel.channelId}`, {
+              error: sendError instanceof Error ? sendError.message : String(sendError),
+            });
+          }
+        }
+      }
+    });
+
     await schedulerService.startAsync();
 
     logger.info("Scheduler started.");

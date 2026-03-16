@@ -5,6 +5,7 @@ import { BaseAgentBase } from "./base-agent.js";
 import type { IAgentResult, IToolCallSummary } from "./base-agent.js";
 import type { IScheduledTask, IExecutionContext } from "../shared/types/index.js";
 import { PROMPT_CRON_AGENT } from "../shared/constants.js";
+import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
 import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { ConfigService } from "../services/config.service.js";
@@ -44,6 +45,7 @@ import {
   JobActivityTracker,
 } from "../tools/index.js";
 import type { MessageSender, TaskIdProvider } from "../tools/index.js";
+import { StatusService } from "../services/status.service.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 
 //#region Interfaces
@@ -99,6 +101,12 @@ export class CronAgent extends BaseAgentBase {
   ): Promise<IAgentResult> {
     // Reset think operation tracker at the start of each task
     thinkTracker.reset();
+
+    // Reset stale compaction flag from any previous task execution.
+    // CronAgent is a singleton — without this reset, a context-exceeded error
+    // in one task would force compaction on the NEXT task even if its context
+    // is tiny (e.g. 5k tokens at 5% utilization).
+    this._forceCompactionOnNextStep = false;
     
     const basePrompt: string = await PromptService.getInstance().getPromptAsync(
       PROMPT_CRON_AGENT,
@@ -118,10 +126,19 @@ export class CronAgent extends BaseAgentBase {
     const contextWindow: number = aiProviderService.getContextWindow();
     this.updateContextWindow(contextWindow);
 
+    const statusService: StatusService = StatusService.getInstance();
+
     const onStepAsync = async (
       stepNumber: number,
       toolCalls: IToolCallSummary[],
     ): Promise<void> => {
+      // Update spinner label so concurrent user sessions don't leave a stale label
+      const toolNames: string = toolCalls.map((tc) => tc.name).join(", ");
+      statusService.setStatus("tool_execution", `Cron: ${task.name} — Step ${stepNumber}: ${toolNames}`, {
+        stepNumber,
+        taskName: task.name,
+      });
+
       // Log token usage at each step to track accumulation during long-running tasks
       if (this._totalInputTokens > 0) {
         const hardLimit = Math.floor(this._contextWindow * 0.85);
@@ -215,7 +232,24 @@ export class CronAgent extends BaseAgentBase {
     }
 
     const resolvedTools: ToolSet = {};
-    const effectiveToolNames: string[] = [...toolNames];
+    const effectiveToolNames: string[] = [];
+
+    // Expand deprecated tool aliases (e.g. query_database → 4 dedicated tools)
+    for (const name of toolNames) {
+      const replacements: readonly string[] | undefined = CRON_TOOL_ALIASES[name];
+      if (replacements) {
+        this._logger.warn(
+          `Deprecated tool "${name}" in cron task — expanded to: ${replacements.join(", ")}. Update the task to remove this warning.`,
+        );
+        for (const replacement of replacements) {
+          if (!effectiveToolNames.includes(replacement)) {
+            effectiveToolNames.push(replacement);
+          }
+        }
+      } else {
+        effectiveToolNames.push(name);
+      }
+    }
 
     // If send_message is available, force-include get_previous_message so the
     // model can satisfy the send-message prerequisite consistently.

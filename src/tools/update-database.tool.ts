@@ -30,8 +30,8 @@ export const updateDatabaseTool = tool({
     tableName: z.string()
       .min(1)
       .describe("Table to update"),
-    set: z.record(z.unknown())
-      .describe("Column-value pairs to set (e.g. {isInteresting: 1, score: 10})"),
+    set: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+      .describe("Column-value pairs to set (e.g. {isInteresting: 1, score: 10}). Values must be flat primitives — no nested objects."),
     where: z.string()
       .min(1)
       .describe("SQL WHERE clause (required for safety, e.g. \"id = 5\")"),

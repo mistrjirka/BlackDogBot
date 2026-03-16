@@ -13,10 +13,10 @@ export const writeToDatabaseTool = tool({
     tableName: z.string()
       .min(1)
       .describe("Name of the table to write to"),
-    data: z.record(z.string(), z.unknown())
+    data: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
       .array()
       .min(1)
-      .describe("Array of row objects to insert (e.g. [{title: 'Hello', score: 5}])"),
+      .describe("Array of row objects to insert (e.g. [{title: 'Hello', score: 5}]). Values must be flat primitives — no nested objects."),
   }),
   execute: async ({
     databaseName,

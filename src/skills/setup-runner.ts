@@ -44,11 +44,6 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
     };
 
     const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools, {
-      enableResultCompaction: true,
-      compactionOptions: {
-        maxTokens: 10000,
-        representativeArraySize: 5,
-      },
       logger,
     });
 

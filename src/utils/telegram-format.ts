@@ -12,6 +12,18 @@ interface ParsedTable {
   rows: string[][];
 }
 
+function isSpoilerDelimiterLine(line: string): boolean {
+  return /^\s*\|\|.*\|\|\s*$/.test(line);
+}
+
+function isTableRowLine(line: string): boolean {
+  return /^\s*\|.*\|.*\|/.test(line) && !isSpoilerDelimiterLine(line);
+}
+
+function isTableSeparatorLine(line: string): boolean {
+  return /^\s*\|([\s\-:]+\|)+\s*$/.test(line);
+}
+
 /**
  * Parses markdown table lines into structured data.
  * @param lines - Array of lines that form a table (including separator line)
@@ -120,7 +132,7 @@ export function convertTablesToBulletLists(text: string): string {
     
     // Check if this line looks like a table row (starts with | and has at least two |)
     // Exclude lines that are just spoiler delimiters (||)
-    if (/^\s*\|.*\|.*\|/.test(line) && !/^\s*\|\|.*\|\|\s*$/.test(line)) {
+    if (isTableRowLine(line)) {
       // Start of a potential table region
       const tableLines: string[] = [];
       let j = i;
@@ -132,9 +144,9 @@ export function convertTablesToBulletLists(text: string): string {
           break;
         }
         // Table row: starts with | and has at least two |, but not spoiler delimiters
-        const isTableRow = /^\s*\|.*\|.*\|/.test(currentLine) && !/^\s*\|\|.*\|\|\s*$/.test(currentLine);
+        const isTableRow = isTableRowLine(currentLine);
         // Separator line: starts with |, contains only |, -, :, spaces, and optional leading/trailing spaces
-        const isSeparator = /^\s*\|([\s\-:]+\|)+\s*$/.test(currentLine);
+        const isSeparator = isTableSeparatorLine(currentLine);
         if (isTableRow || isSeparator) {
           tableLines.push(currentLine);
           j++;
@@ -145,7 +157,7 @@ export function convertTablesToBulletLists(text: string): string {
       
       // Only convert if we have at least 2 lines (header + separator or header + row)
       // Also ensure we have a separator line (common in markdown tables)
-      const hasSeparator = tableLines.some(line => /^\s*\|([\s\-:]+\|)+\s*$/.test(line));
+      const hasSeparator = tableLines.some((tableLine: string): boolean => isTableSeparatorLine(tableLine));
       if (tableLines.length >= 2 && (hasSeparator || tableLines.length >= 3)) {
         // Parse the table and format as bullet list
         const parsedTable = parseMarkdownTable(tableLines);
@@ -162,7 +174,71 @@ export function convertTablesToBulletLists(text: string): string {
       i++;
     }
   }
-  
+
+  return result.join('\n');
+}
+
+/**
+ * Wraps markdown tables in fenced code blocks.
+ * Preserves existing fenced blocks and does not treat spoiler delimiters as tables.
+ */
+export function wrapMarkdownTablesInCodeBlocks(text: string): string {
+  const lines = text.split('\n');
+  const result: string[] = [];
+  let i = 0;
+  let insideCodeBlock = false;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (line.trim().startsWith("```")) {
+      insideCodeBlock = !insideCodeBlock;
+      result.push(line);
+      i++;
+      continue;
+    }
+
+    if (insideCodeBlock) {
+      result.push(line);
+      i++;
+      continue;
+    }
+
+    if (isTableRowLine(line)) {
+      const tableLines: string[] = [];
+      let j = i;
+
+      while (j < lines.length) {
+        const currentLine = lines[j];
+        if (currentLine.trim().startsWith("```")) {
+          break;
+        }
+
+        const isTableRow = isTableRowLine(currentLine);
+        const isSeparator = isTableSeparatorLine(currentLine);
+        if (isTableRow || isSeparator) {
+          tableLines.push(currentLine);
+          j++;
+          continue;
+        }
+
+        break;
+      }
+
+      const hasSeparator = tableLines.some((tableLine: string): boolean => isTableSeparatorLine(tableLine));
+      if (tableLines.length >= 2 && (hasSeparator || tableLines.length >= 3)) {
+        result.push("```");
+        result.push(...tableLines);
+        result.push("```");
+        i = j;
+        continue;
+      }
+    }
+
+    result.push(line);
+    i++;
+  }
+
   return result.join('\n');
 }
 

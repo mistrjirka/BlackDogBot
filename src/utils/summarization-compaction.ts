@@ -63,7 +63,6 @@ export async function compactMessagesSummaryOnlyAsync(
       logger,
       targetTokenCount,
       countTokens,
-      passIndex,
     );
 
     const tokensAfter: number = countTokens(compacted);
@@ -124,14 +123,13 @@ async function _compactSinglePassAsync(
   logger: LoggerService,
   targetTokenCount: number,
   countTokens: (msgs: ModelMessage[]) => number,
-  passIndex: number,
 ): Promise<ModelMessage[]> {
   if (messages.length <= 2) {
     return messages;
   }
 
   const firstMessage: ModelMessage = messages[0];
-  const keepRecentCount: number = _getKeepRecentCount(passIndex, messages.length);
+  const keepRecentCount: number = _getKeepRecentCount(messages, countTokens);
   const recentMessages: ModelMessage[] = messages.slice(-keepRecentCount);
   const oldMessages: ModelMessage[] = messages.slice(1, -keepRecentCount);
 
@@ -164,16 +162,47 @@ async function _compactSinglePassAsync(
   return [firstMessage, summaryMessage, ...recentMessages];
 }
 
-function _getKeepRecentCount(passIndex: number, messageCount: number): number {
-  if (passIndex <= 0) {
-    return Math.min(6, Math.max(2, messageCount - 1));
+/**
+ * Determines how many recent messages to keep based on a dynamic token budget.
+ * Walks backwards from the end of the message array, accumulating token counts,
+ * and keeps messages as long as the total stays under 15% of the total message
+ * token count. Minimum 2 messages are always kept.
+ */
+function _getKeepRecentCount(
+  messages: ModelMessage[],
+  countTokens: (msgs: ModelMessage[]) => number,
+): number {
+  const minKeep: number = 2;
+
+  if (messages.length <= minKeep + 1) {
+    return Math.max(1, messages.length - 1);
   }
 
-  if (passIndex === 1) {
-    return Math.min(4, Math.max(2, messageCount - 1));
+  // Total tokens across all messages (excluding the first / system message)
+  const allNonFirstMessages: ModelMessage[] = messages.slice(1);
+  const totalTokens: number = countTokens(allNonFirstMessages);
+  const budget: number = Math.floor(totalTokens * 0.15);
+
+  let kept: number = 0;
+  let accumulated: number = 0;
+
+  for (let i: number = messages.length - 1; i >= 1; i--) {
+    const msgTokens: number = countTokens([messages[i]]);
+
+    if (kept >= minKeep && accumulated + msgTokens > budget) {
+      break;
+    }
+
+    accumulated += msgTokens;
+    kept++;
+
+    // If we've already consumed the budget and met the minimum, stop
+    if (kept >= minKeep && accumulated >= budget) {
+      break;
+    }
   }
 
-  return Math.min(2, Math.max(1, messageCount - 1));
+  return Math.max(minKeep, kept);
 }
 
 async function _summarizeMessagesMapReduceAsync(
@@ -230,6 +259,9 @@ async function _summarizeTextAsync(
       prompt:
         `Summarize the following conversation excerpt. ` +
         `Keep key decisions, actions, concrete facts, identifiers, and pending tasks. ` +
+        `Pay special attention to [Assistant reasoning] entries — these contain the rationale ` +
+        `behind decisions and tool calls. Preserve the reasoning/rationale in your summary so ` +
+        `that the assistant can recall WHY it made past decisions, not just WHAT it did. ` +
         `Target length: about ${targetChars} characters.\n\n` +
         `Conversation excerpt:\n${sourceText}`,
       retryOptions: { callType: "summarization" },
@@ -290,30 +322,34 @@ function _extractTextContent(message: ModelMessage): string {
       const toolCall = part as {
         toolCallId?: string;
         toolName?: string;
-        args?: unknown;
-        input?: unknown;
+        args?: Record<string, unknown>;
+        input?: Record<string, unknown>;
       };
-      parts.push(JSON.stringify({
-        type: "tool-call",
-        toolCallId: toolCall.toolCallId,
-        toolName: toolCall.toolName,
-        args: toolCall.args ?? toolCall.input,
-      }));
+      const args: Record<string, unknown> = (toolCall.args ?? toolCall.input ?? {}) as Record<string, unknown>;
+
+      // Extract reasoning prominently so the summarization LLM can see it
+      if (args.reasoning && typeof args.reasoning === "string") {
+        parts.push(`[Assistant reasoning]: "${args.reasoning}"`);
+        const { reasoning: _ignored, ...remainingArgs } = args;
+        parts.push(`[Tool call]: ${toolCall.toolName ?? "unknown"}(${JSON.stringify(remainingArgs)})`);
+      } else {
+        parts.push(`[Tool call]: ${toolCall.toolName ?? "unknown"}(${JSON.stringify(args)})`);
+      }
       continue;
     }
 
     if ("result" in part || "output" in part) {
       const resPart = part as {
         toolCallId?: string;
+        toolName?: string;
         result?: unknown;
         output?: unknown;
         isError?: boolean;
       };
-      parts.push(JSON.stringify({
-        toolCallId: resPart.toolCallId,
-        result: resPart.result ?? resPart.output,
-        isError: resPart.isError,
-      }));
+      const resultValue: unknown = resPart.result ?? resPart.output;
+      const errorPrefix: string = resPart.isError ? " (ERROR)" : "";
+      const toolLabel: string = resPart.toolName ? ` ${resPart.toolName}` : "";
+      parts.push(`[Tool result${toolLabel}${errorPrefix}]: ${typeof resultValue === "string" ? resultValue : JSON.stringify(resultValue)}`);
     }
   }
 

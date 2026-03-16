@@ -387,7 +387,7 @@ describe("TelegramHandler", () => {
     await firstCall;
 
     expect(stopSpy).toHaveBeenCalledWith("100");
-    expect(deleteSpy).toHaveBeenCalledWith("100", 101);
+    expect(deleteSpy).toHaveBeenCalledWith("100", 5001);
     expect(deleteSpy).toHaveBeenCalledWith("100", 102);
     expect(deleteSpy).toHaveBeenCalledWith("100", 104);
     expect(cancelReplies.some((reply: string): boolean => reply.toLowerCase().includes("cancelled"))).toBe(true);

@@ -46,6 +46,11 @@ const openAiCompatibleSchema = z.object({
     .describe("Context window size in tokens. Required for accurate context management."),
   rateLimits: rateLimitSchema
     .default({ rpm: 120, tpm: 200000 }),
+  requestTimeout: z.number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Per-request timeout in milliseconds. On timeout, retries once at 2x. Default: 500000 (500s)."),
 });
 
 const lmStudioSchema = z.object({
@@ -66,6 +71,11 @@ const lmStudioSchema = z.object({
     .positive()
     .optional()
     .describe("Context window size. If not set, auto-detected from LM Studio via SDK."),
+  requestTimeout: z.number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Per-request timeout in milliseconds. On timeout, retries once at 2x. Default: 500000 (500s)."),
 });
 
 const aiConfigSchema = z.object({
@@ -95,6 +105,16 @@ const schedulerConfigSchema = z.object({
   timezone: z.string()
     .optional()
     .describe("Timezone for cron expressions (e.g., 'Europe/Prague', 'UTC', 'America/New_York'). Defaults to server local time."),
+  maxParallelCrons: z.number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Maximum number of cron tasks running concurrently. Default: 1."),
+  cronQueueSize: z.number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe("Maximum tasks queued when concurrency limit is reached. Tasks arriving when queue is full are skipped. Default: 3."),
 });
 
 const jobCreationConfigSchema = z.object({

@@ -887,13 +887,7 @@ export class JobExecutorService {
 
     this._logger.debug("Executing agent node", { nodeId: node.nodeId, toolCount: Object.keys(selectedTools).length, maxSteps, reasoningEffort: config.reasoningEffort });
 
-    // Enable tool result compaction to prevent oversized tool results from causing context overflow
     const wrappedTools: ToolSet = wrapToolSetWithReasoning(selectedTools, {
-      enableResultCompaction: true,
-      compactionOptions: {
-        maxTokens: 10000,
-        representativeArraySize: 5,
-      },
       logger: this._logger,
     });
 

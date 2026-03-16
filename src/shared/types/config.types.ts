@@ -28,6 +28,7 @@ export interface IOpenAiCompatibleConfig {
   rateLimits: IRateLimitConfig;
   contextWindow?: number; // Optional, defaults to 128000 if not specified
   supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
+  requestTimeout?: number; // Per-request timeout in ms, default 500000. Retries once at 2x on timeout.
 }
 
 export interface ILmStudioConfig {
@@ -37,6 +38,7 @@ export interface ILmStudioConfig {
   rateLimits: IRateLimitConfig;
   contextWindow?: number;
   supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
+  requestTimeout?: number; // Per-request timeout in ms, default 500000. Retries once at 2x on timeout.
 }
 
 export type AiProvider = "openrouter" | "openai-compatible" | "lm-studio";
@@ -56,6 +58,8 @@ export interface ITelegramConfig {
 export interface ISchedulerConfig {
   enabled: boolean;
   timezone?: string;
+  maxParallelCrons?: number; // Max concurrent cron tasks. Default 1.
+  cronQueueSize?: number; // Max tasks queued when at concurrency limit. Default 3. Overflow is skipped.
 }
 
 export interface IJobCreationConfig {
