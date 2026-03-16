@@ -38,6 +38,9 @@ pnpm-debug.log*
 # Huggingface model cache (large files)
 .hf_cache/
 
+# Diagnostics
+.diagnostics/
+
 # Heap snapshots
 Heap.*.heapsnapshot
 *.heapsnapshot
