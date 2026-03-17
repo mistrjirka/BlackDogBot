@@ -5,10 +5,7 @@ import { generateTextWithRetryAsync } from "./llm-retry.js";
 
 //#region Constants
 
-const MAX_SUMMARIZATION_PASSES: number = 4;
-const CHUNK_OVERLAP_MESSAGES: number = 1;
-const MIN_CHUNK_MESSAGES: number = 3;
-const MAX_CHUNK_MESSAGES: number = 24;
+const MAX_SUMMARIZATION_PASSES: number = 1;
 
 //#endregion Constants
 
@@ -142,7 +139,7 @@ async function _compactSinglePassAsync(
     Math.floor(targetTokenCount - countTokens([firstMessage, ...recentMessages]) - 180),
   );
 
-  const summaryText: string = await _summarizeMessagesMapReduceAsync(
+  const summaryText: string = await _summarizeMessagesSingleShotAsync(
     oldMessages,
     model,
     logger,
@@ -205,44 +202,21 @@ function _getKeepRecentCount(
   return Math.max(minKeep, kept);
 }
 
-async function _summarizeMessagesMapReduceAsync(
+async function _summarizeMessagesSingleShotAsync(
   messages: ModelMessage[],
   model: LanguageModel,
   logger: LoggerService,
   targetSummaryTokens: number,
 ): Promise<string> {
-  const chunkSize: number = _pickChunkSize(messages.length);
-  const chunks: ModelMessage[][] = _chunkMessages(messages, chunkSize, CHUNK_OVERLAP_MESSAGES);
+  const sourceText: string = _messagesToPlainText(messages);
 
-  const partialSummaries: string[] = [];
-  for (let i: number = 0; i < chunks.length; i++) {
-    const chunkText: string = _messagesToPlainText(chunks[i]);
-    const chunkTargetTokens: number = Math.max(220, Math.floor(targetSummaryTokens / Math.max(chunks.length, 1)));
-    const chunkSummary: string = await _summarizeTextAsync(
-      model,
-      logger,
-      chunkText,
-      chunkTargetTokens,
-      `chunk_${i + 1}`,
-    );
-    partialSummaries.push(chunkSummary);
-  }
-
-  let merged: string = partialSummaries.join("\n\n");
-  let mergePass: number = 0;
-
-  while (_estimateTokens(merged) > targetSummaryTokens && mergePass < 3) {
-    mergePass++;
-    merged = await _summarizeTextAsync(
-      model,
-      logger,
-      merged,
-      targetSummaryTokens,
-      `reduce_${mergePass}`,
-    );
-  }
-
-  return merged;
+  return await _summarizeTextAsync(
+    model,
+    logger,
+    sourceText,
+    targetSummaryTokens,
+    "oneshot",
+  );
 }
 
 async function _summarizeTextAsync(
@@ -257,6 +231,7 @@ async function _summarizeTextAsync(
     const result = await generateTextWithRetryAsync({
       model,
       prompt:
+        `/no_think\n` +
         `Summarize the following conversation excerpt. ` +
         `Keep key decisions, actions, concrete facts, identifiers, and pending tasks. ` +
         `Pay special attention to [Assistant reasoning] entries — these contain the rationale ` +
@@ -271,7 +246,7 @@ async function _summarizeTextAsync(
       ? result.text.trim()
       : `[Summary unavailable for phase ${phase}]`;
   } catch (error: unknown) {
-    logger.warn("Chunk summarization failed", {
+    logger.warn("History compaction: partial summary failed", {
       phase,
       error: error instanceof Error ? error.message : String(error),
       sourceLength: sourceText.length,
@@ -354,45 +329,6 @@ function _extractTextContent(message: ModelMessage): string {
   }
 
   return parts.join(" ");
-}
-
-function _pickChunkSize(messageCount: number): number {
-  if (messageCount <= MIN_CHUNK_MESSAGES) {
-    return MIN_CHUNK_MESSAGES;
-  }
-
-  if (messageCount >= 120) {
-    return MAX_CHUNK_MESSAGES;
-  }
-
-  return Math.min(MAX_CHUNK_MESSAGES, Math.max(MIN_CHUNK_MESSAGES, Math.floor(messageCount / 5)));
-}
-
-function _chunkMessages(
-  messages: ModelMessage[],
-  chunkSize: number,
-  overlap: number,
-): ModelMessage[][] {
-  if (messages.length === 0) {
-    return [];
-  }
-
-  const chunks: ModelMessage[][] = [];
-  const stride: number = Math.max(1, chunkSize - overlap);
-
-  for (let start: number = 0; start < messages.length; start += stride) {
-    const end: number = Math.min(messages.length, start + chunkSize);
-    const chunk: ModelMessage[] = messages.slice(start, end);
-    if (chunk.length > 0) {
-      chunks.push(chunk);
-    }
-
-    if (end >= messages.length) {
-      break;
-    }
-  }
-
-  return chunks;
 }
 
 function _estimateTokens(text: string): number {

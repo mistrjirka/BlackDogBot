@@ -67,6 +67,10 @@ export function getPromptsDir(): string {
   return path.join(getBaseDir(), "prompts");
 }
 
+export function getModelProfilesDir(): string {
+  return path.join(getBaseDir(), "model-profiles");
+}
+
 export function getPromptFragmentsDir(): string {
   return path.join(getPromptsDir(), "prompt-fragments");
 }
@@ -116,6 +120,10 @@ export function getTelegramChatsFilePath(): string {
   return path.join(getBaseDir(), "known-telegram-chats.json");
 }
 
+export function getBrainInterfaceTokenFilePath(): string {
+  return path.join(getBaseDir(), "brain-interface.token");
+}
+
 export function getModelsDir(): string {
   const envModelsDir: string | undefined = process.env.BETTERCLAW_MODELS_DIR;
 
@@ -148,6 +156,7 @@ export async function ensureAllDirectoriesAsync(): Promise<void> {
     getRssStateDir(),
     getPromptsDir(),
     getPromptFragmentsDir(),
+    getModelProfilesDir(),
     getDatabasesDir(),
     getModelsDir(),
   ];

@@ -7,6 +7,7 @@ import { RateLimiterService } from "../services/rate-limiter.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { extractAiErrorDetails, formatAiErrorForLog } from "./ai-error.js";
+import { runWithLlmCallTypeAsync } from "./llm-call-context.js";
 
 //#region Types
 
@@ -109,7 +110,6 @@ export async function generateTextWithRetryAsync(
   const rateLimiterService: RateLimiterService = RateLimiterService.getInstance();
   const statusService: StatusService = StatusService.getInstance();
   const providerKey: string = AiProviderService.getInstance().getActiveProvider();
-  const limiter = rateLimiterService.getLimiter(providerKey);
 
   const retryOptions = options.retryOptions ?? {};
   const callType = retryOptions.callType ?? "agent_primary";
@@ -144,9 +144,11 @@ export async function generateTextWithRetryAsync(
           return { text: result.text ?? "" };
         };
 
-        const result: { text: string } = limiter
-          ? await rateLimiterService.scheduleAsync(providerKey, callFn)
-          : await callFn();
+        // NOTE: Do not schedule with RateLimiterService here.
+        // Models from AiProviderService are already wrapped with limiter scheduling
+        // in AiProviderService._wrapModelWithRateLimiter(). Scheduling again here
+        // creates nested Bottleneck scheduling and can deadlock at maxConcurrent=1.
+        const result: { text: string } = await runWithLlmCallTypeAsync(callType, callFn);
 
         // Record token usage for budget tracking (estimate output tokens)
         const outputTokens: number = statusService.countTokens(result.text);
@@ -175,6 +177,8 @@ export async function generateTextWithRetryAsync(
           callType,
           attempt,
           maxAttempts,
+          localRetryAttempt: attempt,
+          localRetryTotal: maxAttempts,
           retryLayer: "local",
           sdkRetriesDisabled: true,
           error: errorMessage,
@@ -207,6 +211,7 @@ export async function generateTextWithRetryAsync(
     llmCallId,
     callType,
     maxAttempts,
+    localRetryTotal: maxAttempts,
     retryLayer: "local",
     sdkRetriesDisabled: true,
     error: finalErrorMsg,
@@ -234,7 +239,6 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
   const rateLimiterService: RateLimiterService = RateLimiterService.getInstance();
   const statusService: StatusService = StatusService.getInstance();
   const providerKey: string = AiProviderService.getInstance().getActiveProvider();
-  const limiter = rateLimiterService.getLimiter(providerKey);
 
   const retryOptions = options.retryOptions ?? {};
   const callType = retryOptions.callType ?? "schema_extraction";
@@ -277,9 +281,11 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
           return { object: result.output };
         };
 
-        const result: { object: z.infer<T> } = limiter
-          ? await rateLimiterService.scheduleAsync(providerKey, callFn)
-          : await callFn();
+        // NOTE: Do not schedule with RateLimiterService here.
+        // Models from AiProviderService are already wrapped with limiter scheduling
+        // in AiProviderService._wrapModelWithRateLimiter(). Scheduling again here
+        // creates nested Bottleneck scheduling and can deadlock at maxConcurrent=1.
+        const result: { object: z.infer<T> } = await runWithLlmCallTypeAsync(callType, callFn);
 
         // Record token usage for budget tracking (estimate output tokens from JSON)
         const outputTokens: number = statusService.countTokens(JSON.stringify(result.object));
@@ -306,6 +312,8 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
           callType,
           attempt,
           maxAttempts,
+          localRetryAttempt: attempt,
+          localRetryTotal: maxAttempts,
           retryLayer: "local",
           sdkRetriesDisabled: true,
           error: errorMessage,
@@ -338,6 +346,7 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
     llmCallId,
     callType,
     maxAttempts,
+    localRetryTotal: maxAttempts,
     retryLayer: "local",
     sdkRetriesDisabled: true,
     error: finalErrorMsg,

@@ -189,6 +189,24 @@ describe("BaseAgentBase", () => {
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
     expect(result.text.length).toBeGreaterThan(0);
   }, 120_000);
+
+  it("should keep the same limiter instance across repeated initialize calls", () => {
+    const configService: ConfigService = ConfigService.getInstance();
+    const aiProviderService: AiProviderService = AiProviderService.getInstance();
+    const rateLimiterService: RateLimiterService = RateLimiterService.getInstance();
+
+    const aiConfig = configService.getConfig().ai;
+    const providerKey: string = aiConfig.provider;
+
+    const firstLimiter = rateLimiterService.getLimiter(providerKey);
+    expect(firstLimiter).toBeDefined();
+
+    aiProviderService.initialize(aiConfig);
+
+    const secondLimiter = rateLimiterService.getLimiter(providerKey);
+    expect(secondLimiter).toBeDefined();
+    expect(secondLimiter).toBe(firstLimiter);
+  });
 });
 
 //#endregion Tests

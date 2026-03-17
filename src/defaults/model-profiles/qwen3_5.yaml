@@ -1,0 +1,31 @@
+name: qwen3_5
+description: >-
+  Built-in profile for Qwen3.5 models on OpenAI-compatible endpoints (llama.cpp/LM Studio),
+  with request-level thinking control via chat_template_kwargs.
+
+defaults:
+  reasoningFormat: none
+  parallelToolCalls: true
+  chatTemplateKwargs:
+    enable_thinking: true
+
+operations:
+  agent_primary:
+    chatTemplateKwargs:
+      enable_thinking: true
+
+  summarization:
+    chatTemplateKwargs:
+      enable_thinking: false
+
+  schema_extraction:
+    chatTemplateKwargs:
+      enable_thinking: false
+
+  cron_history:
+    chatTemplateKwargs:
+      enable_thinking: false
+
+  job_execution:
+    chatTemplateKwargs:
+      enable_thinking: true

@@ -125,6 +125,7 @@ describe("OpenAI-compatible local reasoning middleware E2E", () => {
         tpm: rawConfig.ai?.openaiCompatible?.rateLimits?.tpm ?? 200000,
       },
       supportsStructuredOutputs: true,
+      activeProfile: "qwen3_5",
     };
 
     const nextConfig: IRawConfig = {
@@ -215,6 +216,12 @@ describe("OpenAI-compatible local reasoning middleware E2E", () => {
 
       for (const request of chatRequests) {
         expect(request.body.reasoning_format).toBe("none");
+      }
+
+      // Default profile behavior for agent/tool-call path should keep thinking enabled.
+      for (const request of chatRequests) {
+        expect(request.body.chat_template_kwargs).toBeDefined();
+        expect((request.body.chat_template_kwargs as Record<string, unknown>).enable_thinking).toBe(true);
       }
 
       const secondStepRequest: ICapturedRequest | undefined = chatRequests.find((request: ICapturedRequest) => {

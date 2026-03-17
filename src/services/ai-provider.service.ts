@@ -16,8 +16,15 @@ import {
 } from "../shared/types/index.js";
 import { RateLimiterService } from "./rate-limiter.service.js";
 import { ModelInfoService } from "./model-info.service.js";
+import {
+  ModelProfileService,
+  IRequestBehaviorProfile,
+  ModelProfileOperation,
+} from "./model-profile.service.js";
 import { countRequestBodyTokens, IRequestTokenBreakdown } from "../utils/request-token-counter.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { FORCE_THINK_INTERVAL } from "../shared/constants.js";
+import { getCurrentLlmCallType } from "../utils/llm-call-context.js";
 import { createHash } from "node:crypto";
 
 function normalizeBaseUrl(url: string): string {
@@ -44,12 +51,14 @@ export class AiProviderService {
   private _aiConfig: IAiConfig | null;
   private _rateLimiterService: RateLimiterService;
   private _modelInfoService: ModelInfoService;
+  private _modelProfileService: ModelProfileService;
   private _defaultModel: LanguageModel | null;
   private _contextWindow: number;
   private _supportsStructuredOutputs: boolean = false;
   private _supportsReasoningFormat: boolean = false;
   private _supportsParallelToolCalls: boolean = false;
   private _requestTimeoutMs: number;
+  private _activeProfileName: string | null;
 
   //#endregion Data members
 
@@ -59,9 +68,11 @@ export class AiProviderService {
     this._aiConfig = null;
     this._rateLimiterService = RateLimiterService.getInstance();
     this._modelInfoService = ModelInfoService.getInstance();
+    this._modelProfileService = ModelProfileService.getInstance();
     this._defaultModel = null;
     this._contextWindow = 128000; // Default context window
     this._requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS;
+    this._activeProfileName = null;
   }
 
   //#endregion Constructors
@@ -83,7 +94,20 @@ export class AiProviderService {
     const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
       this._getActiveProviderConfig();
 
-    this._rateLimiterService.createLimiter(providerKey, activeConfig.rateLimits);
+    const profilesDir: string | undefined = activeConfig.profilesDir;
+    await this._modelProfileService.initializeAsync(profilesDir);
+    this._activeProfileName = activeConfig.activeProfile ?? null;
+
+    if (this._activeProfileName && !this._modelProfileService.hasProfile(this._activeProfileName)) {
+      const logger = LoggerService.getInstance();
+      logger.warn("Configured model profile not found; falling back to default behavior", {
+        activeProfile: this._activeProfileName,
+        profilesDir: this._modelProfileService.getProfilesDirectory(),
+      });
+      this._activeProfileName = null;
+    }
+
+    this._rateLimiterService.getOrCreateLimiter(providerKey, activeConfig.rateLimits);
 
     const defaultModelId: string = this._getActiveModelId();
     this._defaultModel = this._createModel(defaultModelId);
@@ -223,7 +247,9 @@ export class AiProviderService {
     const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
       this._getActiveProviderConfig();
 
-    this._rateLimiterService.createLimiter(providerKey, activeConfig.rateLimits);
+    this._activeProfileName = activeConfig.activeProfile ?? null;
+
+    this._rateLimiterService.getOrCreateLimiter(providerKey, activeConfig.rateLimits);
 
     const defaultModelId: string = this._getActiveModelId();
     this._defaultModel = this._createModel(defaultModelId);
@@ -996,6 +1022,8 @@ export class AiProviderService {
                 provider: providerName,
                 timeoutMs,
                 totalAttempts: REQUEST_TIMEOUT_MAX_ATTEMPTS,
+                providerTimeoutAttempt: timeoutAttempt + 1,
+                providerTimeoutTotal: REQUEST_TIMEOUT_MAX_ATTEMPTS,
                 url: typeof url === "string" ? url : url.toString(),
                 concurrentCronTasks: schedulerService.getRunningTaskCount(),
                 queuedCronTasks: schedulerService.getQueuedTaskCount(),
@@ -1009,6 +1037,8 @@ export class AiProviderService {
             logger.warn("API request timed out, retrying with longer timeout", {
               provider: providerName,
               timeoutAttempt: timeoutAttempt + 1,
+              providerTimeoutAttempt: timeoutAttempt + 1,
+              providerTimeoutTotal: REQUEST_TIMEOUT_MAX_ATTEMPTS,
               timeoutMs,
               nextTimeoutMs,
               url: typeof url === "string" ? url : url.toString(),
@@ -1195,10 +1225,31 @@ export class AiProviderService {
                 modified = true;
               }
 
+              const requestBehavior: IRequestBehaviorProfile = this._resolveRequestBehaviorForCurrentCall();
+
+              if (requestBehavior.reasoningFormat && body.reasoning_format !== requestBehavior.reasoningFormat) {
+                body.reasoning_format = requestBehavior.reasoningFormat;
+                modified = true;
+              }
+
+              if (
+                requestBehavior.chatTemplateKwargs &&
+                JSON.stringify(body.chat_template_kwargs ?? null) !== JSON.stringify(requestBehavior.chatTemplateKwargs)
+              ) {
+                body.chat_template_kwargs = requestBehavior.chatTemplateKwargs;
+                modified = true;
+              }
+
               // Inject parallel_tool_calls: true for servers that support it.
               // The @ai-sdk/openai-compatible provider never sends this parameter,
               // so without injection llama.cpp defaults to single tool call mode.
-              if (
+              const requestedParallelToolCalls: boolean | undefined = requestBehavior.parallelToolCalls;
+              if (requestedParallelToolCalls !== undefined) {
+                if (body.parallel_tool_calls !== requestedParallelToolCalls) {
+                  body.parallel_tool_calls = requestedParallelToolCalls;
+                  modified = true;
+                }
+              } else if (
                 this._supportsParallelToolCalls &&
                 body.parallel_tool_calls === undefined
               ) {
@@ -1227,6 +1278,10 @@ export class AiProviderService {
                     modified = true;
                   }
                 }
+              }
+
+              if (this._promoteReasoningToRequiredIfNeeded(body)) {
+                modified = true;
               }
 
               if (modified) {
@@ -1372,6 +1427,168 @@ export class AiProviderService {
     ];
     const largest = components.reduce((max, comp) => comp.value > max.value ? comp : max);
     return `${largest.name} (${largest.value} tokens)`;
+  }
+
+  private _resolveRequestBehaviorForCurrentCall(): IRequestBehaviorProfile {
+    if (!this._activeProfileName) {
+      return {};
+    }
+
+    try {
+      const currentCallType = getCurrentLlmCallType();
+      const operation: ModelProfileOperation = currentCallType ?? "agent_primary";
+      const behavior: IRequestBehaviorProfile | null =
+        this._modelProfileService.resolveRequestBehavior(this._activeProfileName, operation);
+
+      return behavior ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  private _promoteReasoningToRequiredIfNeeded(body: Record<string, unknown>): boolean {
+    const messagesUnknown: unknown = body.messages;
+    const toolsUnknown: unknown = body.tools;
+
+    if (!Array.isArray(messagesUnknown) || !Array.isArray(toolsUnknown)) {
+      return false;
+    }
+
+    const stepsSinceReasoningOrThink: number = this._stepsSinceLastReasoningOrThink(messagesUnknown);
+    if (stepsSinceReasoningOrThink < FORCE_THINK_INTERVAL) {
+      return false;
+    }
+
+    let modified: boolean = false;
+
+    for (const tool of toolsUnknown) {
+      if (typeof tool !== "object" || tool === null) {
+        continue;
+      }
+
+      const functionDef: unknown = (tool as { function?: unknown }).function;
+      if (typeof functionDef !== "object" || functionDef === null) {
+        continue;
+      }
+
+      const parametersUnknown: unknown = (functionDef as { parameters?: unknown }).parameters;
+      if (typeof parametersUnknown !== "object" || parametersUnknown === null) {
+        continue;
+      }
+
+      const parameters = parametersUnknown as {
+        properties?: Record<string, unknown>;
+        required?: unknown;
+      };
+
+      if (!parameters.properties || typeof parameters.properties !== "object") {
+        continue;
+      }
+
+      if (!("reasoning" in parameters.properties)) {
+        continue;
+      }
+
+      const required: string[] = Array.isArray(parameters.required)
+        ? parameters.required.filter((value: unknown): value is string => typeof value === "string")
+        : [];
+
+      if (!required.includes("reasoning")) {
+        parameters.required = [...required, "reasoning"];
+        modified = true;
+      }
+    }
+
+    return modified;
+  }
+
+  private _stepsSinceLastReasoningOrThink(messages: unknown[]): number {
+    let stepsCount: number = 0;
+
+    for (let i: number = messages.length - 1; i >= 0; i--) {
+      const message: unknown = messages[i];
+
+      if (typeof message !== "object" || message === null) {
+        continue;
+      }
+
+      const role: unknown = (message as { role?: unknown }).role;
+      const toolCalls: unknown = (message as { tool_calls?: unknown }).tool_calls;
+
+      if (role !== "assistant" || !Array.isArray(toolCalls)) {
+        continue;
+      }
+
+      let hasRelevantToolCalls: boolean = false;
+      let hasThink: boolean = false;
+      let hasReasoning: boolean = false;
+
+      for (const toolCall of toolCalls) {
+        if (typeof toolCall !== "object" || toolCall === null) {
+          continue;
+        }
+
+        const functionCall: unknown = (toolCall as { function?: unknown }).function;
+        if (typeof functionCall !== "object" || functionCall === null) {
+          continue;
+        }
+
+        const name: unknown = (functionCall as { name?: unknown }).name;
+        if (typeof name !== "string") {
+          continue;
+        }
+
+        if (name === "done") {
+          continue;
+        }
+
+        hasRelevantToolCalls = true;
+
+        if (name === "think") {
+          hasThink = true;
+          continue;
+        }
+
+        const argumentsRaw: unknown = (functionCall as { arguments?: unknown }).arguments;
+        const parsedArgs: unknown = this._parseToolArguments(argumentsRaw);
+
+        if (this._hasNonEmptyReasoning(parsedArgs)) {
+          hasReasoning = true;
+        }
+      }
+
+      if (hasRelevantToolCalls) {
+        if (hasThink || hasReasoning) {
+          return stepsCount;
+        }
+
+        stepsCount++;
+      }
+    }
+
+    return stepsCount;
+  }
+
+  private _parseToolArguments(argumentsRaw: unknown): unknown {
+    if (typeof argumentsRaw === "string") {
+      try {
+        return JSON.parse(argumentsRaw);
+      } catch {
+        return argumentsRaw;
+      }
+    }
+
+    return argumentsRaw;
+  }
+
+  private _hasNonEmptyReasoning(toolArgs: unknown): boolean {
+    if (typeof toolArgs !== "object" || toolArgs === null) {
+      return false;
+    }
+
+    const reasoning: unknown = (toolArgs as { reasoning?: unknown }).reasoning;
+
+    return typeof reasoning === "string" && reasoning.trim().length > 0;
   }
 
   //#endregion Private methods

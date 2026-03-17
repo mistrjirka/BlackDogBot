@@ -12,6 +12,7 @@ export type EmbeddingDevice = "auto" | "cpu" | "cuda";
 export interface IRateLimitConfig {
   rpm: number;
   tpm: number;
+  maxConcurrent?: number;
 }
 
 export interface IOpenRouterConfig {
@@ -19,6 +20,8 @@ export interface IOpenRouterConfig {
   model: string;
   rateLimits: IRateLimitConfig;
   contextWindow?: number; // Optional, defaults to 128000 if not specified
+  activeProfile?: string;
+  profilesDir?: string;
 }
 
 export interface IOpenAiCompatibleConfig {
@@ -29,6 +32,8 @@ export interface IOpenAiCompatibleConfig {
   contextWindow?: number; // Optional, defaults to 128000 if not specified
   supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
   requestTimeout?: number; // Per-request timeout in ms, default 500000. Retries once at 2x on timeout.
+  activeProfile?: string;
+  profilesDir?: string;
 }
 
 export interface ILmStudioConfig {
@@ -39,6 +44,8 @@ export interface ILmStudioConfig {
   contextWindow?: number;
   supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
   requestTimeout?: number; // Per-request timeout in ms, default 500000. Retries once at 2x on timeout.
+  activeProfile?: string;
+  profilesDir?: string;
 }
 
 export type AiProvider = "openrouter" | "openai-compatible" | "lm-studio";
@@ -98,6 +105,12 @@ export interface IServicesConfig {
   crawl4aiUrl: string;
 }
 
+export interface IBrainInterfaceConfig {
+  jwtSecret: string;
+  jwtIssuer: string;
+  jwtAudience: string;
+}
+
 export interface IConfig {
   ai: IAiConfig;
   telegram?: ITelegramConfig;
@@ -108,6 +121,7 @@ export interface IConfig {
   skills: ISkillsConfig;
   logging: ILoggingConfig;
   services: IServicesConfig;
+  brainInterface: IBrainInterfaceConfig;
 }
 
 //#endregion Config Types

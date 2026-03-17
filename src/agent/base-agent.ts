@@ -19,6 +19,7 @@ import { getDuplicateToolCallDirective } from "../utils/prepare-step.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
+import { countMessagesTokens } from "../utils/request-token-counter.js";
 
 //#region Constants
 
@@ -50,12 +51,6 @@ export const AGENT_EMPTY_RESPONSE_RETRIES: number = 4;
  * How many times to retry with compaction when receiving 400 context exceeded errors.
  */
 export const CONTEXT_EXCEEDED_RETRIES: number = 2;
-
-/**
- * Approximate JSON structure overhead per message in OpenAI format.
- * Accounts for: {"role":"...","content":"..."} wrapper
- */
-const MESSAGE_JSON_OVERHEAD_TOKENS: number = 15;
 
 /**
  * Token budget reserved for predictive compaction headroom.
@@ -155,6 +150,9 @@ export abstract class BaseAgentBase {
         try {
           result = await this._agent!.generate({ prompt: userMessage });
         } catch (error: unknown) {
+          const currentAgentAttempt: number = attempt;
+          const totalAgentAttempts: number = AGENT_EMPTY_RESPONSE_RETRIES + 1;
+
           // Enhanced error logging for AI provider errors
           if (APICallError.isInstance(error)) {
             const responseBodyLength = error.responseBody?.length ?? 0;
@@ -165,6 +163,8 @@ export abstract class BaseAgentBase {
               
             this._logger.error("AI provider API call failed", {
               attempt,
+              agentAttempt: currentAgentAttempt,
+              agentAttemptTotal: totalAgentAttempts,
               statusCode: error.statusCode,
               message: error.message,
               responseBodyPreview,
@@ -173,6 +173,8 @@ export abstract class BaseAgentBase {
           } else if (error instanceof Error) {
             this._logger.error("AI call failed with error", {
               attempt,
+              agentAttempt: currentAgentAttempt,
+              agentAttemptTotal: totalAgentAttempts,
               errorName: error.name,
               errorMessage: error.message,
               errorStack: error.stack?.split('\n').slice(0, 5).join('\n'),
@@ -180,6 +182,8 @@ export abstract class BaseAgentBase {
           } else {
             this._logger.error("AI call failed with unknown error", {
               attempt,
+              agentAttempt: currentAgentAttempt,
+              agentAttemptTotal: totalAgentAttempts,
               error: String(error),
             });
           }
@@ -207,6 +211,8 @@ export abstract class BaseAgentBase {
             if (isContextError) {
               this._logger.warn("Context size exceeded, triggering reactive compaction", {
                 attempt,
+                agentAttempt: currentAgentAttempt,
+                agentAttemptTotal: totalAgentAttempts,
                 maxRetries: CONTEXT_EXCEEDED_RETRIES,
                 statusCode: error.statusCode,
                 responseBody: responseBody,
@@ -282,6 +288,8 @@ export abstract class BaseAgentBase {
         if (attempt <= AGENT_EMPTY_RESPONSE_RETRIES) {
           this._logger.warn("Model returned empty response, retrying agent generate", {
             attempt,
+            agentAttempt: attempt,
+            agentAttemptTotal: AGENT_EMPTY_RESPONSE_RETRIES + 1,
             maxRetries: AGENT_EMPTY_RESPONSE_RETRIES,
           });
           continue;
@@ -615,71 +623,104 @@ function _estimateFixedOverhead(instructions: string, allTools: ToolSet): number
 }
 
 /**
- * Count tokens across all messages using cl100k_base encoding (GPT-4/Claude compatible).
- * This provides a reasonable approximation for most LLM providers.
- * Note: This counts message content plus JSON structure overhead, not system prompt or tool definitions.
+ * Count tokens across messages by converting ModelMessage[] into an OpenAI-like
+ * shape and delegating to the canonical request token counter.
  */
 function _countTokens(messages: ModelMessage[]): number {
-  const enc = _getTextEncoder();
-  let totalTokens: number = 0;
-
-  for (const msg of messages) {
-    totalTokens += MESSAGE_JSON_OVERHEAD_TOKENS;
-
-    const text: string = _extractTextContent(msg);
-    totalTokens += enc.encode(text).length;
-  }
-
-  return totalTokens;
+  const requestLikeMessages: unknown[] = messages.map(_toRequestMessageForTokenCounting);
+  return countMessagesTokens(requestLikeMessages);
 }
 
+function _toRequestMessageForTokenCounting(message: ModelMessage): Record<string, unknown> {
+  const result: Record<string, unknown> = {
+    role: message.role,
+  };
 
-
-function _extractTextContent(message: ModelMessage): string {
   if (typeof message.content === "string") {
-    return message.content;
+    result.content = message.content;
+    return result;
   }
 
-  if (Array.isArray(message.content)) {
-    const parts: string[] = [];
+  if (!Array.isArray(message.content)) {
+    return result;
+  }
 
-    for (const part of message.content) {
-      if ("text" in part && typeof part.text === "string") {
-        parts.push(part.text);
-      } else if ("type" in part && part.type === "tool-call") {
-        const toolCall = part as {
-          toolCallId?: string;
-          toolName?: string;
-          args?: unknown;
-          input?: unknown;
-        };
-        parts.push(JSON.stringify({
-          type: "tool-call",
-          toolCallId: toolCall.toolCallId,
-          toolName: toolCall.toolName,
-          args: toolCall.args ?? toolCall.input,
-        }));
-      } else if ("result" in part || "output" in part) {
-        const resPart = part as {
-          result?: unknown;
-          output?: unknown;
-          toolCallId?: string;
-          isError?: boolean;
-        };
-        parts.push(JSON.stringify({
-          toolCallId: resPart.toolCallId,
-          result: resPart.result ?? resPart.output,
-          isError: resPart.isError,
-        }));
-      } else if ("result" in part) {
-        parts.push(JSON.stringify(part.result));
-      }
+  const textParts: string[] = [];
+  const toolCalls: Array<Record<string, unknown>> = [];
+
+  for (const part of message.content) {
+    if (typeof part !== "object" || part === null) {
+      continue;
     }
 
-    return parts.join(" ");
+    if ("text" in part && typeof part.text === "string") {
+      textParts.push(part.text);
+      continue;
+    }
+
+    if ("type" in part && part.type === "tool-call") {
+      const toolCall = part as {
+        toolCallId?: string;
+        toolName?: string;
+        args?: unknown;
+        input?: unknown;
+      };
+
+      toolCalls.push({
+        id: toolCall.toolCallId ?? "",
+        type: "function",
+        function: {
+          name: toolCall.toolName ?? "",
+          arguments: JSON.stringify(toolCall.args ?? toolCall.input ?? {}),
+        },
+      });
+      continue;
+    }
+
+    if ("result" in part || "output" in part) {
+      const toolResultValue: unknown = _extractToolResultValue(part);
+      const serialized: string = typeof toolResultValue === "string"
+        ? toolResultValue
+        : JSON.stringify(toolResultValue ?? null);
+
+      textParts.push(serialized);
+
+      const toolCallId: unknown = (part as { toolCallId?: unknown }).toolCallId;
+      if (typeof toolCallId === "string" && toolCallId.length > 0) {
+        result.tool_call_id = toolCallId;
+      }
+      continue;
+    }
   }
 
-  return "";
+  if (textParts.length > 0) {
+    result.content = textParts.join(" ");
+  }
+
+  if (toolCalls.length > 0) {
+    result.tool_calls = toolCalls;
+  }
+
+  return result;
+}
+
+function _extractToolResultValue(part: unknown): unknown {
+  const resultPart = part as { result?: unknown; output?: unknown };
+
+  if (resultPart.result !== undefined) {
+    return resultPart.result;
+  }
+
+  if (resultPart.output !== undefined) {
+    const outputObject: { type?: string; value?: unknown } = resultPart.output as { type?: string; value?: unknown };
+    if (outputObject && typeof outputObject === "object" && "value" in outputObject) {
+      return outputObject.value;
+    }
+
+    return resultPart.output;
+  }
+
+  return null;
 }
 
 function _extractLastAssistantToolCalls(messages: ModelMessage[]): IToolCallSummary[] {

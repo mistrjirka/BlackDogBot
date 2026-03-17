@@ -11,6 +11,11 @@ const rateLimitSchema = z.object({
     .int()
     .positive()
     .describe("Tokens per minute"),
+  maxConcurrent: z.number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Maximum number of concurrent requests"),
 });
 
 const openRouterSchema = z.object({
@@ -27,6 +32,14 @@ const openRouterSchema = z.object({
     .positive()
     .optional()
     .describe("Model context window size (optional, auto-detected for known models)"),
+  activeProfile: z.string()
+    .min(1)
+    .optional()
+    .describe("Active model profile name (built-in or user-defined YAML profile)"),
+  profilesDir: z.string()
+    .min(1)
+    .optional()
+    .describe("Directory containing YAML model profiles. Defaults to ~/.betterclaw/model-profiles"),
 });
 
 const openAiCompatibleSchema = z.object({
@@ -45,12 +58,20 @@ const openAiCompatibleSchema = z.object({
     .optional()
     .describe("Context window size in tokens. Required for accurate context management."),
   rateLimits: rateLimitSchema
-    .default({ rpm: 120, tpm: 200000 }),
+    .default({ rpm: 120, tpm: 200000, maxConcurrent: 1 }),
   requestTimeout: z.number()
     .int()
     .positive()
     .optional()
     .describe("Per-request timeout in milliseconds. On timeout, retries once at 2x. Default: 500000 (500s)."),
+  activeProfile: z.string()
+    .min(1)
+    .optional()
+    .describe("Active model profile name (built-in or user-defined YAML profile)"),
+  profilesDir: z.string()
+    .min(1)
+    .optional()
+    .describe("Directory containing YAML model profiles. Defaults to ~/.betterclaw/model-profiles"),
 });
 
 const lmStudioSchema = z.object({
@@ -65,7 +86,7 @@ const lmStudioSchema = z.object({
     .min(1)
     .describe("Model identifier"),
   rateLimits: rateLimitSchema
-    .default({ rpm: 120, tpm: 200000 }),
+    .default({ rpm: 120, tpm: 200000, maxConcurrent: 1 }),
   contextWindow: z.number()
     .int()
     .positive()
@@ -76,6 +97,14 @@ const lmStudioSchema = z.object({
     .positive()
     .optional()
     .describe("Per-request timeout in milliseconds. On timeout, retries once at 2x. Default: 500000 (500s)."),
+  activeProfile: z.string()
+    .min(1)
+    .optional()
+    .describe("Active model profile name (built-in or user-defined YAML profile)"),
+  profilesDir: z.string()
+    .min(1)
+    .optional()
+    .describe("Directory containing YAML model profiles. Defaults to ~/.betterclaw/model-profiles"),
 });
 
 const aiConfigSchema = z.object({
@@ -195,6 +224,21 @@ const servicesConfigSchema = z.object({
     .describe("Crawl4AI instance URL"),
 });
 
+const brainInterfaceConfigSchema = z.object({
+  jwtSecret: z.string()
+    .min(1)
+    .default("replace-with-generated-secret")
+    .describe("JWT signing secret for BrainInterface WebSocket authentication"),
+  jwtIssuer: z.string()
+    .min(1)
+    .default("betterclaw")
+    .describe("JWT issuer for BrainInterface tokens"),
+  jwtAudience: z.string()
+    .min(1)
+    .default("brain-interface")
+    .describe("JWT audience for BrainInterface tokens"),
+});
+
 export const configSchema = z.object({
   ai: aiConfigSchema,
   telegram: telegramConfigSchema
@@ -210,6 +254,8 @@ export const configSchema = z.object({
   logging: loggingConfigSchema
     .default({}),
   services: servicesConfigSchema
+    .default({}),
+  brainInterface: brainInterfaceConfigSchema
     .default({}),
 });
 

@@ -1,4 +1,5 @@
 import Bottleneck from "bottleneck";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import { IRateLimitConfig } from "../shared/types/index.js";
 import { LoggerService } from "./logger.service.js";
@@ -12,12 +13,17 @@ interface IProviderState {
   minuteStart: number;
 }
 
+interface IRateLimitExecutionContext {
+  activeProviders: Set<string>;
+}
+
 export class RateLimiterService {
   //#region Data members
 
   private static _instance: RateLimiterService | null;
   private _logger: LoggerService;
   private _providers: Map<string, IProviderState>;
+  private _executionContext: AsyncLocalStorage<IRateLimitExecutionContext>;
 
   //#endregion Data members
 
@@ -26,6 +32,7 @@ export class RateLimiterService {
   private constructor() {
     this._logger = LoggerService.getInstance();
     this._providers = new Map();
+    this._executionContext = new AsyncLocalStorage<IRateLimitExecutionContext>();
   }
 
   //#endregion Constructors
@@ -44,11 +51,22 @@ export class RateLimiterService {
     providerKey: string,
     rateLimits: IRateLimitConfig,
   ): Bottleneck {
+    const existingState: IProviderState | undefined = this._providers.get(providerKey);
+
+    if (existingState) {
+      this._logger.debug("Rate limiter already exists, reusing existing limiter", {
+        providerKey,
+        rpmLimit: existingState.rpmLimit,
+        tpmLimit: existingState.tpmLimit,
+      });
+      return existingState.limiter;
+    }
+
     const limiter: Bottleneck = new Bottleneck({
       reservoir: rateLimits.rpm,
       reservoirRefreshAmount: rateLimits.rpm,
       reservoirRefreshInterval: 60000,
-      maxConcurrent: Math.min(rateLimits.rpm, 10),
+      maxConcurrent: rateLimits.maxConcurrent ?? Math.min(rateLimits.rpm, 10),
       minTime: Math.ceil(60000 / rateLimits.rpm),
     });
 
@@ -93,7 +111,24 @@ export class RateLimiterService {
       );
     }
 
-    return state.limiter.schedule(fn);
+    const existingContext: IRateLimitExecutionContext | undefined = this._executionContext.getStore();
+    if (existingContext?.activeProviders.has(providerKey)) {
+      this._logger.warn("Nested rate limiter scheduling detected for provider", {
+        providerKey,
+        hint: "Avoid double-stacking scheduleAsync calls on the same provider in one async chain.",
+      });
+    }
+
+    const wrappedFn = async (): Promise<T> => {
+      const nextContext: IRateLimitExecutionContext = {
+        activeProviders: new Set(existingContext?.activeProviders ?? []),
+      };
+      nextContext.activeProviders.add(providerKey);
+
+      return this._executionContext.run(nextContext, fn);
+    };
+
+    return state.limiter.schedule(wrappedFn);
   }
 
   /**

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AiProviderService } from "../../src/services/ai-provider.service.js";
 import { LoggerService } from "../../src/services/logger.service.js";
+import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
 import { resetSingletons } from "../utils/test-helpers.js";
 import type { IAiConfig } from "../../src/shared/types/index.js";
 import path from "node:path";
@@ -209,6 +210,48 @@ describe("AiProviderService - Context Management", () => {
 
       // Assert - should attempt the actual request (will fail with network error, but won't be gated)
       expect(response.status).not.toBe(400);
+    });
+  });
+
+  describe("Rate limiter initialization safety", () => {
+    it("should reuse existing limiter when initialize is called multiple times", () => {
+      // Arrange
+      const rateLimiterService: RateLimiterService = RateLimiterService.getInstance();
+
+      // Act
+      service.initialize(mockOpenRouterConfig);
+      const firstLimiter = rateLimiterService.getLimiter("openrouter");
+
+      service.initialize(mockOpenRouterConfig);
+      const secondLimiter = rateLimiterService.getLimiter("openrouter");
+
+      // Assert
+      expect(firstLimiter).toBeDefined();
+      expect(secondLimiter).toBeDefined();
+      expect(secondLimiter).toBe(firstLimiter);
+    });
+
+    it("should warn when nested scheduleAsync is used for the same provider", async () => {
+      // Arrange
+      const rateLimiterService: RateLimiterService = RateLimiterService.getInstance();
+      const loggerService: LoggerService = LoggerService.getInstance();
+      const warnSpy = vi.spyOn(loggerService, "warn");
+
+      service.initialize(mockOpenRouterConfig);
+
+      // Act
+      const result: number = await rateLimiterService.scheduleAsync("openrouter", async () => {
+        return await rateLimiterService.scheduleAsync("openrouter", async () => 42);
+      });
+
+      // Assert
+      expect(result).toBe(42);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "Nested rate limiter scheduling detected for provider",
+        expect.objectContaining({ providerKey: "openrouter" }),
+      );
+
+      warnSpy.mockRestore();
     });
   });
 
