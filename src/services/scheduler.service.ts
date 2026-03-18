@@ -159,14 +159,16 @@ export class SchedulerService {
   }
 
   public async addTaskAsync(task: IScheduledTask): Promise<void> {
-    await this._saveTaskAsync(task);
-    this._tasks.set(task.taskId, task);
+    const validatedTask: IScheduledTask = scheduledTaskSchema.parse(task);
 
-    if (task.enabled) {
-      this._scheduleTask(task);
+    await this._saveTaskAsync(validatedTask);
+    this._tasks.set(validatedTask.taskId, validatedTask);
+
+    if (validatedTask.enabled) {
+      this._scheduleTask(validatedTask);
     }
 
-    this._logger.info("Task added", { taskId: task.taskId, name: task.name });
+    this._logger.info("Task added", { taskId: validatedTask.taskId, name: validatedTask.name });
   }
 
   public async removeTaskAsync(taskId: string): Promise<void> {
@@ -234,18 +236,20 @@ export class SchedulerService {
     Object.assign(task, patch);
     task.updatedAt = new Date().toISOString();
 
-    this._tasks.set(taskId, task);
-    await this._saveTaskAsync(task);
+    const validatedTask: IScheduledTask = scheduledTaskSchema.parse(task);
+
+    this._tasks.set(taskId, validatedTask);
+    await this._saveTaskAsync(validatedTask);
 
     if (enabledChanged || scheduleChanged) {
       this._unscheduleTask(taskId);
-      if (task.enabled) {
-        this._scheduleTask(task);
+      if (validatedTask.enabled) {
+        this._scheduleTask(validatedTask);
       }
     }
 
-    this._logger.info("Task updated", { taskId, name: task.name });
-    return task;
+    this._logger.info("Task updated", { taskId, name: validatedTask.name });
+    return validatedTask;
   }
 
   public async removeAllTasksAsync(): Promise<void> {

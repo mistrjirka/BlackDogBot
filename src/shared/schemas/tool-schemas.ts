@@ -469,31 +469,63 @@ export const CRON_VALID_TOOL_NAMES = [
 export const addCronToolInputSchema = z.object({
   name: z.string()
     .min(1)
-    .describe("Scheduled task name"),
+    .describe("Scheduled task name (required)"),
   description: z.string()
-    .default("")
-    .describe("Task description"),
+    .min(1)
+    .trim()
+    .describe("Task description (required, non-empty)"),
   instructions: z.string()
     .min(1)
-    .describe("Detailed task instructions for the agent"),
+    .trim()
+    .describe("Detailed task instructions for the agent (required)"),
   tools: z.string()
     .min(1)
     .array()
     .min(1)
-    .describe("Tool names available to the task agent"),
+    .describe("Tool names available to the task agent (required, at least one)"),
   scheduleType: z.enum(["once", "interval", "cron"])
-    .describe("Schedule type: once, interval, or cron"),
+    .describe("Schedule type (required): once, interval, or cron"),
   scheduleRunAt: z.string()
     .optional()
-    .describe("ISO 8601 datetime for 'once' schedule (e.g. '2025-06-01T10:00:00Z')"),
+    .describe("Required when scheduleType='once'. ISO 8601 datetime, e.g. '2025-06-01T10:00:00Z'"),
   scheduleIntervalMs: z.number()
     .optional()
-    .describe("Interval in milliseconds for 'interval' schedule"),
+    .describe("Required when scheduleType='interval'. Interval in milliseconds"),
   scheduleCron: z.string()
     .optional()
-    .describe("Cron expression for 'cron' schedule (e.g. '0 */6 * * *')"),
+    .describe("Required when scheduleType='cron'. Cron expression, e.g. '0 */6 * * *'"),
   notifyUser: z.boolean()
-    .describe("Whether to send a Telegram notification when this task completes. Set true for tasks whose results are important to the user, false for silent background tasks."),
+    .describe("Whether to send a Telegram notification when this task completes (required)"),
+}).superRefine((data, ctx) => {
+  if (data.scheduleType === "once") {
+    if (!data.scheduleRunAt || data.scheduleRunAt.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scheduleRunAt"],
+        message: "scheduleRunAt is required when scheduleType is 'once'",
+      });
+    }
+  }
+
+  if (data.scheduleType === "interval") {
+    if (data.scheduleIntervalMs === undefined || !Number.isFinite(data.scheduleIntervalMs) || data.scheduleIntervalMs <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scheduleIntervalMs"],
+        message: "scheduleIntervalMs is required and must be > 0 when scheduleType is 'interval'",
+      });
+    }
+  }
+
+  if (data.scheduleType === "cron") {
+    if (!data.scheduleCron || data.scheduleCron.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scheduleCron"],
+        message: "scheduleCron is required when scheduleType is 'cron'",
+      });
+    }
+  }
 });
 
 export const addCronToolOutputSchema = z.object({
@@ -550,7 +582,7 @@ export const editCronToolInputSchema = z.object({
     .describe("Updated list of available tool names"),
   scheduleType: z.enum(["once", "interval", "cron"])
     .optional()
-    .describe("Updated schedule type: once, interval, or cron"),
+    .describe("Optional schedule type hint. Schedule type is immutable and cannot be changed by edit_cron."),
   scheduleRunAt: z.string()
     .optional()
     .describe("ISO 8601 datetime for 'once' schedule"),
@@ -613,6 +645,36 @@ export const setJobScheduleToolInputSchema = z.object({
       .optional(),
   })
     .describe("Schedule configuration (same format as add_cron)"),
+}).superRefine((data, ctx) => {
+  if (data.schedule.type === "once") {
+    if (!data.schedule.runAt || data.schedule.runAt.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["schedule", "runAt"],
+        message: "schedule.runAt is required when schedule.type is 'once'",
+      });
+    }
+  }
+
+  if (data.schedule.type === "interval") {
+    if (data.schedule.intervalMs === undefined || !Number.isFinite(data.schedule.intervalMs) || data.schedule.intervalMs <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["schedule", "intervalMs"],
+        message: "schedule.intervalMs is required and must be > 0 when schedule.type is 'interval'",
+      });
+    }
+  }
+
+  if (data.schedule.type === "cron") {
+    if (!data.schedule.expression || data.schedule.expression.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["schedule", "expression"],
+        message: "schedule.expression is required when schedule.type is 'cron'",
+      });
+    }
+  }
 });
 
 export const setJobScheduleToolOutputSchema = z.object({

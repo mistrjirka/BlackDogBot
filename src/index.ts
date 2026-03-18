@@ -1,5 +1,8 @@
 import "./env.js";
 import { createServer } from "node:http";
+import fs from "node:fs/promises";
+import crypto from "node:crypto";
+import path from "node:path";
 import { Server as SocketIOServer } from "socket.io";
 import { ConfigService } from "./services/config.service.js";
 import { LoggerService } from "./services/logger.service.js";
@@ -23,13 +26,18 @@ import { telegramPlatform } from "./platforms/telegram/index.js";
 import { discordPlatform } from "./platforms/discord/index.js";
 import type { IPlatformDeps } from "./platforms/types.js";
 import type { IConfig, IScheduledTask, IExecutionContext } from "./shared/types/index.js";
-import { getJobLogsDir } from "./utils/paths.js";
+import { getJobLogsDir, getBrainInterfaceTokenFilePath, ensureDirectoryExistsAsync } from "./utils/paths.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
 import { extractErrorMessage, ChatNotFoundError } from "./utils/error.js";
 import { TelegramHandler } from "./platforms/telegram/handler.js";
 import type { SkillInstallKind } from "./helpers/skill-installer.js";
+import { generateJwtToken, type IJwtPayload } from "./utils/jwt.js";
 
 const BRAIN_INTERFACE_PORT: number = parseInt(process.env.BRAIN_INTERFACE_PORT ?? "3001", 10);
+
+function createBrainInterfaceJwtSecret(): string {
+  return crypto.randomBytes(48).toString("base64url");
+}
 
 //#region Main
 
@@ -39,18 +47,56 @@ async function mainAsync(): Promise<void> {
 
   await configService.initializeAsync();
 
-  const config: IConfig = configService.getConfig();
+  let config: IConfig = configService.getConfig();
+
+  let brainJwtSecret: string = config.brainInterface.jwtSecret;
+  const brainJwtIssuer: string = config.brainInterface.jwtIssuer;
+  const brainJwtAudience: string = config.brainInterface.jwtAudience;
+
+  if (brainJwtSecret === "replace-with-generated-secret") {
+    brainJwtSecret = createBrainInterfaceJwtSecret();
+    await configService.updateConfigAsync({
+      brainInterface: {
+        jwtSecret: brainJwtSecret,
+        jwtIssuer: brainJwtIssuer,
+        jwtAudience: brainJwtAudience,
+      },
+    });
+    config = configService.getConfig();
+  }
 
   // 2. Initialize logger
   const logger: LoggerService = LoggerService.getInstance();
 
   await logger.initializeAsync(config.logging.level);
 
+  const tokenFilePath: string = getBrainInterfaceTokenFilePath();
+  const tokenDirPath: string = path.dirname(tokenFilePath);
+  const nowEpochSeconds: number = Math.floor(Date.now() / 1000);
+  const adminPayload: IJwtPayload = {
+    iss: config.brainInterface.jwtIssuer,
+    aud: config.brainInterface.jwtAudience,
+    sub: "brain-interface-ui",
+    iat: nowEpochSeconds,
+    exp: nowEpochSeconds + (60 * 60 * 24 * 365),
+  };
+  const adminToken: string = generateJwtToken(adminPayload, brainJwtSecret);
+
+  await ensureDirectoryExistsAsync(tokenDirPath);
+  await fs.writeFile(tokenFilePath, `${adminToken}\n`, {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+
   // Enable CLI status output (spinner/status line)
   const statusService: StatusService = StatusService.getInstance();
   statusService.enableCliOutput(true);
 
   logger.info("BetterClaw daemon starting...");
+  logger.info("BrainInterface JWT token is ready for UI login", {
+    tokenFilePath,
+    hint: "Paste this token into the Brain Interface auth field. It is persisted in browser localStorage.",
+  });
 
   // 2.5. Catch unhandled promise rejections
   process.on("unhandledRejection", (reason: unknown): void => {
@@ -141,6 +187,78 @@ async function mainAsync(): Promise<void> {
     notificationChannelCount: channelRegistry.getNotificationChannels().length,
   });
 
+  const notifyAllChannelsAsync = async (
+    message: string,
+    errorPrefix: string,
+  ): Promise<void> => {
+    const notificationChannels = channelRegistry.getNotificationChannels();
+
+    for (const channel of notificationChannels) {
+      try {
+        const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
+        await sender(message);
+      } catch (sendError: unknown) {
+        logger.error(`${errorPrefix} ${channel.platform}:${channel.channelId}`, {
+          error: extractErrorMessage(sendError),
+        });
+      }
+    }
+  };
+
+  const notifySchedulerChannelsAsync = async (
+    message: string,
+    errorPrefix: string,
+    taskId?: string,
+    fallbackSuccessMessage?: string,
+    fallbackFailureMessage?: string,
+    logInvalidChannelWarning?: boolean,
+  ): Promise<void> => {
+    const notificationChannels = channelRegistry.getNotificationChannels();
+
+    for (const channel of notificationChannels) {
+      try {
+        if (!messagingService.hasAdapter(channel.platform)) {
+          continue;
+        }
+
+        const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
+        await sender(message);
+      } catch (sendError: unknown) {
+        if (sendError instanceof ChatNotFoundError && channel.platform === "telegram") {
+          const telegramHandler = TelegramHandler.getInstance();
+          const knownChatIds = telegramHandler.getKnownChatIds();
+
+          if (logInvalidChannelWarning) {
+            logger.warn("Invalid Telegram channel ID, falling back to known chats", {
+              invalidChannelId: channel.channelId,
+              fallbackChatCount: knownChatIds.length,
+            });
+          }
+
+          for (const fallbackChatId of knownChatIds) {
+            try {
+              const fallbackSender = messagingService.createSenderForChat("telegram", fallbackChatId);
+              await fallbackSender(message);
+              if (fallbackSuccessMessage) {
+                logger.info(fallbackSuccessMessage, { fallbackChatId });
+              }
+            } catch (fallbackError: unknown) {
+              logger.error(fallbackFailureMessage ?? "Fallback send also failed", {
+                fallbackChatId,
+                error: extractErrorMessage(fallbackError),
+              });
+            }
+          }
+        } else {
+          logger.error(`${errorPrefix} ${channel.platform}:${channel.channelId}`, {
+            error: extractErrorMessage(sendError),
+            taskId,
+          });
+        }
+      }
+    }
+  };
+
   // 7.6. Auto-setup skills with missing dependencies
   const skillsConfig = config.skills;
   const autoSetup = skillsConfig.autoSetup ?? true;
@@ -177,18 +295,7 @@ async function mainAsync(): Promise<void> {
               const notifyMessage =
                 `✅ **Skill Ready**: \`${skill.name}\`\n\n` +
                 (result.installed.length > 0 ? `**Installed:** ${result.installed.join(", ")}` : "");
-
-              const notificationChannels = channelRegistry.getNotificationChannels();
-              for (const channel of notificationChannels) {
-                try {
-                  const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
-                  await sender(notifyMessage);
-                } catch (sendError) {
-                  logger.error(`Failed to notify ${channel.platform}:${channel.channelId}`, {
-                    error: sendError instanceof Error ? sendError.message : String(sendError),
-                  });
-                }
-              }
+              await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
             }
           } else if (result.manualStepsRequired.length > 0) {
             await skillState.markSkillNeedsSetupAsync(
@@ -206,18 +313,7 @@ async function mainAsync(): Promise<void> {
                 `This skill requires packages that cannot be auto-installed.\n\n` +
                 `**Manual steps:**\n${result.manualStepsRequired.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\n` +
                 `After completing these steps, restart BetterClaw or use the setup-skill tool.`;
-
-              const notificationChannels = channelRegistry.getNotificationChannels();
-              for (const channel of notificationChannels) {
-                try {
-                  const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
-                  await sender(notifyMessage);
-                } catch (sendError) {
-                  logger.error(`Failed to notify ${channel.platform}:${channel.channelId}`, {
-                    error: sendError instanceof Error ? sendError.message : String(sendError),
-                  });
-                }
-              }
+              await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
             }
           } else {
             await skillState.markSkillSetupErrorAsync(skill.name, result.error || "Unknown error");
@@ -228,18 +324,7 @@ async function mainAsync(): Promise<void> {
                 `❌ **Skill Setup Failed**: \`${skill.name}\`\n\n` +
                 `**Error:**\n\`\`\`\n${result.error}\n\`\`\`\n\n` +
                 `Will retry on next startup.`;
-
-              const notificationChannels = channelRegistry.getNotificationChannels();
-              for (const channel of notificationChannels) {
-                try {
-                  const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
-                  await sender(notifyMessage);
-                } catch (sendError) {
-                  logger.error(`Failed to notify ${channel.platform}:${channel.channelId}`, {
-                    error: sendError instanceof Error ? sendError.message : String(sendError),
-                  });
-                }
-              }
+              await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
             }
           }
         } catch (setupError) {
@@ -252,18 +337,7 @@ async function mainAsync(): Promise<void> {
               `❌ **Skill Setup Failed**: \`${skill.name}\`\n\n` +
               `**Error:**\n\`\`\`\n${errorMsg}\n\`\`\`\n\n` +
               `Will retry on next startup.`;
-
-            const notificationChannels = channelRegistry.getNotificationChannels();
-            for (const channel of notificationChannels) {
-              try {
-                const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
-                await sender(notifyMessage);
-              } catch (sendError) {
-                logger.error(`Failed to notify ${channel.platform}:${channel.channelId}`, {
-                  error: sendError instanceof Error ? sendError.message : String(sendError),
-                });
-              }
-            }
+            await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
           }
         }
       }
@@ -314,43 +388,14 @@ async function mainAsync(): Promise<void> {
           );
         }
 
-        for (const channel of notificationChannels) {
-          try {
-            if (!messagingService.hasAdapter(channel.platform)) {
-              continue;
-            }
-            const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
-            await sender(message);
-          } catch (error) {
-            if (error instanceof ChatNotFoundError && channel.platform === "telegram") {
-              const telegramHandler = TelegramHandler.getInstance();
-              const knownChatIds = telegramHandler.getKnownChatIds();
-
-              logger.warn("Invalid Telegram channel ID, falling back to known chats", {
-                invalidChannelId: channel.channelId,
-                fallbackChatCount: knownChatIds.length,
-              });
-
-              for (const fallbackChatId of knownChatIds) {
-                try {
-                  const fallbackSender = messagingService.createSenderForChat("telegram", fallbackChatId);
-                  await fallbackSender(message);
-                  logger.info("Sent notification via fallback chat ID", { fallbackChatId });
-                } catch (fallbackError) {
-                  logger.error("Fallback send also failed", {
-                    fallbackChatId,
-                    error: extractErrorMessage(fallbackError),
-                  });
-                }
-              }
-            } else {
-              logger.error(`Failed to send cron message to ${channel.platform}:${channel.channelId}`, {
-                error: extractErrorMessage(error),
-                taskId: task.taskId,
-              });
-            }
-          }
-        }
+        await notifySchedulerChannelsAsync(
+          message,
+          "Failed to send cron message to",
+          task.taskId,
+          "Sent notification via fallback chat ID",
+          "Fallback send also failed",
+          true,
+        );
       };
 
       const executionContext: IExecutionContext = { toolCallHistory: [] };
@@ -377,43 +422,14 @@ async function mainAsync(): Promise<void> {
         `**Task ID:** \`${task.taskId}\`\n\n` +
         `**Error:**\n\`\`\`\n${error}\n\`\`\``;
 
-      const notificationChannels = channelRegistry.getNotificationChannels();
-      for (const channel of notificationChannels) {
-        try {
-          if (!messagingService.hasAdapter(channel.platform)) {
-            continue;
-          }
-          const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
-          await sender(message);
-        } catch (sendError) {
-          if (sendError instanceof ChatNotFoundError && channel.platform === "telegram") {
-            const telegramHandler = TelegramHandler.getInstance();
-            const knownChatIds = telegramHandler.getKnownChatIds();
-
-            logger.warn("Invalid Telegram channel ID, falling back to known chats", {
-              invalidChannelId: channel.channelId,
-              fallbackChatCount: knownChatIds.length,
-            });
-
-            for (const fallbackChatId of knownChatIds) {
-              try {
-                const fallbackSender = messagingService.createSenderForChat("telegram", fallbackChatId);
-                await fallbackSender(message);
-                logger.info("Sent failure notification via fallback chat ID", { fallbackChatId });
-              } catch (fallbackError) {
-                logger.error("Fallback send also failed", {
-                  fallbackChatId,
-                  error: extractErrorMessage(fallbackError),
-                });
-              }
-            }
-          } else {
-            logger.error(`Failed to send failure notification to ${channel.platform}:${channel.channelId}`, {
-              error: sendError instanceof Error ? sendError.message : String(sendError),
-            });
-          }
-        }
-      }
+      await notifySchedulerChannelsAsync(
+        message,
+        "Failed to send failure notification to",
+        task.taskId,
+        "Sent failure notification via fallback chat ID",
+        "Fallback send also failed",
+        true,
+      );
     });
 
     schedulerService.setOnTaskSkipped(async (task, reason) => {
@@ -424,37 +440,14 @@ async function mainAsync(): Promise<void> {
         `**Task ID:** \`${task.taskId}\`\n\n` +
         `**Reason:** ${reason}`;
 
-      const notificationChannels = channelRegistry.getNotificationChannels();
-      for (const channel of notificationChannels) {
-        try {
-          if (!messagingService.hasAdapter(channel.platform)) {
-            continue;
-          }
-          const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
-          await sender(message);
-        } catch (sendError) {
-          if (sendError instanceof ChatNotFoundError && channel.platform === "telegram") {
-            const telegramHandler = TelegramHandler.getInstance();
-            const knownChatIds = telegramHandler.getKnownChatIds();
-
-            for (const fallbackChatId of knownChatIds) {
-              try {
-                const fallbackSender = messagingService.createSenderForChat("telegram", fallbackChatId);
-                await fallbackSender(message);
-              } catch (fallbackError) {
-                logger.error("Fallback send for task-skipped notification failed", {
-                  fallbackChatId,
-                  error: extractErrorMessage(fallbackError),
-                });
-              }
-            }
-          } else {
-            logger.error(`Failed to send task-skipped notification to ${channel.platform}:${channel.channelId}`, {
-              error: sendError instanceof Error ? sendError.message : String(sendError),
-            });
-          }
-        }
-      }
+      await notifySchedulerChannelsAsync(
+        message,
+        "Failed to send task-skipped notification to",
+        task.taskId,
+        undefined,
+        "Fallback send for task-skipped notification failed",
+        false,
+      );
     });
 
     await schedulerService.startAsync();
@@ -474,7 +467,12 @@ async function mainAsync(): Promise<void> {
   });
 
   const brainInterface: BrainInterfaceService = BrainInterfaceService.getInstance();
-  brainInterface.initialize(io);
+  brainInterface.initialize(
+    io,
+    brainJwtSecret,
+    config.brainInterface.jwtIssuer,
+    config.brainInterface.jwtAudience,
+  );
 
   await new Promise<void>((resolve): void => {
     httpServer.listen(BRAIN_INTERFACE_PORT, (): void => {

@@ -10,7 +10,7 @@ import type { IScheduleTask } from "../../models/brain.types";
 
 function generateId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return generateId();
+    return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
@@ -28,15 +28,18 @@ export class DashboardComponent implements OnInit {
 
   protected readonly connected = this._socket.connected;
   protected readonly currentChatId = this._socket.currentChatId;
+  protected readonly authError = this._socket.authError;
 
   protected chatIdInput = signal("");
+  protected authTokenInput = signal("");
   protected showStartDialog = signal(false);
   protected activeTab: "chat" | "schedules" | "logs" | "database" = "chat";
   protected schedules = signal<IScheduleTask[]>([]);
 
   public ngOnInit(): void {
+    this.authTokenInput.set(this._socket.getAuthToken());
     const wsUrl = `http://${window.location.hostname}:3001`;
-    this._socket.connect(wsUrl);
+    this._socket.connect(wsUrl, this.authTokenInput());
     // Once connected, auto-start or re-use an existing chat session
     this._socket.onConnectedAsync().then(async () => {
       const existingId = this.currentChatId();
@@ -50,6 +53,12 @@ export class DashboardComponent implements OnInit {
     this._socket.startConversationAsync(chatId);
     this.showStartDialog.set(false);
     this.chatIdInput.set("");
+  }
+
+  protected onSaveTokenAndReconnect(): void {
+    this._socket.setAuthToken(this.authTokenInput());
+    const wsUrl: string = `http://${window.location.hostname}:3001`;
+    this._socket.connect(wsUrl, this.authTokenInput());
   }
 
   protected async onSendMessage(message: string): Promise<void> {

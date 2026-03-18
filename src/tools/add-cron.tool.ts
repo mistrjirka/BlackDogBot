@@ -25,6 +25,9 @@ interface IAddCronResult {
 const TOOL_NAME: string = "add-cron";
 const TOOL_DESCRIPTION: string =
   "Add a new scheduled task (cron job) to the scheduler. " +
+  "Required inputs: name, description, instructions, tools, scheduleType, notifyUser. " +
+  "Schedule-specific required input: scheduleRunAt for scheduleType='once', scheduleIntervalMs for scheduleType='interval', scheduleCron for scheduleType='cron'. " +
+  "Examples: once => scheduleRunAt='2026-03-20T08:00:00Z'; interval => scheduleIntervalMs=7200000; cron => scheduleCron='0 */2 * * *'. " +
   "If the task's instructions reference a database, ensure the database and table(s) have been created first using create_database and create_table, then reference them by name (without .db extension) in the instructions.";
 
 //#endregion Const
@@ -38,21 +41,33 @@ function _buildSchedule(input: {
   scheduleCron?: string;
 }): Schedule {
   switch (input.scheduleType) {
-    case "once":
+    case "once": {
+      if (!input.scheduleRunAt || input.scheduleRunAt.trim().length === 0) {
+        throw new Error("scheduleRunAt is required for scheduleType='once'");
+      }
       return {
         type: "once",
-        runAt: input.scheduleRunAt!,
+        runAt: input.scheduleRunAt,
       };
-    case "interval":
+    }
+    case "interval": {
+      if (input.scheduleIntervalMs === undefined || !Number.isFinite(input.scheduleIntervalMs) || input.scheduleIntervalMs <= 0) {
+        throw new Error("scheduleIntervalMs is required and must be > 0 for scheduleType='interval'");
+      }
       return {
         type: "interval",
-        intervalMs: input.scheduleIntervalMs!,
+        intervalMs: input.scheduleIntervalMs,
       };
-    case "cron":
+    }
+    case "cron": {
+      if (!input.scheduleCron || input.scheduleCron.trim().length === 0) {
+        throw new Error("scheduleCron is required for scheduleType='cron'");
+      }
       return {
         type: "cron",
-        expression: input.scheduleCron!,
+        expression: input.scheduleCron,
       };
+    }
   }
 }
 

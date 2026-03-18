@@ -2,6 +2,16 @@
   <header class="dashboard-header">
     <h1>🧠 Brain Interface</h1>
     <div class="header-actions">
+      <div class="auth-controls">
+        <input
+          class="token-input"
+          type="password"
+          placeholder="Paste Brain JWT token"
+          [ngModel]="authTokenInput()"
+          (ngModelChange)="authTokenInput.set($event)"
+        />
+        <button class="save-token-btn" (click)="onSaveTokenAndReconnect()">Save Token</button>
+      </div>
       <span class="connection-status" [class.connected]="connected()" [class.disconnected]="!connected()">
         {{ connected() ? 'Connected' : 'Disconnected' }}
       </span>
@@ -14,6 +24,12 @@
       }
     </div>
   </header>
+
+  @if (authError()) {
+    <div class="auth-error">
+      {{ authError() }}. Read the server log for the token file path and paste token above.
+    </div>
+  }
 
   <nav class="tab-bar">
     <button class="tab-btn" [class.active]="activeTab === 'chat'" (click)="onTabChange('chat')">

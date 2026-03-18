@@ -38,12 +38,24 @@ function _buildSchedule(input: {
   expression?: string;
 }): Schedule {
   switch (input.type) {
-    case "once":
-      return { type: "once", runAt: input.runAt! };
-    case "interval":
-      return { type: "interval", intervalMs: input.intervalMs! };
-    case "cron":
-      return { type: "cron", expression: input.expression! };
+    case "once": {
+      if (!input.runAt || input.runAt.trim().length === 0) {
+        throw new Error("schedule.runAt is required when schedule.type is 'once'");
+      }
+      return { type: "once", runAt: input.runAt };
+    }
+    case "interval": {
+      if (input.intervalMs === undefined || !Number.isFinite(input.intervalMs) || input.intervalMs <= 0) {
+        throw new Error("schedule.intervalMs is required and must be > 0 when schedule.type is 'interval'");
+      }
+      return { type: "interval", intervalMs: input.intervalMs };
+    }
+    case "cron": {
+      if (!input.expression || input.expression.trim().length === 0) {
+        throw new Error("schedule.expression is required when schedule.type is 'cron'");
+      }
+      return { type: "cron", expression: input.expression };
+    }
   }
 }
 

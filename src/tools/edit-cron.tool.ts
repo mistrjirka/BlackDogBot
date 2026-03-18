@@ -159,10 +159,38 @@ Output a JSON object with:
     const updatePayload: Record<string, unknown> = { ...restPatch };
 
     if (scheduleType !== undefined) {
-      const schedule: Record<string, unknown> = { type: scheduleType };
-      if (scheduleRunAt !== undefined) schedule.runAt = scheduleRunAt;
-      if (scheduleIntervalMs !== undefined) schedule.intervalMs = scheduleIntervalMs;
-      if (scheduleCron !== undefined) schedule.expression = scheduleCron;
+      // Schedule type is immutable. Ignore requested type changes and preserve existing type.
+      if (scheduleType !== existingTask.schedule.type) {
+        logger.debug(`[${TOOL_NAME}] Ignoring scheduleType change request`, {
+          taskId,
+          requestedType: scheduleType,
+          existingType: existingTask.schedule.type,
+        });
+      }
+
+      const schedule: Record<string, unknown> = { type: existingTask.schedule.type };
+
+      if (existingTask.schedule.type === "once") {
+        schedule.runAt = scheduleRunAt !== undefined ? scheduleRunAt : existingTask.schedule.runAt;
+      } else if (existingTask.schedule.type === "interval") {
+        schedule.intervalMs = scheduleIntervalMs !== undefined ? scheduleIntervalMs : existingTask.schedule.intervalMs;
+      } else {
+        schedule.expression = scheduleCron !== undefined ? scheduleCron : existingTask.schedule.expression;
+      }
+
+      updatePayload.schedule = schedule;
+    } else if (scheduleRunAt !== undefined || scheduleIntervalMs !== undefined || scheduleCron !== undefined) {
+      // Allow schedule value-only edits without requiring scheduleType.
+      const schedule: Record<string, unknown> = { type: existingTask.schedule.type };
+
+      if (existingTask.schedule.type === "once") {
+        schedule.runAt = scheduleRunAt !== undefined ? scheduleRunAt : existingTask.schedule.runAt;
+      } else if (existingTask.schedule.type === "interval") {
+        schedule.intervalMs = scheduleIntervalMs !== undefined ? scheduleIntervalMs : existingTask.schedule.intervalMs;
+      } else {
+        schedule.expression = scheduleCron !== undefined ? scheduleCron : existingTask.schedule.expression;
+      }
+
       updatePayload.schedule = schedule;
     }
 

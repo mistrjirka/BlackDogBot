@@ -15,6 +15,7 @@ import { JobExecutorService } from "../services/job-executor.service.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { StatusService, type IStatusState } from "../services/status.service.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { verifyJwtToken } from "../utils/jwt.js";
 import * as litesql from "../helpers/litesql.js";
 import type { IQueryResult } from "../helpers/litesql.js";
 import type { IJob, INode } from "../shared/types/index.js";
@@ -28,6 +29,9 @@ export class BrainInterfaceService {
   private _activeChats: Map<string, { paused: boolean }>;
   private _currentGraphs: Map<string, { jobId: string; nodes: INode[]; entrypointNodeId: string | null }>;
   private _logSubscribers: Set<Socket> = new Set<Socket>();
+  private _jwtSecret: string | null = null;
+  private _jwtIssuer: string | null = null;
+  private _jwtAudience: string | null = null;
 
   private constructor() {
     this._logger = LoggerService.getInstance();
@@ -43,9 +47,38 @@ export class BrainInterfaceService {
     return BrainInterfaceService._instance;
   }
 
-  public initialize(io: SocketIOServer): void {
+  public initialize(io: SocketIOServer, jwtSecret: string, jwtIssuer: string, jwtAudience: string): void {
     this._io = io;
+    this._jwtSecret = jwtSecret;
+    this._jwtIssuer = jwtIssuer;
+    this._jwtAudience = jwtAudience;
     this._logger.info("BrainInterfaceService initialized.");
+
+    this._io.use((socket: Socket, next: (error?: Error) => void): void => {
+      try {
+        const token: unknown = socket.handshake.auth?.token;
+
+        if (typeof token !== "string" || token.trim().length === 0) {
+          next(new Error("Unauthorized: missing token"));
+          return;
+        }
+
+        if (!this._jwtSecret || !this._jwtIssuer || !this._jwtAudience) {
+          next(new Error("Unauthorized: auth not configured"));
+          return;
+        }
+
+        verifyJwtToken(token, this._jwtSecret, this._jwtIssuer, this._jwtAudience);
+        next();
+      } catch (error: unknown) {
+        const errorMessage: string = extractErrorMessage(error);
+        this._logger.warn("BrainInterface authentication failed", {
+          socketId: socket.id,
+          error: errorMessage,
+        });
+        next(new Error("Unauthorized: invalid token"));
+      }
+    });
 
     JobStorageService.getInstance().events.on("graph_changed", async ({ jobId }) => {
       // We need to broadcast this graph update to all active chats that might be looking at it.

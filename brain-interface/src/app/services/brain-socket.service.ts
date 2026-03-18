@@ -4,7 +4,7 @@ import { ChangeDetectorRef } from "@angular/core";
 
 function generateId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return generateId();
+    return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
@@ -31,6 +31,7 @@ import type {
   providedIn: "root",
 })
 export class BrainSocketService implements OnDestroy {
+  private static readonly _AuthTokenStorageKey: string = "betterclaw_brain_jwt";
   private _socket: Socket | null = null;
   private _connected = signal(false);
   private _events = signal<TerminalEntry[]>([]);
@@ -41,6 +42,7 @@ export class BrainSocketService implements OnDestroy {
   private _isExecuting = signal<boolean>(false);
   private _logs = signal<ILogEntryEvent[]>([]);
   private _status = signal<IStatusState | null>(null);
+  private _authError = signal<string | null>(null);
   private _connectPromise: Promise<void> | null = null;
   private _connectResolve: (() => void) | null = null;
 
@@ -63,14 +65,36 @@ export class BrainSocketService implements OnDestroy {
   public readonly isExecuting = this._isExecuting.asReadonly();
   public readonly logs = this._logs.asReadonly();
   public readonly status = this._status.asReadonly();
+  public readonly authError = this._authError.asReadonly();
 
-  public connect(url: string = "http://localhost:3001"): void {
+  public getAuthToken(): string {
+    return localStorage.getItem(BrainSocketService._AuthTokenStorageKey) ?? "";
+  }
+
+  public setAuthToken(token: string): void {
+    const trimmedToken: string = token.trim();
+
+    if (trimmedToken.length > 0) {
+      localStorage.setItem(BrainSocketService._AuthTokenStorageKey, trimmedToken);
+    } else {
+      localStorage.removeItem(BrainSocketService._AuthTokenStorageKey);
+    }
+  }
+
+  public connect(url: string = "http://localhost:3001", token?: string): void {
     if (this._socket) {
       this._socket.disconnect();
     }
 
+    const resolvedToken: string = (token ?? this.getAuthToken()).trim();
+
+    this._authError.set(null);
+
     this._socket = io(url, {
       transports: ["websocket"],
+      auth: {
+        token: resolvedToken,
+      },
     });
 
     this._socket.on("connect", async (): Promise<void> => {
@@ -96,6 +120,11 @@ export class BrainSocketService implements OnDestroy {
       this._connected.set(false);
       this._connectPromise = null;
       this._connectResolve = null;
+    });
+
+    this._socket.on("connect_error", (error: Error): void => {
+      this._connected.set(false);
+      this._authError.set(error.message);
     });
 
     this._socket.on("event", (event: BrainEvent): void => {

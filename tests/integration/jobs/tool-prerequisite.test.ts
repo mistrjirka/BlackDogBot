@@ -33,6 +33,9 @@ async function createTaskDirectly(name: string): Promise<string> {
     lastRunAt: null,
     lastRunStatus: null,
     lastRunError: null,
+    messageHistory: [],
+    messageSummary: null,
+    summaryGeneratedAt: null,
   };
   await schedulerService.addTaskAsync(task);
   return task.taskId;
@@ -51,7 +54,10 @@ async function execEditCronTool(args: {
   description?: string;
   instructions?: string;
   tools?: string[];
-  schedule?: { type: "once" | "interval" | "cron"; runAt?: string; intervalMs?: number; expression?: string };
+  scheduleType?: "once" | "interval" | "cron";
+  scheduleRunAt?: string;
+  scheduleIntervalMs?: number;
+  scheduleCron?: string;
   notifyUser?: boolean;
   enabled?: boolean;
 }, messages: any[] = []): Promise<any> {
@@ -246,5 +252,93 @@ describe("editCronTool prerequisites", () => {
     expect(getResult.success).toBe(true);
     expect(getResult.task).toBeDefined();
     expect(getResult.task?.name).toBe("Test Task");
+  });
+
+  it("should keep existing schedule type when edit requests a different type", async () => {
+    const task: IScheduledTask = {
+      taskId: `test-task-${Date.now()}-cron`,
+      name: "Cron Task",
+      description: "Cron task",
+      instructions: "Do cron",
+      tools: ["think"],
+      schedule: { type: "cron", expression: "0 */2 * * *" },
+      enabled: true,
+      notifyUser: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastRunAt: null,
+      lastRunStatus: null,
+      lastRunError: null,
+      messageHistory: [],
+      messageSummary: null,
+      summaryGeneratedAt: null,
+    };
+    await schedulerService.addTaskAsync(task);
+
+    const messagesWithGetCron = [
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolName: "get_cron", input: { taskId: task.taskId }, toolCallId: "call_abc" }],
+      },
+      {
+        role: "tool",
+        toolCallId: "call_abc",
+        content: JSON.stringify({ success: true, task: {} }),
+      },
+    ];
+
+    const editResult = await execEditCronTool({
+      taskId: task.taskId,
+      scheduleType: "once",
+      name: "Cron Task Updated",
+    }, messagesWithGetCron as any);
+
+    expect(editResult.success).toBe(true);
+    expect(editResult.task?.name).toBe("Cron Task Updated");
+    expect(editResult.task?.schedule.type).toBe("cron");
+    expect((editResult.task?.schedule as any).expression).toBe("0 */2 * * *");
+  });
+
+  it("should update cron expression without requiring scheduleType", async () => {
+    const task: IScheduledTask = {
+      taskId: `test-task-${Date.now()}-cron-edit`,
+      name: "Cron Edit Task",
+      description: "Cron edit",
+      instructions: "Do cron",
+      tools: ["think"],
+      schedule: { type: "cron", expression: "0 */2 * * *" },
+      enabled: true,
+      notifyUser: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastRunAt: null,
+      lastRunStatus: null,
+      lastRunError: null,
+      messageHistory: [],
+      messageSummary: null,
+      summaryGeneratedAt: null,
+    };
+    await schedulerService.addTaskAsync(task);
+
+    const messagesWithGetCron = [
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolName: "get_cron", input: { taskId: task.taskId }, toolCallId: "call_def" }],
+      },
+      {
+        role: "tool",
+        toolCallId: "call_def",
+        content: JSON.stringify({ success: true, task: {} }),
+      },
+    ];
+
+    const editResult = await execEditCronTool({
+      taskId: task.taskId,
+      scheduleCron: "15 */3 * * *",
+    }, messagesWithGetCron as any);
+
+    expect(editResult.success).toBe(true);
+    expect(editResult.task?.schedule.type).toBe("cron");
+    expect((editResult.task?.schedule as any).expression).toBe("15 */3 * * *");
   });
 });

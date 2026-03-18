@@ -33,7 +33,7 @@ export function countRequestBodyTokens(requestBody: string): IRequestTokenBreakd
     const tools = body.tools ?? [];
     const system = body.system ?? "";
 
-    const messagesTokens = _countMessagesTokens(messages);
+    const messagesTokens = countMessagesTokens(messages);
     const toolsTokens = tools.length > 0 ? _countTextTokens(JSON.stringify(tools)) : 0;
     const systemTokens = system ? _countTextTokens(system) : 0;
 
@@ -80,7 +80,7 @@ function _countTextTokens(text: string): number {
   return _getEncoder().encode(text).length;
 }
 
-function _countMessagesTokens(messages: unknown[]): number {
+export function countMessagesTokens(messages: unknown[]): number {
   let total = 0;
 
   for (const msg of messages) {
