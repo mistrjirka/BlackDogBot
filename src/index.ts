@@ -32,6 +32,7 @@ import { extractErrorMessage, ChatNotFoundError } from "./utils/error.js";
 import { TelegramHandler } from "./platforms/telegram/handler.js";
 import type { SkillInstallKind } from "./helpers/skill-installer.js";
 import { generateJwtToken, type IJwtPayload } from "./utils/jwt.js";
+import { ChatSessionStorageService } from "./services/chat-session-storage.service.js";
 
 const BRAIN_INTERFACE_PORT: number = parseInt(process.env.BRAIN_INTERFACE_PORT ?? "3001", 10);
 
@@ -112,6 +113,11 @@ async function mainAsync(): Promise<void> {
   if (orphanedCount > 0) {
     logger.info("Cleaned up orphaned jobs in 'creating' status", { count: orphanedCount });
   }
+
+  // 2.7. Initialize chat session storage
+  const chatSessionStorage = ChatSessionStorageService.getInstance();
+  await chatSessionStorage.initializeAsync();
+  logger.info("Chat session storage initialized.", { activeSessions: chatSessionStorage.getSessionCount() });
 
   // 3. Initialize prompt service
   const promptService: PromptService = PromptService.getInstance();

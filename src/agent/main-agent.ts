@@ -84,6 +84,7 @@ import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
+import { ChatSessionStorageService } from "../services/chat-session-storage.service.js";
 import * as toolRegistry from "../helpers/tool-registry.js";
 import type { IJob, INode } from "../shared/types/index.js";
 import type { IToolCallSummary } from "./base-agent.js";
@@ -181,14 +182,45 @@ export class MainAgent extends BaseAgentBase {
     // Create the AbortController immediately so /cancel can abort during initialization
     // (prompt building, tool loading, model setup) before processMessageForChatAsync runs.
     if (!this._sessions.has(chatId)) {
-      this._sessions.set(chatId, {
-        messages: [],
-        lastActivityAt: Date.now(),
-        jobCreationMode: null,
-        paused: false,
-        resumeResolve: null,
-        abortController: new AbortController(),
-      });
+      // Try to load from persistent storage first
+      const sessionStorage = ChatSessionStorageService.getInstance();
+      const savedSession = sessionStorage.loadSession(chatId);
+
+      if (savedSession) {
+        try {
+          const parsedMessages: ModelMessage[] = JSON.parse(savedSession.messages);
+          this._sessions.set(chatId, {
+            messages: parsedMessages,
+            lastActivityAt: savedSession.lastActivityAt,
+            jobCreationMode: savedSession.jobCreationMode
+              ? JSON.parse(savedSession.jobCreationMode)
+              : null,
+            paused: false,
+            resumeResolve: null,
+            abortController: new AbortController(),
+          });
+          this._logger.info("Restored chat session from storage", { chatId, messageCount: parsedMessages.length });
+        } catch (parseError) {
+          this._logger.warn("Failed to parse saved session, starting fresh", { chatId, error: String(parseError) });
+          this._sessions.set(chatId, {
+            messages: [],
+            lastActivityAt: Date.now(),
+            jobCreationMode: null,
+            paused: false,
+            resumeResolve: null,
+            abortController: new AbortController(),
+          });
+        }
+      } else {
+        this._sessions.set(chatId, {
+          messages: [],
+          lastActivityAt: Date.now(),
+          jobCreationMode: null,
+          paused: false,
+          resumeResolve: null,
+          abortController: new AbortController(),
+        });
+      }
     }
 
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
@@ -601,6 +633,17 @@ export class MainAgent extends BaseAgentBase {
       session.abortController = null;
       session.paused = false;
       session.resumeResolve = null;
+
+      // Save session to persistent storage
+      try {
+        const sessionStorage = ChatSessionStorageService.getInstance();
+        const jobCreationMode = session.jobCreationMode
+          ? JSON.stringify(session.jobCreationMode)
+          : null;
+        sessionStorage.saveSession(chatId, JSON.stringify(session.messages), jobCreationMode);
+      } catch (saveError) {
+        this._logger.warn("Failed to save chat session", { chatId, error: String(saveError) });
+      }
     }
 
     return result;
@@ -650,11 +693,19 @@ export class MainAgent extends BaseAgentBase {
 
   public clearChatHistory(chatId: string): void {
     this._sessions.delete(chatId);
+    // Also delete from persistent storage
+    try {
+      ChatSessionStorageService.getInstance().deleteSession(chatId);
+    } catch {
+      // Ignore storage errors on clear
+    }
     this._logger.info("Chat history cleared.", { chatId });
   }
 
   public clearAllChatHistory(): void {
     this._sessions.clear();
+    // Note: We don't delete all sessions from storage here because other chats
+    // may still be active. Only the in-memory sessions are cleared.
     this._logger.info("All chat history cleared.");
   }
 
