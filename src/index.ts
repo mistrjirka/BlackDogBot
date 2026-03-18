@@ -32,6 +32,7 @@ import { extractErrorMessage, ChatNotFoundError } from "./utils/error.js";
 import { TelegramHandler } from "./platforms/telegram/handler.js";
 import type { SkillInstallKind } from "./helpers/skill-installer.js";
 import { generateJwtToken, type IJwtPayload } from "./utils/jwt.js";
+import { StartupDiagnosticsService } from "./services/startup-diagnostics.service.js";
 
 const BRAIN_INTERFACE_PORT: number = parseInt(process.env.BRAIN_INTERFACE_PORT ?? "3001", 10);
 
@@ -93,6 +94,11 @@ async function mainAsync(): Promise<void> {
   statusService.enableCliOutput(true);
 
   logger.info("BetterClaw daemon starting...");
+
+  // 2.7. Run startup diagnostics for configured services
+  const diagnosticsService = StartupDiagnosticsService.getInstance();
+  await diagnosticsService.runDiagnosticsAsync();
+
   logger.info("BrainInterface JWT token is ready for UI login", {
     tokenFilePath,
     hint: "Paste this token into the Brain Interface auth field. It is persisted in browser localStorage.",
