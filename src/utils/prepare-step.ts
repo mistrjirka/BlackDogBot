@@ -2,18 +2,15 @@ import type { ModelMessage } from "ai";
 
 import { FORCE_THINK_INTERVAL } from "../shared/constants.js";
 
-//#region Types
+//#region Constants
 
 /**
- * Return type for directives that force the think tool.
- * Removes all tools except think via `activeTools`.
- * Enforcement is done by limiting available tools only.
+ * How many consecutive identical non-think tool-call steps are required
+ * before we treat the sequence as a likely loop.
  */
-export interface IForceThinkDirective {
-  activeTools: string[];
-}
+const DUPLICATE_CONSECUTIVE_STEPS: number = 3;
 
-//#endregion Types
+//#endregion Constants
 
 //#region Public functions
 
@@ -33,56 +30,56 @@ export function isReasoningRequired(messages: ModelMessage[]): boolean {
 }
 
 /**
- * Detects when the model is stuck in a loop calling the same tool with
- * identical arguments on consecutive steps. When 2 consecutive identical
- * non-think tool-call steps are detected, forces a think step to break
- * the loop.
+ * Detects when the model is likely stuck in a loop calling the same tool(s)
+ * with identical arguments on consecutive steps.
  *
- * Only triggers if the steps are truly consecutive (no other assistant
- * messages between them). This prevents false positives when a forced
- * think breaks up an otherwise identical sequence.
+ * Only triggers when there are at least
+ * {@link DUPLICATE_CONSECUTIVE_STEPS} truly consecutive identical non-think
+ * tool-call steps (no other assistant messages between them).
  *
  * Tool call order does not matter for comparison - [crawl4ai(A), searxng(B)]
  * is considered identical to [searxng(B), crawl4ai(A)].
  *
- * Returns a `prepareStep`-compatible partial result when a loop is detected,
- * or `null` when no duplicate is found.
+ * Returns `true` when a likely duplicate loop is detected.
  */
 export function getDuplicateToolCallDirective(
   stepNumber: number,
   messages: ModelMessage[],
-): IForceThinkDirective | null {
-  if (stepNumber < 2) {
-    return null;
+): boolean {
+  if (stepNumber < DUPLICATE_CONSECUTIVE_STEPS - 1) {
+    return false;
   }
 
   // If the most recent assistant step was already a think call, skip detection.
   // This means we already forced a think to break the loop — now let the model
   // proceed freely so it can make a different tool call instead of re-triggering.
   if (_lastAssistantStepIsThink(messages)) {
-    return null;
+    return false;
   }
 
-  // Get the last 2 non-think tool-call steps with their indices
-  const steps: IToolStepWithIndex[] = _extractLastNonThinkStepsWithIndices(messages, 2);
+  const steps: IToolStepWithIndex[] = _extractLastNonThinkStepsWithIndices(
+    messages,
+    DUPLICATE_CONSECUTIVE_STEPS,
+  );
 
-  if (steps.length < 2) {
-    return null;
+  if (steps.length < DUPLICATE_CONSECUTIVE_STEPS) {
+    return false;
   }
 
-  const [prev, curr] = steps;
-
-  // Check if they are truly consecutive (no other assistant messages between them)
-  if (!_areAssistantMessagesConsecutive(messages, prev.index, curr.index)) {
-    return null;
+  for (let i: number = 1; i < steps.length; i++) {
+    if (!_areAssistantMessagesConsecutive(messages, steps[i - 1].index, steps[i].index)) {
+      return false;
+    }
   }
 
-  // Compare tool sets (order-independent)
-  if (_areToolStepsIdenticalUnordered(prev.signatures, curr.signatures)) {
-    return _buildForceThinkDirective();
+  const base: IToolCallSignature[] = steps[0].signatures;
+  for (let i: number = 1; i < steps.length; i++) {
+    if (!_areToolStepsIdenticalUnordered(base, steps[i].signatures)) {
+      return false;
+    }
   }
 
-  return null;
+  return true;
 }
 
 //#endregion Public functions
@@ -134,17 +131,6 @@ function _lastAssistantStepIsThink(messages: ModelMessage[]): boolean {
   }
 
   return false;
-}
-
-/**
- * Builds a universal force-think directive by limiting available tools
- * to only think. The `activeTools` filter works at the Vercel AI SDK
- * level (controls which tools are serialized into the API request).
- */
-function _buildForceThinkDirective(): IForceThinkDirective {
-  return {
-    activeTools: ["think"],
-  };
 }
 
 function _stepsSinceLastReasoningOrThink(messages: ModelMessage[]): number {
@@ -270,13 +256,8 @@ function _extractLastNonThinkStepsWithIndices(
         const toolName: string = (part as { toolName: string }).toolName;
         const args: unknown = "args" in part ? (part as { args: unknown }).args :
                                "input" in part ? (part as { input: unknown }).input : {};
-        let argsJson: string;
 
-        try {
-          argsJson = JSON.stringify(args, Object.keys(args as object).sort());
-        } catch {
-          argsJson = String(args);
-        }
+        const argsJson: string = _toCanonicalJson(args);
 
         signatures.push({ toolName, argsJson });
       }
@@ -323,9 +304,11 @@ function _areToolStepsIdenticalUnordered(
     return false;
   }
 
-  // Sort by toolName for order-independent comparison
-  const sortedA = [...stepA].sort((a, b) => a.toolName.localeCompare(b.toolName));
-  const sortedB = [...stepB].sort((a, b) => a.toolName.localeCompare(b.toolName));
+  // Sort by full signature for order-independent comparison.
+  const signatureKey = (signature: IToolCallSignature): string =>
+    `${signature.toolName}\u0000${signature.argsJson}`;
+  const sortedA = [...stepA].sort((a, b) => signatureKey(a).localeCompare(signatureKey(b)));
+  const sortedB = [...stepB].sort((a, b) => signatureKey(a).localeCompare(signatureKey(b)));
 
   // Compare each tool call
   for (let i: number = 0; i < sortedA.length; i++) {
@@ -335,6 +318,34 @@ function _areToolStepsIdenticalUnordered(
   }
 
   return true;
+}
+
+function _toCanonicalJson(value: unknown): string {
+  try {
+    return JSON.stringify(_canonicalizeValue(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function _canonicalizeValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item: unknown): unknown => _canonicalizeValue(item));
+  }
+
+  if (typeof value === "object" && value !== null) {
+    const obj: Record<string, unknown> = value as Record<string, unknown>;
+    const keys: string[] = Object.keys(obj).sort();
+    const canonical: Record<string, unknown> = {};
+
+    for (const key of keys) {
+      canonical[key] = _canonicalizeValue(obj[key]);
+    }
+
+    return canonical;
+  }
+
+  return value;
 }
 
 //#endregion Private functions

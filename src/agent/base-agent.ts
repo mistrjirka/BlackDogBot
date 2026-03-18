@@ -437,14 +437,14 @@ export abstract class BaseAgentBase {
 
         // Detect duplicate tool calls (loop prevention) early to break
         // repeated non-productive tool loops with a forced think step.
-        const duplicateDirective = getDuplicateToolCallDirective(stepNumber, messages);
+        const hasDuplicateToolLoop: boolean = getDuplicateToolCallDirective(stepNumber, messages);
 
-        if (duplicateDirective) {
-          logger.warn("Duplicate tool call detected — forcing think to break loop", {
+        if (hasDuplicateToolLoop) {
+          logger.warn("Duplicate tool call pattern detected", {
             stepNumber,
-            directive: JSON.stringify(duplicateDirective),
+            action: "none",
+            hint: "No activeTools override applied; continuing with normal tool set.",
           });
-          return duplicateDirective;
         }
 
         // Check for pause — await the promise if the agent has been paused
