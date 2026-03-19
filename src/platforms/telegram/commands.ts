@@ -35,6 +35,7 @@ export function setupTelegramCommands(bot: Bot): void {
       "/clear — Clear conversation history for this chat",
       "/reset [name|all] — Reset prompt(s) to factory defaults",
       "/factory_reset — Full nuclear reset: delete all jobs, knowledge, tasks, skills, prompts, workspace, logs, and chat history",
+      "/update_prompts — Update all prompts from source defaults",
       "/cancel — Stop current generation and delete the active prompt",
       "/notifications_enable — Enable cron notifications for this chat",
       "/notifications_disable — Disable cron notifications for this chat",
@@ -99,6 +100,19 @@ export function setupTelegramCommands(bot: Bot): void {
       const errorMessage: string = extractErrorMessage(error);
       await ctx.reply(`Factory reset failed: ${errorMessage}`);
       logger.error("Factory reset failed.", { error: errorMessage });
+    }
+  });
+
+  // /update_prompts command
+  bot.command("update_prompts", async (ctx: Context): Promise<void> => {
+    try {
+      await promptService.resetAllPromptsAsync();
+      await ctx.reply("All prompts have been updated from source defaults.");
+      logger.info("Prompts updated from source defaults via /update_prompts command.");
+    } catch (error: unknown) {
+      const errorMessage: string = extractErrorMessage(error);
+      await ctx.reply(`Failed to update prompts: ${errorMessage}`);
+      logger.error("Failed to update prompts via /update_prompts command.", { error: errorMessage });
     }
   });
 

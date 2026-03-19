@@ -28,10 +28,11 @@ import type { IPlatformDeps } from "./platforms/types.js";
 import type { IConfig, IScheduledTask, IExecutionContext } from "./shared/types/index.js";
 import { getJobLogsDir, getBrainInterfaceTokenFilePath, ensureDirectoryExistsAsync } from "./utils/paths.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
-import { extractErrorMessage, ChatNotFoundError } from "./utils/error.js";
+import { extractErrorMessage } from "./utils/error.js";
 import { TelegramHandler } from "./platforms/telegram/handler.js";
 import type { SkillInstallKind } from "./helpers/skill-installer.js";
 import { generateJwtToken, type IJwtPayload } from "./utils/jwt.js";
+import { notifySchedulerChannelsWithDedupAsync } from "./utils/scheduler-notifications.js";
 
 const BRAIN_INTERFACE_PORT: number = parseInt(process.env.BRAIN_INTERFACE_PORT ?? "3001", 10);
 
@@ -215,48 +216,26 @@ async function mainAsync(): Promise<void> {
   ): Promise<void> => {
     const notificationChannels = channelRegistry.getNotificationChannels();
 
-    for (const channel of notificationChannels) {
-      try {
-        if (!messagingService.hasAdapter(channel.platform)) {
-          continue;
-        }
-
-        const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
-        await sender(message);
-      } catch (sendError: unknown) {
-        if (sendError instanceof ChatNotFoundError && channel.platform === "telegram") {
-          const telegramHandler = TelegramHandler.getInstance();
-          const knownChatIds = telegramHandler.getKnownChatIds();
-
-          if (logInvalidChannelWarning) {
-            logger.warn("Invalid Telegram channel ID, falling back to known chats", {
-              invalidChannelId: channel.channelId,
-              fallbackChatCount: knownChatIds.length,
-            });
-          }
-
-          for (const fallbackChatId of knownChatIds) {
-            try {
-              const fallbackSender = messagingService.createSenderForChat("telegram", fallbackChatId);
-              await fallbackSender(message);
-              if (fallbackSuccessMessage) {
-                logger.info(fallbackSuccessMessage, { fallbackChatId });
-              }
-            } catch (fallbackError: unknown) {
-              logger.error(fallbackFailureMessage ?? "Fallback send also failed", {
-                fallbackChatId,
-                error: extractErrorMessage(fallbackError),
-              });
-            }
-          }
-        } else {
-          logger.error(`${errorPrefix} ${channel.platform}:${channel.channelId}`, {
-            error: extractErrorMessage(sendError),
-            taskId,
-          });
-        }
-      }
-    }
+    await notifySchedulerChannelsWithDedupAsync(
+      notificationChannels,
+      message,
+      {
+        errorPrefix,
+        taskId,
+        fallbackSuccessMessage,
+        fallbackFailureMessage,
+        logInvalidChannelWarning,
+      },
+      {
+        hasAdapter: (platform) => messagingService.hasAdapter(platform),
+        sendToChannelAsync: async (platform, channelId, outgoingMessage): Promise<void> => {
+          const sender = messagingService.createSenderForChat(platform, channelId);
+          await sender(outgoingMessage);
+        },
+        getKnownTelegramChatIds: (): string[] => TelegramHandler.getInstance().getKnownChatIds(),
+        logger,
+      },
+    );
   };
 
   // 7.6. Auto-setup skills with missing dependencies

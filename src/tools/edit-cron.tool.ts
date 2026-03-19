@@ -41,6 +41,8 @@ const executeEditCron = async (
     name?: string;
     description?: string;
     instructions?: string;
+    instructionChangeWhat?: string;
+    instructionChangeWhy?: string;
     tools?: string[];
     scheduleType?: "once" | "interval" | "cron";
     scheduleRunAt?: string;
@@ -74,8 +76,29 @@ const executeEditCron = async (
       return { success: false, error: `Cron task with ID '${taskId}' not found.` };
     }
 
-    // 1. Verify instructions using LLM IF they are being changed
-    if (patch.instructions !== undefined) {
+    // 1. Detect whether instructions actually changed
+    const instructionsActuallyChanged: boolean =
+      patch.instructions !== undefined &&
+      patch.instructions.trim() !== existingTask.instructions.trim();
+
+    // 2. Require change metadata when instructions change
+    if (instructionsActuallyChanged) {
+      if (!patch.instructionChangeWhat || patch.instructionChangeWhat.trim().length === 0) {
+        return {
+          success: false,
+          error: "instructionChangeWhat is required when changing instructions. Describe what is being changed and how.",
+        };
+      }
+      if (!patch.instructionChangeWhy || patch.instructionChangeWhy.trim().length === 0) {
+        return {
+          success: false,
+          error: "instructionChangeWhy is required when changing instructions. Explain why this change is needed.",
+        };
+      }
+    }
+
+    // 3. Verify instructions using LLM IF they are actually being changed
+    if (instructionsActuallyChanged) {
       logger.debug(`[${TOOL_NAME}] Re-verifying cron instructions for task: ${taskId}`);
 
       const toolsToVerify = patch.tools ?? existingTask.tools;
@@ -87,6 +110,21 @@ const executeEditCron = async (
         toolContextLines.length > 0
           ? `The agent will have access to the following tools:\n${toolContextLines.join("\n")}`
           : "The agent will have no tools available.";
+
+      const proposedSchedule: Record<string, unknown> = { type: existingTask.schedule.type };
+      if (existingTask.schedule.type === "once") {
+        proposedSchedule.runAt = patch.scheduleRunAt !== undefined ? patch.scheduleRunAt : existingTask.schedule.runAt;
+      } else if (existingTask.schedule.type === "interval") {
+        proposedSchedule.intervalMs = patch.scheduleIntervalMs !== undefined ? patch.scheduleIntervalMs : existingTask.schedule.intervalMs;
+      } else {
+        proposedSchedule.expression = patch.scheduleCron !== undefined ? patch.scheduleCron : existingTask.schedule.expression;
+      }
+
+      const proposedTools: string[] = patch.tools ?? existingTask.tools;
+      const proposedNotifyUser: boolean = patch.notifyUser !== undefined ? patch.notifyUser : existingTask.notifyUser;
+      const proposedEnabled: boolean = patch.enabled !== undefined ? patch.enabled : existingTask.enabled;
+      const proposedName: string = patch.name !== undefined ? patch.name : existingTask.name;
+      const proposedDescription: string = patch.description !== undefined ? patch.description : existingTask.description;
 
       const verifierPrompt = `
 You are a task instruction verifier for an autonomous AI agent.
@@ -120,14 +158,41 @@ RULES:
    - Truly unspecified external resources: an RSS URL, API endpoint, or file path that is not provided AND cannot be derived from tool conventions
 
 6. The "notifyUser" flag controls whether the agent's final text response is automatically forwarded to Telegram.
-   - Set notifyUser=true when the user wants the agent's summary or results delivered to Telegram automatically (e.g. news digests, alerts, reports notifyUser=false for).
-   - Set background tasks where only explicit send_message tool calls should reach Telegram (e.g. cleanup, archival, internal data processing).
+   - Set notifyUser=true when the user wants the agent's summary or results delivered to Telegram automatically (e.g. news digests, alerts, reports).
+   - Set notifyUser=false for background tasks where only explicit send_message tool calls should reach Telegram (e.g. cleanup, archival, internal data processing).
    - The send_message tool ALWAYS sends to Telegram regardless of notifyUser — notifyUser only gates the automatic forwarding of the agent's final text output.
 
-Instructions to verify:
+=== OLD CRON TASK ===
+Task ID: ${existingTask.taskId}
+Name: ${existingTask.name}
+Description: ${existingTask.description}
+Schedule: ${JSON.stringify(existingTask.schedule)}
+Tools: ${existingTask.tools.join(", ")}
+notifyUser: ${existingTask.notifyUser}
+Enabled: ${existingTask.enabled}
+
+Old Instructions:
+"""
+${existingTask.instructions}
+"""
+
+=== PROPOSED NEW CRON TASK ===
+Task ID: ${existingTask.taskId}
+Name: ${proposedName}
+Description: ${proposedDescription}
+Schedule: ${JSON.stringify(proposedSchedule)}
+Tools: ${proposedTools.join(", ")}
+notifyUser: ${proposedNotifyUser}
+Enabled: ${proposedEnabled}
+
+New Instructions:
 """
 ${patch.instructions}
 """
+
+=== CHANGE RATIONALE ===
+What changed: ${patch.instructionChangeWhat}
+Why changed: ${patch.instructionChangeWhy}
 
 Output a JSON object with:
 - "isClear": boolean (true if valid, false if invalid)
@@ -148,14 +213,24 @@ Output a JSON object with:
       });
 
       if (!verificationResult.object.isClear) {
-        const errorMsg = `EDIT REJECTED. The updated instructions are ambiguous or missing context: ${verificationResult.object.missingContext}. Please provide complete, self-contained instructions.`;
-        logger.warn(`[${TOOL_NAME}] Edit rejected: ${errorMsg}`);
+        const errorMsg =
+          `EDIT REJECTED. The updated instructions were not approved by the verifier.\n\n` +
+          `Verifier reason: ${verificationResult.object.missingContext}\n\n` +
+          `Old instructions:\n${existingTask.instructions}\n\n` +
+          `Proposed instructions:\n${patch.instructions}\n\n` +
+          `Change what: ${patch.instructionChangeWhat}\n\n` +
+          `Change why: ${patch.instructionChangeWhy}`;
+        logger.warn(`[${TOOL_NAME}] Edit rejected`, {
+          taskId,
+          reason: verificationResult.object.missingContext,
+        });
         return { success: false, error: errorMsg };
       }
     }
 
-    // 2. Build update payload — reconstruct schedule object from flat params
-    const { scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron, ...restPatch } = patch;
+    // 4. Build update payload — reconstruct schedule object from flat params
+    //    instructionChangeWhat/Why are metadata only, not persisted in task.
+    const { scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron, instructionChangeWhat, instructionChangeWhy, ...restPatch } = patch;
     const updatePayload: Record<string, unknown> = { ...restPatch };
 
     if (scheduleType !== undefined) {

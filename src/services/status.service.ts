@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { getEncoding } from "js-tiktoken";
+import { ConsoleColor } from "../utils/console-color.js";
 
 //#region Types
 
@@ -245,39 +246,79 @@ export class StatusService {
     }
 
     const elapsed: number = Math.round((Date.now() - state.startedAt) / 1000);
-    const elapsedStr: string = elapsed > 0 ? ` (${elapsed}s)` : "";
+    const elapsedStr: string = elapsed > 0
+      ? (ConsoleColor.enabled ? ConsoleColor.dim(` (${elapsed}s)`) : ` (${elapsed}s)`)
+      : "";
     const contextStr: string = state.contextTokens
-      ? ` [${state.contextTokens.toLocaleString()} context]`
+      ? (ConsoleColor.enabled
+          ? ConsoleColor.brightWhite(` [${state.contextTokens.toLocaleString()} context]`)
+          : ` [${state.contextTokens.toLocaleString()} context]`)
       : "";
 
     switch (state.type) {
       case "llm_request": {
         const tokens: string = state.inputTokens
-          ? ` (${state.inputTokens.toLocaleString()} input tokens)`
+          ? (ConsoleColor.enabled
+              ? ConsoleColor.brightCyan(` (${state.inputTokens.toLocaleString()} input tokens)`)
+              : ` (${state.inputTokens.toLocaleString()} input tokens)`)
           : "";
-        return `🤖 LLM: ${state.message}${tokens}${contextStr}${elapsedStr}`;
+        const prefix = ConsoleColor.enabled
+          ? ConsoleColor.cyan("🤖 LLM")
+          : "🤖 LLM";
+        return `${prefix}: ${state.message}${tokens}${contextStr}${elapsedStr}`;
       }
 
-      case "embedding":
-        return `🔢 Embedding: ${state.message}${contextStr}${elapsedStr}`;
+      case "embedding": {
+        const prefix = ConsoleColor.enabled
+          ? ConsoleColor.magenta("🔢 Embedding")
+          : "🔢 Embedding";
+        return `${prefix}: ${state.message}${contextStr}${elapsedStr}`;
+      }
 
-      case "job_execution":
-        return `⚙️ Job: ${state.message}${contextStr}${elapsedStr}`;
+      case "job_execution": {
+        const prefix = ConsoleColor.enabled
+          ? ConsoleColor.blue("⚙️ Job")
+          : "⚙️ Job";
+        return `${prefix}: ${state.message}${contextStr}${elapsedStr}`;
+      }
 
-      case "skill_setup":
-        return `🔧 Skill Setup: ${state.message}${contextStr}${elapsedStr}`;
+      case "skill_setup": {
+        const prefix = ConsoleColor.enabled
+          ? ConsoleColor.yellow("🔧 Skill Setup")
+          : "🔧 Skill Setup";
+        return `${prefix}: ${state.message}${contextStr}${elapsedStr}`;
+      }
 
-      case "tool_execution":
-        return `🔨 Tool: ${state.message}${contextStr}${elapsedStr}`;
+      case "tool_execution": {
+        const prefix = ConsoleColor.enabled
+          ? ConsoleColor.yellow("🔨 Tool")
+          : "🔨 Tool";
+        const message = ConsoleColor.enabled
+          ? this._colorToolMessage(state.message)
+          : state.message;
+        return `${prefix}: ${message}${contextStr}${elapsedStr}`;
+      }
 
-      case "web_search":
-        return `🔍 Search: ${state.message}${contextStr}${elapsedStr}`;
+      case "web_search": {
+        const prefix = ConsoleColor.enabled
+          ? ConsoleColor.green("🔍 Search")
+          : "🔍 Search";
+        return `${prefix}: ${state.message}${contextStr}${elapsedStr}`;
+      }
 
-      case "web_crawl":
-        return `🕷️ Crawl: ${state.message}${contextStr}${elapsedStr}`;
+      case "web_crawl": {
+        const prefix = ConsoleColor.enabled
+          ? ConsoleColor.green("🕷️ Crawl")
+          : "🕷️ Crawl";
+        return `${prefix}: ${state.message}${contextStr}${elapsedStr}`;
+      }
 
-      case "http_request":
-        return `🌐 HTTP: ${state.message}${contextStr}${elapsedStr}`;
+      case "http_request": {
+        const prefix = ConsoleColor.enabled
+          ? ConsoleColor.green("🌐 HTTP")
+          : "🌐 HTTP";
+        return `${prefix}: ${state.message}${contextStr}${elapsedStr}`;
+      }
 
       default:
         return `${state.message}${contextStr}${elapsedStr}`;
@@ -287,6 +328,21 @@ export class StatusService {
   //#endregion Public methods
 
   //#region Private methods
+
+  private _colorToolMessage(message: string): string {
+    // Color "Step N: ..." format — bright yellow step number, bright white tool names
+    const stepMatch = message.match(/^(Cron: .+ — )?Step (\d+): (.+)$/);
+    if (stepMatch) {
+      const cronPrefix = stepMatch[1]
+        ? ConsoleColor.cyan(stepMatch[1])
+        : "";
+      const stepNum = ConsoleColor.brightYellow(`Step ${stepMatch[2]}`);
+      const tools = ConsoleColor.brightWhite(stepMatch[3]);
+      return `${cronPrefix}${stepNum}: ${tools}`;
+    }
+
+    return message;
+  }
 
   private _startSpinner(): void {
     this._spinnerInterval = setInterval(() => {

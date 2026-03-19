@@ -53,6 +53,8 @@ async function execEditCronTool(args: {
   name?: string;
   description?: string;
   instructions?: string;
+  instructionChangeWhat?: string;
+  instructionChangeWhy?: string;
   tools?: string[];
   scheduleType?: "once" | "interval" | "cron";
   scheduleRunAt?: string;

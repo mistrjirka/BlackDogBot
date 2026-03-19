@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 
 import { LogLevel } from "../shared/types/index.js";
 import { getLogsDir } from "../utils/paths.js";
+import { ConsoleColor } from "../utils/console-color.js";
 
 //#region Constants
 
@@ -117,12 +118,20 @@ export class LoggerService {
       : "";
     const line: string = `[${timestamp}] [${levelTag}] ${message}${contextSuffix}`;
 
+    const coloredLevelTag: string = ConsoleColor.enabled
+      ? this._colorLevelTag(levelTag)
+      : levelTag;
+
+    const consoleLine: string = ConsoleColor.enabled
+      ? `${ConsoleColor.gray(`[${timestamp}]`)} [${coloredLevelTag}] ${message}${contextSuffix}`
+      : line;
+
     if (level === "error") {
-      console.error(line);
+      console.error(consoleLine);
     } else if (level === "warn") {
-      console.warn(line);
+      console.warn(consoleLine);
     } else {
-      console.log(line);
+      console.log(consoleLine);
     }
 
     void this._writeToFileAsync(line);
@@ -142,6 +151,16 @@ export class LoggerService {
           else resolve();
         });
       });
+    }
+  }
+
+  private _colorLevelTag(levelTag: string): string {
+    switch (levelTag) {
+      case "ERROR": return ConsoleColor.brightRed(levelTag);
+      case "WARN":  return ConsoleColor.yellow(levelTag);
+      case "INFO":  return ConsoleColor.brightCyan(levelTag);
+      case "DEBUG": return ConsoleColor.gray(levelTag);
+      default:      return levelTag;
     }
   }
 

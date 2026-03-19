@@ -574,6 +574,14 @@ export const editCronToolInputSchema = z.object({
     .min(1)
     .optional()
     .describe("Updated instructions for the agent. If changed, the instructions will be re-verified."),
+  instructionChangeWhat: z.string()
+    .min(1)
+    .optional()
+    .describe("REQUIRED when instructions change. Describe what is being changed and how."),
+  instructionChangeWhy: z.string()
+    .min(1)
+    .optional()
+    .describe("REQUIRED when instructions change. Explain why this change is needed."),
   tools: z.string()
     .min(1)
     .array()
@@ -741,7 +749,7 @@ export const appendFileToolOutputSchema = z.object({
 
 export const editFileToolInputSchema = z.object({
   filePath: z.string()
-    .default("")
+    .min(1, "filePath is required and cannot be empty")
     .describe("Path to the file. Use just a filename (e.g. 'notes.txt') for the default workspace directory. Only specify a full absolute path when you need to access files outside the workspace. For most tasks, do NOT specify a path — just use the filename."),
   oldString: z.string()
     .min(1)
