@@ -5,7 +5,7 @@ import { generateTextWithRetryAsync } from "./llm-retry.js";
 
 //#region Constants
 
-const MAX_SUMMARIZATION_PASSES: number = 1;
+const MAX_SUMMARIZATION_PASSES: number = 2;
 
 //#endregion Constants
 
@@ -347,10 +347,7 @@ async function _compactToolResultsAfterLatestUserAsync(
       `tool-output-${item.index}`,
     );
 
-    resultMessages[item.index] = {
-      ...originalMsg,
-      content: [{ type: "text", text: `[COMPACTED TOOL RESULT]\n${summarized}` }],
-    } as unknown as ModelMessage;
+    resultMessages[item.index] = _replaceToolMessageContentWithSummary(originalMsg, summarized);
   }
 
   logger.info("Compaction stage finished", {
@@ -362,6 +359,58 @@ async function _compactToolResultsAfterLatestUserAsync(
   });
 
   return resultMessages;
+}
+
+function _replaceToolMessageContentWithSummary(
+  originalMsg: ModelMessage,
+  summarized: string,
+): ModelMessage {
+  const compactedText: string = `[COMPACTED TOOL RESULT]\n${summarized}`;
+
+  if (!Array.isArray(originalMsg.content)) {
+    return originalMsg;
+  }
+
+  const replacementOutput: { type: "text"; value: string } = {
+    type: "text",
+    value: compactedText,
+  };
+
+  const newContent: unknown[] = originalMsg.content.map((part: unknown): unknown => {
+    if (typeof part !== "object" || part === null) {
+      return part;
+    }
+
+    const candidate: Record<string, unknown> = part as Record<string, unknown>;
+
+    if (candidate.type === "tool-result") {
+      if ("output" in candidate) {
+        return {
+          ...candidate,
+          output: replacementOutput,
+        };
+      }
+
+      if ("result" in candidate) {
+        return {
+          ...candidate,
+          result: compactedText,
+        };
+      }
+
+      return {
+        ...candidate,
+        output: replacementOutput,
+      };
+    }
+
+    return part;
+  });
+
+  return {
+    ...originalMsg,
+    content: newContent as ModelMessage["content"],
+  } as unknown as ModelMessage;
 }
 
 async function _summarizeMessagesSingleShotAsync(
