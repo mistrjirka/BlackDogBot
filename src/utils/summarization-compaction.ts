@@ -127,22 +127,79 @@ async function _compactSinglePassAsync(
     return messages;
   }
 
-  const firstMessage: ModelMessage = messages[0];
-  const keepRecentCount: number = _getKeepRecentCount(messages, countTokens);
-  const recentMessages: ModelMessage[] = messages.slice(-keepRecentCount);
-  const oldMessages: ModelMessage[] = messages.slice(1, -keepRecentCount);
+  const stageAResult: ModelMessage[] = await _compactPrefixBeforeLastUserAsync(
+    messages,
+    model,
+    logger,
+    targetTokenCount,
+    countTokens,
+  );
 
-  if (oldMessages.length === 0) {
+  if (countTokens(stageAResult) <= targetTokenCount) {
+    return stageAResult;
+  }
+
+  const stageBResult: ModelMessage[] = await _compactLatestUserMessageAsync(
+    stageAResult,
+    model,
+    logger,
+    targetTokenCount,
+    countTokens,
+  );
+
+  if (countTokens(stageBResult) <= targetTokenCount) {
+    return stageBResult;
+  }
+
+  const stageCResult: ModelMessage[] = await _compactToolResultsAfterLatestUserAsync(
+    stageBResult,
+    model,
+    logger,
+    targetTokenCount,
+    countTokens,
+  );
+
+  return stageCResult;
+}
+
+function _findLastUserIndex(messages: ModelMessage[]): number {
+  for (let i: number = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+async function _compactPrefixBeforeLastUserAsync(
+  messages: ModelMessage[],
+  model: LanguageModel,
+  logger: LoggerService,
+  targetTokenCount: number,
+  countTokens: (msgs: ModelMessage[]) => number,
+): Promise<ModelMessage[]> {
+  const lastUserIndex: number = _findLastUserIndex(messages);
+
+  if (lastUserIndex <= 1) {
+    return messages;
+  }
+
+  const firstMessage: ModelMessage = messages[0];
+  const prefixMessages: ModelMessage[] = messages.slice(1, lastUserIndex);
+  const activeSuffix: ModelMessage[] = messages.slice(lastUserIndex);
+
+  if (prefixMessages.length === 0) {
     return messages;
   }
 
   const summaryBudgetTokens: number = Math.max(
-    700,
-    Math.floor(targetTokenCount - countTokens([firstMessage, ...recentMessages]) - 180),
+    600,
+    Math.floor(targetTokenCount - countTokens([firstMessage, ...activeSuffix]) - 180),
   );
 
   const summaryText: string = await _summarizeMessagesSingleShotAsync(
-    oldMessages,
+    prefixMessages,
     model,
     logger,
     summaryBudgetTokens,
@@ -153,55 +210,158 @@ async function _compactSinglePassAsync(
     content: [
       {
         type: "text",
-        text: `[CONVERSATION SUMMARY - Earlier messages were compacted]\n\n${summaryText}\n\n[END OF SUMMARY - Recent conversation follows]`,
+        text: `[EARLIER CONTEXT SUMMARY - Messages before the latest user request were compacted]\n\n${summaryText}\n\n[END OF EARLIER CONTEXT SUMMARY]`,
       },
     ],
   };
 
-  return [firstMessage, summaryMessage, ...recentMessages];
+  const result: ModelMessage[] = [firstMessage, summaryMessage, ...activeSuffix];
+
+  logger.info("Compaction stage finished", {
+    stage: "prefix_before_latest_user",
+    before: countTokens(messages),
+    after: countTokens(result),
+    reducedBy: countTokens(messages) - countTokens(result),
+    prefixMessageCount: prefixMessages.length,
+    keptSuffixCount: activeSuffix.length,
+  });
+
+  return result;
 }
 
-/**
- * Determines how many recent messages to keep based on a dynamic token budget.
- * Walks backwards from the end of the message array, accumulating token counts,
- * and keeps messages as long as the total stays under 15% of the total message
- * token count. Minimum 2 messages are always kept.
- */
-function _getKeepRecentCount(
+async function _compactLatestUserMessageAsync(
   messages: ModelMessage[],
+  model: LanguageModel,
+  logger: LoggerService,
+  targetTokenCount: number,
   countTokens: (msgs: ModelMessage[]) => number,
-): number {
-  const minKeep: number = 2;
+): Promise<ModelMessage[]> {
+  const lastUserIndex: number = _findLastUserIndex(messages);
 
-  if (messages.length <= minKeep + 1) {
-    return Math.max(1, messages.length - 1);
+  if (lastUserIndex < 0) {
+    return messages;
   }
 
-  // Total tokens across all messages (excluding the first / system message)
-  const allNonFirstMessages: ModelMessage[] = messages.slice(1);
-  const totalTokens: number = countTokens(allNonFirstMessages);
-  const budget: number = Math.floor(totalTokens * 0.15);
+  const lastUserMessage: ModelMessage = messages[lastUserIndex];
+  const userText: string = _extractTextContent(lastUserMessage).trim();
+  if (userText.length === 0) {
+    return messages;
+  }
 
-  let kept: number = 0;
-  let accumulated: number = 0;
+  const budgetTokens: number = Math.max(
+    280,
+    Math.min(1200, Math.floor(targetTokenCount * 0.08)),
+  );
 
-  for (let i: number = messages.length - 1; i >= 1; i--) {
-    const msgTokens: number = countTokens([messages[i]]);
+  const taskContractSummary: string = await _summarizeTextAsync(
+    model,
+    logger,
+    `Convert this user request into a concise TASK CONTRACT. Preserve the critical details exactly when possible:\n` +
+      `- explicit goals\n` +
+      `- hard constraints and prohibitions\n` +
+      `- required outputs and acceptance criteria\n` +
+      `- concrete literals: URLs, IDs, file paths, numbers, cron expressions\n\n` +
+      `User request:\n${userText}`,
+    budgetTokens,
+    "latest-user-contract",
+  );
 
-    if (kept >= minKeep && accumulated + msgTokens > budget) {
+  const replacement: ModelMessage = {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `[LATEST USER REQUEST - COMPACT TASK CONTRACT]\n${taskContractSummary}\n[END OF TASK CONTRACT]`,
+      },
+    ],
+  };
+
+  const result: ModelMessage[] = messages.map((msg: ModelMessage, idx: number): ModelMessage =>
+    idx === lastUserIndex ? replacement : msg,
+  );
+
+  logger.info("Compaction stage finished", {
+    stage: "latest_user_message",
+    before: countTokens(messages),
+    after: countTokens(result),
+    reducedBy: countTokens(messages) - countTokens(result),
+    lastUserIndex,
+  });
+
+  return result;
+}
+
+async function _compactToolResultsAfterLatestUserAsync(
+  messages: ModelMessage[],
+  model: LanguageModel,
+  logger: LoggerService,
+  targetTokenCount: number,
+  countTokens: (msgs: ModelMessage[]) => number,
+): Promise<ModelMessage[]> {
+  const lastUserIndex: number = _findLastUserIndex(messages);
+  if (lastUserIndex < 0 || lastUserIndex >= messages.length - 1) {
+    return messages;
+  }
+
+  const indexedToolMessages: Array<{ index: number; tokens: number }> = [];
+  for (let i: number = lastUserIndex + 1; i < messages.length; i++) {
+    const msg: ModelMessage = messages[i];
+    if (msg.role !== "tool") {
+      continue;
+    }
+
+    const text: string = _extractTextContent(msg);
+    const tokenApprox: number = _estimateTokens(text);
+    indexedToolMessages.push({ index: i, tokens: tokenApprox });
+  }
+
+  if (indexedToolMessages.length === 0) {
+    return messages;
+  }
+
+  indexedToolMessages.sort((a, b) => b.tokens - a.tokens);
+
+  const resultMessages: ModelMessage[] = [...messages];
+
+  for (const item of indexedToolMessages) {
+    if (countTokens(resultMessages) <= targetTokenCount) {
       break;
     }
 
-    accumulated += msgTokens;
-    kept++;
-
-    // If we've already consumed the budget and met the minimum, stop
-    if (kept >= minKeep && accumulated >= budget) {
-      break;
+    const originalMsg: ModelMessage = resultMessages[item.index];
+    const originalText: string = _extractTextContent(originalMsg).trim();
+    if (originalText.length < 300) {
+      continue;
     }
+
+    const summaryBudget: number = Math.max(200, Math.min(700, Math.floor(item.tokens * 0.25)));
+    const summarized: string = await _summarizeTextAsync(
+      model,
+      logger,
+      `Summarize this tool output for future continuity. Preserve:\n` +
+        `- key factual result\n` +
+        `- IDs / paths / URLs / codes\n` +
+        `- error details if any\n\n` +
+        `Tool output:\n${originalText}`,
+      summaryBudget,
+      `tool-output-${item.index}`,
+    );
+
+    resultMessages[item.index] = {
+      ...originalMsg,
+      content: [{ type: "text", text: `[COMPACTED TOOL RESULT]\n${summarized}` }],
+    } as unknown as ModelMessage;
   }
 
-  return Math.max(minKeep, kept);
+  logger.info("Compaction stage finished", {
+    stage: "tool_results_after_latest_user",
+    before: countTokens(messages),
+    after: countTokens(resultMessages),
+    reducedBy: countTokens(messages) - countTokens(resultMessages),
+    toolMessagesConsidered: indexedToolMessages.length,
+  });
+
+  return resultMessages;
 }
 
 async function _summarizeMessagesSingleShotAsync(
