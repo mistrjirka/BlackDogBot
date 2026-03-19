@@ -4,6 +4,8 @@ import type { ChannelPermission } from "../shared/types/channel.types.js";
 
 const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
   "run_cmd",
+  "run_cmd_input",
+  "stop_cmd",
   "write_file",
   "append_file",
   "edit_file",
@@ -67,6 +69,10 @@ const CORE_TOOL_NAMES: string[] = [
   "think",
   "done",
   "run_cmd",
+  "run_cmd_input",
+  "get_cmd_status",
+  "get_cmd_output",
+  "stop_cmd",
   "read_file",
   "write_file",
   "append_file",

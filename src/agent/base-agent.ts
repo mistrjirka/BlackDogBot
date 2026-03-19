@@ -19,7 +19,7 @@ import { getDuplicateToolCallDirective } from "../utils/prepare-step.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
-import { countMessagesTokens } from "../utils/request-token-counter.js";
+import { countMessagesTokens, countRequestBodyTokens } from "../utils/request-token-counter.js";
 
 //#region Constants
 
@@ -468,20 +468,31 @@ export abstract class BaseAgentBase {
           };
         }
 
-        // Token-based history compaction: count message tokens + fixed overhead
-        // (system prompt + tool definitions) for an accurate total.
-        // Also account for the dynamic creation-mode prompt which is injected
-        // into the system prompt on-the-fly but not counted in fixedOverheadTokens.
-        const messageTokens: number = _countTokens(messages);
+        // Token-based history compaction using request-style token estimation
+        // as the primary source of truth, with legacy estimation as fallback.
+        const legacyMessageTokens: number = _countTokens(messages);
 
         const creationPrompt: string | null = (useExtraTools && getCreationModePrompt)
           ? getCreationModePrompt()
           : null;
-        const dynamicOverheadTokens: number = creationPrompt
+        const legacyDynamicOverheadTokens: number = creationPrompt
           ? fixedOverheadTokens + _countTextTokens(creationPrompt)
           : fixedOverheadTokens;
+        const legacyTokenCount: number = legacyMessageTokens + legacyDynamicOverheadTokens;
 
-        const tokenCount: number = messageTokens + dynamicOverheadTokens;
+        const requestEstimate: IRequestLikeTokenEstimate | null = _estimateRequestLikeTokens(
+          messages,
+          instructions,
+          creationPrompt,
+          allTools,
+          activeToolNames,
+        );
+
+        const tokenCount: number = requestEstimate?.breakdown.total ?? legacyTokenCount;
+        const estimationSource: "request" | "fallback" = requestEstimate ? "request" : "fallback";
+
+        // Keep a consistent internal token estimate for fallback/error diagnostics.
+        self._totalInputTokens = tokenCount;
 
         // Update status service with context info (including percentage for UI display)
         const statusService: StatusService = StatusService.getInstance();
@@ -494,22 +505,26 @@ export abstract class BaseAgentBase {
           self._forceCompactionOnNextStep;
 
         if (shouldCompact) {
+          const forcedCompaction: boolean = self._forceCompactionOnNextStep;
           self._forceCompactionOnNextStep = false;
 
           logger.info("Compacting agent history", {
             tokenCount,
-            messageTokens,
+            messageTokens: requestEstimate?.breakdown.messages ?? legacyMessageTokens,
             fixedOverhead: fixedOverheadTokens,
-            dynamicOverhead: dynamicOverheadTokens - fixedOverheadTokens,
+            dynamicOverhead: legacyDynamicOverheadTokens - fixedOverheadTokens,
             threshold: compactionTokenThreshold,
             messageCount: messages.length,
-            forced: tokenCount <= compactionTokenThreshold,
+            forced: forcedCompaction,
+            estimationSource,
+            requestTokenBreakdown: requestEstimate?.breakdown,
+            fallbackTokenEstimate: requestEstimate ? legacyTokenCount : undefined,
           });
 
           // Use summary-only compaction (no truncation)
           const compactionTargetTokens: number = Math.max(
             1200,
-            self._compactionTokenThreshold - fixedOverheadTokens - COMPACTION_HEADROOM_TOKENS,
+            self._compactionTokenThreshold - COMPACTION_HEADROOM_TOKENS,
           );
 
           const compactionResult = await compactMessagesSummaryOnlyAsync(
@@ -517,7 +532,22 @@ export abstract class BaseAgentBase {
             compactionModel,
             logger,
             compactionTargetTokens,
-            (msgs: ModelMessage[]) => _countTokens(msgs) + fixedOverheadTokens,
+            (msgs: ModelMessage[]) => {
+              const estimate: IRequestLikeTokenEstimate | null = _estimateRequestLikeTokens(
+                msgs,
+                instructions,
+                creationPrompt,
+                allTools,
+                activeToolNames,
+              );
+
+              if (estimate) {
+                return estimate.breakdown.total;
+              }
+
+              return _countTokens(msgs) + legacyDynamicOverheadTokens;
+            },
+            forcedCompaction,
           );
 
           logger.info("Summary-only compaction completed", {
@@ -721,6 +751,74 @@ function _extractToolResultValue(part: unknown): unknown {
   }
 
   return null;
+}
+
+interface IRequestLikeTokenEstimate {
+  breakdown: {
+    total: number;
+    messages: number;
+    tools: number;
+    system: number;
+    overhead: number;
+    messageCount: number;
+    toolCount: number;
+  };
+}
+
+function _estimateRequestLikeTokens(
+  messages: ModelMessage[],
+  instructions: string,
+  creationPrompt: string | null,
+  allTools: ToolSet,
+  activeToolNames: Array<keyof ToolSet>,
+): IRequestLikeTokenEstimate | null {
+  try {
+    const requestMessages: unknown[] = messages.map(_toRequestMessageForTokenCounting);
+
+    const systemPrompt: string = creationPrompt
+      ? `${instructions}\n\n${creationPrompt}`
+      : instructions;
+
+    const activeToolsPayload: unknown[] = activeToolNames
+      .map((toolName: keyof ToolSet): unknown => {
+        const toolDef: Tool | undefined = allTools[toolName as string];
+        if (!toolDef || typeof toolDef !== "object") {
+          return null;
+        }
+
+        const description: unknown = (toolDef as Record<string, unknown>).description;
+        const inputSchema: unknown = (toolDef as Record<string, unknown>).inputSchema;
+
+        let parameters: unknown = {};
+        if (inputSchema instanceof z.ZodSchema) {
+          parameters = zodToJsonSchema(inputSchema);
+        } else if (inputSchema && typeof inputSchema === "object") {
+          parameters = inputSchema;
+        }
+
+        return {
+          type: "function",
+          function: {
+            name: String(toolName),
+            description: typeof description === "string" ? description : "",
+            parameters,
+          },
+        };
+      })
+      .filter((tool): tool is unknown => tool !== null);
+
+    const requestLikeBody: string = JSON.stringify({
+      model: "token-estimation-only",
+      messages: requestMessages,
+      tools: activeToolsPayload,
+      system: systemPrompt,
+    });
+
+    const breakdown = countRequestBodyTokens(requestLikeBody);
+    return { breakdown };
+  } catch {
+    return null;
+  }
 }
 
 function _extractLastAssistantToolCalls(messages: ModelMessage[]): IToolCallSummary[] {

@@ -8,6 +8,10 @@ import { DEFAULT_AGENT_MAX_STEPS, PROMPT_JOB_CREATION_GUIDE } from "../shared/co
 import {
   thinkTool,
   runCmdTool,
+  runCmdInputTool,
+  getCmdStatusTool,
+  getCmdOutputTool,
+  stopCmdTool,
   modifyPromptTool,
   listPromptsTool,
   searchKnowledgeTool,
@@ -235,6 +239,10 @@ export class MainAgent extends BaseAgentBase {
     const tools: ToolSet = {
       think: thinkTool,
       run_cmd: runCmdTool,
+      run_cmd_input: runCmdInputTool,
+      get_cmd_status: getCmdStatusTool,
+      get_cmd_output: getCmdOutputTool,
+      stop_cmd: stopCmdTool,
       modify_prompt: modifyPromptTool,
       list_prompts: listPromptsTool,
       search_knowledge: searchKnowledgeTool,

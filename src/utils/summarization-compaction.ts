@@ -29,10 +29,11 @@ export async function compactMessagesSummaryOnlyAsync(
   logger: LoggerService,
   targetTokenCount: number,
   countTokens: (msgs: ModelMessage[]) => number,
+  forced: boolean = false,
 ): Promise<ISummarizationResult> {
   const originalTokens: number = countTokens(messages);
 
-  if (messages.length <= 2 || originalTokens <= targetTokenCount) {
+  if (messages.length <= 2 || (!forced && originalTokens <= targetTokenCount)) {
     return {
       messages,
       passes: 0,
@@ -49,7 +50,8 @@ export async function compactMessagesSummaryOnlyAsync(
 
   for (let passIndex: number = 0; passIndex < MAX_SUMMARIZATION_PASSES; passIndex++) {
     const tokensBefore: number = countTokens(currentMessages);
-    if (tokensBefore <= targetTokenCount) {
+    const mustRunForcedPass: boolean = forced && passIndex === 0;
+    if (!mustRunForcedPass && tokensBefore <= targetTokenCount) {
       converged = true;
       break;
     }

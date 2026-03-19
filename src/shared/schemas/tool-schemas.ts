@@ -43,12 +43,118 @@ export const runCmdToolInputSchema = z.object({
     .positive()
     .default(30000)
     .describe("Timeout in milliseconds"),
+  mode: z.enum(["foreground", "background"])
+    .default("foreground")
+    .describe("'foreground' waits for output or stdin block; 'background' returns handleId immediately"),
+  deterministicInputDetection: z.boolean()
+    .default(true)
+    .describe("When true, run_cmd uses strace to detect stdin waiting deterministically"),
 });
 
 export const runCmdToolOutputSchema = z.object({
   stdout: z.string(),
   stderr: z.string(),
-  exitCode: z.number(),
+  exitCode: z.number().nullable(),
+  status: z.enum(["completed", "awaiting_input", "running", "timed_out", "killed", "failed"])
+    .describe("Current command status"),
+  handleId: z.string()
+    .nullable()
+    .describe("Process handle for continuation/status queries (non-null when status=awaiting_input,running,failed-detector,background)"),
+  timedOut: z.boolean()
+    .default(false)
+    .describe("True if the command was killed due to timeout"),
+  durationMs: z.number()
+    .int()
+    .nonnegative()
+    .nullable()
+    .describe("Duration in milliseconds (null if still running)"),
+  signal: z.string()
+    .nullable()
+    .describe("Signal used to kill process, if any"),
+  deterministic: z.boolean()
+    .default(false)
+    .describe("Whether stdin-wait detection was performed via syscall tracing"),
+  error: z.string()
+    .nullable()
+    .describe("Error message if status=failed"),
+});
+
+export const runCmdInputToolInputSchema = z.object({
+  handleId: z.string()
+    .min(1)
+    .describe("Process handle returned by a previous run_cmd call"),
+  input: z.string()
+    .describe("Text to send to the process's stdin (a trailing newline is appended automatically)"),
+  closeStdin: z.boolean()
+    .default(true)
+    .describe("Whether to close stdin after sending input (triggers process to continue)"),
+});
+
+export const runCmdInputToolOutputSchema = z.object({
+  success: z.boolean(),
+  status: z.enum(["completed", "awaiting_input", "running", "timed_out", "killed", "failed"]),
+  stdout: z.string().describe("Any new stdout since the handle was created or last input"),
+  stderr: z.string().describe("Any new stderr since the handle was created or last input"),
+  exitCode: z.number().nullable(),
+  error: z.string().nullable(),
+});
+
+export const getCmdStatusToolInputSchema = z.object({
+  handleId: z.string()
+    .min(1)
+    .describe("Process handle to query"),
+});
+
+export const getCmdStatusToolOutputSchema = z.object({
+  handleId: z.string(),
+  status: z.enum(["completed", "awaiting_input", "running", "timed_out", "killed", "failed"]),
+  exitCode: z.number().nullable(),
+  pid: z.number().nullable(),
+  startedAt: z.string().describe("ISO 8601 timestamp"),
+  elapsedMs: z.number().int().nonnegative(),
+  stdoutBytes: z.number().int().nonnegative(),
+  stderrBytes: z.number().int().nonnegative(),
+  timedOut: z.boolean(),
+  signal: z.string().nullable(),
+  error: z.string().nullable(),
+});
+
+export const getCmdOutputToolInputSchema = z.object({
+  handleId: z.string()
+    .min(1)
+    .describe("Process handle to read output from"),
+  channel: z.enum(["stdout", "stderr", "both"])
+    .default("both")
+    .describe("Which output channel to read"),
+  maxBytes: z.number()
+    .int()
+    .positive()
+    .default(65536)
+    .describe("Maximum bytes to return"),
+});
+
+export const getCmdOutputToolOutputSchema = z.object({
+  handleId: z.string(),
+  stdout: z.string(),
+  stderr: z.string(),
+  totalStdoutBytes: z.number().int().nonnegative(),
+  totalStderrBytes: z.number().int().nonnegative(),
+});
+
+export const stopCmdToolInputSchema = z.object({
+  handleId: z.string()
+    .min(1)
+    .describe("Process handle to stop"),
+  signal: z.string()
+    .default("SIGTERM")
+    .describe("Signal to send (SIGTERM, SIGKILL, SIGINT)"),
+});
+
+export const stopCmdToolOutputSchema = z.object({
+  success: z.boolean(),
+  status: z.enum(["completed", "awaiting_input", "running", "timed_out", "killed", "failed"]),
+  exitCode: z.number().nullable(),
+  error: z.string().nullable(),
 });
 
 //#endregion Run Command Tool
