@@ -6,6 +6,7 @@ import { extractErrorMessage } from "../utils/error.js";
 interface IOpenRouterModel {
   id: string;
   context_length?: number;
+  supported_parameters?: string[];
 }
 
 interface IOpenRouterModelsResponse {
@@ -26,6 +27,7 @@ export class ModelInfoService {
   private static _instance: ModelInfoService | null;
   private _logger: LoggerService;
   private _contextWindowCache: Map<string, number>;
+  private _supportedParametersCache: Map<string, Set<string>>;
   private _modelsFetched: boolean;
   private _fetchPromise: Promise<void> | null;
 
@@ -36,6 +38,7 @@ export class ModelInfoService {
   private constructor() {
     this._logger = LoggerService.getInstance();
     this._contextWindowCache = new Map<string, number>();
+    this._supportedParametersCache = new Map<string, Set<string>>();
     this._modelsFetched = false;
     this._fetchPromise = null;
   }
@@ -97,10 +100,42 @@ export class ModelInfoService {
   }
 
   /**
+   * Fetches supported parameters for a model from OpenRouter API.
+   * Returns null when capabilities are unavailable.
+   */
+  public async fetchSupportedParametersAsync(modelId: string): Promise<Set<string> | null> {
+    const cached: Set<string> | undefined = this._getCachedSupportedParameters(modelId);
+    if (cached) {
+      return new Set<string>(cached);
+    }
+
+    if (!this._modelsFetched) {
+      await this._ensureModelsFetchedAsync();
+    }
+
+    const cachedAfterFetch: Set<string> | undefined = this._getCachedSupportedParameters(modelId);
+    if (cachedAfterFetch) {
+      return new Set<string>(cachedAfterFetch);
+    }
+
+    this._logger.warn("Model capabilities not found in OpenRouter API response", { modelId });
+    return null;
+  }
+
+  /**
+   * Gets cached supported parameters without making API calls.
+   */
+  public getCachedSupportedParameters(modelId: string): Set<string> | null {
+    const cached: Set<string> | undefined = this._getCachedSupportedParameters(modelId);
+    return cached ? new Set<string>(cached) : null;
+  }
+
+  /**
    * Clears the model info cache.
    */
   public clearCache(): void {
     this._contextWindowCache.clear();
+    this._supportedParametersCache.clear();
     this._modelsFetched = false;
     this._fetchPromise = null;
   }
@@ -155,6 +190,17 @@ export class ModelInfoService {
         if (model.id && model.context_length !== undefined) {
           this._contextWindowCache.set(model.id, model.context_length);
         }
+
+        if (model.id && Array.isArray(model.supported_parameters)) {
+          this._supportedParametersCache.set(
+            model.id,
+            new Set<string>(
+              model.supported_parameters
+                .filter((value: string): boolean => typeof value === "string")
+                .map((value: string): string => value.toLowerCase()),
+            ),
+          );
+        }
       }
 
       this._modelsFetched = true;
@@ -166,6 +212,16 @@ export class ModelInfoService {
         error: extractErrorMessage(error),
       });
     }
+  }
+
+  private _getCachedSupportedParameters(modelId: string): Set<string> | undefined {
+    const exact: Set<string> | undefined = this._supportedParametersCache.get(modelId);
+    if (exact) {
+      return exact;
+    }
+
+    const baseModelId: string = modelId.split(":")[0] ?? modelId;
+    return this._supportedParametersCache.get(baseModelId);
   }
 
   //#endregion Private methods

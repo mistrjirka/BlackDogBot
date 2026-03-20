@@ -20,7 +20,6 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
   "create_database",
   "create_table",
   "drop_table",
-  "write_to_database",
   "update_database",
   "delete_from_database",
   "modify_prompt",
@@ -97,7 +96,6 @@ const CORE_TOOL_NAMES: string[] = [
   "drop_table",
   "list_tables",
   "get_table_schema",
-  "write_to_database",
   "read_from_database",
   "update_database",
   "delete_from_database",
@@ -180,6 +178,11 @@ export function isToolAllowed(
 
   // MCP tools are blocked in read_only by default
   if (permission === "read_only" && toolName.startsWith("mcp.")) {
+    return false;
+  }
+
+  // Per-table write tools (write_table_<tableName>) are blocked in read_only
+  if (permission === "read_only" && toolName.startsWith("write_table_")) {
     return false;
   }
 

@@ -1,6 +1,6 @@
 import Bottleneck from "bottleneck";
 import { LanguageModel, wrapLanguageModel, extractReasoningMiddleware } from "ai";
-import { LanguageModelV3 } from "@ai-sdk/provider";
+import { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { LMStudioClient } from "@lmstudio/sdk";
@@ -13,6 +13,8 @@ import {
   IOpenRouterConfig,
   IOpenAiCompatibleConfig,
   ILmStudioConfig,
+  ResolvedStructuredOutputMode,
+  StructuredOutputMode,
 } from "../shared/types/index.js";
 import { RateLimiterService } from "./rate-limiter.service.js";
 import { ModelInfoService } from "./model-info.service.js";
@@ -44,6 +46,8 @@ const DEFAULT_REQUEST_TIMEOUT_MS: number = 500_000; // 500 seconds
 const REQUEST_TIMEOUT_RETRY_MULTIPLIER: number = 2;
 const REQUEST_TIMEOUT_MAX_ATTEMPTS: number = 2; // initial + 1 retry
 
+const STRUCTURED_OUTPUT_STRATEGY_AUTO: StructuredOutputMode = "auto";
+
 export class AiProviderService {
   //#region Data members
 
@@ -57,6 +61,8 @@ export class AiProviderService {
   private _supportsStructuredOutputs: boolean = false;
   private _supportsReasoningFormat: boolean = false;
   private _supportsParallelToolCalls: boolean = false;
+  private _supportsToolCalling: boolean = true;
+  private _resolvedStructuredOutputMode: ResolvedStructuredOutputMode = "native_json_schema";
   private _requestTimeoutMs: number;
   private _activeProfileName: string | null;
 
@@ -199,22 +205,11 @@ export class AiProviderService {
       }
     }
 
-    // Autodetect structured output support when not explicitly configured
+    // Detect/request capabilities and resolve strict structured output mode.
+    await this._resolveStructuredOutputModeAsync(defaultModelId, logger);
+
+    // Autodetect parallel tool call support (local openai-compatible endpoints)
     if (providerKey === "openai-compatible" || providerKey === "lm-studio") {
-      const explicitValue = providerKey === "openai-compatible"
-        ? (aiConfig.openaiCompatible?.supportsStructuredOutputs)
-        : (aiConfig.lmStudio?.supportsStructuredOutputs);
-
-      if (explicitValue !== undefined) {
-        this._supportsStructuredOutputs = explicitValue;
-        logger.info(`Using configured supportsStructuredOutputs: ${explicitValue}`);
-      } else {
-        const detected = await this.testStructuredOutputsAsync();
-        this._supportsStructuredOutputs = detected;
-        logger.info(`Autodetected structured output support: ${detected ? "SUPPORTED" : "NOT SUPPORTED"}`);
-      }
-
-      // Autodetect parallel tool call support (local openai-compatible endpoints)
       this._supportsParallelToolCalls = await this._testParallelToolCallSupportAsync();
       logger.info(
         `Autodetected parallel tool call support: ${this._supportsParallelToolCalls ? "SUPPORTED" : "NOT SUPPORTED"}`,
@@ -268,6 +263,45 @@ export class AiProviderService {
         `Call initializeAsync() for auto-detection or set 'contextWindow' in config.`
       );
     }
+
+    // Sync mode cannot run capability probes. Resolve strict structured mode
+    // using configured values and safe defaults.
+    const configuredMode: StructuredOutputMode = activeConfig.structuredOutputMode ?? STRUCTURED_OUTPUT_STRATEGY_AUTO;
+    if (configuredMode === "native_json_schema") {
+      this._supportsStructuredOutputs = true;
+      this._supportsToolCalling = true;
+      this._resolvedStructuredOutputMode = "native_json_schema";
+    } else if (configuredMode === "tool_emulated") {
+      this._supportsStructuredOutputs = false;
+      this._supportsToolCalling = true;
+      this._resolvedStructuredOutputMode = "tool_emulated";
+    } else {
+      // Auto in sync init: use explicit endpoint flag when available, otherwise
+      // conservative default that avoids response_format dependence.
+      const explicitStructuredSupport: boolean | undefined = providerKey === "openai-compatible"
+        ? aiConfig.openaiCompatible?.supportsStructuredOutputs
+        : providerKey === "lm-studio"
+          ? aiConfig.lmStudio?.supportsStructuredOutputs
+          : undefined;
+
+      if (explicitStructuredSupport === true) {
+        this._supportsStructuredOutputs = true;
+        this._supportsToolCalling = true;
+        this._resolvedStructuredOutputMode = "native_json_schema";
+      } else {
+        this._supportsStructuredOutputs = false;
+        this._supportsToolCalling = true;
+        this._resolvedStructuredOutputMode = "tool_emulated";
+      }
+    }
+
+    logger.info("Structured output mode (sync init)", {
+      provider: providerKey,
+      model: defaultModelId,
+      mode: this._resolvedStructuredOutputMode,
+      supportsStructuredOutputs: this._supportsStructuredOutputs,
+      supportsToolCalling: this._supportsToolCalling,
+    });
   }
 
   public getDefaultModel(): LanguageModel {
@@ -322,6 +356,36 @@ export class AiProviderService {
 
   public get supportsParallelToolCalls(): boolean {
     return this._supportsParallelToolCalls;
+  }
+
+  public getStructuredOutputMode(): ResolvedStructuredOutputMode {
+    return this._resolvedStructuredOutputMode;
+  }
+
+  public getSupportsStructuredOutputs(): boolean {
+    return this._supportsStructuredOutputs;
+  }
+
+  public getSupportsToolCalling(): boolean {
+    return this._supportsToolCalling;
+  }
+
+  public getStructuredProviderOptions(): SharedV3ProviderOptions | undefined {
+    if (!this._aiConfig) {
+      throw new Error("AiProviderService not initialized");
+    }
+
+    if (this._aiConfig.provider !== "openrouter") {
+      return undefined;
+    }
+
+    return {
+      openrouter: {
+        provider: {
+          require_parameters: true,
+        },
+      },
+    };
   }
 
   /**
@@ -640,6 +704,119 @@ export class AiProviderService {
     return response;
   }
 
+  private async _resolveStructuredOutputModeAsync(defaultModelId: string, logger: LoggerService): Promise<void> {
+    if (!this._aiConfig) {
+      return;
+    }
+
+    const providerKey: AiProvider = this._aiConfig.provider;
+    const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
+      this._getActiveProviderConfig();
+
+    const configuredMode: StructuredOutputMode = activeConfig.structuredOutputMode ?? STRUCTURED_OUTPUT_STRATEGY_AUTO;
+
+    if (configuredMode !== STRUCTURED_OUTPUT_STRATEGY_AUTO) {
+      if (configuredMode === "native_json_schema") {
+        this._supportsStructuredOutputs = true;
+        this._supportsToolCalling = true;
+        this._resolvedStructuredOutputMode = "native_json_schema";
+      } else {
+        this._supportsStructuredOutputs = false;
+        this._supportsToolCalling = true;
+        this._resolvedStructuredOutputMode = "tool_emulated";
+      }
+
+      logger.info("Using configured structured output mode", {
+        provider: providerKey,
+        model: defaultModelId,
+        mode: this._resolvedStructuredOutputMode,
+        supportsStructuredOutputs: this._supportsStructuredOutputs,
+        supportsToolCalling: this._supportsToolCalling,
+      });
+      return;
+    }
+
+    // Auto mode: OpenRouter first tries model capability metadata.
+    if (providerKey === "openrouter") {
+      const supportedParameters: Set<string> | null = await this._modelInfoService.fetchSupportedParametersAsync(defaultModelId);
+
+      if (supportedParameters !== null) {
+        const hasStructuredOutputs: boolean = supportedParameters.has("structured_outputs");
+        const hasResponseFormat: boolean = supportedParameters.has("response_format");
+        const hasTools: boolean = supportedParameters.has("tools");
+        const hasToolChoice: boolean = supportedParameters.has("tool_choice");
+
+        this._supportsStructuredOutputs = hasStructuredOutputs || hasResponseFormat;
+        this._supportsToolCalling = hasTools && hasToolChoice;
+
+        if (this._supportsStructuredOutputs) {
+          this._resolvedStructuredOutputMode = "native_json_schema";
+          logger.info("Structured output mode auto-resolved from OpenRouter model metadata", {
+            provider: providerKey,
+            model: defaultModelId,
+            mode: this._resolvedStructuredOutputMode,
+            supportsStructuredOutputs: this._supportsStructuredOutputs,
+            supportsToolCalling: this._supportsToolCalling,
+            source: "openrouter_model_metadata",
+          });
+          return;
+        }
+
+        if (this._supportsToolCalling) {
+          this._resolvedStructuredOutputMode = "tool_emulated";
+          logger.info("Structured output mode auto-resolved from OpenRouter model metadata", {
+            provider: providerKey,
+            model: defaultModelId,
+            mode: this._resolvedStructuredOutputMode,
+            supportsStructuredOutputs: this._supportsStructuredOutputs,
+            supportsToolCalling: this._supportsToolCalling,
+            source: "openrouter_model_metadata",
+          });
+          return;
+        }
+      }
+    }
+
+    // Fallback probe path when capabilities are unavailable.
+    const structuredOutputsProbe: boolean = await this.testStructuredOutputsAsync();
+    this._supportsStructuredOutputs = structuredOutputsProbe;
+
+    if (structuredOutputsProbe) {
+      this._supportsToolCalling = true;
+      this._resolvedStructuredOutputMode = "native_json_schema";
+      logger.info("Structured output mode resolved via probe", {
+        provider: providerKey,
+        model: defaultModelId,
+        mode: this._resolvedStructuredOutputMode,
+        supportsStructuredOutputs: this._supportsStructuredOutputs,
+        supportsToolCalling: this._supportsToolCalling,
+        source: "probe:structured_outputs",
+      });
+      return;
+    }
+
+    const toolCallingProbe: boolean = await this.testToolCallingSupportAsync();
+    this._supportsToolCalling = toolCallingProbe;
+
+    if (toolCallingProbe) {
+      this._resolvedStructuredOutputMode = "tool_emulated";
+      logger.info("Structured output mode resolved via probe", {
+        provider: providerKey,
+        model: defaultModelId,
+        mode: this._resolvedStructuredOutputMode,
+        supportsStructuredOutputs: this._supportsStructuredOutputs,
+        supportsToolCalling: this._supportsToolCalling,
+        source: "probe:tool_calling",
+      });
+      return;
+    }
+
+    throw new Error(
+      "Unable to resolve structured output mode: model supports neither native structured outputs " +
+      "nor required tool calling (tools + tool_choice). Configure ai.<provider>.structuredOutputMode explicitly.",
+    );
+  }
+
   /**
    * Tests if the endpoint supports the reasoning_format parameter (llama.cpp specific).
    * Sends a minimal probe with reasoning_format: "none" — if the server accepts it,
@@ -819,6 +996,114 @@ export class AiProviderService {
       return looksSupported;
     } catch (error: unknown) {
       logger.debug("Parallel tool call probe failed", {
+        error: extractErrorMessage(error),
+      });
+      return false;
+    }
+  }
+
+  public async testToolCallingSupportAsync(): Promise<boolean> {
+    if (!this._aiConfig) {
+      return false;
+    }
+
+    const logger: LoggerService = LoggerService.getInstance();
+    logger.info("Testing tool calling support (tools + tool_choice)...");
+
+    try {
+      const config = this._getActiveProviderConfig();
+      const provider: AiProvider = this._aiConfig.provider;
+
+      if (provider === "openrouter") {
+        const response: Response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${(config as IOpenRouterConfig).apiKey}`,
+          },
+          body: JSON.stringify({
+            model: config.model,
+            messages: [{ role: "user", content: "Call the tool once." }],
+            tools: [
+              {
+                type: "function",
+                function: {
+                  name: "emit_probe",
+                  description: "Probe tool support",
+                  parameters: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean" },
+                    },
+                    required: ["ok"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+            ],
+            tool_choice: "required",
+            max_tokens: 50,
+            provider: {
+              require_parameters: true,
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          logger.debug("Tool calling probe failed for OpenRouter", { status: response.status });
+          return false;
+        }
+
+        const json = await response.json() as {
+          choices?: Array<{ message?: { tool_calls?: unknown[] } }>;
+        };
+
+        const toolCalls = json.choices?.[0]?.message?.tool_calls;
+        return Array.isArray(toolCalls) && toolCalls.length > 0;
+      }
+
+      const baseUrl: string = normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
+      const response: Response = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: config.model,
+          messages: [{ role: "user", content: "Call the tool once." }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "emit_probe",
+                description: "Probe tool support",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    ok: { type: "boolean" },
+                  },
+                  required: ["ok"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          ],
+          tool_choice: "required",
+          max_tokens: 50,
+        }),
+      });
+
+      if (!response.ok) {
+        logger.debug("Tool calling probe failed for local provider", { status: response.status });
+        return false;
+      }
+
+      const json = await response.json() as {
+        choices?: Array<{ message?: { tool_calls?: unknown[] } }>;
+      };
+
+      const toolCalls = json.choices?.[0]?.message?.tool_calls;
+      return Array.isArray(toolCalls) && toolCalls.length > 0;
+    } catch (error: unknown) {
+      logger.debug("Tool calling probe failed", {
         error: extractErrorMessage(error),
       });
       return false;

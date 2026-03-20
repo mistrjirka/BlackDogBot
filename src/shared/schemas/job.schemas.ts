@@ -133,7 +133,7 @@ export const outputToAiConfigSchema = z.object({
 export const liteSqlConfigSchema = z.object({
   databaseName: z.string()
     .min(1)
-    .describe("Name of the database (stored in ~/.betterclaw/databases/<name>.db)"),
+    .describe("Name of the database (without .db extension)"),
   tableName: z.string()
     .min(1)
     .describe("Name of the table to insert into"),

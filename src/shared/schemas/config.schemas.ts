@@ -18,6 +18,10 @@ const rateLimitSchema = z.object({
     .describe("Maximum number of concurrent requests"),
 });
 
+const structuredOutputModeSchema = z.enum(["auto", "native_json_schema", "tool_emulated"])
+  .default("auto")
+  .describe("Structured output strategy: auto, native JSON schema, or tool-emulated via tool calling");
+
 const openRouterSchema = z.object({
   apiKey: z.string()
     .min(1)
@@ -32,6 +36,8 @@ const openRouterSchema = z.object({
     .positive()
     .optional()
     .describe("Model context window size (optional, auto-detected for known models)"),
+  structuredOutputMode: structuredOutputModeSchema
+    .optional(),
   activeProfile: z.string()
     .min(1)
     .optional()
@@ -59,6 +65,11 @@ const openAiCompatibleSchema = z.object({
     .describe("Context window size in tokens. Required for accurate context management."),
   rateLimits: rateLimitSchema
     .default({ rpm: 120, tpm: 200000, maxConcurrent: 1 }),
+  supportsStructuredOutputs: z.boolean()
+    .optional()
+    .describe("Whether the endpoint supports response_format: json_schema"),
+  structuredOutputMode: structuredOutputModeSchema
+    .optional(),
   requestTimeout: z.number()
     .int()
     .positive()
@@ -87,6 +98,11 @@ const lmStudioSchema = z.object({
     .describe("Model identifier"),
   rateLimits: rateLimitSchema
     .default({ rpm: 120, tpm: 200000, maxConcurrent: 1 }),
+  supportsStructuredOutputs: z.boolean()
+    .optional()
+    .describe("Whether LM Studio supports response_format: json_schema"),
+  structuredOutputMode: structuredOutputModeSchema
+    .optional(),
   contextWindow: z.number()
     .int()
     .positive()

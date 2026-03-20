@@ -9,7 +9,7 @@ export const createDatabaseTool = tool({
   inputSchema: z.object({
     databaseName: z.string()
       .min(1)
-      .describe("Name of the database to create (will be stored in ~/.betterclaw/databases/<name>.db)"),
+      .describe("Name of the database to create (without .db extension)"),
   }),
   execute: async ({ databaseName }: { databaseName: string }): Promise<{
     success: boolean;
@@ -35,7 +35,7 @@ export const createDatabaseTool = tool({
       return {
         success: true,
         databaseName,
-        message: `Database "${databaseName}" created successfully at ~/.betterclaw/databases/${databaseName}.db`,
+        message: `Database "${databaseName}" created successfully.`,
       };
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);

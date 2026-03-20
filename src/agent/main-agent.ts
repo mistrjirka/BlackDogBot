@@ -2,6 +2,7 @@ import { ToolSet, LanguageModel, type ModelMessage, APICallError } from "ai";
 
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
+import { LoggerService } from "../services/logger.service.js";
 import { buildMainAgentPromptAsync } from "./system-prompt.js";
 import { BaseAgentBase, AGENT_EMPTY_RESPONSE_RETRIES, CONTEXT_EXCEEDED_RETRIES, type IAgentResult, type OnStepCallback } from "./base-agent.js";
 import { McpService } from "../services/mcp.service.js";
@@ -58,7 +59,6 @@ import {
   createTableTool,
   dropTableTool,
   readFromDatabaseTool,
-  writeToDatabaseTool,
   updateDatabaseTool,
   deleteFromDatabaseTool,
   createDoneTool,
@@ -87,6 +87,9 @@ import { BrainInterfaceService } from "../brain-interface/service.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
+import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
+import { extractRetryAfterMs, getDefault429BackoffMs } from "../utils/retry-after.js";
+import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
 import * as toolRegistry from "../helpers/tool-registry.js";
@@ -117,6 +120,9 @@ const _GraphMutatingTools: Set<string> = new Set([
   "finish_job_creation",
 ]);
 
+/** Max times generate() can be restarted due to tool rebuild (create_table). */
+const MAX_TOOL_REBUILD_RESTARTS: number = 2;
+
 //#endregion Constants
 
 //#region Interfaces
@@ -128,6 +134,9 @@ interface IChatSession {
   paused: boolean;
   resumeResolve: (() => void) | null;
   abortController: AbortController | null;
+  pendingToolRebuild: { toolName: string; tableName: string } | null;
+  toolRebuildCount: number;
+  terminateCurrentRun: boolean;
 }
 
 //#endregion Interfaces
@@ -193,6 +202,9 @@ export class MainAgent extends BaseAgentBase {
         paused: false,
         resumeResolve: null,
         abortController: new AbortController(),
+        pendingToolRebuild: null,
+        toolRebuildCount: 0,
+        terminateCurrentRun: false,
       });
     }
 
@@ -265,10 +277,9 @@ export class MainAgent extends BaseAgentBase {
       list_tables: listTablesTool,
       get_table_schema: getTableSchemaTool,
       create_database: createDatabaseTool,
-      create_table: createTableTool,
+      create_table: _wrapCreateTableWithHotReload(createTableTool, chatId, session),
       drop_table: dropTableTool,
       read_from_database: readFromDatabaseTool,
-      write_to_database: writeToDatabaseTool,
       update_database: updateDatabaseTool,
       delete_from_database: deleteFromDatabaseTool,
       searxng: searxngTool,
@@ -334,6 +345,18 @@ export class MainAgent extends BaseAgentBase {
     const mcpTools: ToolSet = mcpService.getTools();
     for (const [toolName, toolDef] of Object.entries(mcpTools)) {
       tools[toolName] = toolDef;
+    }
+
+    // Merge per-table write tools (generated from database schemas)
+    try {
+      const perTableTools: ToolSet = await buildPerTableToolsAsync();
+      for (const [toolName, toolDef] of Object.entries(perTableTools)) {
+        tools[toolName] = toolDef;
+      }
+    } catch (err: unknown) {
+      this._logger.warn("Failed to build per-table tools at startup", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // Filter tools based on channel permission
@@ -438,7 +461,51 @@ export class MainAgent extends BaseAgentBase {
       (): string | null => session.jobCreationMode !== null ? jobCreationGuide : null,
       // getAbortSignal: provides the current abort signal so prepareStep can check it early
       (): AbortSignal | null => session.abortController?.signal ?? null,
+      // shouldTerminateRun: hard-stop the current generate run after successful create_table
+      (): boolean => session.terminateCurrentRun,
     );
+
+    // Register hot-reload callback for per-table tools
+    const currentFilteredTools: ToolSet = filteredTools;
+    ToolHotReloadService.getInstance().registerRebuildCallback(chatId, (perTableTools: ToolSet) => {
+      const mergedTools: ToolSet = { ...currentFilteredTools, ...perTableTools };
+
+      // Re-filter based on permission
+      const reFilteredTools: ToolSet = {};
+      for (const [toolName, toolDef] of Object.entries(mergedTools)) {
+        if (toolRegistry.isToolAllowed(toolName, permission, { jobCreationEnabled: config.jobCreation.enabled, skillNames })) {
+          reFilteredTools[toolName] = toolDef;
+        }
+      }
+
+      this._buildAgent(
+        model,
+        instructions,
+        reFilteredTools,
+        combinedOnStepAsync,
+        trackedDoneTool,
+        nodeCreationTools
+          ? (): ToolSet | null => session.jobCreationMode !== null ? nodeCreationTools : null
+          : undefined,
+        nodeCreationTools,
+        (): Promise<void> | null => {
+          if (session.paused) {
+            return new Promise<void>((resolve: () => void): void => {
+              session.resumeResolve = resolve;
+            });
+          }
+          return null;
+        },
+        (): string | null => session.jobCreationMode !== null ? jobCreationGuide : null,
+        (): AbortSignal | null => session.abortController?.signal ?? null,
+        (): boolean => session.terminateCurrentRun,
+      );
+
+      this._logger.info("Agent tools hot-reloaded", {
+        chatId,
+        toolCount: Object.keys(reFilteredTools).length,
+      });
+    });
 
     this._logger.info("MainAgent initialized for chat.", { chatId, permission });
   }
@@ -454,82 +521,140 @@ export class MainAgent extends BaseAgentBase {
     }
 
     session.lastActivityAt = Date.now();
+    session.pendingToolRebuild = null;
+    session.toolRebuildCount = 0;
+    session.terminateCurrentRun = false;
 
     this._logger.debug("Processing user message", { chatId, messageLength: userMessage.length });
 
-    // Append the user message to session history
-    const userModelMessage: ModelMessage = {
-      role: "user",
-      content: [{ type: "text", text: userMessage }],
-    };
+    // Mutable user message — gets replaced with injected message on restart
+    let currentUserMessage: string = userMessage;
+    let finalResult: IAgentResult = { text: "Unexpected error.", stepsCount: 0 };
 
-    // Reuse the AbortController from initializeForChatAsync (created during session
-    // setup so /cancel works during initialization). If one doesn't exist, create it.
-    let abortController: AbortController = session.abortController ?? new AbortController();
-    session.abortController = abortController;
+    // Outer loop: restarts generate() when a tool rebuild occurs (e.g., create_table)
+    while (true) {
+      // Append the user message to session history
+      const userModelMessage: ModelMessage = {
+        role: "user",
+        content: [{ type: "text", text: currentUserMessage }],
+      };
 
-    let result: IAgentResult = { text: "Unexpected error.", stepsCount: 0 };
+      // Reuse the AbortController from initializeForChatAsync (created during session
+      // setup so /cancel works during initialization). If one doesn't exist, create it.
+      let abortController: AbortController = session.abortController ?? new AbortController();
+      session.abortController = abortController;
 
-    const statusService: StatusService = StatusService.getInstance();
+      let result: IAgentResult = { text: "Unexpected error.", stepsCount: 0 };
 
-    try {
-      // Set status to show AI is thinking (in-flight)
-      statusService.beginInFlight("llm_request", "Thinking...", { chatId });
+      const statusService: StatusService = StatusService.getInstance();
 
-      let contextRetries: number = 0;
+      try {
+        // Set status to show AI is thinking (in-flight)
+        statusService.beginInFlight("llm_request", "Thinking...", { chatId });
 
-      for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
-        // Reset token count so prepareStep doesn't use stale values from a failed attempt
-        this._totalInputTokens = 0;
+        let contextRetries: number = 0;
+        let _429Retries: number = 0;
 
-        // Create messagesForCall inside the loop so retries use updated session messages
-        const messagesForCall: ModelMessage[] = [...session.messages, userModelMessage];
+        for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
+          // Reset token count so prepareStep doesn't use stale values from a failed attempt
+          this._totalInputTokens = 0;
 
-        try {
-          const generateResult = await this._agent!.generate({
-            messages: messagesForCall,
-            abortSignal: abortController.signal,
-          });
+          // Create messagesForCall inside the loop so retries use updated session messages
+          const messagesForCall: ModelMessage[] = [...session.messages, userModelMessage];
 
-          const stepsCount: number = generateResult.steps?.length ?? 1;
+          try {
+            const generateResult = await this._agent!.generate({
+              messages: messagesForCall,
+              abortSignal: abortController.signal,
+            });
 
-          const inputTokens = generateResult.totalUsage?.inputTokens ?? generateResult.usage?.inputTokens;
-          if (inputTokens !== undefined) {
-            this._totalInputTokens = inputTokens;
-          } else {
-            this._totalInputTokens = 0;
-            this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
-          }
+            const stepsCount: number = generateResult.steps?.length ?? 1;
 
-          const brainInterfaceForOutput: BrainInterfaceService = BrainInterfaceService.getInstance();
-
-          if (generateResult.text) {
-            try {
-              await brainInterfaceForOutput.emitModelOutputAsync(chatId, stepsCount, generateResult.text);
-            } catch {
-              // Never let emit failures affect agent execution
+            const inputTokens = generateResult.totalUsage?.inputTokens ?? generateResult.usage?.inputTokens;
+            if (inputTokens !== undefined) {
+              this._totalInputTokens = inputTokens;
+            } else {
+              this._totalInputTokens = 0;
+              this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
             }
-          }
 
-          this._logger.debug("Agent response generated", { chatId, stepsCount, historyLength: session.messages.length });
+            const brainInterfaceForOutput: BrainInterfaceService = BrainInterfaceService.getInstance();
 
-          let text: string = generateResult.text ?? "";
-
-          if (!text && generateResult.steps) {
-            interface IToolCallLike { toolName: string; input: Record<string, unknown>; }
-            interface IStepLike { toolCalls?: IToolCallLike[]; }
-
-            const doneCall: IToolCallLike | undefined = (generateResult.steps as IStepLike[])
-              .flatMap((s: IStepLike): IToolCallLike[] => s.toolCalls ?? [])
-              .find((tc: IToolCallLike): boolean => tc.toolName === "done");
-
-            if (doneCall && typeof doneCall.input?.summary === "string") {
-              text = doneCall.input.summary;
+            if (generateResult.text) {
+              try {
+                await brainInterfaceForOutput.emitModelOutputAsync(chatId, stepsCount, generateResult.text);
+              } catch {
+                // Never let emit failures affect agent execution
+              }
             }
-          }
 
-          // If we got text, persist conversation and return
-          if (text.trim()) {
+            this._logger.debug("Agent response generated", { chatId, stepsCount, historyLength: session.messages.length });
+
+            let text: string = generateResult.text ?? "";
+
+            if (!text && generateResult.steps) {
+              interface IToolCallLike { toolName: string; input: Record<string, unknown>; }
+              interface IStepLike { toolCalls?: IToolCallLike[]; }
+
+              const doneCall: IToolCallLike | undefined = (generateResult.steps as IStepLike[])
+                .flatMap((s: IStepLike): IToolCallLike[] => s.toolCalls ?? [])
+                .find((tc: IToolCallLike): boolean => tc.toolName === "done");
+
+              if (doneCall && typeof doneCall.input?.summary === "string") {
+                text = doneCall.input.summary;
+              }
+            }
+
+            // If create_table requested a tool rebuild, end this run immediately and restart.
+            // Do not treat missing text as an empty-response failure in this case.
+            if (session.pendingToolRebuild !== null) {
+              session.messages.push(userModelMessage);
+
+              if (generateResult.response?.messages) {
+                for (const responseMsg of generateResult.response.messages) {
+                  session.messages.push(responseMsg as ModelMessage);
+                }
+              }
+
+              this._logger.info("Tool rebuild requested, terminating current run and restarting", {
+                chatId,
+                stepCount: stepsCount,
+                hasText: text.trim().length > 0,
+              });
+
+              if (!text.trim()) {
+                text = "Table created. Continuing with the newly available write_table tool.";
+              }
+
+              result = { text, stepsCount };
+              break;
+            }
+
+            // If we got text, persist conversation and return
+            if (text.trim()) {
+              session.messages.push(userModelMessage);
+
+              if (generateResult.response?.messages) {
+                for (const responseMsg of generateResult.response.messages) {
+                  session.messages.push(responseMsg as ModelMessage);
+                }
+              }
+
+              result = { text, stepsCount };
+              break;
+            }
+
+            // Empty response — retry if we have attempts left
+            if (attempt <= AGENT_EMPTY_RESPONSE_RETRIES) {
+              this._logger.warn("Model returned empty response for chat, retrying", {
+                chatId,
+                attempt,
+                maxRetries: AGENT_EMPTY_RESPONSE_RETRIES,
+              });
+              continue;
+            }
+
+            // All retries exhausted — persist conversation even on failure so history stays consistent
             session.messages.push(userModelMessage);
 
             if (generateResult.response?.messages) {
@@ -538,88 +663,127 @@ export class MainAgent extends BaseAgentBase {
               }
             }
 
-            result = { text, stepsCount };
-            break;
-          }
-
-          // Empty response — retry if we have attempts left
-          if (attempt <= AGENT_EMPTY_RESPONSE_RETRIES) {
-            this._logger.warn("Model returned empty response for chat, retrying", {
-              chatId,
-              attempt,
-              maxRetries: AGENT_EMPTY_RESPONSE_RETRIES,
-            });
-            continue;
-          }
-
-          // All retries exhausted — persist conversation even on failure so history stays consistent
-          session.messages.push(userModelMessage);
-
-          if (generateResult.response?.messages) {
-            for (const responseMsg of generateResult.response.messages) {
-              session.messages.push(responseMsg as ModelMessage);
-            }
-          }
-
-          this._logger.error("Model returned empty response after all retries", { chatId, attempts: attempt });
-          result = {
-            text: "I was unable to complete your request — the model returned empty responses after multiple retries. Please try again.",
-            stepsCount,
-          };
-        } catch (genError: unknown) {
-          // Handle context size exceeded errors (from hard gate or real API errors)
-          // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
-          if (
-            APICallError.isInstance(genError) &&
-            ((genError as APICallError).statusCode === 400 ||
-             (genError as APICallError).statusCode === 500 ||
-             (genError as APICallError).statusCode === 413 ||
-             (genError as APICallError).statusCode === 422) &&
-            contextRetries < CONTEXT_EXCEEDED_RETRIES
-          ) {
-            const apiError = genError as APICallError;
-            const errorBody: string = typeof apiError.responseBody === "string"
-              ? apiError.responseBody
-              : JSON.stringify(apiError.responseBody ?? "");
-            const errorMessage: string = (apiError.message + " " + errorBody).toLowerCase();
-
+            this._logger.error("Model returned empty response after all retries", { chatId, attempts: attempt });
+            result = {
+              text: "I was unable to complete your request — the model returned empty responses after multiple retries. Please try again.",
+              stepsCount,
+            };
+          } catch (genError: unknown) {
+            // Handle context size exceeded errors (from hard gate or real API errors)
+            // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
             if (
-              errorMessage.includes("context") ||
-              errorMessage.includes("token limit") ||
-              errorMessage.includes("exceeded") ||
-              errorMessage.includes("too long") ||
-              errorMessage.includes("length")
+              APICallError.isInstance(genError) &&
+              ((genError as APICallError).statusCode === 400 ||
+               (genError as APICallError).statusCode === 500 ||
+               (genError as APICallError).statusCode === 413 ||
+               (genError as APICallError).statusCode === 422) &&
+              contextRetries < CONTEXT_EXCEEDED_RETRIES
             ) {
-              contextRetries++;
-              this._logger.warn("Context size exceeded, forcing compaction on next step", {
-                chatId,
-                contextRetry: contextRetries,
-                maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
-                statusCode: apiError.statusCode,
-              });
-              this._forceCompactionOnNextStep = true;
-              attempt--; // Don't count this against the empty-response retry limit
-              continue;
+              const apiError = genError as APICallError;
+              const errorBody: string = typeof apiError.responseBody === "string"
+                ? apiError.responseBody
+                : JSON.stringify(apiError.responseBody ?? "");
+              const errorMessage: string = (apiError.message + " " + errorBody).toLowerCase();
+
+              if (
+                errorMessage.includes("context") ||
+                errorMessage.includes("token limit") ||
+                errorMessage.includes("exceeded") ||
+                errorMessage.includes("too long") ||
+                errorMessage.includes("length")
+              ) {
+                contextRetries++;
+                this._logger.warn("Context size exceeded, forcing compaction on next step", {
+                  chatId,
+                  contextRetry: contextRetries,
+                  maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
+                  statusCode: apiError.statusCode,
+                });
+                this._forceCompactionOnNextStep = true;
+                attempt--; // Don't count this against the empty-response retry limit
+                continue;
+              }
             }
+
+            // Handle 429 rate limit errors with Retry-After wait
+            if (APICallError.isInstance(genError) && (genError as APICallError).statusCode === 429) {
+              if (_429Retries < 3) {
+                _429Retries++;
+                const apiError = genError as APICallError;
+                const retryAfterMs: number = extractRetryAfterMs(apiError) ?? getDefault429BackoffMs();
+
+                this._logger.warn("Rate limited (429) in main agent loop, waiting before retry", {
+                  chatId,
+                  attempt,
+                  _429Retries,
+                  max429Retries: 3,
+                  waitMs: retryAfterMs,
+                });
+
+                await new Promise((resolve) => { setTimeout(resolve, retryAfterMs); });
+                attempt--; // Don't burn the empty-response retry budget
+                continue;
+              }
+            }
+
+            // Re-throw non-context errors
+            throw genError;
           }
-          // Re-throw non-context errors
-          throw genError;
         }
-      }
-    } catch (error: unknown) {
-      if (error instanceof Error && error.name === "AbortError") {
+      } catch (error: unknown) {
+        if (error instanceof Error && error.name === "AbortError") {
+          session.abortController = null;
+          return { text: "Operation was stopped.", stepsCount: 0 };
+        }
+        throw error;
+      } finally {
+        statusService.endInFlight();
         session.abortController = null;
-        return { text: "Operation was stopped.", stepsCount: 0 };
+        session.paused = false;
+        session.resumeResolve = null;
       }
-      throw error;
-    } finally {
-      statusService.endInFlight();
-      session.abortController = null;
-      session.paused = false;
-      session.resumeResolve = null;
+
+      // Check if a tool rebuild occurred during this generate() call
+      if (
+        session.pendingToolRebuild !== null &&
+        session.toolRebuildCount < MAX_TOOL_REBUILD_RESTARTS
+      ) {
+        const rebuildInfo = session.pendingToolRebuild as { toolName: string; tableName: string };
+        session.toolRebuildCount++;
+        session.pendingToolRebuild = null;
+        session.terminateCurrentRun = false;
+
+        this._logger.info("Tool rebuild detected, restarting generate with new tools", {
+          chatId,
+          toolName: rebuildInfo.toolName,
+          tableName: rebuildInfo.tableName,
+          restartCount: session.toolRebuildCount,
+        });
+
+        // Inject synthetic user message about the new tool
+        currentUserMessage = `[System] A new tool "${rebuildInfo.toolName}" for the "${rebuildInfo.tableName}" table is now available. Use it to insert data into that table.`;
+
+        continue; // Restart generate() with fresh agent that has the new tool
+      }
+
+      const pendingRebuildInfo = session.pendingToolRebuild;
+      if (session.toolRebuildCount >= MAX_TOOL_REBUILD_RESTARTS && pendingRebuildInfo) {
+        const pendingToolName: string = (pendingRebuildInfo as { toolName: string; tableName: string }).toolName;
+        this._logger.warn("Tool rebuild restart budget exhausted", {
+          chatId,
+          maxRestarts: MAX_TOOL_REBUILD_RESTARTS,
+          pendingTool: pendingToolName,
+        });
+        session.pendingToolRebuild = null;
+        session.terminateCurrentRun = false;
+      }
+
+      // No rebuild needed — return result
+      finalResult = result;
+      break;
     }
 
-    return result;
+    return finalResult;
   }
 
   public pauseChat(chatId: string): boolean {
@@ -666,6 +830,7 @@ export class MainAgent extends BaseAgentBase {
 
   public clearChatHistory(chatId: string): void {
     this._sessions.delete(chatId);
+    ToolHotReloadService.getInstance().unregisterRebuildCallback(chatId);
     this._logger.info("Chat history cleared.", { chatId });
   }
 
@@ -712,6 +877,65 @@ async function _emitGraphUpdateAsync(
   } catch {
     // Never let graph emit failures affect agent execution
   }
+}
+
+function _wrapCreateTableWithHotReload(
+  originalTool: ToolSet[string],
+  chatId: string,
+  session: IChatSession,
+): ToolSet[string] {
+  const originalExecute = originalTool.execute;
+
+  if (!originalExecute) {
+    return originalTool;
+  }
+
+  return {
+    ...originalTool,
+    execute: async (input: unknown, options: any): Promise<unknown> => {
+      const result: any = await originalExecute(input, options);
+
+      if (result?.success === true) {
+        // Extract table name from input
+        const tableName: string = typeof input === "object" && input !== null
+          ? String((input as Record<string, unknown>).tableName ?? (input as Record<string, unknown>).name ?? "unknown")
+          : "unknown";
+
+        const toolName = `write_table_${tableName}`;
+
+        try {
+          const hotReload = ToolHotReloadService.getInstance();
+          const rebuildSucceeded: boolean = await hotReload.triggerRebuildAsync(chatId);
+
+          if (!rebuildSucceeded) {
+            LoggerService.getInstance().warn("create_table succeeded but tool hot-reload did not complete", {
+              chatId,
+              toolName,
+              tableName,
+            });
+            return result;
+          }
+
+          // Signal that generate() should terminate now and restart with fresh tools
+          session.terminateCurrentRun = true;
+          session.pendingToolRebuild = { toolName, tableName };
+
+          LoggerService.getInstance().info("create_table triggered hard-stop + tool rebuild", {
+            chatId,
+            toolName,
+            tableName,
+          });
+        } catch (err: unknown) {
+          LoggerService.getInstance().warn("Tool hot-reload failed after create_table", {
+            chatId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      return result;
+    },
+  } as ToolSet[string];
 }
 
 //#endregion Private functions

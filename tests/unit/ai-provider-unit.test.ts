@@ -98,6 +98,13 @@ describe("AiProviderService unit", () => {
 
       expect(model).toBeDefined();
     });
+
+    it("should expose structured output mode in sync init", () => {
+      const service: AiProviderService = AiProviderService.getInstance();
+      service.initialize(openrouterConfig);
+
+      expect(["native_json_schema", "tool_emulated"]).toContain(service.getStructuredOutputMode());
+    });
   });
 
   describe("initialize + getDefaultModel (openai-compatible)", () => {

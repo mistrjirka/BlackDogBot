@@ -31,6 +31,7 @@ interface IRawConfig {
       };
       contextWindow?: number;
       supportsStructuredOutputs?: boolean;
+      structuredOutputMode?: "auto" | "native_json_schema" | "tool_emulated";
       requestTimeout?: number;
     };
     lmStudio?: {
@@ -125,8 +126,9 @@ describe("OpenAI-compatible local reasoning middleware E2E", () => {
         tpm: rawConfig.ai?.openaiCompatible?.rateLimits?.tpm ?? 200000,
       },
       supportsStructuredOutputs: true,
+      structuredOutputMode: "native_json_schema",
       activeProfile: "qwen3_5",
-    };
+    } as const;
 
     const nextConfig: IRawConfig = {
       ...rawConfig,

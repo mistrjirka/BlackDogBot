@@ -28,6 +28,7 @@ interface IRawConfig {
       };
       contextWindow?: number;
       supportsStructuredOutputs?: boolean;
+      structuredOutputMode?: "auto" | "native_json_schema" | "tool_emulated";
       requestTimeout?: number;
       activeProfile?: string;
     };
@@ -349,9 +350,10 @@ async function initializeLocalOpenAiCompatibleAsync(): Promise<LanguageModel | n
       maxConcurrent: rawConfig.ai?.openaiCompatible?.rateLimits?.maxConcurrent ?? 1,
     },
     supportsStructuredOutputs: true,
+    structuredOutputMode: "native_json_schema",
     requestTimeout: 600000,
     activeProfile: "qwen3_5",
-  };
+  } as const;
 
   const nextConfig: IRawConfig = {
     ...rawConfig,

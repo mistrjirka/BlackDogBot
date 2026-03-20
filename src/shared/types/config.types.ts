@@ -20,9 +20,13 @@ export interface IOpenRouterConfig {
   model: string;
   rateLimits: IRateLimitConfig;
   contextWindow?: number; // Optional, defaults to 128000 if not specified
+  structuredOutputMode?: StructuredOutputMode;
   activeProfile?: string;
   profilesDir?: string;
 }
+
+export type StructuredOutputMode = "auto" | "native_json_schema" | "tool_emulated";
+export type ResolvedStructuredOutputMode = "native_json_schema" | "tool_emulated";
 
 export interface IOpenAiCompatibleConfig {
   baseUrl: string;
@@ -31,6 +35,7 @@ export interface IOpenAiCompatibleConfig {
   rateLimits: IRateLimitConfig;
   contextWindow?: number; // Optional, defaults to 128000 if not specified
   supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
+  structuredOutputMode?: StructuredOutputMode;
   requestTimeout?: number; // Per-request timeout in ms, default 500000. Retries once at 2x on timeout.
   activeProfile?: string;
   profilesDir?: string;
@@ -43,6 +48,7 @@ export interface ILmStudioConfig {
   rateLimits: IRateLimitConfig;
   contextWindow?: number;
   supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
+  structuredOutputMode?: StructuredOutputMode;
   requestTimeout?: number; // Per-request timeout in ms, default 500000. Retries once at 2x on timeout.
   activeProfile?: string;
   profilesDir?: string;

@@ -147,7 +147,7 @@ RULES:
    Example: "send_message" always reaches the correct user — instructions that say "send the results" or "notify the user" are VALID without specifying a chat ID or destination.
 
 3. The agent can derive values from tool descriptions and standard conventions — do NOT flag these as missing:
-   - Database file paths derived from a database name (e.g. "rageintel_news" → ~/.betterclaw/databases/rageintel_news.db)
+
    - Workspace file paths derived from a filename (e.g. "notes.txt" → ~/.betterclaw/workspace/notes.txt)
    - Any argument value that is directly stated in the tool description above
 

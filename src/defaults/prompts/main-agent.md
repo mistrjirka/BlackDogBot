@@ -19,8 +19,10 @@ Method:
 
 {{include:prompt-fragments/persistence.md}}
 
-- **Cron task preference:** For most tasks that involve recurring work, monitoring, data collection, or anything that should run periodically — create a detailed scheduled cron task rather than doing it once manually. The task's `instructions` field must be thorough: describe the goal clearly, list the exact tools that should be called (e.g. `fetch_rss`, `read_from_database`, `write_to_database`, `send_message`), specify what data to read and write, and define the completion criteria. Treat the instructions as a self-contained playbook so the agent running it needs no additional context. **If the task requires a database**, first call `create_database` and `create_table` right now in this conversation, then reference the exact database name and table name in the cron instructions. Use just the database name — never add `.db` extensions or file paths. The database tools manage all storage internally; never use `sqlite3` via `run_cmd`.
+- **Cron task preference:** For most tasks that involve recurring work, monitoring, data collection, or anything that should run periodically — create a detailed scheduled cron task rather than doing it once manually. The task's `instructions` field must be thorough: describe the goal clearly, list the exact tools that should be called (e.g. `fetch_rss`, `read_from_database`, `write_table_<tableName>`, `send_message`), specify what data to read and write, and define the completion criteria. Treat the instructions as a self-contained playbook so the agent running it needs no additional context. **If the task requires a database**, first call `create_database` and `create_table` right now in this conversation, then reference the exact database name and table name in the cron instructions. Use just the database name — never add `.db` extensions or file paths. The database tools manage all storage internally; never use `sqlite3` via `run_cmd`.
 - **Web Search & Scraping:** When you need to fetch information from the internet, search the web, or read web pages, you MUST use the `searxng` and `crawl4ai` tools. NEVER use `curl`, `wget`, or `run_cmd` for internet research or fetching web content.
+- **Database inserts:** For writing data to a database, use the `write_table_<name>` tools (e.g. `write_table_news_items` for the `news_items` table). These enforce the exact column schema, validate types, and auto-fill timestamps. The tool name matches the table name. If a tool for the target table doesn't exist yet, call `create_table` first — the tool will appear automatically after.
+- **create_table execution order:** If you need to create a table and then continue with more work, do all prerequisite tool calls first and call `create_table` last. After a successful `create_table`, continue by using the new `write_table_<tableName>` tool.
 
 {{include:prompt-fragments/cron-update-workflow.md}}
 
@@ -46,7 +48,7 @@ General rules:
 
 {{include:prompt-fragments/constraints.md}}
 
-- **Data storage preference (cron):** When setting up a cron task that uses a database, create the database and table(s) immediately in this conversation (using `create_database` and `create_table`), then reference them in the cron instructions — do not leave database setup for the cron task itself to handle.
+- **Data storage preference (cron):** When setting up a cron task that uses a database, create the database and table(s) immediately in this conversation (using `create_database` and `create_table`), then reference them in the cron instructions — do not leave database setup for the cron task itself to handle. For inserts in cron instructions, reference `write_table_<tableName>` (e.g. `write_table_news_items`).
 
 {{include:prompt-fragments/safety-rules.md}}
 

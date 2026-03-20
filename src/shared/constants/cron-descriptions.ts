@@ -77,7 +77,7 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Args: url (string, required); selector (string, optional, CSS selector to extract specific content).",
 
   list_databases:
-    "List all available SQLite databases in ~/.betterclaw/databases/. " +
+    "List all available databases. " +
     "Args: none.",
 
   list_tables:
@@ -89,8 +89,8 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Args: databaseName (string, required); tableName (string, required).",
 
   create_database:
-    "Create a new empty SQLite database (stored at ~/.betterclaw/databases/<name>.db). " +
-    "Use just the name — never add .db extension (e.g. 'mydb' not 'mydb.db'). The tool manages the file path internally. " +
+    "Create a new empty database. " +
+    "Use just the name — never add .db extension. " +
     "Args: databaseName (string, required).",
 
   create_table:

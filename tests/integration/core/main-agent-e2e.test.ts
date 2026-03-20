@@ -19,11 +19,13 @@ import * as litesql from "../../../src/helpers/litesql.js";
 import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
 import { MainAgent, type IAgentResult } from "../../../src/agent/main-agent.js";
 import type { MessageSender, PhotoSender } from "../../../src/tools/index.js";
+import type { IToolCallSummary } from "../../../src/agent/base-agent.js";
 
 
 let tempDir: string;
 let originalHome: string;
 const sentMessages: string[] = [];
+const stepTraces: { stepNumber: number; toolNames: string[] }[] = [];
 
 
 const mockMessageSender: MessageSender = async (message: string): Promise<string | null> => {
@@ -102,7 +104,18 @@ describe("MainAgent E2E", () => {
 
     const mainAgent: MainAgent = MainAgent.getInstance();
 
-    await mainAgent.initializeForChatAsync("test-chat", mockMessageSender, mockPhotoSender, undefined, "telegram");
+    await mainAgent.initializeForChatAsync(
+      "test-chat",
+      mockMessageSender,
+      mockPhotoSender,
+      async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
+        stepTraces.push({
+          stepNumber,
+          toolNames: toolCalls.map((tc: IToolCallSummary): string => tc.name),
+        });
+      },
+      "telegram",
+    );
   }, 300000);
 
   afterAll(async () => {
@@ -140,6 +153,48 @@ describe("MainAgent E2E", () => {
     expect(result.text.length).toBeGreaterThan(0);
     expect(result.text).toContain("255");
   }, 60000);
+
+  it("should create table and then use write_table tool with temp database", async () => {
+    stepTraces.length = 0;
+
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    const result: IAgentResult = await mainAgent.processMessageForChatAsync(
+      "test-chat",
+      [
+        "Do exactly these steps:",
+        "1) create database test_db",
+        "2) create table test_users in test_db with columns: id INTEGER primary key, name TEXT not null, email TEXT, is_active INTEGER default 1",
+        "3) insert one row into test_users with name 'Jane Smith', email 'jane@example.com' using write_table_test_users",
+        "4) finish",
+        "Do NOT use run_cmd, write_file, append_file, edit_file, or read_file.",
+      ].join("\n"),
+    );
+
+    expect(result).toBeDefined();
+    expect(result.text.length).toBeGreaterThan(0);
+
+    const exists: boolean = await litesql.databaseExistsAsync("test_db");
+    expect(exists).toBe(true);
+
+    const query = await litesql.queryTableAsync("test_db", "test_users", {
+      where: "email = 'jane@example.com'",
+      limit: 5,
+    });
+    expect(query.totalCount).toBeGreaterThanOrEqual(1);
+
+    const tableExists: boolean = await litesql.tableExistsAsync("test_db", "test_users");
+    expect(tableExists).toBe(true);
+
+    const toolNames: string[] = stepTraces.flatMap((trace) => trace.toolNames);
+    expect(toolNames).toContain("write_table_test_users");
+    expect(toolNames).not.toContain("run_cmd");
+    expect(toolNames).not.toContain("write_file");
+
+    const dbs = await litesql.listDatabasesAsync();
+    const testDbInfo = dbs.find((d) => d.name === "test_db");
+    expect(testDbInfo).toBeDefined();
+    expect(testDbInfo!.path.startsWith(tempDir)).toBe(true);
+  }, 180000);
 });
 
 //#endregion Tests

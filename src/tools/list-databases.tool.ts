@@ -5,7 +5,7 @@ import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 
 export const listDatabasesTool = tool({
-  description: "List all available SQLite databases in ~/.betterclaw/databases/",
+  description: "List all available databases.",
   inputSchema: z.object({}),
   execute: async (): Promise<{
     databases: {

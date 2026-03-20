@@ -42,7 +42,6 @@ import {
   createTableTool,
   dropTableTool,
   readFromDatabaseTool,
-  writeToDatabaseTool,
   updateDatabaseTool,
   deleteFromDatabaseTool,
   FileReadTracker,
@@ -50,6 +49,7 @@ import {
 } from "../tools/index.js";
 import type { MessageSender, TaskIdProvider } from "../tools/index.js";
 import { StatusService } from "../services/status.service.js";
+import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 
 //#region Interfaces
@@ -64,6 +64,11 @@ export interface IToolCallTrace {
 
 export interface ITraceCollector {
   addTrace(trace: IToolCallTrace): void;
+}
+
+interface ICronRebuildInfo {
+  toolName: string;
+  tableName: string;
 }
 
 //#endregion Interfaces
@@ -123,7 +128,21 @@ export class CronAgent extends BaseAgentBase {
       basePrompt +
       `\n\n<task_context>\nTask: ${task.name}\nDescription: ${task.description}\nCurrent time: ${currentDateTime}\nInstructions: ${task.instructions}\n</task_context>`;
 
-    const tools: ToolSet = this._resolveTools(task.tools, messageSender, taskIdProvider, executionContext);
+    let pendingRebuild: ICronRebuildInfo | null = null;
+    let rebuildCount: number = 0;
+    const maxRebuildRestarts: number = 2;
+
+    const resolveToolsAsync = async (): Promise<ToolSet> => this._resolveTools(
+      task.tools,
+      messageSender,
+      taskIdProvider,
+      executionContext,
+      (info: ICronRebuildInfo): void => {
+        pendingRebuild = info;
+      },
+    );
+
+    let tools: ToolSet = await resolveToolsAsync();
     
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     const model: LanguageModel = aiProviderService.getModel();
@@ -177,23 +196,84 @@ export class CronAgent extends BaseAgentBase {
       }
     };
 
-    this._buildAgent(model, instructions, tools, onStepAsync);
-
-    return this.processMessageAsync(
-      "Execute the scheduled task according to your instructions.",
+    this._buildAgent(
+      model,
+      instructions,
+      tools,
+      onStepAsync,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (): boolean => pendingRebuild !== null,
     );
+
+    let currentInstruction: string = "Execute the scheduled task according to your instructions.";
+
+    while (true) {
+      const result: IAgentResult = await this.processMessageAsync(currentInstruction);
+
+      if (pendingRebuild !== null && rebuildCount < maxRebuildRestarts) {
+        const info: ICronRebuildInfo = pendingRebuild;
+        pendingRebuild = null;
+        rebuildCount++;
+
+        this._logger.info("Cron create_table triggered tool rebuild, restarting run", {
+          taskId: task.taskId,
+          taskName: task.name,
+          toolName: info.toolName,
+          tableName: info.tableName,
+          restartCount: rebuildCount,
+        });
+
+        tools = await resolveToolsAsync();
+
+        this._buildAgent(
+          model,
+          instructions,
+          tools,
+          onStepAsync,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          (): boolean => pendingRebuild !== null,
+        );
+
+        currentInstruction = `[System] A new tool "${info.toolName}" for the "${info.tableName}" table is now available. Continue the task and use it when needed.`;
+        continue;
+      }
+
+      const pendingToolName: string | undefined = (pendingRebuild as ICronRebuildInfo | null)?.toolName;
+      if (pendingToolName && rebuildCount >= maxRebuildRestarts) {
+        this._logger.warn("Cron tool rebuild restart budget exhausted", {
+          taskId: task.taskId,
+          taskName: task.name,
+          maxRestarts: maxRebuildRestarts,
+          pendingTool: pendingToolName,
+        });
+        pendingRebuild = null;
+      }
+
+      return result;
+    }
   }
 
   //#endregion Public methods
 
   //#region Private methods
 
-  private _resolveTools(
+  private async _resolveTools(
     toolNames: string[],
     messageSender: MessageSender,
     taskIdProvider: TaskIdProvider,
     executionContext: IExecutionContext,
-  ): ToolSet {
+    onCreateTableRebuild?: (info: ICronRebuildInfo) => void,
+  ): Promise<ToolSet> {
     const readTracker: FileReadTracker = new FileReadTracker();
     const jobTracker: JobActivityTracker = new JobActivityTracker();
 
@@ -223,13 +303,24 @@ export class CronAgent extends BaseAgentBase {
       list_tables: listTablesTool,
       get_table_schema: getTableSchemaTool,
       create_database: createDatabaseTool,
-      create_table: createTableTool,
+      create_table: _wrapCronCreateTableTool(createTableTool, onCreateTableRebuild),
       drop_table: dropTableTool,
       read_from_database: readFromDatabaseTool,
-      write_to_database: writeToDatabaseTool,
       update_database: updateDatabaseTool,
       delete_from_database: deleteFromDatabaseTool,
     };
+
+    // Merge per-table write tools
+    try {
+      const perTableTools: ToolSet = await buildPerTableToolsAsync();
+      for (const [name, toolDef] of Object.entries(perTableTools)) {
+        availableTools[name] = toolDef;
+      }
+    } catch (err: unknown) {
+      this._logger.warn("Failed to build per-table tools for cron agent", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     // Only include skill tools if skills are loaded
     const availableSkills = SkillLoaderService.getInstance().getAvailableSkills();
@@ -286,4 +377,35 @@ export class CronAgent extends BaseAgentBase {
   }
 
   //#endregion Private methods
+}
+
+function _wrapCronCreateTableTool(
+  originalTool: Tool,
+  onCreateTableRebuild?: (info: ICronRebuildInfo) => void,
+): Tool {
+  const originalExecute = originalTool.execute;
+
+  if (!originalExecute) {
+    return originalTool;
+  }
+
+  return {
+    ...originalTool,
+    execute: async (input: unknown, options: any): Promise<unknown> => {
+      const result: any = await originalExecute(input, options);
+
+      if (result?.success === true && onCreateTableRebuild) {
+        const tableName: string = typeof input === "object" && input !== null
+          ? String((input as Record<string, unknown>).tableName ?? (input as Record<string, unknown>).name ?? "unknown")
+          : "unknown";
+
+        onCreateTableRebuild({
+          toolName: `write_table_${tableName}`,
+          tableName,
+        });
+      }
+
+      return result;
+    },
+  };
 }

@@ -24,7 +24,7 @@ const columnDefinitionSchema = z.object({
 });
 
 export const createTableTool = tool({
-  description: "Create a new table in a database",
+  description: "Create a new table in a database. Call this after prerequisite checks/tool calls are complete for the current run.",
   inputSchema: z.object({
     databaseName: z.string()
       .min(1)
@@ -108,6 +108,7 @@ export const createTableTool = tool({
         inputSchema,
         message:
           `Table "${tableName}" created with columns: ${columns.map((c) => c.name).join(", ")}.\n` +
+          `To insert rows, use the tool: write_table_${tableName}\n` +
           `For LITESQL nodes inserting into this table, use this inputSchema (pass as inputSchemaHint to add_litesql_node):\n` +
           schemaJson,
       };

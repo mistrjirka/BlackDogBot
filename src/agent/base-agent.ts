@@ -21,6 +21,7 @@ import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
 import { countMessagesTokens, countRequestBodyTokens } from "../utils/request-token-counter.js";
+import { extractRetryAfterMs, getDefault429BackoffMs } from "../utils/retry-after.js";
 
 //#region Constants
 
@@ -52,6 +53,11 @@ export const AGENT_EMPTY_RESPONSE_RETRIES: number = 4;
  * How many times to retry with compaction when receiving 400 context exceeded errors.
  */
 export const CONTEXT_EXCEEDED_RETRIES: number = 2;
+
+/**
+ * How many times to wait and retry when receiving 429 rate limit errors.
+ */
+const MAX_429_RETRIES: number = 3;
 
 /**
  * Token budget reserved for predictive compaction headroom.
@@ -99,6 +105,7 @@ export abstract class BaseAgentBase {
   protected _fixedOverheadTokens: number = 0;
   protected _totalInputTokens: number = 0;
   protected _forceCompactionOnNextStep: boolean = false;
+  protected _shouldTerminateRunCallback: (() => boolean) | null;
 
   //#endregion Data members
 
@@ -111,6 +118,7 @@ export abstract class BaseAgentBase {
     this._maxSteps = options?.maxSteps ?? DEFAULT_AGENT_MAX_STEPS;
     this._contextWindow = options?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     this._compactionTokenThreshold = Math.floor(this._contextWindow * COMPACTION_THRESHOLD_PERCENTAGE);
+    this._shouldTerminateRunCallback = null;
   }
 
   //#endregion Constructors
@@ -141,6 +149,8 @@ export abstract class BaseAgentBase {
     try {
       // Set status to show AI is thinking (in-flight)
       statusService.beginInFlight("llm_request", "Thinking...", {});
+
+      let _429Retries: number = 0;
 
       for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
         // Reset token count so prepareStep doesn't use stale values from a failed attempt
@@ -228,6 +238,27 @@ export abstract class BaseAgentBase {
             }
           }
 
+          // Handle 429 rate limit errors with Retry-After wait
+          if (APICallError.isInstance(error) && error.statusCode === 429) {
+            if (_429Retries < MAX_429_RETRIES) {
+              _429Retries++;
+              const retryAfterMs: number = extractRetryAfterMs(error) ?? getDefault429BackoffMs();
+
+              this._logger.warn("Rate limited (429) in agent loop, waiting before retry", {
+                attempt,
+                agentAttempt: currentAgentAttempt,
+                agentAttemptTotal: totalAgentAttempts,
+                _429Retries,
+                max429Retries: MAX_429_RETRIES,
+                waitMs: retryAfterMs,
+              });
+
+              await new Promise((resolve) => { setTimeout(resolve, retryAfterMs); });
+              attempt--; // Don't burn the empty-response retry budget
+              continue;
+            }
+          }
+
           throw error;
         }
 
@@ -279,6 +310,13 @@ export abstract class BaseAgentBase {
 
         const stepsCount: number = result.steps?.length ?? 1;
 
+        // External terminal conditions (e.g. create_table-triggered rebuild)
+        // may intentionally end the current run without a done summary.
+        if (this._shouldTerminateRunCallback && this._shouldTerminateRunCallback()) {
+          this._logger.info("Current run terminated by external condition");
+          return { text, stepsCount };
+        }
+
         // If we got text, return immediately
         if (text.trim()) {
           this._logger.debug("Agent response generated", { stepsCount });
@@ -329,7 +367,10 @@ export abstract class BaseAgentBase {
     getPausePromise?: () => Promise<void> | null,
     getCreationModePrompt?: () => string | null,
     getAbortSignal?: () => AbortSignal | null,
+    shouldTerminateRun?: () => boolean,
   ): void {
+    this._shouldTerminateRunCallback = shouldTerminateRun ?? null;
+
     const self = this; // Capture this for use in callbacks
     const maxSteps: number = this._maxSteps;
     const compactionTokenThreshold: number = this._compactionTokenThreshold;
@@ -372,6 +413,18 @@ export abstract class BaseAgentBase {
       stopWhen: [
         hasToolCall("done"),
         stepCountIs(maxSteps),
+        (): boolean => {
+          if (!shouldTerminateRun) {
+            return false;
+          }
+
+          const terminateRun: boolean = shouldTerminateRun();
+          if (terminateRun) {
+            logger.info("Terminal run-stop condition detected, ending current generate run");
+          }
+
+          return terminateRun;
+        },
       ],
       experimental_repairToolCall: repairToolCallJsonAsync,
       prepareStep: async ({ stepNumber, messages }) => {
@@ -442,11 +495,14 @@ export abstract class BaseAgentBase {
         const hasDuplicateToolLoop: boolean = getDuplicateToolCallDirective(stepNumber, messages);
 
         if (hasDuplicateToolLoop) {
-          logger.warn("Duplicate tool call pattern detected", {
+          logger.warn("Duplicate tool call pattern detected, restricting to think + done", {
             stepNumber,
-            action: "none",
-            hint: "No activeTools override applied; continuing with normal tool set.",
+            action: "restrict_tools",
           });
+
+          return {
+            activeTools: ["think", "done"] as (keyof typeof allTools)[],
+          };
         }
 
         // Check for pause — await the promise if the agent has been paused

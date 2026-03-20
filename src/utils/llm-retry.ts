@@ -1,4 +1,5 @@
-import { generateText, Output, type LanguageModel } from "ai";
+import { generateText, Output, dynamicTool, type LanguageModel } from "ai";
+import type { SharedV3ProviderOptions } from "@ai-sdk/provider";
 import type { z } from "zod";
 import { randomUUID } from "node:crypto";
 
@@ -7,6 +8,7 @@ import { RateLimiterService } from "../services/rate-limiter.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { extractAiErrorDetails, formatAiErrorForLog } from "./ai-error.js";
+import { extractRetryAfterMs, getDefault429BackoffMs } from "./retry-after.js";
 import { runWithLlmCallTypeAsync } from "./llm-call-context.js";
 
 //#region Types
@@ -197,6 +199,33 @@ export async function generateTextWithRetryAsync(
         if (isAbort) {
           break;
         }
+
+        // 429 rate limit: wait using Retry-After header before retrying
+        const retryAfterMs: number | null = extractRetryAfterMs(error);
+
+        if (retryAfterMs !== null) {
+          logger.warn("LLM call rate limited (429), waiting before retry", {
+            llmCallId,
+            callType,
+            attempt,
+            maxAttempts,
+            waitMs: retryAfterMs,
+          });
+
+          await new Promise((resolve) => { setTimeout(resolve, retryAfterMs); });
+        } else if (extractAiErrorDetails(error).statusCode === 429) {
+          const waitMs: number = getDefault429BackoffMs();
+
+          logger.warn("LLM call rate limited (429), no Retry-After header, using default backoff", {
+            llmCallId,
+            callType,
+            attempt,
+            maxAttempts,
+            waitMs,
+          });
+
+          await new Promise((resolve) => { setTimeout(resolve, waitMs); });
+        }
       }
     }
   } finally {
@@ -238,7 +267,10 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
   const logger: LoggerService = LoggerService.getInstance();
   const rateLimiterService: RateLimiterService = RateLimiterService.getInstance();
   const statusService: StatusService = StatusService.getInstance();
-  const providerKey: string = AiProviderService.getInstance().getActiveProvider();
+  const aiProviderService: AiProviderService = AiProviderService.getInstance();
+  const providerKey: string = aiProviderService.getActiveProvider();
+  const structuredMode = aiProviderService.getStructuredOutputMode();
+  const providerOptions: SharedV3ProviderOptions | undefined = aiProviderService.getStructuredProviderOptions();
 
   const retryOptions = options.retryOptions ?? {};
   const callType = retryOptions.callType ?? "schema_extraction";
@@ -254,7 +286,12 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
     (options.system ? statusService.countTokens(options.system) : 0);
 
   // Set status (in-flight)
-  statusService.beginInFlight("llm_request", "Waiting for structured response", { inputTokens, callType, llmCallId });
+  statusService.beginInFlight("llm_request", "Waiting for structured response", {
+    inputTokens,
+    callType,
+    llmCallId,
+    structuredMode,
+  });
 
   try {
     for (let attempt: number = 1; attempt <= maxAttempts; attempt++) {
@@ -262,23 +299,65 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
         const linkedSignal = createLinkedAbortSignal(retryOptions.abortSignal, timeoutMs);
 
         const callFn = async (): Promise<{ object: z.infer<T> }> => {
-          const result = await generateText({
+          if (structuredMode === "native_json_schema") {
+            const result = await generateText({
+              model: options.model,
+              prompt: options.prompt,
+              ...(options.system ? { system: options.system } : {}),
+              output: Output.object({ schema: options.schema }),
+              ...(providerOptions ? { providerOptions } : {}),
+              maxRetries: 0, // Disable SDK retries - we manage retries ourselves
+              abortSignal: linkedSignal,
+            });
+
+            if (result.output === undefined || result.output === null) {
+              throw new Error(
+                "No structured output generated: model did not return parseable JSON matching the schema." +
+                (result.text ? ` Raw text: ${result.text.substring(0, 200)}` : ""),
+              );
+            }
+
+            return { object: result.output };
+          }
+
+          const emitToolName = "emit_structured_output";
+          const emitterTool = dynamicTool({
+            description:
+              "Emit final structured output. Call this tool once with JSON matching the exact schema.",
+            inputSchema: options.schema,
+            execute: async (input: unknown): Promise<{ object: z.infer<T> }> => {
+              return { object: input as z.infer<T> };
+            },
+          });
+
+          const toolResult = await generateText({
             model: options.model,
             prompt: options.prompt,
-            ...(options.system ? { system: options.system } : {}),
-            output: Output.object({ schema: options.schema }),
-            maxRetries: 0, // Disable SDK retries - we manage retries ourselves
+            ...(options.system ? {
+              system:
+                `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.`,
+            } : {
+              system: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.`,
+            }),
+            tools: {
+              [emitToolName]: emitterTool,
+            },
+            toolChoice: { type: "tool", toolName: emitToolName },
+            ...(providerOptions ? { providerOptions } : {}),
+            maxRetries: 0,
             abortSignal: linkedSignal,
           });
 
-          if (result.output === undefined || result.output === null) {
+          const emitted = toolResult.toolResults.find((item) => item.toolName === emitToolName);
+          const maybeOutput = emitted?.output as { object?: unknown } | undefined;
+          if (!maybeOutput || maybeOutput.object === undefined) {
             throw new Error(
-              "No structured output generated: model did not return parseable JSON matching the schema." +
-              (result.text ? ` Raw text: ${result.text.substring(0, 200)}` : ""),
+              "Tool-emulated structured output failed: no emit_structured_output tool result returned.",
             );
           }
 
-          return { object: result.output };
+          const parsed = options.schema.parse(maybeOutput.object) as z.infer<T>;
+          return { object: parsed };
         };
 
         // NOTE: Do not schedule with RateLimiterService here.
@@ -296,6 +375,7 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
           callType,
           attempt,
           maxAttempts,
+          structuredMode,
           sdkRetriesDisabled: true,
         });
 
@@ -312,6 +392,7 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
           callType,
           attempt,
           maxAttempts,
+          structuredMode,
           localRetryAttempt: attempt,
           localRetryTotal: maxAttempts,
           retryLayer: "local",
@@ -325,12 +406,40 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
           inputTokens,
           callType,
           llmCallId,
+          structuredMode,
           error: errorMessage,
         });
 
         // Don't retry on abort (cancellation or timeout)
         if (isAbort) {
           break;
+        }
+
+        // 429 rate limit: wait using Retry-After header before retrying
+        const retryAfterMs: number | null = extractRetryAfterMs(error);
+
+        if (retryAfterMs !== null) {
+          logger.warn("LLM structured call rate limited (429), waiting before retry", {
+            llmCallId,
+            callType,
+            attempt,
+            maxAttempts,
+            waitMs: retryAfterMs,
+          });
+
+          await new Promise((resolve) => { setTimeout(resolve, retryAfterMs); });
+        } else if (extractAiErrorDetails(error).statusCode === 429) {
+          const waitMs: number = getDefault429BackoffMs();
+
+          logger.warn("LLM structured call rate limited (429), no Retry-After header, using default backoff", {
+            llmCallId,
+            callType,
+            attempt,
+            maxAttempts,
+            waitMs,
+          });
+
+          await new Promise((resolve) => { setTimeout(resolve, waitMs); });
         }
       }
     }
@@ -346,6 +455,7 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
     llmCallId,
     callType,
     maxAttempts,
+    structuredMode,
     localRetryTotal: maxAttempts,
     retryLayer: "local",
     sdkRetriesDisabled: true,

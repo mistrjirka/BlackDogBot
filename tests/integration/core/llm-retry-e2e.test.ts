@@ -3,13 +3,15 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
-import { generateTextWithRetryAsync } from "../../../src/utils/llm-retry.js";
+import { generateTextWithRetryAsync, generateObjectWithRetryAsync } from "../../../src/utils/llm-retry.js";
 import { resetSingletons } from "../../utils/test-helpers.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import type { LanguageModel } from "ai";
+import { z } from "zod";
+import type { IAiConfig } from "../../../src/shared/types/index.js";
 
 
 let tempDir: string;
@@ -41,7 +43,7 @@ describe("llm-retry E2E — real LLM calls", () => {
     const configService: ConfigService = ConfigService.getInstance();
     await configService.initializeAsync(tempConfigPath);
 
-    AiProviderService.getInstance().initialize(configService.getConfig().ai);
+    await AiProviderService.getInstance().initializeAsync(configService.getConfig().ai);
   });
 
   afterAll(async () => {
@@ -77,6 +79,120 @@ describe("llm-retry E2E — real LLM calls", () => {
 
     expect(result.text).toContain("7");
   }, 60000);
+
+  it("should resolve and expose strict structured output mode", async () => {
+    const aiProvider = AiProviderService.getInstance();
+    const mode = aiProvider.getStructuredOutputMode();
+
+    expect(["native_json_schema", "tool_emulated"]).toContain(mode);
+    expect(typeof aiProvider.getSupportsStructuredOutputs()).toBe("boolean");
+    expect(typeof aiProvider.getSupportsToolCalling()).toBe("boolean");
+  }, 60000);
+
+  it("should generate structured object with configured strict mode", async () => {
+    const model: LanguageModel = AiProviderService.getInstance().getDefaultModel();
+
+    const result = await generateObjectWithRetryAsync({
+      model,
+      prompt: "Extract user profile from: Jane Smith, age 31, city Prague.",
+      schema: z.object({
+        name: z.string(),
+        age: z.number(),
+        city: z.string(),
+      }),
+    });
+
+    expect(result.object.name.toLowerCase()).toContain("jane");
+    expect(result.object.age).toBeGreaterThan(0);
+    expect(result.object.city.length).toBeGreaterThan(0);
+  }, 90000);
+
+  it("should honor strict tool_emulated mode without native fallback", async () => {
+    const configService: ConfigService = ConfigService.getInstance();
+    const originalAiConfig: IAiConfig = configService.getConfig().ai;
+    const forcedAiConfig: IAiConfig = structuredClone(originalAiConfig);
+
+    if (forcedAiConfig.provider === "openrouter" && forcedAiConfig.openrouter) {
+      forcedAiConfig.openrouter.structuredOutputMode = "tool_emulated";
+    } else if (forcedAiConfig.provider === "openai-compatible" && forcedAiConfig.openaiCompatible) {
+      forcedAiConfig.openaiCompatible.structuredOutputMode = "tool_emulated";
+    } else if (forcedAiConfig.provider === "lm-studio" && forcedAiConfig.lmStudio) {
+      forcedAiConfig.lmStudio.structuredOutputMode = "tool_emulated";
+    } else {
+      throw new Error("Could not force tool_emulated mode: active provider config missing");
+    }
+
+    const aiProvider: AiProviderService = AiProviderService.getInstance();
+    await aiProvider.initializeAsync(forcedAiConfig);
+
+    expect(aiProvider.getStructuredOutputMode()).toBe("tool_emulated");
+
+    const model: LanguageModel = aiProvider.getDefaultModel();
+    const marker: string = `STRICT_TOOL_MODE_${Date.now()}`;
+    const capturedBodies: Array<Record<string, unknown>> = [];
+    const originalFetch: typeof fetch = globalThis.fetch;
+
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const urlString: string = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (
+        urlString.includes("/v1/chat/completions") &&
+        init?.method === "POST" &&
+        typeof init.body === "string"
+      ) {
+        try {
+          capturedBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+        } catch {
+          // ignore malformed capture body
+        }
+      }
+
+      return originalFetch(input, init);
+    };
+
+    try {
+      const result = await generateObjectWithRetryAsync({
+        model,
+        prompt: `${marker}: Return name=Jane, age=31, city=Prague.`,
+        schema: z.object({
+          name: z.string(),
+          age: z.number(),
+          city: z.string(),
+        }),
+      });
+
+      expect(result.object.name.toLowerCase()).toContain("jane");
+
+      const matchingRequests: Array<Record<string, unknown>> = capturedBodies.filter((body) =>
+        JSON.stringify(body).includes(marker),
+      );
+
+      expect(matchingRequests.length).toBeGreaterThan(0);
+
+      const toolRequest: Record<string, unknown> | undefined = matchingRequests.find((body) => {
+        const tools = body.tools;
+        return Array.isArray(tools) && tools.length > 0;
+      });
+
+      expect(toolRequest).toBeDefined();
+      expect(toolRequest).not.toHaveProperty("response_format");
+      expect(toolRequest).toHaveProperty("tool_choice");
+
+      const tools = toolRequest!.tools as Array<Record<string, unknown>>;
+      const hasEmitTool = tools.some((toolDef) => {
+        const fn = toolDef.function as Record<string, unknown> | undefined;
+        return fn?.name === "emit_structured_output";
+      });
+      expect(hasEmitTool).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await aiProvider.initializeAsync(originalAiConfig);
+    }
+  }, 120000);
 });
 
 //#endregion Tests
