@@ -4,6 +4,7 @@ import {
 } from "../shared/schemas/index.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { IScheduledTask } from "../shared/types/index.js";
+import { formatScheduledTask } from "../utils/cron-format.js";
 import type { ToolExecuteContext } from "../utils/tool-factory.js";
 
 //#region Interfaces
@@ -11,6 +12,7 @@ import type { ToolExecuteContext } from "../utils/tool-factory.js";
 interface IGetCronResult {
   success: boolean;
   task?: IScheduledTask;
+  display?: string;
   error?: string;
 }
 
@@ -39,6 +41,7 @@ export const getCronTool = tool({
     return {
       success: true,
       task,
+      display: formatScheduledTask(task),
     };
   },
 } as any);

@@ -1,10 +1,13 @@
 import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 import { LoggerService } from "./logger.service.js";
 import { JobStorageService } from "./job-storage.service.js";
 import { SchedulerService } from "./scheduler.service.js";
 import { PromptService } from "./prompt.service.js";
 import { MainAgent } from "../agent/main-agent.js";
+import { McpService } from "./mcp.service.js";
 import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
 import { extractErrorMessage } from "../utils/error.js";
 
@@ -74,6 +77,18 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
   await _safeStepAsync("Clear chat history", errors, async (): Promise<void> => {
     const mainAgent: MainAgent = MainAgent.getInstance();
     mainAgent.clearAllChatHistory();
+  });
+
+  // 7b. Close MCP connections and wipe config
+  await _safeStepAsync("Close MCP connections", errors, async (): Promise<void> => {
+    const mcpService: McpService = McpService.getInstance();
+    await mcpService.closeAsync();
+  });
+
+  await _safeStepAsync("Wipe MCP server config", errors, async (): Promise<void> => {
+    const homeDir = process.env.HOME ?? os.homedir();
+    const mcpConfigPath = path.join(homeDir, ".betterclaw", "mcp-servers.json");
+    await fs.rm(mcpConfigPath, { recursive: true, force: true });
   });
 
   // 8. Wipe workspace

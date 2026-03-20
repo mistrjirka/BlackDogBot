@@ -50,7 +50,11 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
   edit_file: "filePath",
   render_graph: "jobId",
   add_cron: "name",
+  edit_cron: "taskId",
   remove_cron: "taskId",
+  get_cron: "taskId",
+  list_crons: "taskId",
+  run_cron: "taskId",
   think: "thought",
   done: "summary",
 };

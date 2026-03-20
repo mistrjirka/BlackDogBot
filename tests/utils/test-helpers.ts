@@ -15,6 +15,8 @@ import { SkillLoaderService } from "../../src/services/skill-loader.service.js";
 import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
 import { PromptService } from "../../src/services/prompt.service.js";
 import { MainAgent } from "../../src/agent/main-agent.js";
+import { McpRegistryService } from "../../src/services/mcp-registry.service.js";
+import { McpService } from "../../src/services/mcp.service.js";
 
 export type SingletonClass =
   | typeof ConfigService
@@ -29,7 +31,9 @@ export type SingletonClass =
   | typeof SkillLoaderService
   | typeof RateLimiterService
   | typeof PromptService
-  | typeof MainAgent;
+  | typeof MainAgent
+  | typeof McpRegistryService
+  | typeof McpService;
 
 export function resetSingletons(services: SingletonClass[] = []): void {
   const defaultServices: SingletonClass[] = [
@@ -46,6 +50,8 @@ export function resetSingletons(services: SingletonClass[] = []): void {
     RateLimiterService,
     PromptService,
     MainAgent,
+    McpRegistryService,
+    McpService,
   ];
 
   const toReset = services.length > 0 ? services : defaultServices;

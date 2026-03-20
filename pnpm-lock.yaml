@@ -29,6 +29,9 @@ importers:
       '@lmstudio/sdk':
         specifier: ^1.5.0
         version: 1.5.0
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.27.1
+        version: 1.27.1(zod@3.25.76)
       '@openrouter/ai-sdk-provider':
         specifier: ^2.2.3
         version: 2.2.3(ai@6.0.91(zod@3.25.76))(zod@3.25.76)
@@ -1310,6 +1313,16 @@ packages:
 
   '@modelcontextprotocol/sdk@1.26.0':
     resolution: {integrity: sha512-Y5RmPncpiDtTXDbLKswIJzTqu2hyBKxTNsgKqKclDbhIgg1wgtf1fRuvxgTnRfcnxtvvgbIEcqUOzZrJ6iSReg==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@cfworker/json-schema': ^4.1.1
+      zod: ^3.25 || ^4.0
+    peerDependenciesMeta:
+      '@cfworker/json-schema':
+        optional: true
+
+  '@modelcontextprotocol/sdk@1.27.1':
+    resolution: {integrity: sha512-sr6GbP+4edBwFndLbM60gf07z0FQ79gaExpnsjMGePXqFcSSb7t6iscpjk9DhFhwd+mTEQrzNafGP8/iGGFYaA==}
     engines: {node: '>=18'}
     peerDependencies:
       '@cfworker/json-schema': ^4.1.1
@@ -4986,6 +4999,28 @@ snapshots:
       raw-body: 3.0.2
       zod: 4.3.5
       zod-to-json-schema: 3.25.1(zod@4.3.5)
+    transitivePeerDependencies:
+      - supports-color
+
+  '@modelcontextprotocol/sdk@1.27.1(zod@3.25.76)':
+    dependencies:
+      '@hono/node-server': 1.19.9(hono@4.12.2)
+      ajv: 8.18.0
+      ajv-formats: 3.0.1(ajv@8.18.0)
+      content-type: 1.0.5
+      cors: 2.8.6
+      cross-spawn: 7.0.6
+      eventsource: 3.0.7
+      eventsource-parser: 3.0.6
+      express: 5.2.1
+      express-rate-limit: 8.2.1(express@5.2.1)
+      hono: 4.12.2
+      jose: 6.1.3
+      json-schema-typed: 8.0.2
+      pkce-challenge: 5.0.1
+      raw-body: 3.0.2
+      zod: 3.25.76
+      zod-to-json-schema: 3.25.1(zod@3.25.76)
     transitivePeerDependencies:
       - supports-color
 

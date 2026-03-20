@@ -4,9 +4,13 @@ import { LoggerService } from "../../services/logger.service.js";
 import { PromptService } from "../../services/prompt.service.js";
 import { MainAgent } from "../../agent/main-agent.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
+import { McpRegistryService } from "../../services/mcp-registry.service.js";
+import { McpService } from "../../services/mcp.service.js";
 import { TelegramHandler } from "./handler.js";
 import { factoryResetAsync, type IFactoryResetResult } from "../../services/factory-reset.service.js";
 import { extractErrorMessage } from "../../utils/error.js";
+import type { IMcpServerConfig, IMcpServersFile } from "../../shared/types/mcp.types.js";
+import { mcpServerConfigSchema } from "../../shared/schemas/mcp.schemas.js";
 
 //#region Telegram Commands
 
@@ -40,6 +44,10 @@ export function setupTelegramCommands(bot: Bot): void {
       "/notifications_enable — Enable cron notifications for this chat",
       "/notifications_disable — Disable cron notifications for this chat",
       "/status — Show current chat status",
+      "/add_mcp_server — Add an MCP server (paste JSON)",
+      "/list_mcp_servers — List configured MCP servers",
+      "/remove_mcp_server <id> — Remove an MCP server",
+      "/mcp_status — Show MCP connection status",
     ].join("\n");
 
     await ctx.reply(helpText);
@@ -182,6 +190,165 @@ export function setupTelegramCommands(bot: Bot): void {
     ];
 
     await ctx.reply(statusLines.join("\n"));
+  });
+
+  // /add_mcp_server command
+  bot.command("add_mcp_server", async (ctx: Context): Promise<void> => {
+    const raw: string = (typeof ctx.match === "string" ? ctx.match : "").trim();
+
+    if (!raw) {
+      await ctx.reply(
+        "Usage: /add_mcp_server <json>\n\n" +
+        "Paste a VS Code MCP config. Two accepted shapes:\n\n" +
+        '1) Full config (copy from VS Code/Claude Desktop):\n```json\n' +
+        '{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest"]}}}\n```\n\n' +
+        '2) Single server entry (include "name" to set the server id):\n```json\n' +
+        '{"name":"playwright","command":"npx","args":["@playwright/mcp@latest"]}\n```\n\n' +
+        "Or for remote servers:\n```json\n" +
+        '{"name":"github","url":"https://api.github.com/mcp","headers":{"Authorization":"Bearer YOUR_TOKEN"}}\n```',
+        { parse_mode: "Markdown" },
+      );
+      return;
+    }
+
+    const mcpRegistry = McpRegistryService.getInstance();
+    const mcpService = McpService.getInstance();
+
+    try {
+      const parsed: Record<string, unknown> = JSON.parse(raw);
+      const addedIds: string[] = [];
+
+      if (parsed.mcpServers && typeof parsed.mcpServers === "object") {
+        // Shape A: full VS Code config
+        const file = parsed as unknown as IMcpServersFile;
+        for (const [id, config] of Object.entries(file.mcpServers)) {
+          mcpServerConfigSchema.parse(config);
+          await mcpRegistry.addServerAsync(id, config);
+          addedIds.push(id);
+        }
+      } else if (typeof parsed.name === "string") {
+        // Shape B: single server with "name" field
+        const id = parsed.name;
+        const config: Record<string, unknown> = { ...parsed };
+        delete config.name;
+
+        mcpServerConfigSchema.parse(config);
+        await mcpRegistry.addServerAsync(id, config as IMcpServerConfig);
+        addedIds.push(id);
+      } else {
+        await ctx.reply(
+          "Invalid format. Server entry must have a \"name\" field, or wrap in {\"mcpServers\":{...}}.\n" +
+          "Use /add_mcp_server without arguments to see examples.",
+        );
+        return;
+      }
+
+      await mcpService.refreshAsync();
+      const results = mcpService.getServerResults();
+
+      const replyLines: string[] = [];
+      for (const id of addedIds) {
+        const result = results.get(id);
+        if (result?.error) {
+          replyLines.push(`❌ "${id}": ${result.error}`);
+        } else {
+          replyLines.push(
+            `✅ "${id}" added (${result?.loadedToolNames.length ?? 0} tools)`,
+          );
+          if (result && result.warnings.length > 0) {
+            replyLines.push(`  ⚠️ ${result.warnings.join("\n  ⚠️ ")}`);
+          }
+        }
+      }
+
+      await ctx.reply(replyLines.join("\n"));
+      logger.info("MCP server(s) added via Telegram", { addedIds });
+    } catch (error: unknown) {
+      const errorMessage: string = extractErrorMessage(error);
+      await ctx.reply(`Failed to add MCP server: ${errorMessage}`);
+      logger.error("Failed to add MCP server via Telegram", { error: errorMessage });
+    }
+  });
+
+  // /list_mcp_servers command
+  bot.command("list_mcp_servers", async (ctx: Context): Promise<void> => {
+    const mcpRegistry = McpRegistryService.getInstance();
+    const mcpService = McpService.getInstance();
+    const servers = mcpRegistry.getAllServers();
+    const results = mcpService.getServerResults();
+
+    if (servers.length === 0) {
+      await ctx.reply("No MCP servers configured. Use /add_mcp_server to add one.");
+      return;
+    }
+
+    const lines: string[] = ["🔧 MCP Servers:\n"];
+    for (const server of servers) {
+      const result = results.get(server.id);
+      const statusIcon = result?.error ? "❌" : result ? "✅" : "⏸️";
+      const transportIcon = server.transport === "stdio" ? "📟" : "🌐";
+
+      lines.push(`${statusIcon} ${transportIcon} "${server.id}"`);
+      if (result?.loadedToolNames && result.loadedToolNames.length > 0) {
+        lines.push(`  Tools: ${result.loadedToolNames.join(", ")}`);
+      }
+      if (result?.warnings && result.warnings.length > 0) {
+        lines.push(`  ⚠️ ${result.warnings.length} warning(s)`);
+      }
+      if (result?.error) {
+        lines.push(`  Error: ${result.error}`);
+      }
+    }
+
+    await ctx.reply(lines.join("\n"));
+  });
+
+  // /remove_mcp_server command
+  bot.command("remove_mcp_server", async (ctx: Context): Promise<void> => {
+    const id: string = (typeof ctx.match === "string" ? ctx.match : "").trim();
+
+    if (!id) {
+      await ctx.reply("Usage: /remove_mcp_server <server-id>");
+      return;
+    }
+
+    const mcpRegistry = McpRegistryService.getInstance();
+    const mcpService = McpService.getInstance();
+
+    const removed = await mcpRegistry.removeServerAsync(id);
+
+    if (!removed) {
+      await ctx.reply(`MCP server "${id}" not found.`);
+      return;
+    }
+
+    await mcpService.refreshAsync();
+    await ctx.reply(`✅ MCP server "${id}" removed.`);
+    logger.info("MCP server removed via Telegram", { id });
+  });
+
+  // /mcp_status command
+  bot.command("mcp_status", async (ctx: Context): Promise<void> => {
+    const mcpService = McpService.getInstance();
+    const tools = mcpService.getTools();
+    const results = mcpService.getServerResults();
+
+    const lines: string[] = ["🔧 MCP Status:\n"];
+    lines.push(`Connected servers: ${results.size}`);
+    lines.push(`Total tools: ${Object.keys(tools).length}`);
+
+    if (results.size > 0) {
+      lines.push("");
+      for (const [serverId, result] of results) {
+        if (result.error) {
+          lines.push(`❌ ${serverId}: ${result.error}`);
+        } else {
+          lines.push(`✅ ${serverId}: ${result.loadedToolNames.length} tools`);
+        }
+      }
+    }
+
+    await ctx.reply(lines.join("\n"));
   });
 }
 

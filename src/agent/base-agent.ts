@@ -3,6 +3,7 @@ import {
   ToolSet,
   LanguageModel,
   hasToolCall,
+  stepCountIs,
   APICallError,
   type ModelMessage,
   type Tool,
@@ -370,6 +371,7 @@ export abstract class BaseAgentBase {
       tools: allTools,
       stopWhen: [
         hasToolCall("done"),
+        stepCountIs(maxSteps),
       ],
       experimental_repairToolCall: repairToolCallJsonAsync,
       prepareStep: async ({ stepNumber, messages }) => {

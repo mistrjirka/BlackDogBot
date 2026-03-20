@@ -9,6 +9,7 @@ export default defineConfig({
       "tests/unit/**/*.test.ts",
       "tests/integration/core/**/*.test.ts",
       "tests/integration/jobs/**/*.test.ts",
+      "tests/integration/mcp/**/*.test.ts",
     ],
     coverage: {
       provider: "v8",

@@ -15,6 +15,8 @@ import { SchedulerService } from "./services/scheduler.service.js";
 import { MessagingService } from "./services/messaging.service.js";
 import { JobStorageService } from "./services/job-storage.service.js";
 import { ChannelRegistryService } from "./services/channel-registry.service.js";
+import { McpRegistryService } from "./services/mcp-registry.service.js";
+import { McpService } from "./services/mcp.service.js";
 import * as toolRegistry from "./helpers/tool-registry.js";
 import * as skillInstaller from "./helpers/skill-installer.js";
 import * as skillState from "./helpers/skill-state.js";
@@ -187,6 +189,26 @@ async function mainAsync(): Promise<void> {
     channelCount: channelRegistry.getAllChannels().length,
     notificationChannelCount: channelRegistry.getNotificationChannels().length,
   });
+
+  // 7.6. Initialize MCP server registry and connect to servers
+  const mcpRegistry = McpRegistryService.getInstance();
+  await mcpRegistry.initializeAsync();
+
+  const mcpService = McpService.getInstance();
+  await mcpService.refreshAsync();
+
+  const mcpResults = mcpService.getServerResults();
+  for (const [serverId, result] of mcpResults) {
+    if (result.error) {
+      logger.warn("MCP server connection failed", { serverId, error: result.error });
+    } else {
+      logger.info("MCP server connected", {
+        serverId,
+        tools: result.loadedToolNames.length,
+        warnings: result.warnings.length,
+      });
+    }
+  }
 
   const notifyAllChannelsAsync = async (
     message: string,
@@ -467,6 +489,7 @@ async function mainAsync(): Promise<void> {
   const shutdownAsync = async (): Promise<void> => {
     logger.info("Shutdown signal received. Stopping BetterClaw...");
 
+    await McpService.getInstance().closeAsync().catch(() => {});
     await telegramPlatform.stop();
     await discordPlatform.stop();
 

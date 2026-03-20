@@ -16,6 +16,14 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   error: 3,
 };
 
+const _JsonHighlightPatterns: Array<{ pattern: RegExp; color: (text: string) => string }> = [
+  { pattern: /"tool_call"/g, color: ConsoleColor.brightBlue },
+  { pattern: /"tool_result"/g, color: ConsoleColor.brightGreen },
+  { pattern: /"success":true/g, color: ConsoleColor.brightGreen },
+  { pattern: /"success":false/g, color: ConsoleColor.brightRed },
+  { pattern: /"error"/g, color: ConsoleColor.brightRed },
+];
+
 //#endregion Constants
 
 export class LoggerService {
@@ -122,8 +130,16 @@ export class LoggerService {
       ? this._colorLevelTag(levelTag)
       : levelTag;
 
+    const coloredMessage: string = ConsoleColor.enabled
+      ? this._colorMessage(message)
+      : message;
+
+    const coloredContext: string = ConsoleColor.enabled
+      ? this._colorContext(contextSuffix)
+      : contextSuffix;
+
     const consoleLine: string = ConsoleColor.enabled
-      ? `${ConsoleColor.gray(`[${timestamp}]`)} [${coloredLevelTag}] ${message}${contextSuffix}`
+      ? `${ConsoleColor.gray(`[${timestamp}]`)} [${coloredLevelTag}] ${coloredMessage}${coloredContext}`
       : line;
 
     if (level === "error") {
@@ -162,6 +178,40 @@ export class LoggerService {
       case "DEBUG": return ConsoleColor.gray(levelTag);
       default:      return levelTag;
     }
+  }
+
+  private _colorMessage(message: string): string {
+    // Highlight tool call/result trace messages differently.
+    if (message.includes("tool_call ")) {
+      return message.replace(/tool_call\s+([^\s]+)/g, (_match: string, toolName: string): string =>
+        `${ConsoleColor.brightBlue("tool_call")} ${ConsoleColor.brightBlue(toolName)}`,
+      );
+    }
+
+    if (message.includes("tool_result ")) {
+      return message.replace(/tool_result\s+([^\s]+)/g, (_match: string, toolName: string): string =>
+        `${ConsoleColor.brightGreen("tool_result")} ${ConsoleColor.brightGreen(toolName)}`,
+      );
+    }
+
+    if (message.includes("Task updated")) {
+      return ConsoleColor.brightMagenta(message);
+    }
+
+    return message;
+  }
+
+  private _colorContext(context: string): string {
+    if (!context) {
+      return context;
+    }
+
+    let output: string = context;
+    for (const entry of _JsonHighlightPatterns) {
+      output = output.replace(entry.pattern, (match: string): string => entry.color(match));
+    }
+
+    return output;
   }
 
   //#endregion Private methods

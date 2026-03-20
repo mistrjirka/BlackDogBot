@@ -4,6 +4,7 @@ import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { buildMainAgentPromptAsync } from "./system-prompt.js";
 import { BaseAgentBase, AGENT_EMPTY_RESPONSE_RETRIES, CONTEXT_EXCEEDED_RETRIES, type IAgentResult, type OnStepCallback } from "./base-agent.js";
+import { McpService } from "../services/mcp.service.js";
 import { DEFAULT_AGENT_MAX_STEPS, PROMPT_JOB_CREATION_GUIDE } from "../shared/constants.js";
 import {
   thinkTool,
@@ -327,6 +328,13 @@ export class MainAgent extends BaseAgentBase {
           create_output_schema: createCreateOutputSchemaTool(),
         }
       : undefined;
+
+    // Merge MCP tools from connected servers
+    const mcpService: McpService = McpService.getInstance();
+    const mcpTools: ToolSet = mcpService.getTools();
+    for (const [toolName, toolDef] of Object.entries(mcpTools)) {
+      tools[toolName] = toolDef;
+    }
 
     // Filter tools based on channel permission
     const channelRegistry = ChannelRegistryService.getInstance();

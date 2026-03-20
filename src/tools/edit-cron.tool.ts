@@ -8,6 +8,7 @@ import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { formatScheduledTask } from "../utils/cron-format.js";
 import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
@@ -15,6 +16,7 @@ import type { IScheduledTask } from "../shared/types/index.js";
 interface IEditCronResult {
   success: boolean;
   task?: IScheduledTask;
+  display?: string;
   error?: string;
 }
 
@@ -98,8 +100,8 @@ const executeEditCron = async (
     }
 
     // 3. Verify instructions using LLM IF they are actually being changed
-    if (instructionsActuallyChanged) {
-      logger.debug(`[${TOOL_NAME}] Re-verifying cron instructions for task: ${taskId}`);
+      if (instructionsActuallyChanged) {
+        logger.debug(`[${TOOL_NAME}] Re-verifying cron instructions for task: ${taskId}`);
 
       const toolsToVerify = patch.tools ?? existingTask.tools;
       const toolContextLines: string[] = toolsToVerify.map((t) => {
@@ -224,6 +226,25 @@ Output a JSON object with:
           taskId,
           reason: verificationResult.object.missingContext,
         });
+
+        logger.error("[edit-cron] Rejected update details", {
+          taskId,
+          oldTask: {
+            taskId: existingTask.taskId,
+            name: existingTask.name,
+            description: existingTask.description,
+            schedule: existingTask.schedule,
+            tools: existingTask.tools,
+            notifyUser: existingTask.notifyUser,
+            enabled: existingTask.enabled,
+            instructions: existingTask.instructions,
+          },
+          proposedPatch: {
+            ...patch,
+          },
+          verifierReason: verificationResult.object.missingContext,
+        });
+
         return { success: false, error: errorMsg };
       }
     }
@@ -271,13 +292,33 @@ Output a JSON object with:
 
     const updatedTask = await scheduler.updateTaskAsync(taskId, updatePayload as any);
 
+    if (updatedTask) {
+      logger.info("[edit-cron] Updated task details", {
+        taskId: updatedTask.taskId,
+        name: updatedTask.name,
+        description: updatedTask.description,
+        schedule: updatedTask.schedule,
+        tools: updatedTask.tools,
+        notifyUser: updatedTask.notifyUser,
+        enabled: updatedTask.enabled,
+        instructions: updatedTask.instructions,
+        messageHistoryCount: updatedTask.messageHistory.length,
+        updatedAt: updatedTask.updatedAt,
+      });
+    }
+
     return {
       success: true,
       task: updatedTask,
+      display: updatedTask ? formatScheduledTask(updatedTask) : undefined,
     };
   } catch (error: unknown) {
     const errorMessage: string = extractErrorMessage(error);
-    logger.error(`[${TOOL_NAME}] Failed to edit cron task: ${errorMessage}`);
+    logger.error(`[${TOOL_NAME}] Failed to edit cron task: ${errorMessage}`, {
+      taskId,
+      patch,
+      error: errorMessage,
+    });
 
     return { success: false, error: errorMessage };
   }

@@ -330,18 +330,38 @@ export class StatusService {
   //#region Private methods
 
   private _colorToolMessage(message: string): string {
-    // Color "Step N: ..." format — bright yellow step number, bright white tool names
+    // Color "Step N: ..." format — bright yellow step number.
+    // Split tool names into tool_call (cool) and tool_result (warm) colors.
     const stepMatch = message.match(/^(Cron: .+ — )?Step (\d+): (.+)$/);
     if (stepMatch) {
       const cronPrefix = stepMatch[1]
         ? ConsoleColor.cyan(stepMatch[1])
         : "";
       const stepNum = ConsoleColor.brightYellow(`Step ${stepMatch[2]}`);
-      const tools = ConsoleColor.brightWhite(stepMatch[3]);
+      const tools = this._colorToolNames(stepMatch[3]);
       return `${cronPrefix}${stepNum}: ${tools}`;
     }
 
     return message;
+  }
+
+  private _colorToolNames(toolNames: string): string {
+    return toolNames
+      .split(",")
+      .map((name: string): string => {
+        const trimmed: string = name.trim();
+
+        if (trimmed.toLowerCase().includes("result")) {
+          return ConsoleColor.brightGreen(trimmed);
+        }
+
+        if (trimmed.toLowerCase().includes("call")) {
+          return ConsoleColor.brightBlue(trimmed);
+        }
+
+        return ConsoleColor.brightWhite(trimmed);
+      })
+      .join(`${ConsoleColor.gray(",")} `);
   }
 
   private _startSpinner(): void {

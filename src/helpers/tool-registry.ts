@@ -141,6 +141,11 @@ export function getAllowedToolNames(
     return [];
   }
 
+  // MCP tools are blocked in read_only by default
+  if (permission === "read_only") {
+    // Filtered below per-tool
+  }
+
   const allowed: string[] = [];
 
   if (options?.skillNames) {
@@ -170,6 +175,11 @@ export function isToolAllowed(
   options?: IToolFilterOptions
 ): boolean {
   if (permission === "ignore") {
+    return false;
+  }
+
+  // MCP tools are blocked in read_only by default
+  if (permission === "read_only" && toolName.startsWith("mcp.")) {
     return false;
   }
 
