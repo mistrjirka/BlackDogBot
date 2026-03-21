@@ -258,6 +258,19 @@ describe("editCronTool instruction verification", () => {
     expect(result.task?.enabled).toBe(false);
   });
 
+  it("should accept write_table_* tools when editing tools", async () => {
+    const task = await createTaskDirectly();
+    const messages = createGetCronMessages(task.taskId);
+
+    const result = await execEditCronTool({
+      taskId: task.taskId,
+      tools: ["fetch_rss", "write_table_articles", "send_message"],
+    }, messages);
+
+    expect(result.success).toBe(true);
+    expect(result.task?.tools).toContain("write_table_articles");
+  });
+
   it("should allow instruction edits with only whitespace difference without metadata", async () => {
     const task = await createTaskDirectly();
     const messages = createGetCronMessages(task.taskId);

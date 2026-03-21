@@ -10,7 +10,11 @@ const CONTEXT_ERROR_KEYWORDS: string[] = [
   "length",
 ];
 
-export function isContextExceededApiError(error: APICallError): boolean {
+export function isContextExceededApiError(error: unknown): boolean {
+  if (!APICallError.isInstance(error)) {
+    return false;
+  }
+
   if (!CONTEXT_ERROR_STATUS_CODES.includes(error.statusCode ?? 0)) {
     return false;
   }

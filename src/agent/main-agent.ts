@@ -1,4 +1,4 @@
-import { ToolSet, LanguageModel, type ModelMessage, APICallError } from "ai";
+import { ToolSet, LanguageModel, type ModelMessage } from "ai";
 
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
@@ -704,21 +704,19 @@ export class MainAgent extends BaseAgentBase {
             // Handle context size exceeded errors (from hard gate or real API errors)
             // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
             if (
-              APICallError.isInstance(genError) &&
+              isContextExceededApiError(genError) &&
               contextRetries < CONTEXT_EXCEEDED_RETRIES
             ) {
-              if (isContextExceededApiError(genError)) {
-                contextRetries++;
-                this._logger.warn("Context size exceeded, forcing compaction on next step", {
-                  chatId,
-                  contextRetry: contextRetries,
-                  maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
-                  statusCode: aiErrorDetails.statusCode,
-                });
-                this._forceCompactionOnNextStep = true;
-                attempt--; // Don't count this against the empty-response retry limit
-                continue;
-              }
+              contextRetries++;
+              this._logger.warn("Context size exceeded, forcing compaction on next step", {
+                chatId,
+                contextRetry: contextRetries,
+                maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
+                statusCode: aiErrorDetails.statusCode,
+              });
+              this._forceCompactionOnNextStep = true;
+              attempt--; // Don't count this against the empty-response retry limit
+              continue;
             }
 
             // Handle 429 rate limit errors with Retry-After wait

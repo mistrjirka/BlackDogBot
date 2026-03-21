@@ -169,6 +169,37 @@ describe("addCronTool", () => {
     expect(result.success).toBe(true);
   });
 
+  it("should include a dynamic description for write_table tools in verifier prompt", async () => {
+    await fs.mkdir(path.join(tempDir, ".betterclaw", "databases"), { recursive: true });
+    const dbModule = await import("../../../src/helpers/litesql.js");
+    await dbModule.createDatabaseAsync("news");
+    await dbModule.createTableAsync("news", "articles", [
+      { name: "id", type: "INTEGER", primaryKey: true },
+      { name: "title", type: "TEXT", notNull: true },
+      { name: "url", type: "TEXT", notNull: true },
+    ]);
+
+    const result = await execAddCronTool({
+      name: "Dynamic Tool Context Task",
+      description: "Ensure verifier sees write_table tool details",
+      instructions: "Use write_table_articles to store fetched items.",
+      tools: ["write_table_articles"],
+      scheduleType: "cron",
+      scheduleCron: "0 * * * *",
+      notifyUser: false,
+    });
+
+    expect(result.success).toBe(true);
+
+    const mockedCall = vi.mocked(generateObjectWithRetryAsync).mock.calls[0];
+    expect(mockedCall).toBeDefined();
+
+    const args = mockedCall[0] as { prompt?: string };
+    expect(args.prompt).toContain("write_table_articles");
+    expect(args.prompt).toContain("Insert rows into the \"articles\" table in database \"news\"");
+    expect(args.prompt).not.toContain("write_table_articles: (no description available)");
+  });
+
   it("should reject ambiguous instructions via verifier", async () => {
     vi.mocked(generateObjectWithRetryAsync).mockResolvedValueOnce({
       object: {

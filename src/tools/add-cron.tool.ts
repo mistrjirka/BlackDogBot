@@ -1,13 +1,13 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { addCronToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
-import { CRON_TOOL_DESCRIPTIONS } from "../shared/constants/cron-descriptions.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { generateId } from "../utils/id.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 
 //#region Interfaces
@@ -122,14 +122,7 @@ export const addCronTool = tool({
       // Build a human-readable tool list so the verifier knows what each tool does.
       // This prevents it from flagging well-known tools (e.g. send_message) as
       // "unresolved destinations" simply because it has no context about them.
-      const toolContextLines: string[] = tools.map((t) => {
-        const desc: string = CRON_TOOL_DESCRIPTIONS[t] ?? "(no description available)";
-        return `  - ${t}: ${desc}`;
-      });
-      const toolContextBlock: string =
-        toolContextLines.length > 0
-          ? `The agent will have access to the following tools:\n${toolContextLines.join("\n")}`
-          : "The agent will have no tools available.";
+      const toolContextBlock: string = await buildCronToolContextBlockAsync(tools);
 
       const verifierPrompt = `
 You are a task instruction verifier for an autonomous AI agent.

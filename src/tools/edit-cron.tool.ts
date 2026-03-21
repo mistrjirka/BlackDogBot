@@ -1,7 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { editCronToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
-import { CRON_TOOL_DESCRIPTIONS } from "../shared/constants/cron-descriptions.js";
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -9,6 +8,7 @@ import { AiProviderService } from "../services/ai-provider.service.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
+import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
 import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
@@ -62,8 +62,9 @@ const executeEditCron = async (
     // 0. Validate tool names at runtime (if provided)
     if (patch.tools !== undefined) {
       const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
+      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
       const invalidTools: string[] = patch.tools.filter(
-        (t) => !validToolSet.has(t),
+        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
       );
       if (invalidTools.length > 0) {
         return {
@@ -104,14 +105,7 @@ const executeEditCron = async (
         logger.debug(`[${TOOL_NAME}] Re-verifying cron instructions for task: ${taskId}`);
 
       const toolsToVerify = patch.tools ?? existingTask.tools;
-      const toolContextLines: string[] = toolsToVerify.map((t) => {
-        const desc: string = CRON_TOOL_DESCRIPTIONS[t] ?? "(no description available)";
-        return `  - ${t}: ${desc}`;
-      });
-      const toolContextBlock: string =
-        toolContextLines.length > 0
-          ? `The agent will have access to the following tools:\n${toolContextLines.join("\n")}`
-          : "The agent will have no tools available.";
+      const toolContextBlock: string = await buildCronToolContextBlockAsync(toolsToVerify);
 
       const proposedSchedule: Record<string, unknown> = { type: existingTask.schedule.type };
       if (existingTask.schedule.type === "once") {

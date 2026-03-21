@@ -128,7 +128,6 @@ export class AiProviderService {
       logger,
     );
 
-    this._rateLimiterService.removeLimiter(providerKey);
     this._rateLimiterService.getOrCreateLimiter(providerKey, effectiveRateLimits);
 
     this._defaultModel = this._createModel(defaultModelId);
@@ -268,7 +267,6 @@ export class AiProviderService {
       logger,
     );
 
-    this._rateLimiterService.removeLimiter(providerKey);
     this._rateLimiterService.getOrCreateLimiter(providerKey, effectiveRateLimits);
 
     this._defaultModel = this._createModel(defaultModelId);

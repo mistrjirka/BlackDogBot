@@ -4,7 +4,6 @@ import {
   LanguageModel,
   hasToolCall,
   stepCountIs,
-  APICallError,
   type ModelMessage,
   type Tool,
 } from "ai";
@@ -172,7 +171,7 @@ export abstract class BaseAgentBase {
           const aiErrorDetails = extractAiErrorDetails(error);
 
           // Enhanced error logging for AI provider errors
-          if (APICallError.isInstance(error)) {
+          if (aiErrorDetails.statusCode !== null) {
             const responseBody: string | null = aiErrorDetails.responseBody;
             const responseBodyLength = responseBody?.length ?? 0;
             const responseBodyPreview = responseBody
@@ -213,29 +212,27 @@ export abstract class BaseAgentBase {
           // Handle context exceeded errors with reactive compaction
           // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
           if (
-            APICallError.isInstance(error) &&
+            isContextExceededApiError(error) &&
             attempt <= CONTEXT_EXCEEDED_RETRIES
           ) {
             const responseBody: string = aiErrorDetails.responseBody ?? "";
             const errorMessage: string = aiErrorDetails.providerMessage ?? aiErrorDetails.message;
 
-            if (isContextExceededApiError(error)) {
-              this._logger.warn("Context size exceeded, triggering reactive compaction", {
-                attempt,
-                agentAttempt: currentAgentAttempt,
-                agentAttemptTotal: totalAgentAttempts,
-                maxRetries: CONTEXT_EXCEEDED_RETRIES,
-                statusCode: aiErrorDetails.statusCode,
-                responseBody: responseBody,
-                errorMessage: errorMessage,
-                currentTokenCount: this._totalInputTokens,
-                contextWindow: this._contextWindow,
-                utilization: `${((this._totalInputTokens / this._contextWindow) * 100).toFixed(1)}%`,
-              });
+            this._logger.warn("Context size exceeded, triggering reactive compaction", {
+              attempt,
+              agentAttempt: currentAgentAttempt,
+              agentAttemptTotal: totalAgentAttempts,
+              maxRetries: CONTEXT_EXCEEDED_RETRIES,
+              statusCode: aiErrorDetails.statusCode,
+              responseBody: responseBody,
+              errorMessage: errorMessage,
+              currentTokenCount: this._totalInputTokens,
+              contextWindow: this._contextWindow,
+              utilization: `${((this._totalInputTokens / this._contextWindow) * 100).toFixed(1)}%`,
+            });
 
-              this._forceCompactionOnNextStep = true;
-              continue;
-            }
+            this._forceCompactionOnNextStep = true;
+            continue;
           }
 
           // Handle 429 rate limit errors with Retry-After wait
