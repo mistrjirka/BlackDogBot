@@ -700,6 +700,7 @@ export class MainAgent extends BaseAgentBase {
             };
           } catch (genError: unknown) {
             const aiErrorDetails = extractAiErrorDetails(genError);
+            const isRetriable429: boolean = aiErrorDetails.statusCode === 429 && _429Retries < 3;
 
             // Handle context size exceeded errors (from hard gate or real API errors)
             // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
@@ -720,24 +721,22 @@ export class MainAgent extends BaseAgentBase {
             }
 
             // Handle 429 rate limit errors with Retry-After wait
-            if (aiErrorDetails.statusCode === 429) {
-              if (_429Retries < 3) {
-                _429Retries++;
-                await apply429BackoffAsync({
-                  logger: this._logger,
-                  error: genError,
-                  retryAttempt: _429Retries,
-                  logMessage: "Rate limited (429) in main agent loop, waiting before retry",
-                  logContext: {
-                    chatId,
-                    attempt,
-                    _429Retries,
-                    max429Retries: 3,
-                  },
-                });
-                attempt--; // Don't burn the empty-response retry budget
-                continue;
-              }
+            if (isRetriable429) {
+              _429Retries++;
+              await apply429BackoffAsync({
+                logger: this._logger,
+                error: genError,
+                retryAttempt: _429Retries,
+                logMessage: "Rate limited (429) in main agent loop, waiting before retry",
+                logContext: {
+                  chatId,
+                  attempt,
+                  _429Retries,
+                  max429Retries: 3,
+                },
+              });
+              attempt--; // Don't burn the empty-response retry budget
+              continue;
             }
 
             // Re-throw non-context errors

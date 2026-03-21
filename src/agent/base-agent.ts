@@ -169,8 +169,58 @@ export abstract class BaseAgentBase {
           const currentAgentAttempt: number = attempt;
           const totalAgentAttempts: number = AGENT_EMPTY_RESPONSE_RETRIES + 1;
           const aiErrorDetails = extractAiErrorDetails(error);
+          const isRetriable429: boolean =
+            aiErrorDetails.statusCode === 429 &&
+            _429Retries < MAX_429_RETRIES;
 
-          // Enhanced error logging for AI provider errors
+          // Handle context exceeded errors with reactive compaction
+          // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
+          if (
+            isContextExceededApiError(error) &&
+            attempt <= CONTEXT_EXCEEDED_RETRIES
+          ) {
+            const responseBody: string = aiErrorDetails.responseBody ?? "";
+            const errorMessage: string = aiErrorDetails.providerMessage ?? aiErrorDetails.message;
+
+            this._logger.warn("Context size exceeded, triggering reactive compaction", {
+              attempt,
+              agentAttempt: currentAgentAttempt,
+              agentAttemptTotal: totalAgentAttempts,
+              maxRetries: CONTEXT_EXCEEDED_RETRIES,
+              statusCode: aiErrorDetails.statusCode,
+              responseBody: responseBody,
+              errorMessage: errorMessage,
+              currentTokenCount: this._totalInputTokens,
+              contextWindow: this._contextWindow,
+              utilization: `${((this._totalInputTokens / this._contextWindow) * 100).toFixed(1)}%`,
+            });
+
+            this._forceCompactionOnNextStep = true;
+            continue;
+          }
+
+          // Handle 429 rate limit errors with Retry-After wait
+          if (isRetriable429) {
+            _429Retries++;
+            await apply429BackoffAsync({
+              logger: this._logger,
+              error,
+              retryAttempt: _429Retries,
+              logMessage: "Rate limited (429) in agent loop, waiting before retry",
+              logContext: {
+                attempt,
+                agentAttempt: currentAgentAttempt,
+                agentAttemptTotal: totalAgentAttempts,
+                _429Retries,
+                max429Retries: MAX_429_RETRIES,
+              },
+            });
+            attempt--; // Don't burn the empty-response retry budget
+            continue;
+          }
+
+          // Enhanced error logging for terminal errors only.
+          // Suppress noisy per-attempt error logs for retriable 429s.
           if (aiErrorDetails.statusCode !== null) {
             const responseBody: string | null = aiErrorDetails.responseBody;
             const responseBodyLength = responseBody?.length ?? 0;
@@ -207,54 +257,6 @@ export abstract class BaseAgentBase {
               agentAttemptTotal: totalAgentAttempts,
               error: String(error),
             });
-          }
-
-          // Handle context exceeded errors with reactive compaction
-          // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
-          if (
-            isContextExceededApiError(error) &&
-            attempt <= CONTEXT_EXCEEDED_RETRIES
-          ) {
-            const responseBody: string = aiErrorDetails.responseBody ?? "";
-            const errorMessage: string = aiErrorDetails.providerMessage ?? aiErrorDetails.message;
-
-            this._logger.warn("Context size exceeded, triggering reactive compaction", {
-              attempt,
-              agentAttempt: currentAgentAttempt,
-              agentAttemptTotal: totalAgentAttempts,
-              maxRetries: CONTEXT_EXCEEDED_RETRIES,
-              statusCode: aiErrorDetails.statusCode,
-              responseBody: responseBody,
-              errorMessage: errorMessage,
-              currentTokenCount: this._totalInputTokens,
-              contextWindow: this._contextWindow,
-              utilization: `${((this._totalInputTokens / this._contextWindow) * 100).toFixed(1)}%`,
-            });
-
-            this._forceCompactionOnNextStep = true;
-            continue;
-          }
-
-          // Handle 429 rate limit errors with Retry-After wait
-          if (aiErrorDetails.statusCode === 429) {
-            if (_429Retries < MAX_429_RETRIES) {
-              _429Retries++;
-              await apply429BackoffAsync({
-                logger: this._logger,
-                error,
-                retryAttempt: _429Retries,
-                logMessage: "Rate limited (429) in agent loop, waiting before retry",
-                logContext: {
-                  attempt,
-                  agentAttempt: currentAgentAttempt,
-                  agentAttemptTotal: totalAgentAttempts,
-                  _429Retries,
-                  max429Retries: MAX_429_RETRIES,
-                },
-              });
-              attempt--; // Don't burn the empty-response retry budget
-              continue;
-            }
           }
 
           throw error;
