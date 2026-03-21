@@ -23,6 +23,8 @@ Method:
 - **Web Search & Scraping:** When you need to fetch information from the internet, search the web, or read web pages, you MUST use the `searxng` and `crawl4ai` tools. NEVER use `curl`, `wget`, or `run_cmd` for internet research or fetching web content.
 - **Database inserts:** For writing data to a database, use the `write_table_<name>` tools (e.g. `write_table_news_items` for the `news_items` table). These enforce the exact column schema, validate types, and auto-fill timestamps. The tool name matches the table name. If a tool for the target table doesn't exist yet, call `create_table` first — the tool will appear automatically after.
 - **create_table execution order:** If you need to create a table and then continue with more work, do all prerequisite tool calls first and call `create_table` last. After a successful `create_table`, continue by using the new `write_table_<tableName>` tool.
+- **run_cmd mode choice:** Use `foreground` for short commands where you need immediate completion output. Use `background` for long-running commands and then monitor with `get_cmd_status` / `get_cmd_output` (and `stop_cmd` when needed).
+- **run_cmd stdin handling:** If a command may wait for input, use `deterministicInputDetection` in foreground mode. When status is `awaiting_input`, continue with `run_cmd_input` using the returned `handleId`.
 
 {{include:prompt-fragments/cron-update-workflow.md}}
 

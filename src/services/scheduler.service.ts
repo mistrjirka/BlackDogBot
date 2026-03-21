@@ -14,11 +14,13 @@ import {
 import { LoggerService } from "./logger.service.js";
 import { ConfigService } from "./config.service.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 
 //#region Const
 
 const DEFAULT_MAX_PARALLEL_CRONS: number = 1;
 const DEFAULT_CRON_QUEUE_SIZE: number = 3;
+const LEGACY_WRITE_TOOL_NAMES: readonly string[] = ["write_to_database", "write_database"];
 
 //#endregion Const
 
@@ -27,6 +29,13 @@ const DEFAULT_CRON_QUEUE_SIZE: number = 3;
 interface IQueuedTask {
   task: IScheduledTask;
   executeCallback: () => Promise<void>;
+}
+
+interface ILegacyWriteToolMigrationResult {
+  task: IScheduledTask;
+  changed: boolean;
+  replacedTools: string[];
+  addedWriteTableTools: number;
 }
 
 //#endregion Interfaces
@@ -301,6 +310,20 @@ export class SchedulerService {
       entry.endsWith(".json"),
     );
 
+    // Build per-table write tool names once to migrate legacy generic write tools
+    // in existing persisted cron tasks.
+    let perTableWriteToolNames: string[] = [];
+    try {
+      const perTableTools = await buildPerTableToolsAsync();
+      perTableWriteToolNames = Object.keys(perTableTools)
+        .filter((name: string): boolean => name.startsWith("write_table_"))
+        .sort();
+    } catch (error: unknown) {
+      this._logger.warn("Failed to build per-table tools for cron migration", {
+        error: extractErrorMessage(error),
+      });
+    }
+
     const migratedTasks: string[] = [];
 
     for (const fileName of jsonFiles) {
@@ -311,15 +334,29 @@ export class SchedulerService {
         const parsed: unknown = JSON.parse(content);
         const task: IScheduledTask = scheduledTaskSchema.parse(parsed);
 
+        const migration = this._migrateLegacyWriteTools(task, perTableWriteToolNames);
+        if (migration.changed) {
+          await fs.writeFile(filePath, JSON.stringify(migration.task, null, 2), "utf-8");
+
+          this._logger.info("Migrated legacy write cron tools to per-table tools", {
+            taskId: migration.task.taskId,
+            name: migration.task.name,
+            replacedTools: migration.replacedTools,
+            addedWriteTableTools: migration.addedWriteTableTools,
+          });
+        }
+
+        const effectiveTask: IScheduledTask = migration.task;
+
         // Check for deprecated tool names
-        const deprecatedTools: string[] = task.tools.filter(
+        const deprecatedTools: string[] = effectiveTask.tools.filter(
           (name: string) => name in CRON_TOOL_ALIASES,
         );
         if (deprecatedTools.length > 0) {
-          migratedTasks.push(`${task.name} (${task.taskId}): ${deprecatedTools.join(", ")}`);
+          migratedTasks.push(`${effectiveTask.name} (${effectiveTask.taskId}): ${deprecatedTools.join(", ")}`);
         }
 
-        this._tasks.set(task.taskId, task);
+        this._tasks.set(effectiveTask.taskId, effectiveTask);
       } catch (error: unknown) {
         this._logger.warn("Failed to parse task file, skipping", {
           filePath,
@@ -334,6 +371,57 @@ export class SchedulerService {
         { tasks: migratedTasks },
       );
     }
+  }
+
+  private _migrateLegacyWriteTools(
+    task: IScheduledTask,
+    perTableWriteToolNames: readonly string[],
+  ): ILegacyWriteToolMigrationResult {
+    const replacedTools: string[] = task.tools.filter((name: string): boolean =>
+      LEGACY_WRITE_TOOL_NAMES.includes(name),
+    );
+
+    if (replacedTools.length === 0) {
+      return {
+        task,
+        changed: false,
+        replacedTools: [],
+        addedWriteTableTools: 0,
+      };
+    }
+
+    if (perTableWriteToolNames.length === 0) {
+      this._logger.warn("Legacy write cron tools detected but no write_table_* tools exist yet", {
+        taskId: task.taskId,
+        name: task.name,
+        replacedTools,
+      });
+
+      return {
+        task,
+        changed: false,
+        replacedTools,
+        addedWriteTableTools: 0,
+      };
+    }
+
+    const withoutLegacy: string[] = task.tools.filter((name: string): boolean =>
+      !LEGACY_WRITE_TOOL_NAMES.includes(name),
+    );
+    const mergedTools: string[] = Array.from(new Set([...withoutLegacy, ...perTableWriteToolNames]));
+
+    const migratedTask: IScheduledTask = {
+      ...task,
+      tools: mergedTools,
+      updatedAt: new Date().toISOString(),
+    };
+
+    return {
+      task: migratedTask,
+      changed: true,
+      replacedTools,
+      addedWriteTableTools: perTableWriteToolNames.length,
+    };
   }
 
   private async _saveTaskAsync(task: IScheduledTask): Promise<void> {

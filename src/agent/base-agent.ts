@@ -461,9 +461,20 @@ export abstract class BaseAgentBase {
         if (stepNumber > 0 && onStepAsync) {
           const toolCalls: IToolCallSummary[] = _extractLastAssistantToolCalls(messages);
 
+          logger.debug("prepareStep onStep callback payload", {
+            stepNumber,
+            messageCount: messages.length,
+            toolCallsCount: toolCalls.length,
+            toolNames: toolCalls.map((toolCall: IToolCallSummary): string => toolCall.name),
+          });
+
           try {
             await onStepAsync(stepNumber, toolCalls);
-          } catch {
+          } catch (callbackError: unknown) {
+            logger.warn("onStep callback failed in prepareStep", {
+              stepNumber,
+              error: callbackError instanceof Error ? callbackError.message : String(callbackError),
+            });
             // Ignore step callback errors — never let UI failures affect agent execution
           }
         }

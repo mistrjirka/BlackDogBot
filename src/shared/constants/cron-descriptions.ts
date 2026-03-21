@@ -109,8 +109,8 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "where (string, optional SQL WHERE); orderBy (string, optional); limit (number, optional, default 100); columns (string[], optional).",
 
   write_to_database:
-    "Insert rows into a database table. Use just the database name, not a file path. " +
-    "Args: databaseName (string, required); tableName (string, required); " +
+    "Deprecated generic write tool. Prefer table-specific tools named write_table_<tableName> (for example write_table_news_items). " +
+    "Use just the database name, not a file path. Args: databaseName (string, required); tableName (string, required); " +
     "data (array of row objects, required, e.g. [{title: 'Hello', score: 5}]).",
 
   update_database:

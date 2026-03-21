@@ -13,7 +13,7 @@ const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
 ]);
 
 export const writeToDatabaseTool = tool({
-  description: "Write a row of data into a table in a database. Prefer per-table tools (write_to_<tableName>) when available — they enforce exact column schemas.",
+  description: "Write a row of data into a table in a database. Prefer per-table tools (write_table_<tableName>) when available — they enforce exact column schemas.",
   inputSchema: z.object({
     databaseName: z.string()
       .min(1)

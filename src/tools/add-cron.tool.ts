@@ -104,8 +104,9 @@ export const addCronTool = tool({
     try {
       // 0. Validate tool names at runtime
       const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
+      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
       const invalidTools: string[] = tools.filter(
-        (t) => !validToolSet.has(t),
+        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
       );
       if (invalidTools.length > 0) {
         return {

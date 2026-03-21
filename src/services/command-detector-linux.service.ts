@@ -6,6 +6,7 @@ import { LoggerService } from "./logger.service.js";
 //#region Constants
 
 const STRACE_TIMEOUT_MS: number = 5000;
+const DETECTOR_STARTUP_GRACE_MS: number = 200;
 
 //#endregion Constants
 
@@ -34,6 +35,7 @@ export class CommandDetectorLinuxService {
   private _logger: LoggerService;
   private _detectors: Map<string, IDetectorEntry>;
   private _stracePath: string | null;
+  private _stdbufPath: string | null;
 
   //#endregion Data members
 
@@ -43,6 +45,7 @@ export class CommandDetectorLinuxService {
     this._logger = LoggerService.getInstance();
     this._detectors = new Map();
     this._stracePath = null;
+    this._stdbufPath = null;
   }
 
   //#endregion Constructors
@@ -55,6 +58,10 @@ export class CommandDetectorLinuxService {
     }
 
     return CommandDetectorLinuxService._instance;
+  }
+
+  public static resetForTesting(): void {
+    CommandDetectorLinuxService._instance = null;
   }
 
   public async startAsync(pid: number, onStdinBlocked: () => void): Promise<IStartResult> {
@@ -73,6 +80,10 @@ export class CommandDetectorLinuxService {
         this._stracePath = straceCheck;
       }
 
+      if (!this._stdbufPath) {
+        this._stdbufPath = this._checkStdbufExists();
+      }
+
       const ptraceAvailable: boolean = this._checkPtraceAvailability();
 
       if (!ptraceAvailable) {
@@ -84,18 +95,34 @@ export class CommandDetectorLinuxService {
       }
 
       const handleId: string = this._generateHandleId();
-      const straceProcess: ReturnType<typeof spawn> = spawn(this._stracePath, [
+      const straceArgs: string[] = [
         "-f",
         "-e",
-        "trace=read,poll,ppoll,pselect,pselect6,select",
+        "trace=read,poll,ppoll,pselect6,select",
         "-p",
         pid.toString(),
-        "-o",
-        "/dev/stdout",
-      ], {
+      ];
+
+      let command: string;
+      let args: string[];
+
+      if (this._stdbufPath) {
+        command = this._stdbufPath;
+        args = ["-oL", this._stracePath!, ...straceArgs];
+      } else {
+        command = this._stracePath!;
+        args = straceArgs;
+      }
+
+      const straceProcess: ReturnType<typeof spawn> = spawn(command, args, {
         stdio: ["ignore", "pipe", "pipe"],
         detached: false,
       });
+
+      let startupError: string | null = null;
+      let startupExited: boolean = false;
+      let startupExitCode: number | null = null;
+      let startupExitSignal: string | null = null;
 
       const entry: IDetectorEntry = {
         handleId,
@@ -112,18 +139,46 @@ export class CommandDetectorLinuxService {
       });
 
       straceProcess.stderr?.on("data", (data: Buffer): void => {
-        this._logger.debug("strace stderr", { handleId, data: data.toString() });
+        const output: string = data.toString();
+        this._logger.debug("strace stderr", { handleId, data: output });
+        this._parseStraceOutput(handleId, output);
+
+        if (this._isStraceStartupFailureOutput(output)) {
+          startupError = output.trim();
+        }
       });
 
       straceProcess.on("error", (error: Error): void => {
+        startupError = error.message;
         this._logger.error("strace process error", { handleId, pid, error: error.message });
         void this.stopAsync(handleId);
       });
 
       straceProcess.on("exit", (code: number | null, signal: string | null): void => {
+        startupExited = true;
+        startupExitCode = code;
+        startupExitSignal = signal;
         this._logger.debug("strace process exited", { handleId, pid, code, signal });
         this._detectors.delete(handleId);
       });
+
+      await new Promise<void>((resolve): void => {
+        setTimeout(resolve, DETECTOR_STARTUP_GRACE_MS);
+      });
+
+      if (startupError || startupExited) {
+        this._detectors.delete(handleId);
+
+        const error: string = startupError
+          ? `strace failed to attach: ${startupError}`
+          : `strace exited during startup (code=${String(startupExitCode)}, signal=${String(startupExitSignal)})`;
+
+        return {
+          handleId: "",
+          available: false,
+          error,
+        };
+      }
 
       this._logger.debug("strace detector started", { handleId, pid });
 
@@ -217,6 +272,23 @@ export class CommandDetectorLinuxService {
     }
   }
 
+  private _checkStdbufExists(): string | null {
+    try {
+      const whichResult: string = execSync("which stdbuf", {
+        encoding: "utf-8",
+        timeout: STRACE_TIMEOUT_MS,
+      }).trim();
+
+      if (whichResult && whichResult.length > 0) {
+        return whichResult;
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   private _checkPtraceAvailability(): boolean {
     try {
       const content: string = fs.readFileSync(
@@ -229,6 +301,22 @@ export class CommandDetectorLinuxService {
     } catch {
       return false;
     }
+  }
+
+  private _isStraceStartupFailureOutput(output: string): boolean {
+    const lower: string = output.toLowerCase();
+
+    if (!lower.includes("strace:")) {
+      return false;
+    }
+
+    return (
+      lower.includes("attach:") ||
+      lower.includes("operation not permitted") ||
+      lower.includes("permission denied") ||
+      lower.includes("no such process") ||
+      lower.includes("invalid system call")
+    );
   }
 
   private _parseStraceOutput(handleId: string, output: string): void {

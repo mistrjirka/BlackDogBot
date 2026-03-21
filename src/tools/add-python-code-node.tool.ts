@@ -41,7 +41,7 @@ export function createAddPythonCodeNodeTool(jobTracker: IJobActivityTracker) {
 
         if (sqliteImportPattern.test(code) || sqliteUsagePattern.test(code)) {
           throw new Error(
-            "Python sqlite libraries are not allowed. Use the database nodes instead: create_table, write_to_database, read_from_database, update_database, and delete_from_database. If the task cannot be expressed with these nodes, tell the user which database node is missing.",
+            "Python sqlite libraries are not allowed. Use the database nodes instead: create_table, write_table_<tableName>, read_from_database, update_database, and delete_from_database. If the task cannot be expressed with these nodes, tell the user which database node is missing.",
           );
         }
 

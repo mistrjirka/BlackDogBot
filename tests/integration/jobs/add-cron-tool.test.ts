@@ -158,9 +158,9 @@ describe("addCronTool", () => {
         "1. Use think to plan the execution order. " +
         "2. Use searxng to search the web for 'artificial intelligence 2026'. Take the top 3 result titles and URLs from the search output. " +
         "3. Use fetch_rss to fetch the Hacker News RSS feed at https://news.ycombinator.com/rss. Take the top 3 item titles and URLs from the feed. " +
-        "4. Use write_to_database to insert each article into the 'news' database with databaseName='news' and tableName='articles' (columns: id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL, source TEXT NOT NULL, fetched_at TEXT NOT NULL). Use source='searxng' for searxng results and source='rss' for RSS items. Set fetched_at to the current ISO timestamp. " +
+        "4. Use write_table_articles to insert each article into the 'news' database table 'articles' (columns: id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, url TEXT NOT NULL, source TEXT NOT NULL, fetched_at TEXT NOT NULL). Use source='searxng' for searxng results and source='rss' for RSS items. Set fetched_at to the current ISO timestamp. " +
         "5. Use send_message to send the user a numbered list of all stored article titles.",
-      tools: ["think", "searxng", "fetch_rss", "write_to_database", "send_message"],
+      tools: ["think", "searxng", "fetch_rss", "write_table_articles", "send_message"],
       scheduleType: "cron",
       scheduleCron: "0 * * * *",
       notifyUser: false,

@@ -136,7 +136,7 @@ not the same as node types.
 | `write_file` | Write a file to the workspace |
 | `append_file` | Append content to a file |
 | `edit_file` | Edit a file in place |
-| `write_to_database` | Insert a row into a database table. Requires databaseName, tableName, and data (key-value pairs matching column names). |
+| `write_table_<tableName>` | Insert rows into a specific table using schema-validated per-table tools. Use the exact tool for your table, e.g. `write_table_news_items`. |
 | `read_from_database` | Query rows from a database table with optional WHERE, ORDER BY, LIMIT, and column selection. |
 | `list_databases` | List all available databases. |
 | `list_tables` | List all tables in a specific database. |
@@ -151,6 +151,12 @@ not the same as node types.
 - `send_message` requires execution messaging context (for example when the job
    is run from a chat). In headless runs (e.g., some scheduled/background
    executions), messages are logged instead of being delivered to a user chat.
+- `run_cmd` mode guidance: use `foreground` for short commands where you need
+  final output immediately; use `background` for long-running commands and then
+  continue with `get_cmd_status`/`get_cmd_output` and optionally `stop_cmd`.
+- `run_cmd` stdin guidance: if a command may pause for input, enable
+  `deterministicInputDetection` in `foreground` mode; if status becomes
+  `awaiting_input`, use `run_cmd_input` with `handleId` to continue.
 - Choose only the tools the agent actually needs. Fewer tools = more
   focused behavior.
 - **Do not confuse these with node types** (`curl_fetcher`, `crawl4ai`,

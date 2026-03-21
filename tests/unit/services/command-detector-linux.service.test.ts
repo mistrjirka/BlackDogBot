@@ -5,8 +5,9 @@ describe("CommandDetectorLinuxService", () => {
   let service: CommandDetectorLinuxService;
 
   beforeEach(() => {
+    CommandDetectorLinuxService.resetForTesting();
     service = CommandDetectorLinuxService.getInstance();
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   afterEach(async () => {
@@ -59,17 +60,44 @@ describe("CommandDetectorLinuxService", () => {
 
   describe("startAsync - strace not found", () => {
     it("returns available=false when strace not found", async () => {
-      vi.spyOn(require("child_process"), "execSync").mockImplementation(() => {
-        throw new Error("Command not found");
-      });
-
-      vi.spyOn(require("node:fs"), "readFileSync").mockReturnValue("0\n");
+      vi.spyOn(service as unknown as { _checkStraceExists: () => string | null }, "_checkStraceExists")
+        .mockReturnValue(null);
 
       const callback = vi.fn();
       const result = await service.startAsync(12345, callback);
 
       expect(result.available).toBe(false);
       expect(result.error).toContain("strace not found");
+    });
+  });
+
+  describe("startAsync - ptrace unavailable", () => {
+    it("returns available=false when ptrace is blocked", async () => {
+      vi.spyOn(service as unknown as { _checkStraceExists: () => string | null }, "_checkStraceExists")
+        .mockReturnValue("/usr/bin/strace");
+      vi.spyOn(service as unknown as { _checkPtraceAvailability: () => boolean }, "_checkPtraceAvailability")
+        .mockReturnValue(false);
+
+      const result = await service.startAsync(process.pid, vi.fn());
+
+      expect(result.available).toBe(false);
+      expect(result.error).toContain("ptrace is not available");
+    });
+  });
+
+  describe("_isStraceStartupFailureOutput", () => {
+    it("detects startup failure text from strace", () => {
+      const match = (service as unknown as { _isStraceStartupFailureOutput: (output: string) => boolean })
+        ._isStraceStartupFailureOutput("strace: attach: ptrace(PTRACE_SEIZE, 123): Operation not permitted");
+
+      expect(match).toBe(true);
+    });
+
+    it("ignores non-failure output", () => {
+      const match = (service as unknown as { _isStraceStartupFailureOutput: (output: string) => boolean })
+        ._isStraceStartupFailureOutput("read(0, \"abc\", 1024) = 3");
+
+      expect(match).toBe(false);
     });
   });
 });

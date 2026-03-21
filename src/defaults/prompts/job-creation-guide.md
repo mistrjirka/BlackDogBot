@@ -82,12 +82,12 @@ Alternatively, for jobs not in creation mode:
 
 - > **NEVER use `python_code` to interact with databases.**
   > Database persistence is handled exclusively by the `litesql` node and by
-  > `agent` nodes with `write_to_database` / `read_from_database` tools.
+  > `agent` nodes with `write_table_<tableName>` / `read_from_database` tools.
   > Database reads are handled by the `litesql_reader` node or by `agent`
   > nodes with `read_from_database`.
   > Writing Python that opens a `sqlite3` connection, runs INSERT statements,
   > or manages `.db` files is **always wrong** — no exceptions. Use the
-  > purpose-built `litesql` node and the `create_table` / `write_to_database` /
+  > purpose-built `litesql` node and the `create_table` / `write_table_<tableName>` /
   > `read_from_database` tools instead.
 
 - Every URL, query, and body field in fetcher nodes supports `{{key}}`
@@ -178,7 +178,7 @@ this means chaining each new node to the previously created node.
 > **NEVER write Python code that opens a SQLite connection.**
 > Any `python_code` node containing `import sqlite3`, `conn.execute(...)`, or
 > similar is always wrong. Use the `litesql` node and the `create_table` /
-> `write_to_database` / `read_from_database` tools.
+> `write_table_<tableName>` / `read_from_database` tools.
 
 ### When to use litesql / litesql_reader vs agent with DB tools
 
@@ -186,7 +186,7 @@ this means chaining each new node to the previously created node.
 |---|---|
 | Every input record should be inserted as-is, no logic needed | `litesql` node |
 | Simple deterministic read (e.g. last N hours, all rows) | `litesql_reader` node |
-| Need to read from the DB before deciding what to write | `agent` node with `read_from_database` + `write_to_database` |
+| Need to read from the DB before deciding what to write | `agent` node with `read_from_database` + `write_table_<tableName>` |
 | Need conditional writes (e.g. skip duplicates, filter by rule) | `agent` node with DB tools |
 | Need to query data for summaries / reports | `agent` node with `read_from_database` |
 | Simple end-of-pipeline persistence (insert and done) | `litesql` node |
@@ -215,7 +215,7 @@ these tools directly to set up the schema:
 - `get_table_schema` — inspects a table's columns
 
 At **pipeline runtime**, `agent` nodes can use these tools via `selectedTools`:
-- `write_to_database` — inserts or updates rows
+- `write_table_<tableName>` — inserts rows using the table-specific validated tool
 - `read_from_database` — queries rows
 - `create_table` — creates a table if needed
 - `list_databases` / `list_tables` / `get_table_schema` — introspection
@@ -257,7 +257,7 @@ At **pipeline runtime**, `agent` nodes can use these tools via `selectedTools`:
 > `pubDate`, `title`, `link`). The agent completely replaces upstream data;
 > fields not in the agent's output are lost. If the table needs fields from
 > both the RSS fetcher and the agent's analysis, the agent must output both
-> sets of fields. Alternatively, give the agent `write_to_database` in its
+> sets of fields. Alternatively, give the agent table-specific `write_table_<tableName>` tools in its
 > `selectedTools` and let it handle storage itself (preferred for complex
 > pipelines).
 >
@@ -270,7 +270,7 @@ At **pipeline runtime**, `agent` nodes can use these tools via `selectedTools`:
 If an `agent` node must read from or write to a database (e.g. an agent that
 checks existing records before deciding what to store), add these tools to its
 `selectedTools`:
-- `write_to_database` — inserts or updates rows
+- `write_table_<tableName>` — inserts rows using the table-specific validated tool
 - `read_from_database` — queries rows
 - `create_table` — creates a table if needed
 - `list_databases` / `list_tables` / `get_table_schema` — introspection
@@ -304,10 +304,10 @@ start_job_creation                                          → startNodeId "s1"
 add_rss_fetcher_node(parentNodeId = "s1", mode = "unseen") → nodeId "n1"
 add_agent_node(                                             → nodeId "n2"
   parentNodeId  = "n1",
-  selectedTools = ["write_to_database", "read_from_database",
+  selectedTools = ["write_table_interesting_items", "read_from_database",
                    "list_databases", "list_tables"],
   systemPrompt  = "You receive RSS feed items. For each item, decide if it is
-                   interesting. Store interesting items using write_to_database
+                   interesting. Store interesting items using write_table_interesting_items
                    (database=news, table=interesting_items). Include title,
                    link, summary, and stored_at (ISO timestamp)."
 )
@@ -534,7 +534,7 @@ This is typically used at the **end of a pipeline** to persist data.
 
 > **If you need to read from the database, check for duplicates, or apply
 > conditional logic before writing — use an `agent` node with `selectedTools`
-> including `write_to_database` and `read_from_database` instead.**
+> including table-specific `write_table_<tableName>` tools and `read_from_database` instead.**
 
 **Important:** Before using this node, you MUST:
 1. Use `list_databases` to see existing databases

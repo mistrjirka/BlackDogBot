@@ -383,6 +383,13 @@ export class MainAgent extends BaseAgentBase {
     const trackedDoneTool = createDoneTool(jobTracker);
 
     const combinedOnStepAsync = async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
+      this._logger.debug("MainAgent combinedOnStep callback invoked", {
+        chatId,
+        stepNumber,
+        toolCallsCount: toolCalls.length,
+        toolNames: toolCalls.map((tc: IToolCallSummary): string => tc.name),
+      });
+
       await brainInterface.emitStepStartedAsync(chatId, stepNumber);
 
       // Update status to show tool execution progress
@@ -432,7 +439,17 @@ export class MainAgent extends BaseAgentBase {
       }
 
       if (onStepAsync) {
+        this._logger.debug("Forwarding onStep callback to platform handler", {
+          chatId,
+          stepNumber,
+          toolCallsCount: toolCalls.length,
+        });
         await onStepAsync(stepNumber, toolCalls);
+      } else {
+        this._logger.debug("No platform onStep callback registered", {
+          chatId,
+          stepNumber,
+        });
       }
     };
 
@@ -464,6 +481,11 @@ export class MainAgent extends BaseAgentBase {
       // shouldTerminateRun: hard-stop the current generate run after successful create_table
       (): boolean => session.terminateCurrentRun,
     );
+
+    this._logger.debug("MainAgent _buildAgent completed", {
+      chatId,
+      hasOnStepCallback: onStepAsync !== undefined,
+    });
 
     // Register hot-reload callback for per-table tools
     const currentFilteredTools: ToolSet = filteredTools;
@@ -500,6 +522,12 @@ export class MainAgent extends BaseAgentBase {
         (): AbortSignal | null => session.abortController?.signal ?? null,
         (): boolean => session.terminateCurrentRun,
       );
+
+      this._logger.debug("MainAgent _buildAgent completed after hot-reload", {
+        chatId,
+        hasOnStepCallback: onStepAsync !== undefined,
+        toolCount: Object.keys(reFilteredTools).length,
+      });
 
       this._logger.info("Agent tools hot-reloaded", {
         chatId,

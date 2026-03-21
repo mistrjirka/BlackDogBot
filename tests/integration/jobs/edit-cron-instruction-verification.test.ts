@@ -32,7 +32,7 @@ async function createTaskDirectly(overrides?: Partial<IScheduledTask>): Promise<
     name: "Test Task",
     description: "Test task",
     instructions: "Fetch RSS from http://example.com/feed.xml and store in database.",
-    tools: ["fetch_rss", "write_to_database", "send_message"],
+    tools: ["fetch_rss", "write_table_news_items", "send_message"],
     schedule: { type: "cron", expression: "0 */2 * * *" },
     enabled: true,
     notifyUser: false,

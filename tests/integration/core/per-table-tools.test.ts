@@ -162,7 +162,7 @@ describe("Per-Table Write Tools", () => {
     });
   });
 
-  describe("write_to_database runtime validation", () => {
+  describe("write table runtime validation", () => {
     it("should auto-fill created_at and succeed", async () => {
       await litesql.createDatabaseAsync("testdb");
       await litesql.createTableAsync("testdb", "articles", [
@@ -501,7 +501,7 @@ describe("Per-Table Write Tools", () => {
     });
   });
 
-  describe("write_to_database NOT NULL bug fix", () => {
+  describe("write table NOT NULL bug fix", () => {
     it("should flag column as required when notNull=true and defaultValue is empty string", async () => {
       // Simulate a column where defaultValue might be empty string
       await litesql.createDatabaseAsync("testdb");

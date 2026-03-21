@@ -184,7 +184,11 @@ export class TelegramHandler {
       if (stepLogs.length === 0) {
         return status;
       }
-      return `${status}\n\n<blockquote expandable>${stepLogs.join("\n")}</blockquote>`;
+      const escapedStepLogs: string = stepLogs
+        .map((line: string): string => _escapeTelegramHtml(line))
+        .join("\n");
+
+      return `${status}\n\n<blockquote expandable>${escapedStepLogs}</blockquote>`;
     };
 
     try {
@@ -213,25 +217,71 @@ export class TelegramHandler {
         const progressMsg = await ctx.reply("⚙️ Working...", { parse_mode: "HTML" });
         progressMsgId = progressMsg.message_id;
         this._inFlightMessageIdByChat.set(chatId, progressMsgId);
-      } catch {
+      } catch (progressError: unknown) {
+        this._logger.warn("Failed to send initial Telegram progress message", {
+          chatId,
+          error: progressError instanceof Error ? progressError.message : String(progressError),
+        });
         // Continue without progress message
       }
+
+      this._logger.debug("Telegram progress callback setup", {
+        chatId,
+        hasProgressMessage: progressMsgId !== null,
+      });
 
       const onStepAsync: OnStepCallback | undefined =
         progressMsgId !== null
           ? async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
+              this._logger.debug("Telegram onStep callback invoked", {
+                chatId,
+                stepNumber,
+                toolCallsCount: toolCalls.length,
+                toolNames: toolCalls.map((tc: IToolCallSummary): string => tc.name),
+                stepLogsCountBefore: stepLogs.length,
+              });
+
               if (toolCalls.length > 0) {
                 const formatted: string = toolCalls
                   .map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input))
                   .join(", ");
                 stepLogs.push(`Step ${stepNumber}: ${formatted}`);
+
+                this._logger.debug("Telegram tool step appended to progress trace", {
+                  chatId,
+                  stepNumber,
+                  formattedLength: formatted.length,
+                  stepLogsCountAfter: stepLogs.length,
+                  formattedPreview: formatted.slice(0, 180),
+                });
+              } else {
+                this._logger.debug("Telegram onStep received empty toolCalls", {
+                  chatId,
+                  stepNumber,
+                  stepLogsCount: stepLogs.length,
+                });
               }
 
+              const progressText: string = buildProgressText("⚙️ Working...");
+
               try {
-                await ctx.api.editMessageText(chatId, progressMsgId!, buildProgressText("⚙️ Working..."), {
+                await ctx.api.editMessageText(chatId, progressMsgId!, progressText, {
                   parse_mode: "HTML",
                 });
-              } catch {
+                this._logger.debug("Telegram progress message updated", {
+                  chatId,
+                  stepNumber,
+                  progressLength: progressText.length,
+                  hasTrace: stepLogs.length > 0,
+                });
+              } catch (editError: unknown) {
+                this._logger.warn("Failed to update Telegram progress message", {
+                  chatId,
+                  stepNumber,
+                  progressLength: progressText.length,
+                  hasTrace: stepLogs.length > 0,
+                  error: editError instanceof Error ? editError.message : String(editError),
+                });
                 // Ignore edit failures
               }
             }
@@ -260,13 +310,26 @@ export class TelegramHandler {
         if (progressMsgId !== null) {
           try {
             const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
+            const doneProgressText: string = buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`);
             await ctx.api.editMessageText(
               chatId,
               progressMsgId,
-              buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`),
+              doneProgressText,
               { parse_mode: "HTML" }
             );
-          } catch {
+            this._logger.debug("Telegram progress marked done", {
+              chatId,
+              stepsCount: result.stepsCount,
+              progressLength: doneProgressText.length,
+              hasTrace: stepLogs.length > 0,
+            });
+          } catch (doneEditError: unknown) {
+            this._logger.warn("Failed to mark Telegram progress as done", {
+              chatId,
+              stepsCount: result.stepsCount,
+              hasTrace: stepLogs.length > 0,
+              error: doneEditError instanceof Error ? doneEditError.message : String(doneEditError),
+            });
             // Ignore
           }
         }
@@ -330,10 +393,21 @@ export class TelegramHandler {
       // Update progress message to error state
       if (progressMsgId !== null) {
         try {
-          await ctx.api.editMessageText(chatId, progressMsgId, buildProgressText("❌ Error"), {
+          const errorProgressText: string = buildProgressText("❌ Error");
+          await ctx.api.editMessageText(chatId, progressMsgId, errorProgressText, {
             parse_mode: "HTML",
           });
-        } catch {
+          this._logger.debug("Telegram progress marked error", {
+            chatId,
+            progressLength: errorProgressText.length,
+            hasTrace: stepLogs.length > 0,
+          });
+        } catch (errorEditError: unknown) {
+          this._logger.warn("Failed to mark Telegram progress as error", {
+            chatId,
+            hasTrace: stepLogs.length > 0,
+            error: errorEditError instanceof Error ? errorEditError.message : String(errorEditError),
+          });
           // Ignore
         }
       }
@@ -587,6 +661,13 @@ function _buildCancelResponseText(
   }
 
   return `Cancelled: ${details.join(", ")}.`;
+}
+
+function _escapeTelegramHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function _formatReasoningSuffix(input: Record<string, unknown>): string {

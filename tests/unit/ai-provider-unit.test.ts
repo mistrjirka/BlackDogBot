@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 import { AiProviderService } from "../../src/services/ai-provider.service.js";
+import { SchedulerService } from "../../src/services/scheduler.service.js";
+import * as litesql from "../../src/helpers/litesql.js";
+import { ConfigService } from "../../src/services/config.service.js";
 import { resetSingletons } from "../utils/test-helpers.js";
 import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
 import type { IAiConfig } from "../../src/shared/types/index.js";
@@ -39,6 +45,29 @@ describe("AiProviderService unit", () => {
   beforeEach(() => {
     resetSingletons();
   });
+
+  async function buildScheduledTaskAsync(taskId: string, tools: string[]): Promise<any> {
+    const nowIso: string = new Date().toISOString();
+
+    return {
+      taskId,
+      name: "Legacy Write Task",
+      description: "Legacy cron task",
+      instructions: "Test migration",
+      tools,
+      schedule: { type: "cron", expression: "0 */6 * * *" },
+      notifyUser: false,
+      enabled: false,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      lastRunAt: null,
+      lastRunStatus: null,
+      lastRunError: null,
+      messageHistory: [],
+      messageSummary: null,
+      summaryGeneratedAt: null,
+    };
+  }
 
   afterEach(() => {
     resetSingletons();
@@ -125,6 +154,65 @@ describe("AiProviderService unit", () => {
 
       expect(service.getActiveProvider()).toBe("openai-compatible");
     });
+  });
+
+  describe("Scheduler legacy write tool migration", () => {
+    it("should replace write_to_database with all write_table tools at startup", async () => {
+      const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-scheduler-migrate-"));
+      const originalHome = process.env.HOME ?? os.homedir();
+
+      try {
+        process.env.HOME = tempRoot;
+
+        const betterClawDir = path.join(tempRoot, ".betterclaw");
+        const cronDir = path.join(betterClawDir, "cron");
+        const configDir = betterClawDir;
+        await fs.mkdir(cronDir, { recursive: true });
+
+        const realConfigPath = path.join(originalHome, ".betterclaw", "config.yaml");
+        const tempConfigPath = path.join(configDir, "config.yaml");
+        await fs.cp(realConfigPath, tempConfigPath);
+
+        resetSingletons();
+
+        const configService = ConfigService.getInstance();
+        await configService.initializeAsync(tempConfigPath);
+
+        const aiService = AiProviderService.getInstance();
+        aiService.initialize(configService.getConfig().ai);
+
+        await litesql.createDatabaseAsync("test_db");
+        await litesql.createTableAsync("test_db", "users", [
+          { name: "id", type: "INTEGER", primaryKey: true },
+          { name: "name", type: "TEXT" },
+        ]);
+
+        const task = await buildScheduledTaskAsync("legacy-task-1", [
+          "fetch_rss",
+          "write_to_database",
+          "send_message",
+        ]);
+        await fs.writeFile(path.join(cronDir, "legacy-task-1.json"), JSON.stringify(task, null, 2), "utf-8");
+
+        const scheduler = SchedulerService.getInstance();
+        await scheduler.startAsync();
+
+        const loadedTask = await scheduler.getTaskAsync("legacy-task-1");
+        expect(loadedTask).toBeDefined();
+        expect(loadedTask!.tools).not.toContain("write_to_database");
+        expect(loadedTask!.tools).toContain("write_table_users");
+
+        const persistedRaw = await fs.readFile(path.join(cronDir, "legacy-task-1.json"), "utf-8");
+        const persisted = JSON.parse(persistedRaw) as { tools: string[] };
+        expect(persisted.tools).not.toContain("write_to_database");
+        expect(persisted.tools).toContain("write_table_users");
+
+        await scheduler.stopAsync();
+      } finally {
+        process.env.HOME = originalHome;
+        await fs.rm(tempRoot, { recursive: true, force: true });
+      }
+    }, 60000);
   });
 
   describe("error paths", () => {

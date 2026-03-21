@@ -316,6 +316,57 @@ describe("TelegramHandler", () => {
     );
   }, 120000);
 
+  it("should escape HTML in progress trace tool calls", async () => {
+    const mainAgent: MainAgent = MainAgent.getInstance();
+
+    let capturedOnStep: ((stepNumber: number, toolCalls: Array<{ name: string; input: Record<string, unknown> }>) => Promise<void>) | undefined;
+
+    vi.spyOn(mainAgent, "initializeForChatAsync").mockImplementation(async (
+      _chatId,
+      _sender,
+      _photoSender,
+      onStepAsync,
+    ) => {
+      capturedOnStep = onStepAsync;
+    });
+
+    vi.spyOn(mainAgent, "processMessageForChatAsync").mockImplementation(async () => {
+      if (capturedOnStep) {
+        await capturedOnStep(1, [{
+          name: "run_cmd",
+          input: {
+            command: "echo <unsafe>&\"chars\"",
+          },
+        }]);
+      }
+
+      return {
+        text: "Done",
+        stepsCount: 1,
+      };
+    });
+
+    const editMessageTextSpy: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined);
+    const ctx: Context = makeCtx({
+      chatId: 100,
+      text: "run tool",
+      replyImpl: async (): Promise<{ message_id: number }> => ({ message_id: 6001 }),
+    });
+    (ctx as unknown as { api?: unknown }).api = {
+      editMessageText: editMessageTextSpy,
+    };
+
+    const handler: TelegramHandler = TelegramHandler.getInstance();
+    await handler.handleMessageAsync(ctx);
+
+    expect(editMessageTextSpy).toHaveBeenCalled();
+
+    const serializedCalls: string = JSON.stringify(editMessageTextSpy.mock.calls);
+    expect(serializedCalls).toContain("&lt;unsafe&gt;");
+    expect(serializedCalls).toContain("&amp;");
+    expect(serializedCalls).not.toContain("<unsafe>");
+  }, 120000);
+
   it("should cancel in-flight run, delete prompt, and clear all queued messages on /cancel", async () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
 

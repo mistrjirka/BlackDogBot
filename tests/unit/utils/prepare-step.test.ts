@@ -127,12 +127,12 @@ describe("prepare-step reasoning requirement", () => {
 describe("prepare-step duplicate tool-call detection", () => {
   it("should not detect duplicate loop before threshold of 3 identical steps", () => {
     const messages: ModelMessage[] = [
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1, title: "A" }],
       }),
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1, title: "A" }],
@@ -144,17 +144,17 @@ describe("prepare-step duplicate tool-call detection", () => {
 
   it("should detect duplicate loop after 3 consecutive identical tool-call steps", () => {
     const messages: ModelMessage[] = [
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1, title: "A" }],
       }),
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1, title: "A" }],
       }),
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1, title: "A" }],
@@ -166,17 +166,17 @@ describe("prepare-step duplicate tool-call detection", () => {
 
   it("should not detect duplicate loop when nested args differ", () => {
     const messages: ModelMessage[] = [
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1, title: "A" }],
       }),
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 2, title: "B" }],
       }),
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 3, title: "C" }],
@@ -188,17 +188,17 @@ describe("prepare-step duplicate tool-call detection", () => {
 
   it("should detect duplicate loop when nested args are semantically identical with different key order", () => {
     const messages: ModelMessage[] = [
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         tableName: "items",
         data: [{ title: "A", id: 1 }],
         databaseName: "db",
       }),
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1, title: "A" }],
       }),
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         data: [{ title: "A", id: 1 }],
         databaseName: "db",
         tableName: "items",
@@ -210,18 +210,18 @@ describe("prepare-step duplicate tool-call detection", () => {
 
   it("should not detect duplicate loop when assistant messages are not consecutive", () => {
     const messages: ModelMessage[] = [
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1 }],
       }),
       _assistantTextMessage("I will do something else now."),
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1 }],
       }),
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1 }],
@@ -233,12 +233,12 @@ describe("prepare-step duplicate tool-call detection", () => {
 
   it("should not detect duplicate loop if most recent assistant step is think", () => {
     const messages: ModelMessage[] = [
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1 }],
       }),
-      _assistantToolCallMessage("write_to_database", {
+      _assistantToolCallMessage("write_table_items", {
         databaseName: "db",
         tableName: "items",
         data: [{ id: 1 }],
