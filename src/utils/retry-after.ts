@@ -9,6 +9,34 @@ export interface I429BackoffDecision {
   source: "retry-after" | "rate-limit-reset" | "retry-after+rate-limit-reset" | "adaptive";
   retryAfterMs: number | null;
   rateLimitResetMs: number | null;
+  retryAfterSource:
+    | "header:retry-after-ms"
+    | "header:retry-after"
+    | "body:openrouter.metadata.headers.retry-after"
+    | "none";
+  rateLimitResetSource:
+    | "header:x-ratelimit-reset"
+    | "header:x-ratelimit-reset-requests"
+    | "body:openrouter.metadata.headers.x-ratelimit-reset"
+    | "none";
+}
+
+interface IRetryAfterExtraction {
+  waitMs: number | null;
+  source:
+    | "header:retry-after-ms"
+    | "header:retry-after"
+    | "body:openrouter.metadata.headers.retry-after"
+    | "none";
+}
+
+interface IRateLimitResetExtraction {
+  waitMs: number | null;
+  source:
+    | "header:x-ratelimit-reset"
+    | "header:x-ratelimit-reset-requests"
+    | "body:openrouter.metadata.headers.x-ratelimit-reset"
+    | "none";
 }
 
 /**
@@ -22,8 +50,12 @@ export interface I429BackoffDecision {
  * Returns `null` if the error is not a 429 or no retry-after info is found.
  */
 export function extractRetryAfterMs(error: unknown): number | null {
+  return extractRetryAfterDecision(error).waitMs;
+}
+
+function extractRetryAfterDecision(error: unknown): IRetryAfterExtraction {
   if (!APICallError.isInstance(error) || error.statusCode !== 429) {
-    return null;
+    return { waitMs: null, source: "none" };
   }
 
   const headers: Record<string, string> | undefined = error.responseHeaders;
@@ -37,7 +69,10 @@ export function extractRetryAfterMs(error: unknown): number | null {
       const ms: number = parseFloat(retryAfterMs);
 
       if (!Number.isNaN(ms) && ms > 0) {
-        return Math.min(ms, MAX_RETRY_AFTER_MS);
+        return {
+          waitMs: Math.min(ms, MAX_RETRY_AFTER_MS),
+          source: "header:retry-after-ms",
+        };
       }
     }
 
@@ -49,7 +84,10 @@ export function extractRetryAfterMs(error: unknown): number | null {
       const seconds: number = parseFloat(retryAfter);
 
       if (!Number.isNaN(seconds) && seconds > 0) {
-        return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+        return {
+          waitMs: Math.min(seconds * 1000, MAX_RETRY_AFTER_MS),
+          source: "header:retry-after",
+        };
       }
 
       // HTTP-date format
@@ -59,7 +97,10 @@ export function extractRetryAfterMs(error: unknown): number | null {
         const delay: number = dateMs - Date.now();
 
         if (delay > 0) {
-          return Math.min(delay, MAX_RETRY_AFTER_MS);
+          return {
+            waitMs: Math.min(delay, MAX_RETRY_AFTER_MS),
+            source: "header:retry-after",
+          };
         }
       }
     }
@@ -70,46 +111,66 @@ export function extractRetryAfterMs(error: unknown): number | null {
     const openRouterMs: number | null = _parseOpenRouterRetryAfter(error.responseBody);
 
     if (openRouterMs !== null) {
-      return openRouterMs;
+      return {
+        waitMs: openRouterMs,
+        source: "body:openrouter.metadata.headers.retry-after",
+      };
     }
   }
 
-  return null;
+  return { waitMs: null, source: "none" };
 }
 
 export function extractRateLimitResetMs(error: unknown): number | null {
+  return extractRateLimitResetDecision(error).waitMs;
+}
+
+function extractRateLimitResetDecision(error: unknown): IRateLimitResetExtraction {
   if (!APICallError.isInstance(error) || error.statusCode !== 429) {
-    return null;
+    return { waitMs: null, source: "none" };
   }
 
   const headers: Record<string, string> | undefined = error.responseHeaders;
-  const headerValue: string | undefined = headers
-    ? (
-      headers["x-ratelimit-reset"] ??
-      headers["X-RateLimit-Reset"] ??
-      headers["x-ratelimit-reset-requests"] ??
-      headers["X-RateLimit-Reset-Requests"]
-    )
+  const headerRateLimitReset: string | undefined = headers
+    ? (headers["x-ratelimit-reset"] ?? headers["X-RateLimit-Reset"])
     : undefined;
+  const parsedFromRateLimitResetHeader: number | null = _parseResetValueToDelayMs(headerRateLimitReset);
+  if (parsedFromRateLimitResetHeader !== null) {
+    return {
+      waitMs: parsedFromRateLimitResetHeader,
+      source: "header:x-ratelimit-reset",
+    };
+  }
 
-  const parsedFromHeaders: number | null = _parseResetValueToDelayMs(headerValue);
-  if (parsedFromHeaders !== null) {
-    return parsedFromHeaders;
+  const headerRateLimitResetRequests: string | undefined = headers
+    ? (headers["x-ratelimit-reset-requests"] ?? headers["X-RateLimit-Reset-Requests"])
+    : undefined;
+  const parsedFromRateLimitResetRequestsHeader: number | null = _parseResetValueToDelayMs(headerRateLimitResetRequests);
+  if (parsedFromRateLimitResetRequestsHeader !== null) {
+    return {
+      waitMs: parsedFromRateLimitResetRequestsHeader,
+      source: "header:x-ratelimit-reset-requests",
+    };
   }
 
   if (typeof error.responseBody === "string") {
     const parsedFromBody: number | null = _parseOpenRouterRateLimitReset(error.responseBody);
     if (parsedFromBody !== null) {
-      return parsedFromBody;
+      return {
+        waitMs: parsedFromBody,
+        source: "body:openrouter.metadata.headers.x-ratelimit-reset",
+      };
     }
   }
 
-  return null;
+  return { waitMs: null, source: "none" };
 }
 
 export function resolve429Backoff(error: unknown, retryAttempt: number): I429BackoffDecision {
-  const retryAfterMs: number | null = extractRetryAfterMs(error);
-  const rateLimitResetMs: number | null = extractRateLimitResetMs(error);
+  const retryAfter: IRetryAfterExtraction = extractRetryAfterDecision(error);
+  const rateLimitReset: IRateLimitResetExtraction = extractRateLimitResetDecision(error);
+  const retryAfterMs: number | null = retryAfter.waitMs;
+  const rateLimitResetMs: number | null = rateLimitReset.waitMs;
 
   if (retryAfterMs !== null && rateLimitResetMs !== null) {
     const explicitWaitMs: number = Math.max(retryAfterMs, rateLimitResetMs);
@@ -119,6 +180,8 @@ export function resolve429Backoff(error: unknown, retryAttempt: number): I429Bac
       source: "retry-after+rate-limit-reset",
       retryAfterMs,
       rateLimitResetMs,
+      retryAfterSource: retryAfter.source,
+      rateLimitResetSource: rateLimitReset.source,
     };
   }
 
@@ -128,6 +191,8 @@ export function resolve429Backoff(error: unknown, retryAttempt: number): I429Bac
       source: "retry-after",
       retryAfterMs,
       rateLimitResetMs,
+      retryAfterSource: retryAfter.source,
+      rateLimitResetSource: rateLimitReset.source,
     };
   }
 
@@ -137,6 +202,8 @@ export function resolve429Backoff(error: unknown, retryAttempt: number): I429Bac
       source: "rate-limit-reset",
       retryAfterMs,
       rateLimitResetMs,
+      retryAfterSource: retryAfter.source,
+      rateLimitResetSource: rateLimitReset.source,
     };
   }
 
@@ -151,6 +218,8 @@ export function resolve429Backoff(error: unknown, retryAttempt: number): I429Bac
     source: "adaptive",
     retryAfterMs,
     rateLimitResetMs,
+    retryAfterSource: retryAfter.source,
+    rateLimitResetSource: rateLimitReset.source,
   };
 }
 

@@ -62,7 +62,7 @@ export const CONTEXT_EXCEEDED_RETRIES: number = 2;
 /**
  * How many times to wait and retry when receiving 429 rate limit errors.
  */
-const MAX_429_RETRIES: number = 3;
+const MAX_429_RETRIES: number = 8;
 
 /**
  * Token budget reserved for predictive compaction headroom.
@@ -209,9 +209,11 @@ export abstract class BaseAgentBase {
               logMessage: "Rate limited (429) in agent loop, waiting before retry",
               logContext: {
                 attempt,
+                emptyResponseAttempt: attempt,
                 agentAttempt: currentAgentAttempt,
                 agentAttemptTotal: totalAgentAttempts,
                 _429Retries,
+                current429RetryCount: _429Retries,
                 max429Retries: MAX_429_RETRIES,
               },
             });

@@ -79,6 +79,8 @@ describe("retry-after helpers", () => {
     expect(decision.source).toBe("retry-after+rate-limit-reset");
     expect(decision.waitMs).toBeGreaterThanOrEqual(22000);
     expect(decision.waitMs).toBeLessThanOrEqual(33000);
+    expect(decision.retryAfterSource).toBe("header:retry-after");
+    expect(decision.rateLimitResetSource).toBe("header:x-ratelimit-reset");
   });
 
   it("resolve429Backoff uses adaptive exponential fallback when no explicit delay exists", () => {
@@ -102,5 +104,53 @@ describe("retry-after helpers", () => {
     expect(firstDecision.waitMs).toBe(10000);
     expect(secondDecision.waitMs).toBe(20000);
     expect(thirdDecision.waitMs).toBe(40000);
+    expect(firstDecision.retryAfterSource).toBe("none");
+    expect(firstDecision.rateLimitResetSource).toBe("none");
+  });
+
+  it("resolve429Backoff reports retry-after-ms header source", () => {
+    const error: APICallError = create429Error({
+      responseHeaders: { "retry-after-ms": "7000" },
+    });
+
+    const decision = resolve429Backoff(error, 1);
+    expect(decision.source).toBe("retry-after");
+    expect(decision.retryAfterSource).toBe("header:retry-after-ms");
+    expect(decision.waitMs).toBeGreaterThanOrEqual(7700);
+    expect(decision.waitMs).toBeLessThanOrEqual(7701);
+  });
+
+  it("resolve429Backoff reports OpenRouter body retry-after source", () => {
+    const error: APICallError = create429Error({
+      responseBody: JSON.stringify({
+        error: {
+          metadata: {
+            headers: {
+              "Retry-After": "6",
+            },
+          },
+        },
+      }),
+    });
+
+    const decision = resolve429Backoff(error, 1);
+    expect(decision.source).toBe("retry-after");
+    expect(decision.retryAfterSource).toBe("body:openrouter.metadata.headers.retry-after");
+    expect(decision.waitMs).toBeGreaterThanOrEqual(6600);
+    expect(decision.waitMs).toBeLessThanOrEqual(6601);
+  });
+
+  it("resolve429Backoff reports x-ratelimit-reset-requests source", () => {
+    const resetAtMs: number = Date.now() + 12_000;
+    const error: APICallError = create429Error({
+      responseHeaders: {
+        "x-ratelimit-reset-requests": String(resetAtMs),
+      },
+    });
+
+    const decision = resolve429Backoff(error, 1);
+    expect(decision.source).toBe("rate-limit-reset");
+    expect(decision.rateLimitResetSource).toBe("header:x-ratelimit-reset-requests");
+    expect(decision.waitMs).toBeGreaterThanOrEqual(12_000);
   });
 });

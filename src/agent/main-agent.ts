@@ -124,6 +124,7 @@ const _GraphMutatingTools: Set<string> = new Set([
 
 /** Max times generate() can be restarted due to tool rebuild (create_table). */
 const MAX_TOOL_REBUILD_RESTARTS: number = 2;
+const MAX_429_RETRIES: number = 8;
 
 //#endregion Constants
 
@@ -700,7 +701,7 @@ export class MainAgent extends BaseAgentBase {
             };
           } catch (genError: unknown) {
             const aiErrorDetails = extractAiErrorDetails(genError);
-            const isRetriable429: boolean = aiErrorDetails.statusCode === 429 && _429Retries < 3;
+            const isRetriable429: boolean = aiErrorDetails.statusCode === 429 && _429Retries < MAX_429_RETRIES;
 
             // Handle context size exceeded errors (from hard gate or real API errors)
             // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
@@ -731,8 +732,10 @@ export class MainAgent extends BaseAgentBase {
                 logContext: {
                   chatId,
                   attempt,
+                  emptyResponseAttempt: attempt,
                   _429Retries,
-                  max429Retries: 3,
+                  current429RetryCount: _429Retries,
+                  max429Retries: MAX_429_RETRIES,
                 },
               });
               attempt--; // Don't burn the empty-response retry budget
