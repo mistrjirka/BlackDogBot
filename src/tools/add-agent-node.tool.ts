@@ -4,7 +4,7 @@ import { JobStorageService } from "../services/job-storage.service.js";
 import { IAgentNodeConfig, IJob, INode } from "../shared/types/index.js";
 import { type IJobActivityTracker } from "../utils/job-activity-tracker.js";
 import { createNodeAsync, type ICreateNodeResult } from "../utils/node-creation-helper.js";
-import { getAgentNodeToolNames } from "../utils/agent-node-tool-pool.js";
+import { getAgentNodeToolNamesAsync } from "../utils/agent-node-tool-pool.js";
 import { buildAsciiGraph } from "../utils/ascii-graph.js";
 import { IOutputSchemaBlueprint } from "../shared/schemas/output-schema-blueprint.schema.js";
 import { convertOutputSchemaBlueprintToJsonSchema } from "../utils/output-schema-blueprint.js";
@@ -42,7 +42,7 @@ export function createAddAgentNodeTool(jobTracker: IJobActivityTracker) {
     }): Promise<ICreateNodeResult & { graphAscii?: string }> => {
       try {
         if (!Array.isArray(selectedTools) || selectedTools.length === 0) {
-          const availableTools: string[] = getAgentNodeToolNames();
+          const availableTools: string[] = await getAgentNodeToolNamesAsync();
           throw new Error(
             "The agent doesn't have any tools. Please select some from the available tools: " +
               availableTools.join(", "),

@@ -8,7 +8,8 @@ import { resetSingletons } from "../../utils/test-helpers.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import { JobActivityTracker } from "../../../src/utils/job-activity-tracker.js";
-import { getAgentNodeToolNames } from "../../../src/utils/agent-node-tool-pool.js";
+import { getAgentNodeToolNamesAsync } from "../../../src/utils/agent-node-tool-pool.js";
+import * as litesql from "../../../src/helpers/litesql.js";
 import { createAddAgentNodeTool } from "../../../src/tools/add-agent-node.tool.js";
 
 
@@ -83,6 +84,38 @@ describe("add_agent_node (unit)", () => {
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/doesn't have any tools/i);
     expect(result.message).toMatch(/available tools/i);
-    expect(result.message).toContain(getAgentNodeToolNames().join(", "));
+    const toolNames: string[] = await getAgentNodeToolNamesAsync();
+    expect(result.message).toContain(toolNames.join(", "));
+  });
+
+  it("should include write_table_* tools in available tools message when tables exist", async () => {
+    await litesql.createDatabaseAsync("jobs");
+    await litesql.createTableAsync("jobs", "artifacts", [
+      { name: "id", type: "INTEGER", primaryKey: true },
+      { name: "name", type: "TEXT", notNull: true },
+    ]);
+
+    const storage: JobStorageService = JobStorageService.getInstance();
+    const job = await storage.createJobAsync("Test Job", "desc");
+
+    const tool = createAddAgentNodeTool(new JobActivityTracker());
+
+    const result = await execTool<{ success: boolean; message: string; error?: string }>(
+      tool,
+      {
+        jobId: job.jobId,
+        name: "Agent Without Tools",
+        description: "No tools selected",
+        outputSchema: { type: "object", fields: [{ name: "ok", type: "boolean" }] },
+        systemPrompt: "Do something",
+        selectedTools: [],
+        model: null,
+        reasoningEffort: "low",
+        maxSteps: 10,
+      },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("write_table_artifacts");
   });
 });

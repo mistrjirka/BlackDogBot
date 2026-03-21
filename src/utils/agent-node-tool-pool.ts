@@ -19,12 +19,14 @@ import {
   createTableTool,
   FileReadTracker,
 } from "../tools/index.js";
+import { buildPerTableToolsAsync } from "./per-table-tools.js";
 
 export type AgentNodeMessageSender = (message: string) => Promise<string | null>;
 
 export function createAgentNodeToolPool(
   logger: LoggerService,
   messageSender?: AgentNodeMessageSender,
+  perTableTools?: ToolSet,
 ): Record<string, ToolSet[string]> {
   const effectiveSender: AgentNodeMessageSender = messageSender ?? (async (message: string): Promise<string | null> => {
     logger.info("Agent node message", { message });
@@ -33,7 +35,7 @@ export function createAgentNodeToolPool(
 
   const readTracker: FileReadTracker = new FileReadTracker();
 
-  return {
+  const staticTools: Record<string, ToolSet[string]> = {
     think: thinkTool,
     run_cmd: runCmdTool,
     search_knowledge: searchKnowledgeTool,
@@ -50,8 +52,18 @@ export function createAgentNodeToolPool(
     get_table_schema: getTableSchemaTool,
     create_table: createTableTool,
   };
+
+  if (!perTableTools) {
+    return staticTools;
+  }
+
+  return {
+    ...staticTools,
+    ...perTableTools,
+  };
 }
 
-export function getAgentNodeToolNames(): string[] {
-  return Object.keys(createAgentNodeToolPool(LoggerService.getInstance()));
+export async function getAgentNodeToolNamesAsync(): Promise<string[]> {
+  const perTableTools: ToolSet = await buildPerTableToolsAsync();
+  return Object.keys(createAgentNodeToolPool(LoggerService.getInstance(), undefined, perTableTools));
 }

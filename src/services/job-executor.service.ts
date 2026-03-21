@@ -51,6 +51,7 @@ import {
   type AgentNodeMessageSender,
 } from "../utils/agent-node-tool-pool.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 
 // Default timeout for HTTP requests in node execution (30 seconds)
 const DEFAULT_FETCH_TIMEOUT_MS: number = 30000;
@@ -835,9 +836,11 @@ export class JobExecutorService {
     }
 
     // Build the tool set from selected tools
+    const perTableTools: ToolSet = await buildPerTableToolsAsync();
     const toolPool: Record<string, ToolSet[string]> = createAgentNodeToolPool(
       this._logger,
       options?.agentNodeMessageSender,
+      perTableTools,
     );
     const selectedTools: ToolSet = {};
 
