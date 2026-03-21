@@ -271,10 +271,10 @@ export class AiProviderService {
       this._supportsStructuredOutputs = true;
       this._supportsToolCalling = true;
       this._resolvedStructuredOutputMode = "native_json_schema";
-    } else if (configuredMode === "tool_emulated") {
+    } else if (configuredMode === "tool_emulated" || configuredMode === "tool_auto") {
       this._supportsStructuredOutputs = false;
       this._supportsToolCalling = true;
-      this._resolvedStructuredOutputMode = "tool_emulated";
+      this._resolvedStructuredOutputMode = configuredMode;
     } else {
       // Auto in sync init: use explicit endpoint flag when available, otherwise
       // conservative default that avoids response_format dependence.
@@ -720,6 +720,10 @@ export class AiProviderService {
         this._supportsStructuredOutputs = true;
         this._supportsToolCalling = true;
         this._resolvedStructuredOutputMode = "native_json_schema";
+      } else if (configuredMode === "tool_auto") {
+        this._supportsStructuredOutputs = false;
+        this._supportsToolCalling = true;
+        this._resolvedStructuredOutputMode = "tool_auto";
       } else {
         this._supportsStructuredOutputs = false;
         this._supportsToolCalling = true;
@@ -747,7 +751,7 @@ export class AiProviderService {
         const hasToolChoice: boolean = supportedParameters.has("tool_choice");
 
         this._supportsStructuredOutputs = hasStructuredOutputs || hasResponseFormat;
-        this._supportsToolCalling = hasTools && hasToolChoice;
+        this._supportsToolCalling = hasTools;
 
         if (this._supportsStructuredOutputs) {
           this._resolvedStructuredOutputMode = "native_json_schema";
@@ -762,8 +766,21 @@ export class AiProviderService {
           return;
         }
 
-        if (this._supportsToolCalling) {
+        if (hasTools && hasToolChoice) {
           this._resolvedStructuredOutputMode = "tool_emulated";
+          logger.info("Structured output mode auto-resolved from OpenRouter model metadata", {
+            provider: providerKey,
+            model: defaultModelId,
+            mode: this._resolvedStructuredOutputMode,
+            supportsStructuredOutputs: this._supportsStructuredOutputs,
+            supportsToolCalling: this._supportsToolCalling,
+            source: "openrouter_model_metadata",
+          });
+          return;
+        }
+
+        if (hasTools) {
+          this._resolvedStructuredOutputMode = "tool_auto";
           logger.info("Structured output mode auto-resolved from OpenRouter model metadata", {
             provider: providerKey,
             model: defaultModelId,
@@ -811,9 +828,25 @@ export class AiProviderService {
       return;
     }
 
+    const softToolCallingProbe: boolean = await this.testToolCallingSoftSupportAsync();
+    this._supportsToolCalling = softToolCallingProbe;
+
+    if (softToolCallingProbe) {
+      this._resolvedStructuredOutputMode = "tool_auto";
+      logger.info("Structured output mode resolved via probe", {
+        provider: providerKey,
+        model: defaultModelId,
+        mode: this._resolvedStructuredOutputMode,
+        supportsStructuredOutputs: this._supportsStructuredOutputs,
+        supportsToolCalling: this._supportsToolCalling,
+        source: "probe:tool_calling_soft",
+      });
+      return;
+    }
+
     throw new Error(
       "Unable to resolve structured output mode: model supports neither native structured outputs " +
-      "nor required tool calling (tools + tool_choice). Configure ai.<provider>.structuredOutputMode explicitly.",
+      "nor tool calling (strict or auto). Configure ai.<provider>.structuredOutputMode explicitly.",
     );
   }
 
@@ -1104,6 +1137,111 @@ export class AiProviderService {
       return Array.isArray(toolCalls) && toolCalls.length > 0;
     } catch (error: unknown) {
       logger.debug("Tool calling probe failed", {
+        error: extractErrorMessage(error),
+      });
+      return false;
+    }
+  }
+
+  public async testToolCallingSoftSupportAsync(): Promise<boolean> {
+    if (!this._aiConfig) {
+      return false;
+    }
+
+    const logger: LoggerService = LoggerService.getInstance();
+    logger.info("Testing soft tool calling support (tools + tool_choice:auto)...");
+
+    try {
+      const config = this._getActiveProviderConfig();
+      const provider: AiProvider = this._aiConfig.provider;
+
+      if (provider === "openrouter") {
+        const response: Response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${(config as IOpenRouterConfig).apiKey}`,
+          },
+          body: JSON.stringify({
+            model: config.model,
+            messages: [{ role: "user", content: "Call the tool emit_probe once." }],
+            tools: [
+              {
+                type: "function",
+                function: {
+                  name: "emit_probe",
+                  description: "Probe tool support",
+                  parameters: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean" },
+                    },
+                    required: ["ok"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+            ],
+            tool_choice: "auto",
+            max_tokens: 80,
+          }),
+        });
+
+        if (!response.ok) {
+          logger.debug("Soft tool calling probe failed for OpenRouter", { status: response.status });
+          return false;
+        }
+
+        const json = await response.json() as {
+          choices?: Array<{ message?: { tool_calls?: unknown[] } }>;
+        };
+
+        const toolCalls = json.choices?.[0]?.message?.tool_calls;
+        return Array.isArray(toolCalls) && toolCalls.length > 0;
+      }
+
+      const baseUrl: string = normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
+      const response: Response = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: config.model,
+          messages: [{ role: "user", content: "Call the tool emit_probe once." }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "emit_probe",
+                description: "Probe tool support",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    ok: { type: "boolean" },
+                  },
+                  required: ["ok"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          ],
+          tool_choice: "auto",
+          max_tokens: 80,
+        }),
+      });
+
+      if (!response.ok) {
+        logger.debug("Soft tool calling probe failed for local provider", { status: response.status });
+        return false;
+      }
+
+      const json = await response.json() as {
+        choices?: Array<{ message?: { tool_calls?: unknown[] } }>;
+      };
+
+      const toolCalls = json.choices?.[0]?.message?.tool_calls;
+      return Array.isArray(toolCalls) && toolCalls.length > 0;
+    } catch (error: unknown) {
+      logger.debug("Soft tool calling probe failed", {
         error: extractErrorMessage(error),
       });
       return false;

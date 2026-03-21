@@ -101,6 +101,43 @@ function createLinkedAbortSignal(
   return controller.signal;
 }
 
+function tryParseJsonFromText(text: string): unknown | null {
+  const trimmedText: string = text.trim();
+  if (trimmedText.length === 0) {
+    return null;
+  }
+
+  const candidates: string[] = [trimmedText];
+
+  const fencedMatch: RegExpMatchArray | null = trimmedText.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch && fencedMatch[1]) {
+    candidates.push(fencedMatch[1].trim());
+  }
+
+  const firstBraceIndex: number = trimmedText.indexOf("{");
+  const lastBraceIndex: number = trimmedText.lastIndexOf("}");
+  if (firstBraceIndex >= 0 && lastBraceIndex > firstBraceIndex) {
+    candidates.push(trimmedText.slice(firstBraceIndex, lastBraceIndex + 1));
+  }
+
+  const seen = new Set<string>();
+
+  for (const candidate of candidates) {
+    if (candidate.length === 0 || seen.has(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+
+    try {
+      return JSON.parse(candidate) as unknown;
+    } catch {
+      // Continue trying candidates.
+    }
+  }
+
+  return null;
+}
+
 //#endregion Private Helpers
 
 //#region Public functions
@@ -297,6 +334,8 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
     for (let attempt: number = 1; attempt <= maxAttempts; attempt++) {
       try {
         const linkedSignal = createLinkedAbortSignal(retryOptions.abortSignal, timeoutMs);
+        const requestProviderOptions: SharedV3ProviderOptions | undefined =
+          structuredMode === "tool_auto" ? undefined : providerOptions;
 
         const callFn = async (): Promise<{ object: z.infer<T> }> => {
           if (structuredMode === "native_json_schema") {
@@ -305,7 +344,7 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
               prompt: options.prompt,
               ...(options.system ? { system: options.system } : {}),
               output: Output.object({ schema: options.schema }),
-              ...(providerOptions ? { providerOptions } : {}),
+              ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}),
               maxRetries: 0, // Disable SDK retries - we manage retries ourselves
               abortSignal: linkedSignal,
             });
@@ -330,34 +369,126 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
             },
           });
 
-          const toolResult = await generateText({
-            model: options.model,
-            prompt: options.prompt,
-            ...(options.system ? {
-              system:
-                `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.`,
-            } : {
-              system: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.`,
-            }),
-            tools: {
-              [emitToolName]: emitterTool,
-            },
-            toolChoice: { type: "tool", toolName: emitToolName },
-            ...(providerOptions ? { providerOptions } : {}),
-            maxRetries: 0,
-            abortSignal: linkedSignal,
-          });
+          if (structuredMode === "tool_emulated") {
+            const toolResult = await generateText({
+              model: options.model,
+              prompt: options.prompt,
+              ...(options.system ? {
+                system:
+                  `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.`,
+              } : {
+                system: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.`,
+              }),
+              tools: {
+                [emitToolName]: emitterTool,
+              },
+              toolChoice: { type: "tool", toolName: emitToolName },
+              ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}),
+              maxRetries: 0,
+              abortSignal: linkedSignal,
+            });
 
-          const emitted = toolResult.toolResults.find((item) => item.toolName === emitToolName);
-          const maybeOutput = emitted?.output as { object?: unknown } | undefined;
-          if (!maybeOutput || maybeOutput.object === undefined) {
-            throw new Error(
-              "Tool-emulated structured output failed: no emit_structured_output tool result returned.",
-            );
+            const emitted = toolResult.toolResults.find((item) => item.toolName === emitToolName);
+            const maybeOutput = emitted?.output as { object?: unknown } | undefined;
+            if (!maybeOutput || maybeOutput.object === undefined) {
+              throw new Error(
+                "Tool-emulated structured output failed: no emit_structured_output tool result returned.",
+              );
+            }
+
+            const parsed = options.schema.parse(maybeOutput.object) as z.infer<T>;
+            return { object: parsed };
           }
 
-          const parsed = options.schema.parse(maybeOutput.object) as z.infer<T>;
-          return { object: parsed };
+          const maxToolAutoRounds: number = 3;
+          let lastText: string = "";
+          let shouldFallbackToTextOnly: boolean = false;
+
+          for (let round: number = 1; round <= maxToolAutoRounds; round++) {
+            const roundSuffix: string = round === 1
+              ? ""
+              : `\n\nPrevious attempt did not call ${emitToolName}. Retry and call only ${emitToolName} with valid JSON.`;
+
+            try {
+              const toolResult = await generateText({
+                model: options.model,
+                prompt: options.prompt,
+                ...(options.system ? {
+                  system:
+                    `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.${roundSuffix}`,
+                } : {
+                  system: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.${roundSuffix}`,
+                }),
+                tools: {
+                  [emitToolName]: emitterTool,
+                },
+                ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}),
+                maxRetries: 0,
+                abortSignal: linkedSignal,
+              });
+
+              const emitted = toolResult.toolResults.find((item) => item.toolName === emitToolName);
+              const maybeOutput = emitted?.output as { object?: unknown } | undefined;
+
+              if (maybeOutput && maybeOutput.object !== undefined) {
+                const parsed = options.schema.parse(maybeOutput.object) as z.infer<T>;
+                return { object: parsed };
+              }
+
+              lastText = toolResult.text ?? "";
+            } catch (toolAutoError: unknown) {
+              const details = extractAiErrorDetails(toolAutoError);
+              const errorText: string = details.message.toLowerCase();
+              const isRoutingParameterMismatch: boolean =
+                details.statusCode === 404 &&
+                (
+                  errorText.includes("no endpoints found") ||
+                  errorText.includes("requested parameters")
+                );
+
+              if (!isRoutingParameterMismatch) {
+                throw toolAutoError;
+              }
+
+              shouldFallbackToTextOnly = true;
+              break;
+            }
+          }
+
+          const maxTextOnlyRounds: number = shouldFallbackToTextOnly ? 3 : 1;
+          for (let textRound: number = 1; textRound <= maxTextOnlyRounds; textRound++) {
+            if (textRound > 1 || shouldFallbackToTextOnly) {
+              const textRoundSuffix: string = textRound === 1
+                ? ""
+                : "\n\nPrevious output was invalid. Return only a valid JSON object matching the schema.";
+
+              const textOnlyResult = await generateText({
+                model: options.model,
+                prompt: options.prompt,
+                ...(options.system ? {
+                  system:
+                    `${options.system}\n\nReturn only valid JSON object matching the requested schema. Do not call tools. Do not include markdown.${textRoundSuffix}`,
+                } : {
+                  system: `Return only valid JSON object matching the requested schema. Do not call tools. Do not include markdown.${textRoundSuffix}`,
+                }),
+                ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}),
+                maxRetries: 0,
+                abortSignal: linkedSignal,
+              });
+
+              lastText = textOnlyResult.text ?? "";
+            }
+
+            const parsedFromText: unknown | null = tryParseJsonFromText(lastText);
+            if (parsedFromText !== null) {
+              const parsed = options.schema.parse(parsedFromText) as z.infer<T>;
+              return { object: parsed };
+            }
+          }
+
+          throw new Error(
+            "Tool-auto structured output failed: no emit_structured_output result and no parseable JSON text after retries.",
+          );
         };
 
         // NOTE: Do not schedule with RateLimiterService here.

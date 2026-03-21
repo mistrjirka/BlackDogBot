@@ -84,7 +84,7 @@ describe("llm-retry E2E — real LLM calls", () => {
     const aiProvider = AiProviderService.getInstance();
     const mode = aiProvider.getStructuredOutputMode();
 
-    expect(["native_json_schema", "tool_emulated"]).toContain(mode);
+    expect(["native_json_schema", "tool_emulated", "tool_auto"]).toContain(mode);
     expect(typeof aiProvider.getSupportsStructuredOutputs()).toBe("boolean");
     expect(typeof aiProvider.getSupportsToolCalling()).toBe("boolean");
   }, 60000);
@@ -190,6 +190,47 @@ describe("llm-retry E2E — real LLM calls", () => {
       expect(hasEmitTool).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
+      await aiProvider.initializeAsync(originalAiConfig);
+    }
+  }, 120000);
+
+  it("should honor strict tool_auto mode with best-effort tool call", async () => {
+    const configService: ConfigService = ConfigService.getInstance();
+    const originalAiConfig: IAiConfig = configService.getConfig().ai;
+    const forcedAiConfig: IAiConfig = structuredClone(originalAiConfig);
+
+    if (forcedAiConfig.provider === "openrouter" && forcedAiConfig.openrouter) {
+      forcedAiConfig.openrouter.structuredOutputMode = "tool_auto";
+    } else if (forcedAiConfig.provider === "openai-compatible" && forcedAiConfig.openaiCompatible) {
+      forcedAiConfig.openaiCompatible.structuredOutputMode = "tool_auto";
+    } else if (forcedAiConfig.provider === "lm-studio" && forcedAiConfig.lmStudio) {
+      forcedAiConfig.lmStudio.structuredOutputMode = "tool_auto";
+    } else {
+      throw new Error("Could not force tool_auto mode: active provider config missing");
+    }
+
+    const aiProvider: AiProviderService = AiProviderService.getInstance();
+    await aiProvider.initializeAsync(forcedAiConfig);
+
+    expect(aiProvider.getStructuredOutputMode()).toBe("tool_auto");
+
+    const model: LanguageModel = aiProvider.getDefaultModel();
+
+    try {
+      const result = await generateObjectWithRetryAsync({
+        model,
+        prompt: "Return name=Jane, age=31, city=Prague.",
+        schema: z.object({
+          name: z.string(),
+          age: z.number(),
+          city: z.string(),
+        }),
+      });
+
+      expect(result.object.name.toLowerCase()).toContain("jane");
+      expect(result.object.age).toBeGreaterThan(0);
+      expect(result.object.city.length).toBeGreaterThan(0);
+    } finally {
       await aiProvider.initializeAsync(originalAiConfig);
     }
   }, 120000);

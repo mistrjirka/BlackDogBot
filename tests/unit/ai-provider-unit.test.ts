@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -9,6 +9,7 @@ import * as litesql from "../../src/helpers/litesql.js";
 import { ConfigService } from "../../src/services/config.service.js";
 import { resetSingletons } from "../utils/test-helpers.js";
 import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
+import { ModelInfoService } from "../../src/services/model-info.service.js";
 import type { IAiConfig } from "../../src/shared/types/index.js";
 import type { LanguageModel } from "ai";
 
@@ -132,7 +133,47 @@ describe("AiProviderService unit", () => {
       const service: AiProviderService = AiProviderService.getInstance();
       service.initialize(openrouterConfig);
 
-      expect(["native_json_schema", "tool_emulated"]).toContain(service.getStructuredOutputMode());
+      expect(["native_json_schema", "tool_emulated", "tool_auto"]).toContain(service.getStructuredOutputMode());
+    });
+
+    it("should accept configured tool_auto mode in sync init", () => {
+      const service: AiProviderService = AiProviderService.getInstance();
+      service.initialize({
+        provider: "openrouter",
+        openrouter: {
+          apiKey: "test-key",
+          model: "stepfun/step-3.5-flash:free",
+          rateLimits: { rpm: 60, tpm: 100000 },
+          structuredOutputMode: "tool_auto",
+        },
+      });
+
+      expect(service.getStructuredOutputMode()).toBe("tool_auto");
+      expect(service.getSupportsStructuredOutputs()).toBe(false);
+      expect(service.getSupportsToolCalling()).toBe(true);
+    });
+
+    it("should auto-resolve to tool_auto when OpenRouter metadata has tools without tool_choice", async () => {
+      const modelInfoService: ModelInfoService = ModelInfoService.getInstance();
+      vi.spyOn(modelInfoService, "fetchContextWindowAsync").mockResolvedValue(256000);
+      vi.spyOn(modelInfoService, "fetchSupportedParametersAsync")
+        .mockResolvedValue(new Set<string>(["tools"]));
+
+      const service: AiProviderService = AiProviderService.getInstance();
+      vi.spyOn(service, "testResponseFormatAsync").mockResolvedValue({ ok: false, reason: "skipped" });
+
+      await service.initializeAsync({
+        provider: "openrouter",
+        openrouter: {
+          apiKey: "test-key",
+          model: "stepfun/step-3.5-flash:free",
+          rateLimits: { rpm: 60, tpm: 100000 },
+        },
+      });
+
+      expect(service.getStructuredOutputMode()).toBe("tool_auto");
+      expect(service.getSupportsStructuredOutputs()).toBe(false);
+      expect(service.getSupportsToolCalling()).toBe(true);
     });
   });
 

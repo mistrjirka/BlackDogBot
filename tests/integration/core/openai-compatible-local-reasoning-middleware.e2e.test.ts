@@ -31,7 +31,7 @@ interface IRawConfig {
       };
       contextWindow?: number;
       supportsStructuredOutputs?: boolean;
-      structuredOutputMode?: "auto" | "native_json_schema" | "tool_emulated";
+      structuredOutputMode?: "auto" | "native_json_schema" | "tool_emulated" | "tool_auto";
       requestTimeout?: number;
     };
     lmStudio?: {

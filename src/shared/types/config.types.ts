@@ -25,8 +25,8 @@ export interface IOpenRouterConfig {
   profilesDir?: string;
 }
 
-export type StructuredOutputMode = "auto" | "native_json_schema" | "tool_emulated";
-export type ResolvedStructuredOutputMode = "native_json_schema" | "tool_emulated";
+export type StructuredOutputMode = "auto" | "native_json_schema" | "tool_emulated" | "tool_auto";
+export type ResolvedStructuredOutputMode = "native_json_schema" | "tool_emulated" | "tool_auto";
 
 export interface IOpenAiCompatibleConfig {
   baseUrl: string;

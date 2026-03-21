@@ -18,9 +18,9 @@ const rateLimitSchema = z.object({
     .describe("Maximum number of concurrent requests"),
 });
 
-const structuredOutputModeSchema = z.enum(["auto", "native_json_schema", "tool_emulated"])
+const structuredOutputModeSchema = z.enum(["auto", "native_json_schema", "tool_emulated", "tool_auto"])
   .default("auto")
-  .describe("Structured output strategy: auto, native JSON schema, or tool-emulated via tool calling");
+  .describe("Structured output strategy: auto, native JSON schema, tool-emulated (forced tool call), or tool-auto (best-effort tool call)");
 
 const openRouterSchema = z.object({
   apiKey: z.string()
