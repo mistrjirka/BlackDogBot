@@ -88,7 +88,7 @@ import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
-import { extractRetryAfterMs, getDefault429BackoffMs } from "../utils/retry-after.js";
+import { resolve429Backoff } from "../utils/retry-after.js";
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
@@ -738,17 +738,20 @@ export class MainAgent extends BaseAgentBase {
               if (_429Retries < 3) {
                 _429Retries++;
                 const apiError = genError as APICallError;
-                const retryAfterMs: number = extractRetryAfterMs(apiError) ?? getDefault429BackoffMs();
+                const backoff = resolve429Backoff(apiError, _429Retries);
 
                 this._logger.warn("Rate limited (429) in main agent loop, waiting before retry", {
                   chatId,
                   attempt,
                   _429Retries,
                   max429Retries: 3,
-                  waitMs: retryAfterMs,
+                  waitMs: backoff.waitMs,
+                  backoffSource: backoff.source,
+                  retryAfterMs: backoff.retryAfterMs,
+                  rateLimitResetMs: backoff.rateLimitResetMs,
                 });
 
-                await new Promise((resolve) => { setTimeout(resolve, retryAfterMs); });
+                await new Promise((resolve) => { setTimeout(resolve, backoff.waitMs); });
                 attempt--; // Don't burn the empty-response retry budget
                 continue;
               }

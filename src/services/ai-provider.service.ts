@@ -10,6 +10,7 @@ import { SchedulerService } from "./scheduler.service.js";
 import {
   IAiConfig,
   AiProvider,
+  IRateLimitConfig,
   IOpenRouterConfig,
   IOpenAiCompatibleConfig,
   ILmStudioConfig,
@@ -45,6 +46,7 @@ const PARALLEL_TOOL_CALL_PROBE_TIMEOUT_MS: number = 60000;
 const DEFAULT_REQUEST_TIMEOUT_MS: number = 500_000; // 500 seconds
 const REQUEST_TIMEOUT_RETRY_MULTIPLIER: number = 2;
 const REQUEST_TIMEOUT_MAX_ATTEMPTS: number = 2; // initial + 1 retry
+const OPENROUTER_FREE_MODEL_RPM_LIMIT: number = 20;
 
 const STRUCTURED_OUTPUT_STRATEGY_AUTO: StructuredOutputMode = "auto";
 
@@ -96,9 +98,10 @@ export class AiProviderService {
   public async initializeAsync(aiConfig: IAiConfig): Promise<void> {
     this._aiConfig = aiConfig;
 
-    const providerKey: string = aiConfig.provider;
+    const providerKey: AiProvider = aiConfig.provider;
     const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
       this._getActiveProviderConfig();
+    const logger = LoggerService.getInstance();
 
     const profilesDir: string | undefined = activeConfig.profilesDir;
     await this._modelProfileService.initializeAsync(profilesDir);
@@ -113,12 +116,20 @@ export class AiProviderService {
       this._activeProfileName = null;
     }
 
-    this._rateLimiterService.getOrCreateLimiter(providerKey, activeConfig.rateLimits);
-
     const defaultModelId: string = this._getActiveModelId();
+
+    const effectiveRateLimits: IRateLimitConfig = this._resolveEffectiveRateLimits(
+      providerKey,
+      activeConfig.rateLimits,
+      defaultModelId,
+      logger,
+    );
+
+    this._rateLimiterService.removeLimiter(providerKey);
+    this._rateLimiterService.getOrCreateLimiter(providerKey, effectiveRateLimits);
+
     this._defaultModel = this._createModel(defaultModelId);
 
-    const logger = LoggerService.getInstance();
     const defaultLocalContextWindow = 32768;
 
     // Priority: 1. Config value, 2. SDK detection (LM Studio) or API detection, 3. Conservative default
@@ -238,18 +249,27 @@ export class AiProviderService {
     // Use initializeAsync() for full initialization
     this._aiConfig = aiConfig;
 
-    const providerKey: string = aiConfig.provider;
+    const providerKey: AiProvider = aiConfig.provider;
     const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
       this._getActiveProviderConfig();
+    const logger = LoggerService.getInstance();
 
     this._activeProfileName = activeConfig.activeProfile ?? null;
 
-    this._rateLimiterService.getOrCreateLimiter(providerKey, activeConfig.rateLimits);
-
     const defaultModelId: string = this._getActiveModelId();
+
+    const effectiveRateLimits: IRateLimitConfig = this._resolveEffectiveRateLimits(
+      providerKey,
+      activeConfig.rateLimits,
+      defaultModelId,
+      logger,
+    );
+
+    this._rateLimiterService.removeLimiter(providerKey);
+    this._rateLimiterService.getOrCreateLimiter(providerKey, effectiveRateLimits);
+
     this._defaultModel = this._createModel(defaultModelId);
 
-    const logger = LoggerService.getInstance();
     const defaultLocalContextWindow = 32768;
 
     // Use config value if provided, otherwise use conservative default
@@ -1797,6 +1817,43 @@ export class AiProviderService {
       this._getActiveProviderConfig();
 
     return config.model;
+  }
+
+  private _resolveEffectiveRateLimits(
+    providerKey: AiProvider,
+    configuredRateLimits: IRateLimitConfig,
+    modelId: string,
+    logger: LoggerService,
+  ): IRateLimitConfig {
+    if (providerKey !== "openrouter") {
+      return configuredRateLimits;
+    }
+
+    if (!modelId.toLowerCase().endsWith(":free")) {
+      return configuredRateLimits;
+    }
+
+    if (configuredRateLimits.rpm <= OPENROUTER_FREE_MODEL_RPM_LIMIT) {
+      return configuredRateLimits;
+    }
+
+    const clampedRateLimits: IRateLimitConfig = {
+      ...configuredRateLimits,
+      rpm: OPENROUTER_FREE_MODEL_RPM_LIMIT,
+      ...(configuredRateLimits.maxConcurrent !== undefined
+        ? { maxConcurrent: Math.min(configuredRateLimits.maxConcurrent, OPENROUTER_FREE_MODEL_RPM_LIMIT) }
+        : {}),
+    };
+
+    logger.warn("OpenRouter free model detected: clamping local RPM to align with upstream free-tier limits", {
+      modelId,
+      configuredRpm: configuredRateLimits.rpm,
+      effectiveRpm: clampedRateLimits.rpm,
+      configuredMaxConcurrent: configuredRateLimits.maxConcurrent,
+      effectiveMaxConcurrent: clampedRateLimits.maxConcurrent,
+    });
+
+    return clampedRateLimits;
   }
 
   private _getActiveProviderConfig():

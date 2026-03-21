@@ -153,6 +153,23 @@ describe("AiProviderService unit", () => {
       expect(service.getSupportsToolCalling()).toBe(true);
     });
 
+    it("should clamp OpenRouter free model local RPM to 20", async () => {
+      const service: AiProviderService = AiProviderService.getInstance();
+      service.initialize({
+        provider: "openrouter",
+        openrouter: {
+          apiKey: "test-key",
+          model: "stepfun/step-3.5-flash:free",
+          rateLimits: { rpm: 60, tpm: 100000 },
+        },
+      });
+
+      const limiter = service.getRateLimiter();
+      const reservoir: number | null = await limiter.currentReservoir();
+
+      expect(reservoir).toBe(20);
+    });
+
     it("should auto-resolve to tool_auto when OpenRouter metadata has tools without tool_choice", async () => {
       const modelInfoService: ModelInfoService = ModelInfoService.getInstance();
       vi.spyOn(modelInfoService, "fetchContextWindowAsync").mockResolvedValue(256000);

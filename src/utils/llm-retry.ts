@@ -8,7 +8,7 @@ import { RateLimiterService } from "../services/rate-limiter.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { extractAiErrorDetails, formatAiErrorForLog } from "./ai-error.js";
-import { extractRetryAfterMs, getDefault429BackoffMs } from "./retry-after.js";
+import { resolve429Backoff } from "./retry-after.js";
 import { runWithLlmCallTypeAsync } from "./llm-call-context.js";
 
 //#region Types
@@ -237,31 +237,21 @@ export async function generateTextWithRetryAsync(
           break;
         }
 
-        // 429 rate limit: wait using Retry-After header before retrying
-        const retryAfterMs: number | null = extractRetryAfterMs(error);
+        if (extractAiErrorDetails(error).statusCode === 429) {
+          const backoff = resolve429Backoff(error, attempt);
 
-        if (retryAfterMs !== null) {
           logger.warn("LLM call rate limited (429), waiting before retry", {
             llmCallId,
             callType,
             attempt,
             maxAttempts,
-            waitMs: retryAfterMs,
+            waitMs: backoff.waitMs,
+            backoffSource: backoff.source,
+            retryAfterMs: backoff.retryAfterMs,
+            rateLimitResetMs: backoff.rateLimitResetMs,
           });
 
-          await new Promise((resolve) => { setTimeout(resolve, retryAfterMs); });
-        } else if (extractAiErrorDetails(error).statusCode === 429) {
-          const waitMs: number = getDefault429BackoffMs();
-
-          logger.warn("LLM call rate limited (429), no Retry-After header, using default backoff", {
-            llmCallId,
-            callType,
-            attempt,
-            maxAttempts,
-            waitMs,
-          });
-
-          await new Promise((resolve) => { setTimeout(resolve, waitMs); });
+          await new Promise((resolve) => { setTimeout(resolve, backoff.waitMs); });
         }
       }
     }
@@ -546,31 +536,21 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
           break;
         }
 
-        // 429 rate limit: wait using Retry-After header before retrying
-        const retryAfterMs: number | null = extractRetryAfterMs(error);
+        if (extractAiErrorDetails(error).statusCode === 429) {
+          const backoff = resolve429Backoff(error, attempt);
 
-        if (retryAfterMs !== null) {
           logger.warn("LLM structured call rate limited (429), waiting before retry", {
             llmCallId,
             callType,
             attempt,
             maxAttempts,
-            waitMs: retryAfterMs,
+            waitMs: backoff.waitMs,
+            backoffSource: backoff.source,
+            retryAfterMs: backoff.retryAfterMs,
+            rateLimitResetMs: backoff.rateLimitResetMs,
           });
 
-          await new Promise((resolve) => { setTimeout(resolve, retryAfterMs); });
-        } else if (extractAiErrorDetails(error).statusCode === 429) {
-          const waitMs: number = getDefault429BackoffMs();
-
-          logger.warn("LLM structured call rate limited (429), no Retry-After header, using default backoff", {
-            llmCallId,
-            callType,
-            attempt,
-            maxAttempts,
-            waitMs,
-          });
-
-          await new Promise((resolve) => { setTimeout(resolve, waitMs); });
+          await new Promise((resolve) => { setTimeout(resolve, backoff.waitMs); });
         }
       }
     }

@@ -3,6 +3,13 @@ import { APICallError } from "ai";
 const DEFAULT_429_BACKOFF_MS: number = 10_000;
 const MAX_RETRY_AFTER_MS: number = 120_000;
 
+export interface I429BackoffDecision {
+  waitMs: number;
+  source: "retry-after" | "rate-limit-reset" | "retry-after+rate-limit-reset" | "adaptive";
+  retryAfterMs: number | null;
+  rateLimitResetMs: number | null;
+}
+
 /**
  * Extracts the Retry-After delay in milliseconds from an APICallError with status 429.
  *
@@ -69,6 +76,81 @@ export function extractRetryAfterMs(error: unknown): number | null {
   return null;
 }
 
+export function extractRateLimitResetMs(error: unknown): number | null {
+  if (!APICallError.isInstance(error) || error.statusCode !== 429) {
+    return null;
+  }
+
+  const headers: Record<string, string> | undefined = error.responseHeaders;
+  const headerValue: string | undefined = headers
+    ? (
+      headers["x-ratelimit-reset"] ??
+      headers["X-RateLimit-Reset"] ??
+      headers["x-ratelimit-reset-requests"] ??
+      headers["X-RateLimit-Reset-Requests"]
+    )
+    : undefined;
+
+  const parsedFromHeaders: number | null = _parseResetValueToDelayMs(headerValue);
+  if (parsedFromHeaders !== null) {
+    return parsedFromHeaders;
+  }
+
+  if (typeof error.responseBody === "string") {
+    const parsedFromBody: number | null = _parseOpenRouterRateLimitReset(error.responseBody);
+    if (parsedFromBody !== null) {
+      return parsedFromBody;
+    }
+  }
+
+  return null;
+}
+
+export function resolve429Backoff(error: unknown, retryAttempt: number): I429BackoffDecision {
+  const retryAfterMs: number | null = extractRetryAfterMs(error);
+  const rateLimitResetMs: number | null = extractRateLimitResetMs(error);
+
+  if (retryAfterMs !== null && rateLimitResetMs !== null) {
+    return {
+      waitMs: Math.max(retryAfterMs, rateLimitResetMs),
+      source: "retry-after+rate-limit-reset",
+      retryAfterMs,
+      rateLimitResetMs,
+    };
+  }
+
+  if (retryAfterMs !== null) {
+    return {
+      waitMs: retryAfterMs,
+      source: "retry-after",
+      retryAfterMs,
+      rateLimitResetMs,
+    };
+  }
+
+  if (rateLimitResetMs !== null) {
+    return {
+      waitMs: rateLimitResetMs,
+      source: "rate-limit-reset",
+      retryAfterMs,
+      rateLimitResetMs,
+    };
+  }
+
+  const safeAttempt: number = Math.max(1, retryAttempt);
+  const adaptiveBackoffMs: number = Math.min(
+    DEFAULT_429_BACKOFF_MS * Math.pow(2, safeAttempt - 1),
+    MAX_RETRY_AFTER_MS,
+  );
+
+  return {
+    waitMs: adaptiveBackoffMs,
+    source: "adaptive",
+    retryAfterMs,
+    rateLimitResetMs,
+  };
+}
+
 /**
  * Returns the default backoff for 429 errors when no Retry-After header is present.
  */
@@ -121,4 +203,93 @@ function _parseOpenRouterRetryAfter(body: string): number | null {
   } catch {
     return null;
   }
+}
+
+function _parseOpenRouterRateLimitReset(body: string): number | null {
+  try {
+    const parsed: unknown = JSON.parse(body);
+
+    if (typeof parsed !== "object" || parsed === null) {
+      return null;
+    }
+
+    const error: unknown = (parsed as Record<string, unknown>)["error"];
+
+    if (typeof error !== "object" || error === null) {
+      return null;
+    }
+
+    const metadata: unknown = (error as Record<string, unknown>)["metadata"];
+
+    if (typeof metadata !== "object" || metadata === null) {
+      return null;
+    }
+
+    const headers: unknown = (metadata as Record<string, unknown>)["headers"];
+
+    if (typeof headers !== "object" || headers === null) {
+      return null;
+    }
+
+    const resetValue: unknown =
+      (headers as Record<string, unknown>)["X-RateLimit-Reset"] ??
+      (headers as Record<string, unknown>)["x-ratelimit-reset"] ??
+      (headers as Record<string, unknown>)["X-RateLimit-Reset-Requests"] ??
+      (headers as Record<string, unknown>)["x-ratelimit-reset-requests"];
+
+    if (typeof resetValue !== "string" && typeof resetValue !== "number") {
+      return null;
+    }
+
+    return _parseResetValueToDelayMs(String(resetValue));
+  } catch {
+    return null;
+  }
+}
+
+function _parseResetValueToDelayMs(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed: string = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const numeric: number = Number.parseFloat(trimmed);
+
+  if (!Number.isNaN(numeric) && Number.isFinite(numeric) && numeric > 0) {
+    let delayMs: number;
+
+    // Epoch milliseconds
+    if (numeric >= 1_000_000_000_000) {
+      delayMs = numeric - Date.now();
+    }
+    // Epoch seconds
+    else if (numeric >= 1_000_000_000) {
+      delayMs = (numeric * 1000) - Date.now();
+    }
+    // Relative seconds (fallback for non-standard providers)
+    else {
+      delayMs = numeric * 1000;
+    }
+
+    if (delayMs > 0) {
+      return Math.min(delayMs, MAX_RETRY_AFTER_MS);
+    }
+
+    return null;
+  }
+
+  const parsedDateMs: number = Date.parse(trimmed);
+
+  if (!Number.isNaN(parsedDateMs)) {
+    const delayMs: number = parsedDateMs - Date.now();
+    if (delayMs > 0) {
+      return Math.min(delayMs, MAX_RETRY_AFTER_MS);
+    }
+  }
+
+  return null;
 }

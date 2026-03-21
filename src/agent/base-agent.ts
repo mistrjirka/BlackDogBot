@@ -21,7 +21,7 @@ import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
 import { countMessagesTokens, countRequestBodyTokens } from "../utils/request-token-counter.js";
-import { extractRetryAfterMs, getDefault429BackoffMs } from "../utils/retry-after.js";
+import { resolve429Backoff } from "../utils/retry-after.js";
 
 //#region Constants
 
@@ -242,7 +242,7 @@ export abstract class BaseAgentBase {
           if (APICallError.isInstance(error) && error.statusCode === 429) {
             if (_429Retries < MAX_429_RETRIES) {
               _429Retries++;
-              const retryAfterMs: number = extractRetryAfterMs(error) ?? getDefault429BackoffMs();
+              const backoff = resolve429Backoff(error, _429Retries);
 
               this._logger.warn("Rate limited (429) in agent loop, waiting before retry", {
                 attempt,
@@ -250,10 +250,13 @@ export abstract class BaseAgentBase {
                 agentAttemptTotal: totalAgentAttempts,
                 _429Retries,
                 max429Retries: MAX_429_RETRIES,
-                waitMs: retryAfterMs,
+                waitMs: backoff.waitMs,
+                backoffSource: backoff.source,
+                retryAfterMs: backoff.retryAfterMs,
+                rateLimitResetMs: backoff.rateLimitResetMs,
               });
 
-              await new Promise((resolve) => { setTimeout(resolve, retryAfterMs); });
+              await new Promise((resolve) => { setTimeout(resolve, backoff.waitMs); });
               attempt--; // Don't burn the empty-response retry budget
               continue;
             }
