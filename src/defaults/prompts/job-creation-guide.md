@@ -187,6 +187,7 @@ this means chaining each new node to the previously created node.
 | Every input record should be inserted as-is, no logic needed | `litesql` node |
 | Simple deterministic read (e.g. last N hours, all rows) | `litesql_reader` node |
 | Need to read from the DB before deciding what to write | `agent` node with `read_from_database` + `write_table_<tableName>` |
+| Need to update or delete existing rows conditionally | `agent` node with `update_database` / `delete_from_database` (+ explicit WHERE) |
 | Need conditional writes (e.g. skip duplicates, filter by rule) | `agent` node with DB tools |
 | Need to query data for summaries / reports | `agent` node with `read_from_database` |
 | Simple end-of-pipeline persistence (insert and done) | `litesql` node |
@@ -217,6 +218,8 @@ these tools directly to set up the schema:
 At **pipeline runtime**, `agent` nodes can use these tools via `selectedTools`:
 - `write_table_<tableName>` — inserts rows using the table-specific validated tool
 - `read_from_database` — queries rows
+- `update_database` — updates existing rows (requires WHERE)
+- `delete_from_database` — deletes rows (requires WHERE)
 - `create_table` — creates a table if needed
 - `list_databases` / `list_tables` / `get_table_schema` — introspection
 
@@ -261,6 +264,9 @@ At **pipeline runtime**, `agent` nodes can use these tools via `selectedTools`:
 > `selectedTools` and let it handle storage itself (preferred for complex
 > pipelines).
 >
+> If the agent handles DB writes directly via `write_table_<tableName>`, the
+> downstream `litesql` node is typically unnecessary for that branch.
+>
 > Also ensure type alignment: if a table column is TEXT, the corresponding
 > output schema field must be `string`, not `stringArray`. Arrays must be
 > serialized to JSON strings before storage.
@@ -272,6 +278,7 @@ checks existing records before deciding what to store), add these tools to its
 `selectedTools`:
 - `write_table_<tableName>` — inserts rows using the table-specific validated tool
 - `read_from_database` — queries rows
+- `update_database` / `delete_from_database` — optional for modifying existing rows (always with WHERE)
 - `create_table` — creates a table if needed
 - `list_databases` / `list_tables` / `get_table_schema` — introspection
 
@@ -305,7 +312,7 @@ add_rss_fetcher_node(parentNodeId = "s1", mode = "unseen") → nodeId "n1"
 add_agent_node(                                             → nodeId "n2"
   parentNodeId  = "n1",
   selectedTools = ["write_table_interesting_items", "read_from_database",
-                   "list_databases", "list_tables"],
+                   "create_table", "get_table_schema", "list_databases", "list_tables"],
   systemPrompt  = "You receive RSS feed items. For each item, decide if it is
                    interesting. Store interesting items using write_table_interesting_items
                    (database=news, table=interesting_items). Include title,

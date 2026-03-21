@@ -13,10 +13,14 @@ import {
   appendFileTool,
   editFileTool,
   readFromDatabaseTool,
+  updateDatabaseTool,
+  deleteFromDatabaseTool,
+  createDatabaseTool,
   listDatabasesTool,
   listTablesTool,
   getTableSchemaTool,
   createTableTool,
+  dropTableTool,
   FileReadTracker,
 } from "../tools/index.js";
 import { buildPerTableToolsAsync } from "./per-table-tools.js";
@@ -46,11 +50,15 @@ export function createAgentNodeToolPool(
     write_file: createWriteFileTool(readTracker),
     append_file: appendFileTool,
     edit_file: editFileTool,
+    create_database: createDatabaseTool,
     read_from_database: readFromDatabaseTool,
+    update_database: updateDatabaseTool,
+    delete_from_database: deleteFromDatabaseTool,
     list_databases: listDatabasesTool,
     list_tables: listTablesTool,
     get_table_schema: getTableSchemaTool,
     create_table: createTableTool,
+    drop_table: dropTableTool,
   };
 
   if (!perTableTools) {

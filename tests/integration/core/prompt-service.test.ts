@@ -115,6 +115,26 @@ describe("PromptService", () => {
     expect(modified).toHaveLength(0);
   });
 
+  it("should apply updated default prompts after resetAllPromptsAsync", async () => {
+    const service: PromptService = PromptService.getInstance();
+
+    await service.initializeAsync();
+
+    const originalRaw: string = await service.getPromptRawAsync("cron-agent");
+
+    await service.writePromptAsync("cron-agent", "temporary override content");
+    const overridden: string = await service.getPromptAsync("cron-agent");
+    expect(overridden).toContain("temporary override content");
+
+    await service.resetAllPromptsAsync();
+
+    const afterResetRaw: string = await service.getPromptRawAsync("cron-agent");
+    const afterResetResolved: string = await service.getPromptAsync("cron-agent");
+
+    expect(afterResetRaw).toBe(originalRaw);
+    expect(afterResetResolved).not.toContain("temporary override content");
+  });
+
   it("should resolve include directives", async () => {
     const service: PromptService = PromptService.getInstance();
 

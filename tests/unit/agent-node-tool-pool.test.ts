@@ -28,6 +28,10 @@ describe("agent-node-tool-pool", () => {
       const pool = createAgentNodeToolPool(LoggerService.getInstance(), undefined, perTableTools);
 
       expect(pool).toHaveProperty("write_table_artifacts");
+      expect(pool).toHaveProperty("update_database");
+      expect(pool).toHaveProperty("delete_from_database");
+      expect(pool).toHaveProperty("create_database");
+      expect(pool).toHaveProperty("drop_table");
     } finally {
       process.env.HOME = originalHome;
       await fs.rm(tempDir, { recursive: true, force: true });

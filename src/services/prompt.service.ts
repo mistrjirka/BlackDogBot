@@ -214,6 +214,15 @@ export class PromptService {
     this._promptCache.clear();
   }
 
+  public async reloadPromptsFromDiskAsync(): Promise<void> {
+    this._ensureInitialized();
+    this._promptCache.clear();
+  }
+
+  public async refreshPromptCacheAsync(): Promise<void> {
+    await this.reloadPromptsFromDiskAsync();
+  }
+
   //#endregion Public methods
 
   //#region Private methods

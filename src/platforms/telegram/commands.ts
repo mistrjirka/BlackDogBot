@@ -115,6 +115,7 @@ export function setupTelegramCommands(bot: Bot): void {
   bot.command("update_prompts", async (ctx: Context): Promise<void> => {
     try {
       await promptService.resetAllPromptsAsync();
+
       await ctx.reply("All prompts have been updated from source defaults.");
       logger.info("Prompts updated from source defaults via /update_prompts command.");
     } catch (error: unknown) {

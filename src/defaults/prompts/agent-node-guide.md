@@ -138,6 +138,8 @@ not the same as node types.
 | `edit_file` | Edit a file in place |
 | `write_table_<tableName>` | Insert rows into a specific table using schema-validated per-table tools. Use the exact tool for your table, e.g. `write_table_news_items`. |
 | `read_from_database` | Query rows from a database table with optional WHERE, ORDER BY, LIMIT, and column selection. |
+| `update_database` | Update existing rows in a table. Requires a WHERE clause for safety. |
+| `delete_from_database` | Delete rows from a table. Requires a WHERE clause for safety. |
 | `list_databases` | List all available databases. |
 | `list_tables` | List all tables in a specific database. |
 | `get_table_schema` | Get the schema (columns, types) of a specific table. |
@@ -148,6 +150,17 @@ not the same as node types.
   to include them in `selectedTools`, but listing `think` is harmless.
 - `done` is the tool the agent calls when it has finished its task. It is
   always available.
+- For inserts, always use the exact `write_table_<tableName>` tool for the target
+  table. Do not use `write_to_database` and do not use `run_cmd`/`sqlite3` for DB writes.
+- `write_table_<tableName>` tools enforce column names/types and auto-fill common
+  timestamps (`created_at`, `updated_at`, `timestamp`, `created`, `updated`) when missing.
+- If the required `write_table_<tableName>` tool is not available yet, include
+  `create_table` in `selectedTools`, create the table first, then use the new write tool.
+- For update/delete operations, include `update_database` / `delete_from_database`
+  in `selectedTools` and always provide explicit `where` clauses.
+- For DB-enabled agent nodes, `selectedTools` should usually include:
+  `write_table_<tableName>`, `read_from_database`, `create_table`,
+  `list_databases`, `list_tables`, `get_table_schema` (plus update/delete tools if needed).
 - `send_message` requires execution messaging context (for example when the job
    is run from a chat). In headless runs (e.g., some scheduled/background
    executions), messages are logged instead of being delivered to a user chat.
