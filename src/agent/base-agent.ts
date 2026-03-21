@@ -8,9 +8,6 @@ import {
   type ModelMessage,
   type Tool,
 } from "ai";
-import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
-import { encodingForModel } from "js-tiktoken";
 
 import { doneTool } from "../tools/done.tool.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -20,8 +17,17 @@ import { getDuplicateToolCallDirective } from "../utils/prepare-step.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
-import { countMessagesTokens, countRequestBodyTokens } from "../utils/request-token-counter.js";
-import { resolve429Backoff } from "../utils/retry-after.js";
+import { isContextExceededApiError } from "../utils/context-error.js";
+import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
+import { extractAiErrorDetails } from "../utils/ai-error.js";
+import {
+  countTextTokens,
+  countTokens,
+  estimateFixedOverhead,
+  estimateRequestLikeTokens,
+  type IRequestLikeTokenEstimate,
+} from "../utils/token-tracker.js";
+import { extractLastAssistantToolCalls } from "../utils/tool-call-tracker.js";
 
 //#region Constants
 
@@ -163,23 +169,28 @@ export abstract class BaseAgentBase {
         } catch (error: unknown) {
           const currentAgentAttempt: number = attempt;
           const totalAgentAttempts: number = AGENT_EMPTY_RESPONSE_RETRIES + 1;
+          const aiErrorDetails = extractAiErrorDetails(error);
 
           // Enhanced error logging for AI provider errors
           if (APICallError.isInstance(error)) {
-            const responseBodyLength = error.responseBody?.length ?? 0;
-            const responseBodyPreview = error.responseBody
-              ? error.responseBody.substring(0, Math.min(1000, responseBodyLength)) + 
+            const responseBody: string | null = aiErrorDetails.responseBody;
+            const responseBodyLength = responseBody?.length ?? 0;
+            const responseBodyPreview = responseBody
+              ? responseBody.substring(0, Math.min(1000, responseBodyLength)) +
                 (responseBodyLength > 1000 ? "..." : "")
               : undefined;
-              
+
             this._logger.error("AI provider API call failed", {
               attempt,
               agentAttempt: currentAgentAttempt,
               agentAttemptTotal: totalAgentAttempts,
-              statusCode: error.statusCode,
-              message: error.message,
+              statusCode: aiErrorDetails.statusCode,
+              message: aiErrorDetails.message,
+              providerMessage: aiErrorDetails.providerMessage,
+              provider: aiErrorDetails.provider,
+              model: aiErrorDetails.model,
               responseBodyPreview,
-              url: error.url,
+              url: aiErrorDetails.url,
             });
           } else if (error instanceof Error) {
             this._logger.error("AI call failed with error", {
@@ -203,29 +214,18 @@ export abstract class BaseAgentBase {
           // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
           if (
             APICallError.isInstance(error) &&
-            (error.statusCode === 400 || error.statusCode === 500 || error.statusCode === 413 || error.statusCode === 422) &&
             attempt <= CONTEXT_EXCEEDED_RETRIES
           ) {
-            const responseBody: string = error.responseBody ?? "";
-            const errorMessage: string = error.message ?? "";
-            const lowerBody: string = responseBody.toLowerCase();
-            const lowerMsg: string = errorMessage.toLowerCase();
+            const responseBody: string = aiErrorDetails.responseBody ?? "";
+            const errorMessage: string = aiErrorDetails.providerMessage ?? aiErrorDetails.message;
 
-            const isContextError: boolean =
-              lowerBody.includes("context") ||
-              lowerMsg.includes("context size") ||
-              lowerMsg.includes("token limit") ||
-              lowerBody.includes("exceeded") ||
-              lowerBody.includes("length") ||
-              lowerMsg.includes("too long");
-
-            if (isContextError) {
+            if (isContextExceededApiError(error)) {
               this._logger.warn("Context size exceeded, triggering reactive compaction", {
                 attempt,
                 agentAttempt: currentAgentAttempt,
                 agentAttemptTotal: totalAgentAttempts,
                 maxRetries: CONTEXT_EXCEEDED_RETRIES,
-                statusCode: error.statusCode,
+                statusCode: aiErrorDetails.statusCode,
                 responseBody: responseBody,
                 errorMessage: errorMessage,
                 currentTokenCount: this._totalInputTokens,
@@ -239,24 +239,22 @@ export abstract class BaseAgentBase {
           }
 
           // Handle 429 rate limit errors with Retry-After wait
-          if (APICallError.isInstance(error) && error.statusCode === 429) {
+          if (aiErrorDetails.statusCode === 429) {
             if (_429Retries < MAX_429_RETRIES) {
               _429Retries++;
-              const backoff = resolve429Backoff(error, _429Retries);
-
-              this._logger.warn("Rate limited (429) in agent loop, waiting before retry", {
-                attempt,
-                agentAttempt: currentAgentAttempt,
-                agentAttemptTotal: totalAgentAttempts,
-                _429Retries,
-                max429Retries: MAX_429_RETRIES,
-                waitMs: backoff.waitMs,
-                backoffSource: backoff.source,
-                retryAfterMs: backoff.retryAfterMs,
-                rateLimitResetMs: backoff.rateLimitResetMs,
+              await apply429BackoffAsync({
+                logger: this._logger,
+                error,
+                retryAttempt: _429Retries,
+                logMessage: "Rate limited (429) in agent loop, waiting before retry",
+                logContext: {
+                  attempt,
+                  agentAttempt: currentAgentAttempt,
+                  agentAttemptTotal: totalAgentAttempts,
+                  _429Retries,
+                  max429Retries: MAX_429_RETRIES,
+                },
               });
-
-              await new Promise((resolve) => { setTimeout(resolve, backoff.waitMs); });
               attempt--; // Don't burn the empty-response retry budget
               continue;
             }
@@ -399,10 +397,10 @@ export abstract class BaseAgentBase {
     // Pre-compute the fixed token overhead that's included in every API request
     // but not in the messages array: system prompt + tool definitions.
     // This is critical for accurate context window tracking.
-    const fixedOverheadTokens: number = _estimateFixedOverhead(instructions, allTools);
+    const fixedOverheadTokens: number = estimateFixedOverhead(instructions, allTools);
     self._fixedOverheadTokens = fixedOverheadTokens;
     logger.debug("Computed fixed token overhead for context tracking", {
-      systemPromptTokens: _countTextTokens(instructions),
+      systemPromptTokens: countTextTokens(instructions),
       toolCount: Object.keys(allTools).length,
       toolNames: Object.keys(allTools),
       totalOverhead: fixedOverheadTokens,
@@ -462,7 +460,7 @@ export abstract class BaseAgentBase {
 
         // Notify about completed previous step before doing anything else
         if (stepNumber > 0 && onStepAsync) {
-          const toolCalls: IToolCallSummary[] = _extractLastAssistantToolCalls(messages);
+          const toolCalls: IToolCallSummary[] = extractLastAssistantToolCalls(messages);
 
           logger.debug("prepareStep onStep callback payload", {
             stepNumber,
@@ -542,17 +540,17 @@ export abstract class BaseAgentBase {
 
         // Token-based history compaction using request-style token estimation
         // as the primary source of truth, with legacy estimation as fallback.
-        const legacyMessageTokens: number = _countTokens(messages);
+        const legacyMessageTokens: number = countTokens(messages);
 
         const creationPrompt: string | null = (useExtraTools && getCreationModePrompt)
           ? getCreationModePrompt()
           : null;
         const legacyDynamicOverheadTokens: number = creationPrompt
-          ? fixedOverheadTokens + _countTextTokens(creationPrompt)
+          ? fixedOverheadTokens + countTextTokens(creationPrompt)
           : fixedOverheadTokens;
         const legacyTokenCount: number = legacyMessageTokens + legacyDynamicOverheadTokens;
 
-        const requestEstimate: IRequestLikeTokenEstimate | null = _estimateRequestLikeTokens(
+        const requestEstimate: IRequestLikeTokenEstimate | null = estimateRequestLikeTokens(
           messages,
           instructions,
           creationPrompt,
@@ -605,7 +603,7 @@ export abstract class BaseAgentBase {
             logger,
             compactionTargetTokens,
             (msgs: ModelMessage[]) => {
-              const estimate: IRequestLikeTokenEstimate | null = _estimateRequestLikeTokens(
+              const estimate: IRequestLikeTokenEstimate | null = estimateRequestLikeTokens(
                 msgs,
                 instructions,
                 creationPrompt,
@@ -617,7 +615,7 @@ export abstract class BaseAgentBase {
                 return estimate.breakdown.total;
               }
 
-              return _countTokens(msgs) + legacyDynamicOverheadTokens;
+              return countTokens(msgs) + legacyDynamicOverheadTokens;
             },
             forcedCompaction,
           );
@@ -664,308 +662,5 @@ export abstract class BaseAgentBase {
 //#endregion BaseAgent
 
 //#region Private functions
-
-// Cached tokenizer to avoid recreating it on every call (saves ~23s per message)
-let _cachedEncoder: ReturnType<typeof encodingForModel> | null = null;
-
-function _getTextEncoder(): ReturnType<typeof encodingForModel> {
-  if (!_cachedEncoder) {
-    _cachedEncoder = encodingForModel("gpt-4o");
-  }
-  return _cachedEncoder;
-}
-
-/**
- * Count tokens in a plain text string using cl100k_base encoding.
- */
-function _countTextTokens(text: string): number {
-  return _getTextEncoder().encode(text).length;
-}
-
-/**
- * Estimate the fixed token overhead per API request from the system prompt
- * and tool definitions. This is computed once at agent build time.
- *
- * Tool definitions contribute significantly: each tool sends its name,
- * description, and full JSON schema to the LLM. For 30+ tools with
- * complex zod schemas, this can easily be 30,000–50,000+ tokens.
- */
-function _estimateFixedOverhead(instructions: string, allTools: ToolSet): number {
-  let overhead: number = _countTextTokens(instructions);
-
-  for (const [name, toolDef] of Object.entries(allTools)) {
-    overhead += _countTextTokens(name) + 10;
-
-    if (toolDef && typeof toolDef === "object") {
-      const desc: unknown = (toolDef as Record<string, unknown>).description;
-      if (typeof desc === "string") {
-        overhead += _countTextTokens(desc);
-      }
-
-      const inputSchema: unknown = (toolDef as Record<string, unknown>).inputSchema;
-
-      if (inputSchema) {
-        let schemaStr: string;
-
-        if (inputSchema instanceof z.ZodSchema) {
-          const jsonSchema = zodToJsonSchema(inputSchema);
-          schemaStr = JSON.stringify(jsonSchema);
-        } else if (typeof inputSchema === "object") {
-          schemaStr = JSON.stringify(inputSchema);
-        } else {
-          schemaStr = String(inputSchema);
-        }
-
-        overhead += _countTextTokens(schemaStr);
-      }
-    }
-  }
-
-  return overhead;
-}
-
-/**
- * Count tokens across messages by converting ModelMessage[] into an OpenAI-like
- * shape and delegating to the canonical request token counter.
- */
-function _countTokens(messages: ModelMessage[]): number {
-  const requestLikeMessages: unknown[] = messages.map(_toRequestMessageForTokenCounting);
-  return countMessagesTokens(requestLikeMessages);
-}
-
-function _toRequestMessageForTokenCounting(message: ModelMessage): Record<string, unknown> {
-  const result: Record<string, unknown> = {
-    role: message.role,
-  };
-
-  if (typeof message.content === "string") {
-    result.content = message.content;
-    return result;
-  }
-
-  if (!Array.isArray(message.content)) {
-    return result;
-  }
-
-  const textParts: string[] = [];
-  const toolCalls: Array<Record<string, unknown>> = [];
-
-  for (const part of message.content) {
-    if (typeof part !== "object" || part === null) {
-      continue;
-    }
-
-    if ("text" in part && typeof part.text === "string") {
-      textParts.push(part.text);
-      continue;
-    }
-
-    if ("type" in part && part.type === "tool-call") {
-      const toolCall = part as {
-        toolCallId?: string;
-        toolName?: string;
-        args?: unknown;
-        input?: unknown;
-      };
-
-      toolCalls.push({
-        id: toolCall.toolCallId ?? "",
-        type: "function",
-        function: {
-          name: toolCall.toolName ?? "",
-          arguments: JSON.stringify(toolCall.args ?? toolCall.input ?? {}),
-        },
-      });
-      continue;
-    }
-
-    if ("result" in part || "output" in part) {
-      const toolResultValue: unknown = _extractToolResultValue(part);
-      const serialized: string = typeof toolResultValue === "string"
-        ? toolResultValue
-        : JSON.stringify(toolResultValue ?? null);
-
-      textParts.push(serialized);
-
-      const toolCallId: unknown = (part as { toolCallId?: unknown }).toolCallId;
-      if (typeof toolCallId === "string" && toolCallId.length > 0) {
-        result.tool_call_id = toolCallId;
-      }
-      continue;
-    }
-  }
-
-  if (textParts.length > 0) {
-    result.content = textParts.join(" ");
-  }
-
-  if (toolCalls.length > 0) {
-    result.tool_calls = toolCalls;
-  }
-
-  return result;
-}
-
-function _extractToolResultValue(part: unknown): unknown {
-  const resultPart = part as { result?: unknown; output?: unknown };
-
-  if (resultPart.result !== undefined) {
-    return resultPart.result;
-  }
-
-  if (resultPart.output !== undefined) {
-    const outputObject: { type?: string; value?: unknown } = resultPart.output as { type?: string; value?: unknown };
-    if (outputObject && typeof outputObject === "object" && "value" in outputObject) {
-      return outputObject.value;
-    }
-
-    return resultPart.output;
-  }
-
-  return null;
-}
-
-interface IRequestLikeTokenEstimate {
-  breakdown: {
-    total: number;
-    messages: number;
-    tools: number;
-    system: number;
-    overhead: number;
-    messageCount: number;
-    toolCount: number;
-  };
-}
-
-function _estimateRequestLikeTokens(
-  messages: ModelMessage[],
-  instructions: string,
-  creationPrompt: string | null,
-  allTools: ToolSet,
-  activeToolNames: Array<keyof ToolSet>,
-): IRequestLikeTokenEstimate | null {
-  try {
-    const requestMessages: unknown[] = messages.map(_toRequestMessageForTokenCounting);
-
-    const systemPrompt: string = creationPrompt
-      ? `${instructions}\n\n${creationPrompt}`
-      : instructions;
-
-    const activeToolsPayload: unknown[] = activeToolNames
-      .map((toolName: keyof ToolSet): unknown => {
-        const toolDef: Tool | undefined = allTools[toolName as string];
-        if (!toolDef || typeof toolDef !== "object") {
-          return null;
-        }
-
-        const description: unknown = (toolDef as Record<string, unknown>).description;
-        const inputSchema: unknown = (toolDef as Record<string, unknown>).inputSchema;
-
-        let parameters: unknown = {};
-        if (inputSchema instanceof z.ZodSchema) {
-          parameters = zodToJsonSchema(inputSchema);
-        } else if (inputSchema && typeof inputSchema === "object") {
-          parameters = inputSchema;
-        }
-
-        return {
-          type: "function",
-          function: {
-            name: String(toolName),
-            description: typeof description === "string" ? description : "",
-            parameters,
-          },
-        };
-      })
-      .filter((tool): tool is unknown => tool !== null);
-
-    const requestLikeBody: string = JSON.stringify({
-      model: "token-estimation-only",
-      messages: requestMessages,
-      tools: activeToolsPayload,
-      system: systemPrompt,
-    });
-
-    const breakdown = countRequestBodyTokens(requestLikeBody);
-    return { breakdown };
-  } catch {
-    return null;
-  }
-}
-
-function _extractLastAssistantToolCalls(messages: ModelMessage[]): IToolCallSummary[] {
-  for (let i: number = messages.length - 1; i >= 0; i--) {
-    const msg: ModelMessage = messages[i];
-
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      const calls: IToolCallSummary[] = [];
-
-      for (const part of msg.content) {
-        if (
-          typeof part === "object" &&
-          part !== null &&
-          "type" in part &&
-          (part as { type: string }).type === "tool-call" &&
-          "toolName" in part &&
-          typeof (part as { toolName: unknown }).toolName === "string"
-        ) {
-          calls.push({
-            toolCallId: (part as { toolCallId?: string }).toolCallId,
-            name: (part as { toolName: string }).toolName,
-            input: ((part as { args?: unknown }).args ?? (part as { input?: unknown }).input ?? {}) as Record<string, unknown>,
-          });
-        }
-      }
-
-      if (calls.length > 0) {
-        // Look ahead for tool results
-        for (let j = i + 1; j < messages.length; j++) {
-          const nextMsg = messages[j];
-          if (nextMsg.role === "tool" && Array.isArray(nextMsg.content)) {
-            for (const nextPart of nextMsg.content) {
-              if (
-                typeof nextPart === "object" &&
-                nextPart !== null &&
-                "type" in nextPart &&
-                (nextPart as { type: string }).type === "tool-result"
-              ) {
-                const resPart = nextPart as { toolCallId?: string; result?: unknown; output?: unknown; isError?: boolean };
-                const matchedCall = calls.find(c => c.toolCallId === resPart.toolCallId);
-                
-                // Extract actual result value
-                let actualResult = resPart.result;
-                if (actualResult === undefined && resPart.output !== undefined) {
-                  // Handle LanguageModelV3ToolResultOutput format used by internal ModelMessage
-                  const outObj = resPart.output as { type?: string; value?: unknown };
-                  if (outObj && typeof outObj === "object" && outObj.value !== undefined) {
-                    actualResult = outObj.value;
-                  } else {
-                    actualResult = resPart.output;
-                  }
-                }
-
-                if (matchedCall) {
-                  matchedCall.result = actualResult ?? null; 
-                  matchedCall.isError = resPart.isError;
-                } else {
-                  // Fallback: if no toolCallId matched or wasn't provided, try matching by name
-                  const toolName = (resPart as { toolName?: string }).toolName;
-                  const matchedByName = calls.find(c => c.name === toolName && c.result === undefined);
-                  if (matchedByName) {
-                    matchedByName.result = actualResult ?? null;
-                    matchedByName.isError = resPart.isError;
-                  }
-                }
-              }
-            }
-          }
-        }
-        return calls;
-      }
-    }
-  }
-
-  return [];
-}
 
 //#endregion Private functions

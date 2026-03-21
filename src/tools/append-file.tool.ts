@@ -1,12 +1,10 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 
 import { tool } from "ai";
 
 import { appendFileToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
-import { resolveFilePath } from "../utils/file-tools-helper.js";
-import { ensureDirectoryExistsAsync } from "../utils/paths.js";
+import { runFileOperationAsync } from "../utils/file-operation-helper.js";
 
 //#region Interfaces
 
@@ -30,23 +28,26 @@ export const appendFileTool = tool({
   execute: async ({ filePath, content }: { filePath: string; content: string }): Promise<IAppendFileResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
-    try {
-      const resolved: string = resolveFilePath(filePath);
+    const operationResult = await runFileOperationAsync<null>({
+      logger,
+      filePath,
+      onErrorLogMessage: "File append failed",
+      runAsync: async (resolvedPath: string): Promise<null> => {
+        await fs.appendFile(resolvedPath, content, "utf-8");
+        return null;
+      },
+    });
 
-      await ensureDirectoryExistsAsync(path.dirname(resolved));
-
-      await fs.appendFile(resolved, content, "utf-8");
-
-      logger.debug("Content appended to file", { path: resolved, appendedSize: content.length });
-
-      return { success: true, message: `Content appended successfully (${content.length} characters).` };
-    } catch (error: unknown) {
-      const errorMessage: string = (error as Error).message;
-
-      logger.debug("File append failed", { path: filePath, error: errorMessage });
-
-      return { success: false, message: errorMessage };
+    if (!operationResult.success) {
+      return { success: false, message: operationResult.errorMessage };
     }
+
+    logger.debug("Content appended to file", {
+      path: operationResult.resolvedPath,
+      appendedSize: content.length,
+    });
+
+    return { success: true, message: `Content appended successfully (${content.length} characters).` };
   },
 });
 

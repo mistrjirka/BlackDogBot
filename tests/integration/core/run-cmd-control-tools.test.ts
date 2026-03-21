@@ -10,7 +10,7 @@ import { getCmdOutputTool } from "../../../src/tools/get-cmd-output.tool.js";
 import { stopCmdTool } from "../../../src/tools/stop-cmd.tool.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { CommandProcessService } from "../../../src/services/command-process.service.js";
-import { resetSingletons } from "../../utils/test-helpers.js";
+import { resetSingletons, silenceLogger } from "../../utils/test-helpers.js";
 
 type IRunCmdOutput = {
   stdout: string;
@@ -149,10 +149,7 @@ describe("run_cmd control tools", () => {
     const loggerService: LoggerService = LoggerService.getInstance();
     await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
 
-    vi.spyOn(loggerService, "info").mockImplementation(() => {});
-    vi.spyOn(loggerService, "warn").mockImplementation(() => {});
-    vi.spyOn(loggerService, "error").mockImplementation(() => {});
-    vi.spyOn(loggerService, "debug").mockImplementation(() => {});
+    silenceLogger(loggerService);
   });
 
   afterEach(async () => {

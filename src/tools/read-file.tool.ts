@@ -1,12 +1,11 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 
 import { tool } from "ai";
 
 import { readFileToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
-import { resolveFilePath, type IFileReadTracker } from "../utils/file-tools-helper.js";
-import { ensureDirectoryExistsAsync } from "../utils/paths.js";
+import { type IFileReadTracker } from "../utils/file-tools-helper.js";
+import { runFileOperationAsync } from "../utils/file-operation-helper.js";
 
 //#region Interfaces
 
@@ -30,25 +29,31 @@ export function createReadFileTool(readTracker: IFileReadTracker) {
     execute: async ({ filePath }: { filePath: string }): Promise<IReadFileResult> => {
       const logger: LoggerService = LoggerService.getInstance();
 
-      try {
-        const resolved: string = resolveFilePath(filePath);
+      const operationResult = await runFileOperationAsync<string>({
+        logger,
+        filePath,
+        onErrorLogMessage: "File read failed",
+        runAsync: async (resolvedPath: string): Promise<string> => {
+          const content: string = await fs.readFile(resolvedPath, "utf-8");
+          readTracker.markRead(resolvedPath);
+          return content;
+        },
+      });
 
-        await ensureDirectoryExistsAsync(path.dirname(resolved));
-
-        const content: string = await fs.readFile(resolved, "utf-8");
-
-        readTracker.markRead(resolved);
-
-        logger.debug("File read successfully", { path: resolved, size: content.length });
-
-        return { success: true, content, message: `File read successfully (${content.length} characters).` };
-      } catch (error: unknown) {
-        const errorMessage: string = (error as Error).message;
-
-        logger.debug("File read failed", { path: filePath, error: errorMessage });
-
-        return { success: false, content: undefined, message: errorMessage };
+      if (!operationResult.success) {
+        return { success: false, content: undefined, message: operationResult.errorMessage };
       }
+
+      logger.debug("File read successfully", {
+        path: operationResult.resolvedPath,
+        size: operationResult.value.length,
+      });
+
+      return {
+        success: true,
+        content: operationResult.value,
+        message: `File read successfully (${operationResult.value.length} characters).`,
+      };
     },
   });
 }

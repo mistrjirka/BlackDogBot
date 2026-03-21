@@ -109,20 +109,28 @@ export class EmbeddingService {
     const normalizedOpenRouterModel: string =
       this._normalizeOpenRouterModel(requestedOpenRouterModel);
 
-    if (
-      this._initialized &&
-      this._provider === requestedProvider &&
-      this._modelPath === requestedModelPath &&
-      this._dtype === requestedDtype &&
-      this._device === (requestedDevice === "auto" ? this._device : requestedDevice) &&
-      this._openRouterModel === normalizedOpenRouterModel
-    ) {
+    if (this._matchesInitializationRequest(
+      requestedProvider,
+      requestedModelPath,
+      requestedDtype,
+      requestedDevice,
+      normalizedOpenRouterModel,
+    )) {
       return;
     }
 
     if (this._initializationPromise) {
       await this._initializationPromise;
-      return;
+
+      if (this._matchesInitializationRequest(
+        requestedProvider,
+        requestedModelPath,
+        requestedDtype,
+        requestedDevice,
+        normalizedOpenRouterModel,
+      )) {
+        return;
+      }
     }
 
     const initializeTask: Promise<void> = this._initializeInternalAsync(
@@ -141,6 +149,26 @@ export class EmbeddingService {
     } finally {
       this._initializationPromise = null;
     }
+  }
+
+  private _matchesInitializationRequest(
+    requestedProvider: EmbeddingProvider,
+    requestedModelPath: string,
+    requestedDtype: EmbeddingDtype,
+    requestedDevice: EmbeddingDevice,
+    normalizedOpenRouterModel: string,
+  ): boolean {
+    if (!this._initialized) {
+      return false;
+    }
+
+    return (
+      this._provider === requestedProvider &&
+      this._modelPath === requestedModelPath &&
+      this._dtype === requestedDtype &&
+      this._device === (requestedDevice === "auto" ? this._device : requestedDevice) &&
+      this._openRouterModel === normalizedOpenRouterModel
+    );
   }
 
   private async _initializeInternalAsync(

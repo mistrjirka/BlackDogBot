@@ -77,8 +77,8 @@ describe("retry-after helpers", () => {
 
     const decision = resolve429Backoff(error, 1);
     expect(decision.source).toBe("retry-after+rate-limit-reset");
-    expect(decision.waitMs).toBeGreaterThanOrEqual(20000);
-    expect(decision.waitMs).toBeLessThanOrEqual(30000);
+    expect(decision.waitMs).toBeGreaterThanOrEqual(22000);
+    expect(decision.waitMs).toBeLessThanOrEqual(33000);
   });
 
   it("resolve429Backoff uses adaptive exponential fallback when no explicit delay exists", () => {

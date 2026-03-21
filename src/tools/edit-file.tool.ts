@@ -4,7 +4,7 @@ import { tool } from "ai";
 
 import { editFileToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
-import { resolveFilePath } from "../utils/file-tools-helper.js";
+import { runFileOperationAsync } from "../utils/file-operation-helper.js";
 
 //#region Interfaces
 
@@ -39,39 +39,52 @@ export const editFileTool = tool({
   }): Promise<IEditFileResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
-    try {
-      const resolved: string = resolveFilePath(filePath);
+    const operationResult = await runFileOperationAsync<IEditFileResult>({
+      logger,
+      filePath,
+      onErrorLogMessage: "File edit failed",
+      runAsync: async (resolvedPath: string): Promise<IEditFileResult> => {
+        const content: string = await fs.readFile(resolvedPath, "utf-8");
 
-      const content: string = await fs.readFile(resolved, "utf-8");
+        if (!content.includes(oldString)) {
+          return {
+            success: false,
+            replacements: 0,
+            message: `The string to find was not found in the file "${filePath}".`,
+          };
+        }
 
-      if (!content.includes(oldString)) {
-        return { success: false, replacements: 0, message: `The string to find was not found in the file "${filePath}".` };
-      }
+        let updatedContent: string;
+        let replacements: number;
 
-      let updatedContent: string;
-      let replacements: number;
+        if (replaceAll) {
+          replacements = content.split(oldString).length - 1;
+          updatedContent = content.replaceAll(oldString, newString);
+        } else {
+          replacements = 1;
+          updatedContent = content.replace(oldString, newString);
+        }
 
-      if (replaceAll) {
-        // Count occurrences
-        replacements = content.split(oldString).length - 1;
-        updatedContent = content.replaceAll(oldString, newString);
-      } else {
-        replacements = 1;
-        updatedContent = content.replace(oldString, newString);
-      }
+        await fs.writeFile(resolvedPath, updatedContent, "utf-8");
 
-      await fs.writeFile(resolved, updatedContent, "utf-8");
+        return { success: true, replacements, message: `Replaced ${replacements} occurrence(s) successfully.` };
+      },
+    });
 
-      logger.debug("File edited successfully", { path: resolved, replacements });
-
-      return { success: true, replacements, message: `Replaced ${replacements} occurrence(s) successfully.` };
-    } catch (error: unknown) {
-      const errorMessage: string = (error as Error).message;
-
-      logger.debug("File edit failed", { path: filePath, error: errorMessage });
-
-      return { success: false, replacements: undefined, message: errorMessage };
+    if (!operationResult.success) {
+      return { success: false, replacements: undefined, message: operationResult.errorMessage };
     }
+
+    if (!operationResult.value.success) {
+      return operationResult.value;
+    }
+
+    logger.debug("File edited successfully", {
+      path: operationResult.resolvedPath,
+      replacements: operationResult.value.replacements,
+    });
+
+    return operationResult.value;
   },
 });
 

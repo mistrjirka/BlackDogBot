@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { ChannelRegistryService } from "../../src/services/channel-registry.service.js";
 import { LoggerService } from "../../src/services/logger.service.js";
 import type { IRegisteredChannel } from "../../src/shared/types/channel.types.js";
-import { resetSingletons } from "../utils/test-helpers.js";
+import { resetSingletons, silenceLogger } from "../utils/test-helpers.js";
 
 async function createTempChannelsFile(
   content: Record<string, unknown>
@@ -33,10 +33,7 @@ describe("ChannelRegistryService", () => {
     resetSingletons();
 
     const logger = LoggerService.getInstance();
-    vi.spyOn(logger, "debug").mockReturnValue(undefined);
-    vi.spyOn(logger, "info").mockReturnValue(undefined);
-    vi.spyOn(logger, "warn").mockReturnValue(undefined);
-    vi.spyOn(logger, "error").mockReturnValue(undefined);
+    silenceLogger(logger);
   });
 
   afterEach(async () => {

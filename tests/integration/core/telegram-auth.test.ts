@@ -5,7 +5,7 @@ import os from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { ConfigService } from "../../../src/services/config.service.js";
-import { resetSingletons } from "../../utils/test-helpers.js";
+import { resetSingletons, silenceLogger } from "../../utils/test-helpers.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { MessagingService } from "../../../src/services/messaging.service.js";
 import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
@@ -71,12 +71,10 @@ describe("TelegramHandler authorization", () => {
     process.env.HOME = tempDir;
 
     resetSingletons();
+    (TelegramHandler as unknown as { _instance: TelegramHandler | null })._instance = null;
 
     const logger: LoggerService = LoggerService.getInstance();
-    vi.spyOn(logger, "debug").mockReturnValue(undefined);
-    vi.spyOn(logger, "info").mockReturnValue(undefined);
-    vi.spyOn(logger, "warn").mockReturnValue(undefined);
-    vi.spyOn(logger, "error").mockReturnValue(undefined);
+    silenceLogger(logger);
 
     const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
     const betterclawDir: string = path.join(tempDir, ".betterclaw");
@@ -91,6 +89,7 @@ describe("TelegramHandler authorization", () => {
 
   afterEach(async () => {
     resetSingletons();
+    (TelegramHandler as unknown as { _instance: TelegramHandler | null })._instance = null;
     vi.restoreAllMocks();
 
     process.env.HOME = originalHome;

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { vi } from "vitest";
 
 import { ConfigService } from "../../src/services/config.service.js";
 import { LoggerService } from "../../src/services/logger.service.js";
@@ -17,6 +18,7 @@ import { PromptService } from "../../src/services/prompt.service.js";
 import { MainAgent } from "../../src/agent/main-agent.js";
 import { McpRegistryService } from "../../src/services/mcp-registry.service.js";
 import { McpService } from "../../src/services/mcp.service.js";
+import type { LogLevel } from "../../src/shared/types/index.js";
 
 export type SingletonClass =
   | typeof ConfigService
@@ -64,7 +66,7 @@ export function resetSingletons(services: SingletonClass[] = []): void {
 export interface ITestEnvironment {
   tempDir: string;
   originalHome: string;
-  setupAsync: (options?: { logLevel?: string }) => Promise<void>;
+  setupAsync: (options?: { logLevel?: LogLevel }) => Promise<void>;
   teardownAsync: () => Promise<void>;
 }
 
@@ -79,7 +81,7 @@ export function createTestEnvironment(prefix: string): ITestEnvironment {
     get originalHome() {
       return originalHome;
     },
-    setupAsync: async (options?: { logLevel?: string }) => {
+    setupAsync: async (options?: { logLevel?: LogLevel }) => {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `betterclaw-${prefix}-`));
       originalHome = process.env.HOME ?? os.homedir();
       process.env.HOME = tempDir;
@@ -120,4 +122,11 @@ export async function setupVectorStoreAsync(): Promise<void> {
     lanceDbPath,
     embeddingService.getDimension()
   );
+}
+
+export function silenceLogger(logger: LoggerService): void {
+  vi.spyOn(logger, "debug").mockReturnValue(undefined);
+  vi.spyOn(logger, "info").mockReturnValue(undefined);
+  vi.spyOn(logger, "warn").mockReturnValue(undefined);
+  vi.spyOn(logger, "error").mockReturnValue(undefined);
 }

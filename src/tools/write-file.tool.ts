@@ -1,12 +1,11 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 
 import { tool } from "ai";
 
 import { writeFileToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
-import { resolveFilePath, type IFileReadTracker } from "../utils/file-tools-helper.js";
-import { ensureDirectoryExistsAsync } from "../utils/paths.js";
+import { type IFileReadTracker } from "../utils/file-tools-helper.js";
+import { runFileOperationAsync } from "../utils/file-operation-helper.js";
 
 //#region Interfaces
 
@@ -32,43 +31,48 @@ export function createWriteFileTool(readTracker: IFileReadTracker) {
     execute: async ({ filePath, content }: { filePath: string; content: string }): Promise<IWriteFileResult> => {
       const logger: LoggerService = LoggerService.getInstance();
 
-      try {
-        const resolved: string = resolveFilePath(filePath);
+      const operationResult = await runFileOperationAsync<IWriteFileResult>({
+        logger,
+        filePath,
+        onErrorLogMessage: "File write failed",
+        runAsync: async (resolvedPath: string): Promise<IWriteFileResult> => {
+          let fileExists: boolean;
 
-        await ensureDirectoryExistsAsync(path.dirname(resolved));
+          try {
+            await fs.access(resolvedPath);
+            fileExists = true;
+          } catch {
+            fileExists = false;
+          }
 
-        // Check if file exists — if it does, enforce read-before-write guard
-        let fileExists: boolean;
+          if (fileExists && !readTracker.hasBeenRead(resolvedPath)) {
+            return {
+              success: false,
+              message: `You must read the file "${filePath}" with read_file before overwriting it. This prevents accidental data loss.`,
+            };
+          }
 
-        try {
-          await fs.access(resolved);
-          fileExists = true;
-        } catch {
-          fileExists = false;
-        }
+          await fs.writeFile(resolvedPath, content, "utf-8");
+          readTracker.markRead(resolvedPath);
 
-        if (fileExists && !readTracker.hasBeenRead(resolved)) {
-          return {
-            success: false,
-            message: `You must read the file "${filePath}" with read_file before overwriting it. This prevents accidental data loss.`,
-          };
-        }
+          return { success: true, message: `File written successfully (${content.length} characters).` };
+        },
+      });
 
-        await fs.writeFile(resolved, content, "utf-8");
-
-        // Mark as read after writing so subsequent writes don't re-trigger the guard
-        readTracker.markRead(resolved);
-
-        logger.debug("File written successfully", { path: resolved, size: content.length });
-
-        return { success: true, message: `File written successfully (${content.length} characters).` };
-      } catch (error: unknown) {
-        const errorMessage: string = (error as Error).message;
-
-        logger.debug("File write failed", { path: filePath, error: errorMessage });
-
-        return { success: false, message: errorMessage };
+      if (!operationResult.success) {
+        return { success: false, message: operationResult.errorMessage };
       }
+
+      if (!operationResult.value.success) {
+        return operationResult.value;
+      }
+
+      logger.debug("File written successfully", {
+        path: operationResult.resolvedPath,
+        size: content.length,
+      });
+
+      return operationResult.value;
     },
   });
 }

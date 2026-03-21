@@ -88,7 +88,9 @@ import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
-import { resolve429Backoff } from "../utils/retry-after.js";
+import { isContextExceededApiError } from "../utils/context-error.js";
+import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
+import { extractAiErrorDetails } from "../utils/ai-error.js";
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
@@ -697,35 +699,21 @@ export class MainAgent extends BaseAgentBase {
               stepsCount,
             };
           } catch (genError: unknown) {
+            const aiErrorDetails = extractAiErrorDetails(genError);
+
             // Handle context size exceeded errors (from hard gate or real API errors)
             // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
             if (
               APICallError.isInstance(genError) &&
-              ((genError as APICallError).statusCode === 400 ||
-               (genError as APICallError).statusCode === 500 ||
-               (genError as APICallError).statusCode === 413 ||
-               (genError as APICallError).statusCode === 422) &&
               contextRetries < CONTEXT_EXCEEDED_RETRIES
             ) {
-              const apiError = genError as APICallError;
-              const errorBody: string = typeof apiError.responseBody === "string"
-                ? apiError.responseBody
-                : JSON.stringify(apiError.responseBody ?? "");
-              const errorMessage: string = (apiError.message + " " + errorBody).toLowerCase();
-
-              if (
-                errorMessage.includes("context") ||
-                errorMessage.includes("token limit") ||
-                errorMessage.includes("exceeded") ||
-                errorMessage.includes("too long") ||
-                errorMessage.includes("length")
-              ) {
+              if (isContextExceededApiError(genError)) {
                 contextRetries++;
                 this._logger.warn("Context size exceeded, forcing compaction on next step", {
                   chatId,
                   contextRetry: contextRetries,
                   maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
-                  statusCode: apiError.statusCode,
+                  statusCode: aiErrorDetails.statusCode,
                 });
                 this._forceCompactionOnNextStep = true;
                 attempt--; // Don't count this against the empty-response retry limit
@@ -734,24 +722,21 @@ export class MainAgent extends BaseAgentBase {
             }
 
             // Handle 429 rate limit errors with Retry-After wait
-            if (APICallError.isInstance(genError) && (genError as APICallError).statusCode === 429) {
+            if (aiErrorDetails.statusCode === 429) {
               if (_429Retries < 3) {
                 _429Retries++;
-                const apiError = genError as APICallError;
-                const backoff = resolve429Backoff(apiError, _429Retries);
-
-                this._logger.warn("Rate limited (429) in main agent loop, waiting before retry", {
-                  chatId,
-                  attempt,
-                  _429Retries,
-                  max429Retries: 3,
-                  waitMs: backoff.waitMs,
-                  backoffSource: backoff.source,
-                  retryAfterMs: backoff.retryAfterMs,
-                  rateLimitResetMs: backoff.rateLimitResetMs,
+                await apply429BackoffAsync({
+                  logger: this._logger,
+                  error: genError,
+                  retryAttempt: _429Retries,
+                  logMessage: "Rate limited (429) in main agent loop, waiting before retry",
+                  logContext: {
+                    chatId,
+                    attempt,
+                    _429Retries,
+                    max429Retries: 3,
+                  },
                 });
-
-                await new Promise((resolve) => { setTimeout(resolve, backoff.waitMs); });
                 attempt--; // Don't burn the empty-response retry budget
                 continue;
               }

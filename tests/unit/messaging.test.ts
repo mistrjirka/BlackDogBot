@@ -10,7 +10,7 @@ import type {
   IOutgoingMessage,
   IOutgoingPhoto,
 } from "../../src/shared/types/messaging.types.js";
-import { resetSingletons } from "../utils/test-helpers.js";
+import { resetSingletons, silenceLogger } from "../utils/test-helpers.js";
 
 function createFakeAdapter(platform: "telegram" | "console" | "api"): IPlatformAdapter {
   return {
@@ -28,10 +28,7 @@ describe("MessagingService", () => {
     resetSingletons();
 
     const logger: LoggerService = LoggerService.getInstance();
-    vi.spyOn(logger, "debug").mockReturnValue(undefined);
-    vi.spyOn(logger, "info").mockReturnValue(undefined);
-    vi.spyOn(logger, "warn").mockReturnValue(undefined);
-    vi.spyOn(logger, "error").mockReturnValue(undefined);
+    silenceLogger(logger);
   });
 
   afterEach(() => {

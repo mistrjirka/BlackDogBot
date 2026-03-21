@@ -6,7 +6,7 @@ import os from "node:os";
 import { McpRegistryService } from "../../../src/services/mcp-registry.service.js";
 import { McpService } from "../../../src/services/mcp.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
-import { resetSingletons } from "../../utils/test-helpers.js";
+import { resetSingletons, silenceLogger } from "../../utils/test-helpers.js";
 
 let tempDir: string;
 let originalHome: string;
@@ -20,10 +20,7 @@ describe("MCP Agent Integration", () => {
     resetSingletons();
 
     const logger: LoggerService = LoggerService.getInstance();
-    vi.spyOn(logger, "debug").mockReturnValue(undefined);
-    vi.spyOn(logger, "info").mockReturnValue(undefined);
-    vi.spyOn(logger, "warn").mockReturnValue(undefined);
-    vi.spyOn(logger, "error").mockReturnValue(undefined);
+    silenceLogger(logger);
 
     await logger.initializeAsync("error", path.join(tempDir, "logs"));
 

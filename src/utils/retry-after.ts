@@ -2,6 +2,7 @@ import { APICallError } from "ai";
 
 const DEFAULT_429_BACKOFF_MS: number = 10_000;
 const MAX_RETRY_AFTER_MS: number = 120_000;
+const EXPLICIT_429_SAFETY_MULTIPLIER: number = 1.1;
 
 export interface I429BackoffDecision {
   waitMs: number;
@@ -111,8 +112,10 @@ export function resolve429Backoff(error: unknown, retryAttempt: number): I429Bac
   const rateLimitResetMs: number | null = extractRateLimitResetMs(error);
 
   if (retryAfterMs !== null && rateLimitResetMs !== null) {
+    const explicitWaitMs: number = Math.max(retryAfterMs, rateLimitResetMs);
+
     return {
-      waitMs: Math.max(retryAfterMs, rateLimitResetMs),
+      waitMs: _applyExplicit429SafetyMargin(explicitWaitMs),
       source: "retry-after+rate-limit-reset",
       retryAfterMs,
       rateLimitResetMs,
@@ -121,7 +124,7 @@ export function resolve429Backoff(error: unknown, retryAttempt: number): I429Bac
 
   if (retryAfterMs !== null) {
     return {
-      waitMs: retryAfterMs,
+      waitMs: _applyExplicit429SafetyMargin(retryAfterMs),
       source: "retry-after",
       retryAfterMs,
       rateLimitResetMs,
@@ -130,7 +133,7 @@ export function resolve429Backoff(error: unknown, retryAttempt: number): I429Bac
 
   if (rateLimitResetMs !== null) {
     return {
-      waitMs: rateLimitResetMs,
+      waitMs: _applyExplicit429SafetyMargin(rateLimitResetMs),
       source: "rate-limit-reset",
       retryAfterMs,
       rateLimitResetMs,
@@ -151,11 +154,9 @@ export function resolve429Backoff(error: unknown, retryAttempt: number): I429Bac
   };
 }
 
-/**
- * Returns the default backoff for 429 errors when no Retry-After header is present.
- */
-export function getDefault429BackoffMs(): number {
-  return DEFAULT_429_BACKOFF_MS;
+function _applyExplicit429SafetyMargin(waitMs: number): number {
+  const safeWaitMs: number = Math.ceil(waitMs * EXPLICIT_429_SAFETY_MULTIPLIER);
+  return Math.min(safeWaitMs, MAX_RETRY_AFTER_MS);
 }
 
 function _parseOpenRouterRetryAfter(body: string): number | null {

@@ -27,6 +27,7 @@ describe("extractAiErrorDetails", () => {
 
     // Assert
     expect(details.message).toBe("User not found.");
+    expect(details.providerMessage).toBe("User not found.");
     expect(details.statusCode).toBe(401);
     expect(details.responseBody).toBe('{"error":{"message":"User not found."}}');
     expect(details.isRetryable).toBe(false);
@@ -44,6 +45,7 @@ describe("extractAiErrorDetails", () => {
 
     // Assert
     expect(details.message).toBe("something went wrong");
+    expect(details.providerMessage).toBeNull();
     expect(details.statusCode).toBeNull();
     expect(details.responseBody).toBeNull();
     expect(details.isRetryable).toBeNull();
@@ -58,6 +60,7 @@ describe("extractAiErrorDetails", () => {
 
     // Assert
     expect(details.message).toBe("raw string error");
+    expect(details.providerMessage).toBeNull();
     expect(details.statusCode).toBeNull();
   });
 
@@ -75,6 +78,7 @@ describe("extractAiErrorDetails", () => {
 
     // Assert
     expect(details.model).toBeNull();
+    expect(details.providerMessage).toBeNull();
     expect(details.provider).toBe("api.openai.com");
     expect(details.statusCode).toBe(400);
   });
@@ -96,6 +100,32 @@ describe("extractAiErrorDetails", () => {
     expect(details.statusCode).toBe(429);
     expect(details.isRetryable).toBe(true);
     expect(details.model).toBe("openai/gpt-4o");
+    expect(details.providerMessage).toBeNull();
+  });
+
+  it("should prefer metadata.raw as providerMessage when present", () => {
+    // Arrange
+    const error: APICallError = new APICallError({
+      message: "Provider returned malformed response",
+      url: "https://openrouter.ai/api/v1/chat/completions",
+      requestBodyValues: { model: "openai/gpt-4o" },
+      statusCode: 400,
+      responseBody: JSON.stringify({
+        error: {
+          message: "Provider internal validation failed",
+          metadata: {
+            raw: "openai/gpt-4o does not support parameter 'strict_json'",
+          },
+        },
+      }),
+      isRetryable: false,
+    });
+
+    // Act
+    const details: IAiErrorDetails = extractAiErrorDetails(error);
+
+    // Assert
+    expect(details.providerMessage).toBe("openai/gpt-4o does not support parameter 'strict_json'");
   });
 });
 
@@ -104,6 +134,7 @@ describe("formatAiErrorForLog", () => {
     // Arrange
     const details: IAiErrorDetails = {
       message: "User not found.",
+      providerMessage: "User not found.",
       provider: "openrouter.ai",
       model: "minimax/minimax-m2.5",
       statusCode: 401,
@@ -128,6 +159,7 @@ describe("formatAiErrorForLog", () => {
     // Arrange
     const details: IAiErrorDetails = {
       message: "something broke",
+      providerMessage: null,
       provider: null,
       model: null,
       statusCode: null,
@@ -149,6 +181,7 @@ describe("formatAiErrorForUser", () => {
     // Arrange
     const details: IAiErrorDetails = {
       message: "User not found.",
+      providerMessage: "User not found.",
       provider: "openrouter.ai",
       model: "minimax/minimax-m2.5",
       statusCode: 401,
@@ -171,6 +204,7 @@ describe("formatAiErrorForUser", () => {
     // Arrange
     const details: IAiErrorDetails = {
       message: "Rate limit exceeded",
+      providerMessage: null,
       provider: "openrouter.ai",
       model: null,
       statusCode: 429,
@@ -190,6 +224,7 @@ describe("formatAiErrorForUser", () => {
     // Arrange
     const details: IAiErrorDetails = {
       message: "Internal Server Error",
+      providerMessage: null,
       provider: "openrouter.ai",
       model: null,
       statusCode: 502,
@@ -209,6 +244,7 @@ describe("formatAiErrorForUser", () => {
     // Arrange
     const details: IAiErrorDetails = {
       message: "something went wrong",
+      providerMessage: null,
       provider: null,
       model: null,
       statusCode: null,
@@ -228,6 +264,7 @@ describe("formatAiErrorForUser", () => {
     // Arrange
     const details: IAiErrorDetails = {
       message: "Weird error",
+      providerMessage: null,
       provider: null,
       model: null,
       statusCode: 418,
@@ -241,6 +278,28 @@ describe("formatAiErrorForUser", () => {
 
     // Assert
     expect(userMsg).toContain("HTTP 418");
+  });
+
+  it("should show provider metadata.raw details when available", () => {
+    // Arrange
+    const details: IAiErrorDetails = {
+      message: "Provider returned malformed response",
+      providerMessage: "openai/gpt-4o does not support parameter 'strict_json'",
+      provider: "openrouter.ai",
+      model: "openai/gpt-4o",
+      statusCode: 400,
+      responseBody: null,
+      isRetryable: false,
+      url: null,
+    };
+
+    // Act
+    const userMsg: string = formatAiErrorForUser(details);
+
+    // Assert
+    expect(userMsg).toContain("openai/gpt-4o does not support parameter 'strict_json'");
+    expect(userMsg).toContain("Provider: openrouter.ai");
+    expect(userMsg).toContain("Model: openai/gpt-4o");
   });
 });
 

@@ -5,6 +5,7 @@ import { extractErrorMessage } from "./error.js";
 
 export interface IAiErrorDetails {
   message: string;
+  providerMessage: string | null;
   provider: string | null;
   model: string | null;
   statusCode: number | null;
@@ -26,6 +27,7 @@ export interface IAiErrorDetails {
 export function extractAiErrorDetails(error: unknown): IAiErrorDetails {
   const details: IAiErrorDetails = {
     message: extractErrorMessage(error),
+    providerMessage: null,
     provider: null,
     model: null,
     statusCode: null,
@@ -59,6 +61,8 @@ export function extractAiErrorDetails(error: unknown): IAiErrorDetails {
         details.model = body.model;
       }
     }
+
+    details.providerMessage = _extractProviderMessageFromResponseBody(details.responseBody);
   }
 
   return details;
@@ -98,6 +102,7 @@ export function formatAiErrorForLog(details: IAiErrorDetails): string {
  */
 export function formatAiErrorForUser(details: IAiErrorDetails): string {
   const parts: string[] = [];
+  const detailMessage: string = details.providerMessage ?? details.message;
 
   if (details.statusCode !== null) {
     if (details.statusCode === 401 || details.statusCode === 403) {
@@ -118,12 +123,47 @@ export function formatAiErrorForUser(details: IAiErrorDetails): string {
       parts.push(`Model: ${details.model}`);
     }
 
-    parts.push(`Details: ${details.message}`);
+    parts.push(`Details: ${detailMessage}`);
   } else {
-    parts.push(`An error occurred: ${details.message}`);
+    parts.push(`An error occurred: ${detailMessage}`);
   }
 
   return parts.join("\n");
+}
+
+function _extractProviderMessageFromResponseBody(responseBody: string | null): string | null {
+  if (!responseBody) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(responseBody);
+    if (typeof parsed !== "object" || parsed === null) {
+      return null;
+    }
+
+    const errorObject: unknown = (parsed as Record<string, unknown>).error;
+    if (typeof errorObject !== "object" || errorObject === null) {
+      return null;
+    }
+
+    const metadata: unknown = (errorObject as Record<string, unknown>).metadata;
+    if (typeof metadata === "object" && metadata !== null) {
+      const raw: unknown = (metadata as Record<string, unknown>).raw;
+      if (typeof raw === "string" && raw.trim().length > 0) {
+        return raw.trim();
+      }
+    }
+
+    const providerMessage: unknown = (errorObject as Record<string, unknown>).message;
+    if (typeof providerMessage === "string" && providerMessage.trim().length > 0) {
+      return providerMessage.trim();
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 //#endregion Public functions

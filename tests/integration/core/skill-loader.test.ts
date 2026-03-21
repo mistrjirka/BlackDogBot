@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
-import { resetSingletons } from "../../utils/test-helpers.js";
+import { resetSingletons, silenceLogger } from "../../utils/test-helpers.js";
 import * as skillState from "../../../src/helpers/skill-state.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import type { ISkill } from "../../../src/shared/types/index.js";
@@ -44,10 +44,7 @@ describe("SkillLoaderService", () => {
     resetSingletons();
 
     const logger: LoggerService = LoggerService.getInstance();
-    vi.spyOn(logger, "debug").mockReturnValue(undefined);
-    vi.spyOn(logger, "info").mockReturnValue(undefined);
-    vi.spyOn(logger, "warn").mockReturnValue(undefined);
-    vi.spyOn(logger, "error").mockReturnValue(undefined);
+    silenceLogger(logger);
   });
 
   afterEach(async () => {

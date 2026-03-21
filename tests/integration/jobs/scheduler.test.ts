@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { SchedulerService } from "../../../src/services/scheduler.service.js";
-import { resetSingletons } from "../../utils/test-helpers.js";
+import { resetSingletons, silenceLogger } from "../../utils/test-helpers.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import type { IScheduledTask } from "../../../src/shared/types/index.js";
@@ -31,6 +31,9 @@ function createTask(overrides?: Partial<IScheduledTask>): IScheduledTask {
     lastRunError: null,
     createdAt: now,
     updatedAt: now,
+    messageHistory: [],
+    messageSummary: null,
+    summaryGeneratedAt: null,
     ...overrides,
   };
 }
@@ -47,10 +50,7 @@ describe("SchedulerService", () => {
     resetSingletons();
 
     const logger: LoggerService = LoggerService.getInstance();
-    vi.spyOn(logger, "debug").mockReturnValue(undefined);
-    vi.spyOn(logger, "info").mockReturnValue(undefined);
-    vi.spyOn(logger, "warn").mockReturnValue(undefined);
-    vi.spyOn(logger, "error").mockReturnValue(undefined);
+    silenceLogger(logger);
 
     const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
     const tempConfigDir: string = path.join(tempDir, ".betterclaw");

@@ -16,6 +16,8 @@ import {
   ILmStudioConfig,
   ResolvedStructuredOutputMode,
   StructuredOutputMode,
+  ILlmResponse,
+  ILlmToolCall,
 } from "../shared/types/index.js";
 import { RateLimiterService } from "./rate-limiter.service.js";
 import { ModelInfoService } from "./model-info.service.js";
@@ -28,6 +30,7 @@ import { countRequestBodyTokens, IRequestTokenBreakdown } from "../utils/request
 import { extractErrorMessage } from "../utils/error.js";
 import { FORCE_THINK_INTERVAL } from "../shared/constants.js";
 import { getCurrentLlmCallType } from "../utils/llm-call-context.js";
+import { runToolCallingProbeAsync } from "../utils/llm-probe-helpers.js";
 import { createHash } from "node:crypto";
 
 function normalizeBaseUrl(url: string): string {
@@ -136,7 +139,7 @@ export class AiProviderService {
     if (activeConfig.contextWindow) {
       this._contextWindow = activeConfig.contextWindow;
       logger.info(`Using configured context window: ${this._contextWindow}`);
-    } else if (providerKey === "lm-studio") {
+    } else if (this._isLmStudio(providerKey)) {
       const lmConfig = activeConfig as ILmStudioConfig;
       
       // Use LM Studio SDK for detection with retry
@@ -183,7 +186,7 @@ export class AiProviderService {
           `Please set 'contextWindow' in config to match your LM Studio settings.`
         );
       }
-    } else if (providerKey === "openrouter") {
+    } else if (this._isOpenRouter(providerKey)) {
       try {
         this._contextWindow = await this._modelInfoService.fetchContextWindowAsync(defaultModelId);
         logger.info(`Detected OpenRouter context window: ${this._contextWindow}`);
@@ -209,7 +212,7 @@ export class AiProviderService {
     logger.info(`Model ${defaultModelId} response format: ${responseFormat.ok ? "OK" : `ISSUE - ${responseFormat.reason}`}`);
 
     // Autodetect reasoning_format support (llama.cpp specific)
-    if (providerKey === "openai-compatible") {
+    if (this._isOpenAiCompatible(providerKey)) {
       this._supportsReasoningFormat = await this._testReasoningFormatSupportAsync();
       if (this._supportsReasoningFormat) {
         logger.info("Will use reasoning_format: 'none' with AI SDK client-side think-tag extraction middleware");
@@ -220,14 +223,14 @@ export class AiProviderService {
     await this._resolveStructuredOutputModeAsync(defaultModelId, logger);
 
     // Autodetect parallel tool call support (local openai-compatible endpoints)
-    if (providerKey === "openai-compatible" || providerKey === "lm-studio") {
+    if (this._isLocalProvider(providerKey)) {
       this._supportsParallelToolCalls = await this._testParallelToolCallSupportAsync();
       logger.info(
         `Autodetected parallel tool call support: ${this._supportsParallelToolCalls ? "SUPPORTED" : "NOT SUPPORTED"}`,
       );
 
       // Resolve per-request timeout from config (local providers only)
-      const configuredTimeout: number | undefined = providerKey === "openai-compatible"
+      const configuredTimeout: number | undefined = this._isOpenAiCompatible(providerKey)
         ? aiConfig.openaiCompatible?.requestTimeout
         : aiConfig.lmStudio?.requestTimeout;
       this._requestTimeoutMs = configuredTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS;
@@ -298,9 +301,9 @@ export class AiProviderService {
     } else {
       // Auto in sync init: use explicit endpoint flag when available, otherwise
       // conservative default that avoids response_format dependence.
-      const explicitStructuredSupport: boolean | undefined = providerKey === "openai-compatible"
+      const explicitStructuredSupport: boolean | undefined = this._isOpenAiCompatible(providerKey)
         ? aiConfig.openaiCompatible?.supportsStructuredOutputs
-        : providerKey === "lm-studio"
+        : this._isLmStudio(providerKey)
           ? aiConfig.lmStudio?.supportsStructuredOutputs
           : undefined;
 
@@ -430,7 +433,7 @@ export class AiProviderService {
  
      try {
        const config = this._getActiveProviderConfig();
-       const baseUrl = normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
+       const baseUrl: string = this._getLocalBaseUrl(config);
  
        const response = await fetch(`${baseUrl}/v1/chat/completions`, {
          method: "POST",
@@ -446,15 +449,8 @@ export class AiProviderService {
          return { ok: false, reason: `HTTP ${response.status}` };
        }
  
-       const json = await response.json() as {
-         choices?: Array<{
-           message?: {
-             content?: string;
-             reasoning_content?: string;
-           };
-         }>;
-       };
-       const message = json.choices?.[0]?.message;
+        const json = await response.json() as ILlmResponse;
+        const message = json.choices?.[0]?.message;
  
        if (!message) {
          return { ok: false, reason: "No message in response" };
@@ -499,7 +495,7 @@ export class AiProviderService {
 
     try {
       const config = this._getActiveProviderConfig();
-      const baseUrl = normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
+      const baseUrl: string = this._getLocalBaseUrl(config);
 
       // Build probe request body — include reasoning_format: "none" when supported
       // to prevent thinking models from wasting tokens on reasoning instead of
@@ -544,14 +540,7 @@ export class AiProviderService {
         return false;
       }
 
-      const json = await response.json() as {
-        choices?: Array<{
-          message?: {
-            content?: string;
-            reasoning_content?: string;
-          };
-        }>;
-      };
+      const json = await response.json() as ILlmResponse;
 
       // Try to extract valid JSON from content or reasoning_content.
       // Some models/servers put structured output in reasoning_content instead of content,
@@ -653,15 +642,7 @@ export class AiProviderService {
         };
       };
 
-      const json = await response.clone().json() as {
-        choices?: Array<{
-          message?: {
-            content?: string;
-            reasoning_content?: string;
-            tool_calls?: unknown[];
-          };
-        }>;
-      };
+      const json = await response.clone().json() as ILlmResponse;
 
       if (json.choices && Array.isArray(json.choices)) {
         let modified = false;
@@ -761,7 +742,7 @@ export class AiProviderService {
     }
 
     // Auto mode: OpenRouter first tries model capability metadata.
-    if (providerKey === "openrouter") {
+    if (this._isOpenRouter(providerKey)) {
       const supportedParameters: Set<string> | null = await this._modelInfoService.fetchSupportedParametersAsync(defaultModelId);
 
       if (supportedParameters !== null) {
@@ -937,22 +918,7 @@ export class AiProviderService {
 
     try {
       const config = this._getActiveProviderConfig();
-      const baseUrl: string = normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
-
-      type IToolCall = {
-        function?: {
-          name?: string;
-          arguments?: string;
-        };
-      };
-
-      type IProbeResponse = {
-        choices?: Array<{
-          message?: {
-            tool_calls?: IToolCall[];
-          };
-        }>;
-      };
+      const baseUrl: string = this._getLocalBaseUrl(config);
 
       const makeProbeRequestAsync = async (parallelToolCalls: boolean): Promise<Response> => {
         const controller: AbortController = new AbortController();
@@ -1024,17 +990,17 @@ export class AiProviderService {
         return false;
       }
 
-      const jsonWithParallel = await responseWithParallel.json() as IProbeResponse;
-      const jsonWithoutParallel = await responseWithoutParallel.json() as IProbeResponse;
+      const jsonWithParallel = await responseWithParallel.json() as ILlmResponse;
+      const jsonWithoutParallel = await responseWithoutParallel.json() as ILlmResponse;
 
-      const toolCallsWithParallel: IToolCall[] = jsonWithParallel.choices?.[0]?.message?.tool_calls ?? [];
-      const toolCallsWithoutParallel: IToolCall[] = jsonWithoutParallel.choices?.[0]?.message?.tool_calls ?? [];
+      const toolCallsWithParallel: ILlmToolCall[] = jsonWithParallel.choices?.[0]?.message?.tool_calls ?? [];
+      const toolCallsWithoutParallel: ILlmToolCall[] = jsonWithoutParallel.choices?.[0]?.message?.tool_calls ?? [];
 
       const getWeatherCallsWithParallel: number = toolCallsWithParallel.filter(
-        (toolCall: IToolCall) => toolCall.function?.name === "get_weather",
+        (toolCall: ILlmToolCall) => toolCall.function?.name === "get_weather",
       ).length;
       const getWeatherCallsWithoutParallel: number = toolCallsWithoutParallel.filter(
-        (toolCall: IToolCall) => toolCall.function?.name === "get_weather",
+        (toolCall: ILlmToolCall) => toolCall.function?.name === "get_weather",
       ).length;
 
       const looksSupported: boolean =
@@ -1068,93 +1034,41 @@ export class AiProviderService {
       const provider: AiProvider = this._aiConfig.provider;
 
       if (provider === "openrouter") {
-        const response: Response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${(config as IOpenRouterConfig).apiKey}`,
+        const result = await runToolCallingProbeAsync({
+          url: "https://openrouter.ai/api/v1/chat/completions",
+          model: config.model,
+          prompt: "Call the tool once.",
+          toolChoice: "required",
+          maxTokens: 50,
+          apiKey: (config as IOpenRouterConfig).apiKey,
+          providerPayload: {
+            require_parameters: true,
           },
-          body: JSON.stringify({
-            model: config.model,
-            messages: [{ role: "user", content: "Call the tool once." }],
-            tools: [
-              {
-                type: "function",
-                function: {
-                  name: "emit_probe",
-                  description: "Probe tool support",
-                  parameters: {
-                    type: "object",
-                    properties: {
-                      ok: { type: "boolean" },
-                    },
-                    required: ["ok"],
-                    additionalProperties: false,
-                  },
-                },
-              },
-            ],
-            tool_choice: "required",
-            max_tokens: 50,
-            provider: {
-              require_parameters: true,
-            },
-          }),
         });
 
-        if (!response.ok) {
-          logger.debug("Tool calling probe failed for OpenRouter", { status: response.status });
+        if (!result.ok) {
+          logger.debug("Tool calling probe failed for OpenRouter", { status: result.status });
           return false;
         }
 
-        const json = await response.json() as {
-          choices?: Array<{ message?: { tool_calls?: unknown[] } }>;
-        };
-
-        const toolCalls = json.choices?.[0]?.message?.tool_calls;
-        return Array.isArray(toolCalls) && toolCalls.length > 0;
+        return result.hasToolCalls;
       }
 
-      const baseUrl: string = normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
-      const response: Response = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: config.model,
-          messages: [{ role: "user", content: "Call the tool once." }],
-          tools: [
-            {
-              type: "function",
-              function: {
-                name: "emit_probe",
-                description: "Probe tool support",
-                parameters: {
-                  type: "object",
-                  properties: {
-                    ok: { type: "boolean" },
-                  },
-                  required: ["ok"],
-                  additionalProperties: false,
-                },
-              },
-            },
-          ],
-          tool_choice: "required",
-          max_tokens: 50,
-        }),
+      const baseUrl: string = this._getLocalBaseUrl(config);
+      const result = await runToolCallingProbeAsync({
+        url: `${baseUrl}/v1/chat/completions`,
+        model: config.model,
+        prompt: "Call the tool once.",
+        toolChoice: "required",
+        maxTokens: 50,
       });
 
-      if (!response.ok) {
-        logger.debug("Tool calling probe failed for local provider", { status: response.status });
+      if (!result.ok) {
+        logger.debug("Tool calling probe failed for local provider", { status: result.status });
         return false;
       }
 
-      const json = await response.json() as {
-        choices?: Array<{ message?: { tool_calls?: unknown[] } }>;
-      };
-
-      const toolCalls = json.choices?.[0]?.message?.tool_calls;
-      return Array.isArray(toolCalls) && toolCalls.length > 0;
+      return result.hasToolCalls;
     } catch (error: unknown) {
       logger.debug("Tool calling probe failed", {
         error: extractErrorMessage(error),
@@ -1176,90 +1090,38 @@ export class AiProviderService {
       const provider: AiProvider = this._aiConfig.provider;
 
       if (provider === "openrouter") {
-        const response: Response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${(config as IOpenRouterConfig).apiKey}`,
-          },
-          body: JSON.stringify({
-            model: config.model,
-            messages: [{ role: "user", content: "Call the tool emit_probe once." }],
-            tools: [
-              {
-                type: "function",
-                function: {
-                  name: "emit_probe",
-                  description: "Probe tool support",
-                  parameters: {
-                    type: "object",
-                    properties: {
-                      ok: { type: "boolean" },
-                    },
-                    required: ["ok"],
-                    additionalProperties: false,
-                  },
-                },
-              },
-            ],
-            tool_choice: "auto",
-            max_tokens: 80,
-          }),
+        const result = await runToolCallingProbeAsync({
+          url: "https://openrouter.ai/api/v1/chat/completions",
+          model: config.model,
+          prompt: "Call the tool emit_probe once.",
+          toolChoice: "auto",
+          maxTokens: 80,
+          apiKey: (config as IOpenRouterConfig).apiKey,
         });
 
-        if (!response.ok) {
-          logger.debug("Soft tool calling probe failed for OpenRouter", { status: response.status });
+        if (!result.ok) {
+          logger.debug("Soft tool calling probe failed for OpenRouter", { status: result.status });
           return false;
         }
 
-        const json = await response.json() as {
-          choices?: Array<{ message?: { tool_calls?: unknown[] } }>;
-        };
-
-        const toolCalls = json.choices?.[0]?.message?.tool_calls;
-        return Array.isArray(toolCalls) && toolCalls.length > 0;
+        return result.hasToolCalls;
       }
 
-      const baseUrl: string = normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
-      const response: Response = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: config.model,
-          messages: [{ role: "user", content: "Call the tool emit_probe once." }],
-          tools: [
-            {
-              type: "function",
-              function: {
-                name: "emit_probe",
-                description: "Probe tool support",
-                parameters: {
-                  type: "object",
-                  properties: {
-                    ok: { type: "boolean" },
-                  },
-                  required: ["ok"],
-                  additionalProperties: false,
-                },
-              },
-            },
-          ],
-          tool_choice: "auto",
-          max_tokens: 80,
-        }),
+      const baseUrl: string = this._getLocalBaseUrl(config);
+      const result = await runToolCallingProbeAsync({
+        url: `${baseUrl}/v1/chat/completions`,
+        model: config.model,
+        prompt: "Call the tool emit_probe once.",
+        toolChoice: "auto",
+        maxTokens: 80,
       });
 
-      if (!response.ok) {
-        logger.debug("Soft tool calling probe failed for local provider", { status: response.status });
+      if (!result.ok) {
+        logger.debug("Soft tool calling probe failed for local provider", { status: result.status });
         return false;
       }
 
-      const json = await response.json() as {
-        choices?: Array<{ message?: { tool_calls?: unknown[] } }>;
-      };
-
-      const toolCalls = json.choices?.[0]?.message?.tool_calls;
-      return Array.isArray(toolCalls) && toolCalls.length > 0;
+      return result.hasToolCalls;
     } catch (error: unknown) {
       logger.debug("Soft tool calling probe failed", {
         error: extractErrorMessage(error),
@@ -1817,6 +1679,26 @@ export class AiProviderService {
       this._getActiveProviderConfig();
 
     return config.model;
+  }
+
+  private _getLocalBaseUrl(config: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig): string {
+    return normalizeBaseUrl((config as IOpenAiCompatibleConfig | ILmStudioConfig).baseUrl || "http://localhost:1234");
+  }
+
+  private _isOpenRouter(providerKey: AiProvider): boolean {
+    return providerKey === "openrouter";
+  }
+
+  private _isOpenAiCompatible(providerKey: AiProvider): boolean {
+    return providerKey === "openai-compatible";
+  }
+
+  private _isLmStudio(providerKey: AiProvider): boolean {
+    return providerKey === "lm-studio";
+  }
+
+  private _isLocalProvider(providerKey: AiProvider): boolean {
+    return this._isOpenAiCompatible(providerKey) || this._isLmStudio(providerKey);
   }
 
   private _resolveEffectiveRateLimits(
