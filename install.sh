@@ -467,12 +467,16 @@ create_config() {
     fi
     
     echo ""
-    echo -e "${BLUE}Job Creation Feature${NC}"
-    if prompt_yesno "Enable Job Creation feature?" "y"; then
-        JOB_CREATION_ENABLED="true"
-    else
-        JOB_CREATION_ENABLED="false"
-    fi
+    # NOTE: Job creation toggle temporarily disabled in installer.
+    # The feature is currently unstable, so we force-disable it here.
+    # Keep this block as comments so it can be re-enabled later.
+    # echo -e "${BLUE}Job Creation Feature${NC}"
+    # if prompt_yesno "Enable Job Creation feature?" "y"; then
+    #     JOB_CREATION_ENABLED="true"
+    # else
+    #     JOB_CREATION_ENABLED="false"
+    # fi
+    JOB_CREATION_ENABLED="false"
     
     echo ""
     echo -e "${BLUE}Embedding Configuration${NC}"
