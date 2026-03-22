@@ -23,6 +23,13 @@ import { extractErrorMessage } from "../../utils/error.js";
 import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 import { isCancelCommand } from "../../utils/command-utils.js";
 import { getTelegramChatsFilePath } from "../../utils/paths.js";
+import { getUploadsDir, ensureDirectoryExistsAsync } from "../../utils/paths.js";
+import {
+  compressImageToLimitAsync,
+  getImageExtensionForMimeType,
+  getUniqueUploadPathAsync,
+  sanitizeImageFileName,
+} from "../../utils/image-helpers.js";
 
 //#region Constants
 
@@ -62,7 +69,14 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
 
 interface IPendingTelegramMessage {
   text: string;
-  messageId: number;
+  messageId: number | null;
+}
+
+interface IPendingTelegramImage {
+  promptText: string;
+  mediaType: string;
+  savedPath: string;
+  timer: NodeJS.Timeout;
 }
 
 //#endregion Constants
@@ -83,6 +97,7 @@ export class TelegramHandler {
   private _knownChatIds: Set<string>;
   private _chatIdsFilePath: string;
   private _config: ITelegramConfig | null = null;
+  private _pendingImagesByChat: Map<string, IPendingTelegramImage>;
 
   //#endregion Data Members
 
@@ -97,6 +112,7 @@ export class TelegramHandler {
     this._pendingMessages = new Map<string, IPendingTelegramMessage[]>();
     this._inFlightMessageIdByChat = new Map<string, number>();
     this._knownChatIds = new Set<string>();
+    this._pendingImagesByChat = new Map<string, IPendingTelegramImage>();
 
     this._chatIdsFilePath = getTelegramChatsFilePath();
   }
@@ -146,6 +162,14 @@ export class TelegramHandler {
     if (isCancelCommand(message.text)) {
       await this.handleCancelCommandAsync(ctx);
       return;
+    }
+
+    const pendingImage: IPendingTelegramImage | undefined = this._pendingImagesByChat.get(chatId);
+    if (pendingImage) {
+      clearTimeout(pendingImage.timer);
+      this._pendingImagesByChat.delete(chatId);
+
+      message.text = `${pendingImage.promptText}\n\n${message.text}`;
     }
 
     // Auto-register channel if not exists
@@ -453,6 +477,101 @@ export class TelegramHandler {
     }
   }
 
+  public async handleImageMessageAsync(ctx: Context): Promise<void> {
+    const message = ctx.message;
+    if (!message) {
+      return;
+    }
+
+    const chatId: string = String(message.chat.id);
+
+    try {
+      if (!(await this._isAuthorizedAsync(chatId))) {
+        return;
+      }
+
+      const extraction = await this._extractTelegramImageAsync(ctx);
+      if (!extraction) {
+        return;
+      }
+
+      const maxImageBytes: number = 10 * 1024 * 1024;
+      let imageBuffer: Buffer = extraction.imageBuffer;
+      let resolvedMediaType: string = extraction.mediaType;
+
+      if (imageBuffer.length > maxImageBytes) {
+        const compressed: Buffer = await compressImageToLimitAsync(imageBuffer, maxImageBytes);
+        if (compressed !== imageBuffer) {
+          imageBuffer = compressed;
+          resolvedMediaType = "image/jpeg";
+        }
+      }
+
+      if (imageBuffer.length > maxImageBytes) {
+        await ctx.reply(
+          `Image is too large (${imageBuffer.length} bytes) and could not be compressed below ${maxImageBytes} bytes.`,
+        );
+        return;
+      }
+
+      const uploadsDir: string = getUploadsDir();
+      await ensureDirectoryExistsAsync(uploadsDir);
+
+      const now: Date = new Date();
+      const extension: string = getImageExtensionForMimeType(resolvedMediaType);
+      const preferredName: string = extraction.originalFileName
+        ? sanitizeImageFileName(extraction.originalFileName)
+        : `telegram_${chatId}_${now.getTime()}${extension}`;
+
+      const fileNameWithExt: string = preferredName.includes(".")
+        ? preferredName
+        : `${preferredName}${extension}`;
+
+      const uniquePath: string = await getUniqueUploadPathAsync(fileNameWithExt);
+      await writeFile(uniquePath, imageBuffer);
+
+      const previousPending: IPendingTelegramImage | undefined = this._pendingImagesByChat.get(chatId);
+      if (previousPending) {
+        clearTimeout(previousPending.timer);
+        this._pendingImagesByChat.delete(chatId);
+      }
+
+      const imagePromptBase: string = this._buildImageAnalysisPrompt(uniquePath, resolvedMediaType);
+      const captionText: string = extraction.captionText ?? "";
+
+      if (captionText.length > 0) {
+        const combinedPrompt: string = `${imagePromptBase}\n\nUser caption: ${captionText}`;
+        await this._enqueueOrProcessPromptAsync(chatId, combinedPrompt, null);
+        await ctx.reply(`Image received and stored to ${uniquePath}. Processing with caption...`);
+        return;
+      }
+
+      const timer: NodeJS.Timeout = setTimeout((): void => {
+        void this._autoAnalyzePendingImageAsync(chatId).catch((error: unknown): void => {
+          this._logger.error("Failed to auto-analyze pending image", {
+            chatId,
+            error: extractErrorMessage(error),
+          });
+        });
+      }, 2000);
+
+      this._pendingImagesByChat.set(chatId, {
+        promptText: imagePromptBase,
+        mediaType: resolvedMediaType,
+        savedPath: uniquePath,
+        timer,
+      });
+
+      await ctx.reply(`Image received and stored to ${uniquePath}. Send text within 2s to combine it, or it will auto-analyze.`);
+    } catch (error: unknown) {
+      this._logger.error("Failed to handle Telegram image message", {
+        chatId,
+        error: extractErrorMessage(error),
+      });
+      await ctx.reply(`Failed to process image: ${extractErrorMessage(error)}`).catch((): void => {});
+    }
+  }
+
   public async handleCancelCommandAsync(ctx: Context): Promise<void> {
     const message = ctx.message;
 
@@ -461,6 +580,12 @@ export class TelegramHandler {
     }
 
     const chatId: string = String(message.chat.id);
+
+    const pendingImage: IPendingTelegramImage | undefined = this._pendingImagesByChat.get(chatId);
+    if (pendingImage) {
+      clearTimeout(pendingImage.timer);
+      this._pendingImagesByChat.delete(chatId);
+    }
 
     const stopped: boolean = this._mainAgent.stopChat(chatId);
     let deletedInFlightMessage: boolean = false;
@@ -477,6 +602,9 @@ export class TelegramHandler {
     if (pendingForChat.length > 0) {
       // Delete all queued prompt messages best-effort
       for (const queuedMessage of pendingForChat) {
+        if (queuedMessage.messageId === null) {
+          continue;
+        }
         const deleted = await this._tryDeleteTelegramMessageAsync(ctx, chatId, queuedMessage.messageId);
         if (deleted) {
           droppedQueuedMessages++;
@@ -577,6 +705,105 @@ export class TelegramHandler {
         model: errorDetails.model,
         retryable: errorDetails.isRetryable,
       });
+    }
+  }
+
+  private async _autoAnalyzePendingImageAsync(chatId: string): Promise<void> {
+    const pending: IPendingTelegramImage | undefined = this._pendingImagesByChat.get(chatId);
+    if (!pending) {
+      return;
+    }
+
+    this._pendingImagesByChat.delete(chatId);
+
+    const textWithImage: string =
+      `${pending.promptText}\n\n` +
+      "No caption was provided. Please analyze this image.";
+
+    await this._enqueueOrProcessPromptAsync(chatId, textWithImage, null);
+  }
+
+  private async _extractTelegramImageAsync(
+    ctx: Context,
+  ): Promise<{ imageBuffer: Buffer; mediaType: string; originalFileName: string | null; captionText: string | null } | null> {
+    const message = ctx.message;
+    if (!message) {
+      return null;
+    }
+
+    let fileId: string | null = null;
+    let mediaType: string = "image/jpeg";
+    let originalFileName: string | null = null;
+
+    if ("photo" in message && Array.isArray(message.photo) && message.photo.length > 0) {
+      const largestPhoto = message.photo[message.photo.length - 1];
+      fileId = largestPhoto.file_id;
+      mediaType = "image/jpeg";
+      originalFileName = null;
+    } else if ("document" in message && message.document) {
+      const doc = message.document;
+      const mimeType: string = doc.mime_type ?? "";
+      if (!mimeType.startsWith("image/")) {
+        return null;
+      }
+      fileId = doc.file_id;
+      mediaType = mimeType;
+      originalFileName = doc.file_name ?? null;
+    }
+
+    if (!fileId || !this._config) {
+      return null;
+    }
+
+    const file = await ctx.api.getFile(fileId);
+    if (!file.file_path) {
+      throw new Error("Telegram API did not return file_path for image.");
+    }
+
+    const url: string = `https://api.telegram.org/file/bot${this._config.botToken}/${file.file_path}`;
+    const response: Response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to download Telegram image (${response.status} ${response.statusText}).`);
+    }
+
+    const arrayBuffer: ArrayBuffer = await response.arrayBuffer();
+    const imageBuffer: Buffer = Buffer.from(arrayBuffer);
+
+    return {
+      imageBuffer,
+      mediaType,
+      originalFileName,
+      captionText: ("caption" in message && typeof message.caption === "string") ? message.caption : null,
+    };
+  }
+
+  private _buildImageAnalysisPrompt(savedPath: string, mediaType: string): string {
+    return [
+      `Image received from Telegram and saved to: ${savedPath}`,
+      `Media type: ${mediaType}`,
+      "Use read_image with this file path to inspect and analyze the image.",
+      "If the image cannot be read, explain why and suggest a fix.",
+    ].join("\n");
+  }
+
+  private async _enqueueOrProcessPromptAsync(chatId: string, promptText: string, messageId: number | null): Promise<void> {
+    if (this._processing.has(chatId)) {
+      const pendingForChat: IPendingTelegramMessage[] = this._pendingMessages.get(chatId) ?? [];
+      pendingForChat.push({
+        text: promptText,
+        messageId,
+      });
+      this._pendingMessages.set(chatId, pendingForChat);
+      return;
+    }
+
+    this._processing.add(chatId);
+
+    try {
+      await this._processMergedQueuedMessageAsync(chatId, [{ text: promptText, messageId }]);
+      await this._drainQueuedMessagesAsync(chatId);
+    } finally {
+      this._processing.delete(chatId);
     }
   }
 

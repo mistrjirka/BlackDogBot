@@ -838,9 +838,11 @@ export class AiProviderService {
       const config = this._getActiveProviderConfig();
       const baseUrl: string = this._getLocalBaseUrl(config);
 
-      // Build probe request body — include reasoning_format: "none" when supported
-      // to prevent thinking models from wasting tokens on reasoning instead of
-      // producing the constrained JSON output directly in content.
+      // Build probe request body.
+      // IMPORTANT: Do not include reasoning_format here. On newer llama.cpp
+      // versions, combining reasoning_format with response_format json_schema
+      // can fail (e.g. sampler initialization errors), even when each feature
+      // works independently.
       const probeBody: Record<string, unknown> = {
         model: config.model,
         messages: [{ role: "user", content: 'Reply with: {"ok": true}' }],
@@ -861,10 +863,6 @@ export class AiProviderService {
           },
         },
       };
-
-      if (this._supportsReasoningFormat) {
-        probeBody.reasoning_format = "none";
-      }
 
       const response = await fetch(`${baseUrl}/v1/chat/completions`, {
         method: "POST",
@@ -887,6 +885,24 @@ export class AiProviderService {
       // Some models/servers put structured output in reasoning_content instead of content,
       // or content may contain non-JSON think tags. Try both fields robustly.
       const message = json.choices?.[0]?.message;
+
+      // If the endpoint returned structured-output related hard errors, treat
+      // this as unsupported instead of retrying parse attempts.
+      // This specifically helps llama.cpp variants that can emit endpoint-level
+      // JSON-schema parser/sampler errors.
+      const responseErrorMessage: string =
+        typeof (json as Record<string, unknown>).error === "object" &&
+          (json as Record<string, unknown>).error !== null &&
+          typeof ((json as Record<string, unknown>).error as Record<string, unknown>).message === "string"
+          ? (((json as Record<string, unknown>).error as Record<string, unknown>).message as string)
+          : "";
+
+      if (responseErrorMessage.length > 0) {
+        logger.debug("Structured output probe: endpoint returned structured-output error payload", {
+          message: responseErrorMessage.substring(0, 200),
+        });
+        return false;
+      }
       const candidates: string[] = [
         message?.content ?? "",
         message?.reasoning_content ?? "",
@@ -1604,6 +1620,24 @@ export class AiProviderService {
       return;
     }
 
+    if (this._supportsReasoningFormat) {
+      // Compatibility fallback for newer llama.cpp builds where thinking/
+      // reasoning features can interfere with structured-output/tool probes,
+      // even though regular tool-calling works at runtime.
+      this._supportsStructuredOutputs = false;
+      this._supportsToolCalling = true;
+      this._resolvedStructuredOutputMode = "tool_auto";
+      logger.warn("Structured output probes failed, falling back to tool_auto due to reasoning_format support", {
+        provider: providerKey,
+        model: defaultModelId,
+        mode: this._resolvedStructuredOutputMode,
+        supportsStructuredOutputs: this._supportsStructuredOutputs,
+        supportsToolCalling: this._supportsToolCalling,
+        source: "probe:fallback_reasoning_format",
+      });
+      return;
+    }
+
     throw new Error(
       "Unable to resolve structured output mode: model supports neither native structured outputs " +
       "nor tool calling (strict or auto). Configure ai.<provider>.structuredOutputMode explicitly.",
@@ -1796,9 +1830,9 @@ export class AiProviderService {
         const result = await runToolCallingProbeAsync({
           url: "https://openrouter.ai/api/v1/chat/completions",
           model: config.model,
-          prompt: "Call the tool once.",
+          prompt: "Call the tool emit_probe once with ok:true. Use the tool, do not explain.",
           toolChoice: "required",
-          maxTokens: 50,
+          maxTokens: 200,
           apiKey: (config as IOpenRouterConfig).apiKey,
           providerPayload: {
             require_parameters: true,
@@ -1817,9 +1851,9 @@ export class AiProviderService {
       const result = await runToolCallingProbeAsync({
         url: `${baseUrl}/v1/chat/completions`,
         model: config.model,
-        prompt: "Call the tool once.",
+        prompt: "Call the tool emit_probe once with ok:true. Use the tool, do not explain.",
         toolChoice: "required",
-        maxTokens: 50,
+        maxTokens: 200,
       });
 
       if (!result.ok) {
@@ -1852,9 +1886,9 @@ export class AiProviderService {
         const result = await runToolCallingProbeAsync({
           url: "https://openrouter.ai/api/v1/chat/completions",
           model: config.model,
-          prompt: "Call the tool emit_probe once.",
+          prompt: "Call the tool emit_probe once with ok:true. Use the tool, do not explain.",
           toolChoice: "auto",
-          maxTokens: 80,
+          maxTokens: 200,
           apiKey: (config as IOpenRouterConfig).apiKey,
         });
 
@@ -1870,9 +1904,9 @@ export class AiProviderService {
       const result = await runToolCallingProbeAsync({
         url: `${baseUrl}/v1/chat/completions`,
         model: config.model,
-        prompt: "Call the tool emit_probe once.",
+        prompt: "Call the tool emit_probe once with ok:true. Use the tool, do not explain.",
         toolChoice: "auto",
-        maxTokens: 80,
+        maxTokens: 200,
       });
 
       if (!result.ok) {

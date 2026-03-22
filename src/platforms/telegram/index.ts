@@ -58,6 +58,15 @@ export const telegramPlatform: IPlatform<ITelegramConfig> = {
       });
     });
 
+    bot.on(["message:photo", "message:document"], (ctx) => {
+      handler.handleImageMessageAsync(ctx).catch((err: unknown): void => {
+        deps.logger.error("Unhandled error in Telegram image handler", {
+          chatId: String(ctx.chat?.id),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    });
+
     // Start bot
     bot.start({
       onStart: (): void => {
