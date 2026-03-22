@@ -27,6 +27,13 @@ export interface IRequestLikeTokenEstimate {
   };
 }
 
+export interface IRequestLikeByteTokenEstimate {
+  estimatedTokens: number;
+  requestSizeBytes: number;
+  messageCount: number;
+  toolCount: number;
+}
+
 export function countTextTokens(text: string): number {
   return getTextEncoder().encode(text).length;
 }
@@ -78,49 +85,46 @@ export function estimateRequestLikeTokens(
   activeToolNames: Array<keyof ToolSet>,
 ): IRequestLikeTokenEstimate | null {
   try {
-    const requestMessages: unknown[] = messages.map(toRequestMessageForTokenCounting);
-
-    const systemPrompt: string = creationPrompt
-      ? `${instructions}\n\n${creationPrompt}`
-      : instructions;
-
-    const activeToolsPayload: unknown[] = activeToolNames
-      .map((toolName: keyof ToolSet): unknown => {
-        const toolDef: Tool | undefined = allTools[toolName as string];
-        if (!toolDef || typeof toolDef !== "object") {
-          return null;
-        }
-
-        const description: unknown = (toolDef as Record<string, unknown>).description;
-        const inputSchema: unknown = (toolDef as Record<string, unknown>).inputSchema;
-
-        let parameters: unknown = {};
-        if (inputSchema instanceof z.ZodSchema) {
-          parameters = zodToJsonSchema(inputSchema);
-        } else if (inputSchema && typeof inputSchema === "object") {
-          parameters = inputSchema;
-        }
-
-        return {
-          type: "function",
-          function: {
-            name: String(toolName),
-            description: typeof description === "string" ? description : "",
-            parameters,
-          },
-        };
-      })
-      .filter((tool): tool is unknown => tool !== null);
-
-    const requestLikeBody: string = JSON.stringify({
-      model: "token-estimation-only",
-      messages: requestMessages,
-      tools: activeToolsPayload,
-      system: systemPrompt,
-    });
+    const requestLikeBody: string = _buildRequestLikeBody(
+      messages,
+      instructions,
+      creationPrompt,
+      allTools,
+      activeToolNames,
+    );
 
     const breakdown = countRequestBodyTokens(requestLikeBody);
     return { breakdown };
+  } catch {
+    return null;
+  }
+}
+
+export function estimateRequestLikeTokensByBytes(
+  messages: ModelMessage[],
+  instructions: string,
+  creationPrompt: string | null,
+  allTools: ToolSet,
+  activeToolNames: Array<keyof ToolSet>,
+): IRequestLikeByteTokenEstimate | null {
+  try {
+    const requestLikeBody: string = _buildRequestLikeBody(
+      messages,
+      instructions,
+      creationPrompt,
+      allTools,
+      activeToolNames,
+    );
+
+    const requestSizeBytes: number = Buffer.byteLength(requestLikeBody, "utf8");
+    const estimatedTokens: number = Math.ceil(requestSizeBytes / 4);
+
+    return {
+      estimatedTokens,
+      requestSizeBytes,
+      messageCount: messages.length,
+      toolCount: activeToolNames.length,
+    };
   } catch {
     return null;
   }
@@ -216,4 +220,53 @@ function extractToolResultValue(part: unknown): unknown {
   }
 
   return null;
+}
+
+function _buildRequestLikeBody(
+  messages: ModelMessage[],
+  instructions: string,
+  creationPrompt: string | null,
+  allTools: ToolSet,
+  activeToolNames: Array<keyof ToolSet>,
+): string {
+  const requestMessages: unknown[] = messages.map(toRequestMessageForTokenCounting);
+
+  const systemPrompt: string = creationPrompt
+    ? `${instructions}\n\n${creationPrompt}`
+    : instructions;
+
+  const activeToolsPayload: unknown[] = activeToolNames
+    .map((toolName: keyof ToolSet): unknown => {
+      const toolDef: Tool | undefined = allTools[toolName as string];
+      if (!toolDef || typeof toolDef !== "object") {
+        return null;
+      }
+
+      const description: unknown = (toolDef as Record<string, unknown>).description;
+      const inputSchema: unknown = (toolDef as Record<string, unknown>).inputSchema;
+
+      let parameters: unknown = {};
+      if (inputSchema instanceof z.ZodSchema) {
+        parameters = zodToJsonSchema(inputSchema);
+      } else if (inputSchema && typeof inputSchema === "object") {
+        parameters = inputSchema;
+      }
+
+      return {
+        type: "function",
+        function: {
+          name: String(toolName),
+          description: typeof description === "string" ? description : "",
+          parameters,
+        },
+      };
+    })
+    .filter((tool): tool is unknown => tool !== null);
+
+  return JSON.stringify({
+    model: "token-estimation-only",
+    messages: requestMessages,
+    tools: activeToolsPayload,
+    system: systemPrompt,
+  });
 }

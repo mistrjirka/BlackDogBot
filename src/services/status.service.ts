@@ -257,10 +257,15 @@ export class StatusService {
 
     switch (state.type) {
       case "llm_request": {
+        const inputTokenSource: string | undefined =
+          typeof state.details.inputTokensSource === "string"
+            ? state.details.inputTokensSource
+            : undefined;
+        const tokenPrefix: string = inputTokenSource === "estimate_bytes" ? "~" : "";
         const tokens: string = state.inputTokens
           ? (ConsoleColor.enabled
-              ? ConsoleColor.brightCyan(` (${state.inputTokens.toLocaleString()} input tokens)`)
-              : ` (${state.inputTokens.toLocaleString()} input tokens)`)
+              ? ConsoleColor.brightCyan(` (${tokenPrefix}${state.inputTokens.toLocaleString()} input tokens)`)
+              : ` (${tokenPrefix}${state.inputTokens.toLocaleString()} input tokens)`)
           : "";
         const prefix = ConsoleColor.enabled
           ? ConsoleColor.cyan("🤖 LLM")

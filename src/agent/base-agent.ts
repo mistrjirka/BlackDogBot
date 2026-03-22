@@ -20,11 +20,9 @@ import { isContextExceededApiError, isRetryableApiError } from "../utils/context
 import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
 import { extractAiErrorDetails } from "../utils/ai-error.js";
 import {
-  countTextTokens,
   countTokens,
-  estimateFixedOverhead,
-  estimateRequestLikeTokens,
-  type IRequestLikeTokenEstimate,
+  estimateRequestLikeTokensByBytes,
+  type IRequestLikeByteTokenEstimate,
 } from "../utils/token-tracker.js";
 import { extractLastAssistantToolCalls } from "../utils/tool-call-tracker.js";
 
@@ -113,7 +111,6 @@ export abstract class BaseAgentBase {
   protected _maxSteps: number;
   protected _contextWindow: number;
   protected _compactionTokenThreshold: number;
-  protected _fixedOverheadTokens: number = 0;
   protected _totalInputTokens: number = 0;
   protected _forceCompactionOnNextStep: boolean = false;
   protected _shouldTerminateRunCallback: (() => boolean) | null;
@@ -421,18 +418,6 @@ export abstract class BaseAgentBase {
     /** Names of extra (mode-gated) tools — registered but hidden by default. */
     const extraToolNames: string[] = Object.keys(extraTools ?? {});
 
-    // Pre-compute the fixed token overhead that's included in every API request
-    // but not in the messages array: system prompt + tool definitions.
-    // This is critical for accurate context window tracking.
-    const fixedOverheadTokens: number = estimateFixedOverhead(instructions, allTools);
-    self._fixedOverheadTokens = fixedOverheadTokens;
-    logger.debug("Computed fixed token overhead for context tracking", {
-      systemPromptTokens: countTextTokens(instructions),
-      toolCount: Object.keys(allTools).length,
-      toolNames: Object.keys(allTools),
-      totalOverhead: fixedOverheadTokens,
-    });
-
     this._agent = new ToolLoopAgent({
       model,
       instructions,
@@ -565,28 +550,27 @@ export abstract class BaseAgentBase {
           };
         }
 
-        // Token-based history compaction using request-style token estimation
-        // as the primary source of truth, with legacy estimation as fallback.
-        const legacyMessageTokens: number = countTokens(messages);
-
+        // Token-based history compaction:
+        // 1) Prefer actual provider-reported usage from the previous response.
+        // 2) Before first usage is available, use a byte-size request estimate.
         const creationPrompt: string | null = (useExtraTools && getCreationModePrompt)
           ? getCreationModePrompt()
           : null;
-        const legacyDynamicOverheadTokens: number = creationPrompt
-          ? fixedOverheadTokens + countTextTokens(creationPrompt)
-          : fixedOverheadTokens;
-        const legacyTokenCount: number = legacyMessageTokens + legacyDynamicOverheadTokens;
+        let tokenCount: number = self._totalInputTokens;
+        let estimationSource: "actual_usage" | "bytes_fallback" = "actual_usage";
 
-        const requestEstimate: IRequestLikeTokenEstimate | null = estimateRequestLikeTokens(
-          messages,
-          instructions,
-          creationPrompt,
-          allTools,
-          activeToolNames,
-        );
+        if (tokenCount <= 0) {
+          const requestEstimate: IRequestLikeByteTokenEstimate | null = estimateRequestLikeTokensByBytes(
+            messages,
+            instructions,
+            creationPrompt,
+            allTools,
+            activeToolNames,
+          );
 
-        const tokenCount: number = requestEstimate?.breakdown.total ?? legacyTokenCount;
-        const estimationSource: "request" | "fallback" = requestEstimate ? "request" : "fallback";
+          tokenCount = requestEstimate?.estimatedTokens ?? countTokens(messages);
+          estimationSource = "bytes_fallback";
+        }
 
         // Keep a consistent internal token estimate for fallback/error diagnostics.
         self._totalInputTokens = tokenCount;
@@ -607,15 +591,10 @@ export abstract class BaseAgentBase {
 
           logger.info("Compacting agent history", {
             tokenCount,
-            messageTokens: requestEstimate?.breakdown.messages ?? legacyMessageTokens,
-            fixedOverhead: fixedOverheadTokens,
-            dynamicOverhead: legacyDynamicOverheadTokens - fixedOverheadTokens,
             threshold: compactionTokenThreshold,
             messageCount: messages.length,
             forced: forcedCompaction,
             estimationSource,
-            requestTokenBreakdown: requestEstimate?.breakdown,
-            fallbackTokenEstimate: requestEstimate ? legacyTokenCount : undefined,
           });
 
           // Use summary-only compaction (no truncation)
@@ -629,21 +608,7 @@ export abstract class BaseAgentBase {
             compactionModel,
             logger,
             compactionTargetTokens,
-            (msgs: ModelMessage[]) => {
-              const estimate: IRequestLikeTokenEstimate | null = estimateRequestLikeTokens(
-                msgs,
-                instructions,
-                creationPrompt,
-                allTools,
-                activeToolNames,
-              );
-
-              if (estimate) {
-                return estimate.breakdown.total;
-              }
-
-              return countTokens(msgs) + legacyDynamicOverheadTokens;
-            },
+            (msgs: ModelMessage[]): number => countTokens(msgs),
             forcedCompaction,
           );
 

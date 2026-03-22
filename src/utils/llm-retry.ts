@@ -138,6 +138,16 @@ function tryParseJsonFromText(text: string): unknown | null {
   return null;
 }
 
+function estimateTokensFromTextByBytes(text: string): number {
+  return Math.ceil(Buffer.byteLength(text, "utf8") / 4);
+}
+
+function estimateTokensFromPromptAndSystem(prompt: string, system?: string): number {
+  const promptBytes: number = Buffer.byteLength(prompt, "utf8");
+  const systemBytes: number = system ? Buffer.byteLength(system, "utf8") : 0;
+  return Math.ceil((promptBytes + systemBytes) / 4);
+}
+
 //#endregion Private Helpers
 
 //#region Public functions
@@ -160,18 +170,22 @@ export async function generateTextWithRetryAsync(
   let lastError: unknown;
 
   // Count input tokens for status display
-  const inputTokens: number = statusService.countTokens(options.prompt) +
-    (options.system ? statusService.countTokens(options.system) : 0);
+  const inputTokensEstimate: number = estimateTokensFromPromptAndSystem(options.prompt, options.system);
 
   // Set status (in-flight)
-  statusService.beginInFlight("llm_request", "Waiting for response", { inputTokens, callType, llmCallId });
+  statusService.beginInFlight("llm_request", "Waiting for response", {
+    inputTokens: inputTokensEstimate,
+    inputTokensSource: "estimate_bytes",
+    callType,
+    llmCallId,
+  });
 
   try {
     for (let attempt: number = 1; attempt <= maxAttempts; attempt++) {
       try {
         const linkedSignal = createLinkedAbortSignal(retryOptions.abortSignal, timeoutMs);
 
-        const callFn = async (): Promise<{ text: string }> => {
+        const callFn = async (): Promise<{ text: string; inputTokens: number; outputTokens: number }> => {
           const result = await generateText({
             model: options.model,
             prompt: options.prompt,
@@ -180,30 +194,44 @@ export async function generateTextWithRetryAsync(
             abortSignal: linkedSignal,
           });
 
-          return { text: result.text ?? "" };
+          const inputTokens: number =
+            result.totalUsage?.inputTokens ??
+            result.usage?.inputTokens ??
+            inputTokensEstimate;
+          const outputTokens: number =
+            result.totalUsage?.outputTokens ??
+            result.usage?.outputTokens ??
+            estimateTokensFromTextByBytes(result.text ?? "");
+
+          return {
+            text: result.text ?? "",
+            inputTokens,
+            outputTokens,
+          };
         };
 
         // NOTE: Do not schedule with RateLimiterService here.
         // Models from AiProviderService are already wrapped with limiter scheduling
         // in AiProviderService._wrapModelWithRateLimiter(). Scheduling again here
         // creates nested Bottleneck scheduling and can deadlock at maxConcurrent=1.
-        const result: { text: string } = await runWithLlmCallTypeAsync(callType, callFn);
+        const result: { text: string; inputTokens: number; outputTokens: number } =
+          await runWithLlmCallTypeAsync(callType, callFn);
 
-        // Record token usage for budget tracking (estimate output tokens)
-        const outputTokens: number = statusService.countTokens(result.text);
-        rateLimiterService.recordTokenUsage(providerKey, inputTokens, outputTokens);
+        // Record token usage for budget tracking (actual usage if available)
+        rateLimiterService.recordTokenUsage(providerKey, result.inputTokens, result.outputTokens);
 
         logger.info("LLM call succeeded", {
           llmCallId,
           callType,
           attempt,
           maxAttempts,
-          inputTokens,
-          outputTokens,
+          inputTokensEstimate,
+          inputTokensActual: result.inputTokens,
+          outputTokensActual: result.outputTokens,
           sdkRetriesDisabled: true,
         });
 
-        return result;
+        return { text: result.text };
       } catch (error: unknown) {
         lastError = error;
         const errorMessage: string = formatAiErrorForLog(extractAiErrorDetails(error));
@@ -226,7 +254,8 @@ export async function generateTextWithRetryAsync(
 
         // Update status with retry info
         statusService.setStatus("llm_request", `Retrying (${attempt}/${maxAttempts})`, {
-          inputTokens,
+          inputTokens: inputTokensEstimate,
+          inputTokensSource: "estimate_bytes",
           callType,
           llmCallId,
           error: errorMessage,
@@ -307,12 +336,12 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
   let lastError: unknown;
 
   // Count input tokens for status display
-  const inputTokens: number = statusService.countTokens(options.prompt) +
-    (options.system ? statusService.countTokens(options.system) : 0);
+  const inputTokensEstimate: number = estimateTokensFromPromptAndSystem(options.prompt, options.system);
 
   // Set status (in-flight)
   statusService.beginInFlight("llm_request", "Waiting for structured response", {
-    inputTokens,
+    inputTokens: inputTokensEstimate,
+    inputTokensSource: "estimate_bytes",
     callType,
     llmCallId,
     structuredMode,
@@ -485,9 +514,11 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
         // creates nested Bottleneck scheduling and can deadlock at maxConcurrent=1.
         const result: { object: z.infer<T> } = await runWithLlmCallTypeAsync(callType, callFn);
 
-        // Record token usage for budget tracking (estimate output tokens from JSON)
-        const outputTokens: number = statusService.countTokens(JSON.stringify(result.object));
-        rateLimiterService.recordTokenUsage(providerKey, inputTokens, outputTokens);
+        // Record token usage for budget tracking (byte estimate for structured path).
+        // Structured mode may include multiple internal sub-calls, so exact usage
+        // is not consistently available from a single returned object here.
+        const outputTokensEstimate: number = estimateTokensFromTextByBytes(JSON.stringify(result.object));
+        rateLimiterService.recordTokenUsage(providerKey, inputTokensEstimate, outputTokensEstimate);
 
         logger.info("LLM structured call succeeded", {
           llmCallId,
@@ -522,7 +553,8 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
 
         // Update status with retry info
         statusService.setStatus("llm_request", `Retrying (${attempt}/${maxAttempts})`, {
-          inputTokens,
+          inputTokens: inputTokensEstimate,
+          inputTokensSource: "estimate_bytes",
           callType,
           llmCallId,
           structuredMode,
