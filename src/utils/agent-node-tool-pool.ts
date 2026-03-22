@@ -3,6 +3,11 @@ import { type ToolSet } from "ai";
 import { LoggerService } from "../services/logger.service.js";
 import {
   runCmdTool,
+  runCmdInputTool,
+  getCmdStatusTool,
+  getCmdOutputTool,
+  waitForCmdTool,
+  stopCmdTool,
   searchKnowledgeTool,
   addKnowledgeTool,
   editKnowledgeTool,
@@ -42,6 +47,11 @@ export function createAgentNodeToolPool(
   const staticTools: Record<string, ToolSet[string]> = {
     think: thinkTool,
     run_cmd: runCmdTool,
+    run_cmd_input: runCmdInputTool,
+    get_cmd_status: getCmdStatusTool,
+    get_cmd_output: getCmdOutputTool,
+    wait_for_cmd: waitForCmdTool,
+    stop_cmd: stopCmdTool,
     search_knowledge: searchKnowledgeTool,
     add_knowledge: addKnowledgeTool,
     edit_knowledge: editKnowledgeTool,

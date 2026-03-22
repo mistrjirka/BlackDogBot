@@ -4,6 +4,7 @@ export { runCmdTool } from "./run-cmd.tool.js";
 export { runCmdInputTool } from "./run-cmd-input.tool.js";
 export { getCmdStatusTool } from "./get-cmd-status.tool.js";
 export { getCmdOutputTool } from "./get-cmd-output.tool.js";
+export { waitForCmdTool } from "./wait-for-cmd.tool.js";
 export { stopCmdTool } from "./stop-cmd.tool.js";
 export { createSendMessageTool, createSendMessageToolWithHistory, type MessageSender, type TaskIdProvider } from "./send-message.tool.js";
 export { createGetPreviousMessageTool } from "./get-previous-message.tool.js";

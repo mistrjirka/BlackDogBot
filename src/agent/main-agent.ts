@@ -14,6 +14,7 @@ import {
   runCmdInputTool,
   getCmdStatusTool,
   getCmdOutputTool,
+  waitForCmdTool,
   stopCmdTool,
   modifyPromptTool,
   listPromptsTool,
@@ -94,6 +95,8 @@ import { ensureDirectoryExistsAsync, getSessionsDir, getSessionFilePath } from "
 import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
 import { extractAiErrorDetails } from "../utils/ai-error.js";
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
+import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
+import { countTokens } from "../utils/token-tracker.js";
 import { JobStorageService } from "../services/job-storage.service.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
 import * as toolRegistry from "../helpers/tool-registry.js";
@@ -127,6 +130,7 @@ const _GraphMutatingTools: Set<string> = new Set([
 /** Max times generate() can be restarted due to tool rebuild (create_table). */
 const MAX_TOOL_REBUILD_RESTARTS: number = 2;
 const MAX_429_RETRIES: number = 8;
+const SESSION_COMPACTION_HEADROOM_TOKENS: number = 4000;
 
 //#endregion Constants
 
@@ -275,6 +279,7 @@ export class MainAgent extends BaseAgentBase {
       run_cmd_input: runCmdInputTool,
       get_cmd_status: getCmdStatusTool,
       get_cmd_output: getCmdOutputTool,
+      wait_for_cmd: waitForCmdTool,
       stop_cmd: stopCmdTool,
       modify_prompt: modifyPromptTool,
       list_prompts: listPromptsTool,
@@ -578,6 +583,7 @@ export class MainAgent extends BaseAgentBase {
     // Mutable user message — gets replaced with injected message on restart
     let currentUserMessage: string = userMessage;
     let finalResult: IAgentResult = { text: "Unexpected error.", stepsCount: 0 };
+    const compactionModel: LanguageModel = AiProviderService.getInstance().getModel();
 
     // Outer loop: restarts generate() when a tool rebuild occurs (e.g., create_table)
     while (true) {
@@ -656,13 +662,14 @@ export class MainAgent extends BaseAgentBase {
             // If create_table requested a tool rebuild, end this run immediately and restart.
             // Do not treat missing text as an empty-response failure in this case.
             if (session.pendingToolRebuild !== null) {
-              session.messages.push(userModelMessage);
+              _appendResponseToSession(session.messages, userModelMessage, generateResult.response?.messages);
 
-              if (generateResult.response?.messages) {
-                for (const responseMsg of generateResult.response.messages) {
-                  session.messages.push(responseMsg as ModelMessage);
-                }
-              }
+              session.messages = await _compactSessionMessagesAsync(
+                session.messages,
+                compactionModel,
+                this._logger,
+                this._compactionTokenThreshold,
+              );
 
               this._logger.info("Tool rebuild requested, terminating current run and restarting", {
                 chatId,
@@ -681,13 +688,14 @@ export class MainAgent extends BaseAgentBase {
 
             // If we got text, persist conversation and return
             if (text.trim()) {
-              session.messages.push(userModelMessage);
+              _appendResponseToSession(session.messages, userModelMessage, generateResult.response?.messages);
 
-              if (generateResult.response?.messages) {
-                for (const responseMsg of generateResult.response.messages) {
-                  session.messages.push(responseMsg as ModelMessage);
-                }
-              }
+              session.messages = await _compactSessionMessagesAsync(
+                session.messages,
+                compactionModel,
+                this._logger,
+                this._compactionTokenThreshold,
+              );
 
               result = { text, stepsCount };
               break;
@@ -704,13 +712,14 @@ export class MainAgent extends BaseAgentBase {
             }
 
             // All retries exhausted — persist conversation even on failure so history stays consistent
-            session.messages.push(userModelMessage);
+            _appendResponseToSession(session.messages, userModelMessage, generateResult.response?.messages);
 
-            if (generateResult.response?.messages) {
-              for (const responseMsg of generateResult.response.messages) {
-                session.messages.push(responseMsg as ModelMessage);
-              }
-            }
+            session.messages = await _compactSessionMessagesAsync(
+              session.messages,
+              compactionModel,
+              this._logger,
+              this._compactionTokenThreshold,
+            );
 
             this._logger.error("Model returned empty response after all retries", { chatId, attempts: attempt });
             result = {
@@ -966,6 +975,53 @@ async function _emitGraphUpdateAsync(
   } catch {
     // Never let graph emit failures affect agent execution
   }
+}
+
+function _appendResponseToSession(
+  sessionMessages: ModelMessage[],
+  userMessage: ModelMessage,
+  responseMessages?: unknown[],
+): void {
+  sessionMessages.push(userMessage);
+
+  if (!responseMessages) {
+    return;
+  }
+
+  for (const responseMsg of responseMessages) {
+    sessionMessages.push(responseMsg as ModelMessage);
+  }
+}
+
+async function _compactSessionMessagesAsync(
+  messages: ModelMessage[],
+  model: LanguageModel,
+  logger: LoggerService,
+  compactionThreshold: number,
+): Promise<ModelMessage[]> {
+  if (messages.length <= 2) {
+    return messages;
+  }
+
+  const targetTokens: number = Math.max(
+    1200,
+    compactionThreshold - SESSION_COMPACTION_HEADROOM_TOKENS,
+  );
+
+  const currentTokens: number = countTokens(messages);
+  if (currentTokens <= targetTokens) {
+    return messages;
+  }
+
+  const compactionResult = await compactMessagesSummaryOnlyAsync(
+    messages,
+    model,
+    logger,
+    targetTokens,
+    (msgs: ModelMessage[]): number => countTokens(msgs),
+  );
+
+  return compactionResult.messages;
 }
 
 function _wrapCreateTableWithHotReload(

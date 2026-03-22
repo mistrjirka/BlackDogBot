@@ -11,6 +11,26 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Execute a shell command and return stdout, stderr, and exit code. " +
     "Args: command (string, required); cwd (string, default ~/.blackdogbot); timeout (ms, default 30000).",
 
+  run_cmd_input:
+    "Send input to a running command waiting for stdin. " +
+    "Args: handleId (string, required); input (string, required); closeStdin (boolean, default true).",
+
+  get_cmd_status:
+    "Get the current status of a running command handle. " +
+    "Args: handleId (string, required).",
+
+  get_cmd_output:
+    "Get stdout/stderr output from a running command handle. " +
+    "Args: handleId (string, required); channel (stdout|stderr|both, default both); maxBytes (number, default 65536).",
+
+  wait_for_cmd:
+    "Wait for a command handle to reach terminal status (or awaiting_input) and return status plus output. " +
+    "Args: handleId (string, required); timeoutMs (number, default 120000); maxBytes (number, default 65536).",
+
+  stop_cmd:
+    "Stop a running command handle with a signal. " +
+    "Args: handleId (string, required); signal (SIGTERM|SIGKILL|SIGINT, default SIGTERM).",
+
   search_knowledge:
     "Search the knowledge base for relevant information. Returns documents ranked by relevance. " +
     "Args: query (string, required); collection (string, default 'default'); limit (number, default 10).",

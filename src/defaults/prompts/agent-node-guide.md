@@ -128,6 +128,11 @@ not the same as node types.
 |---|---|
 | `think` | Internal reasoning / scratchpad — always injected automatically |
 | `run_cmd` | Run shell commands |
+| `run_cmd_input` | Send stdin input to a running command handle |
+| `get_cmd_status` | Check status of a running command handle |
+| `get_cmd_output` | Read stdout/stderr from a running command handle |
+| `wait_for_cmd` | Block until a command completes or await-input state |
+| `stop_cmd` | Stop a running command by signal |
 | `search_knowledge` | Search the knowledge base |
 | `add_knowledge` | Add information to the knowledge base |
 | `edit_knowledge` | Edit existing knowledge entries |
@@ -166,7 +171,7 @@ not the same as node types.
    executions), messages are logged instead of being delivered to a user chat.
 - `run_cmd` mode guidance: use `foreground` for short commands where you need
   final output immediately; use `background` for long-running commands and then
-  continue with `get_cmd_status`/`get_cmd_output` and optionally `stop_cmd`.
+  prefer `wait_for_cmd` (use `get_cmd_status`/`get_cmd_output`/`stop_cmd` when you need manual control).
 - `run_cmd` stdin guidance: if a command may pause for input, enable
   `deterministicInputDetection` in `foreground` mode; if status becomes
   `awaiting_input`, use `run_cmd_input` with `handleId` to continue.

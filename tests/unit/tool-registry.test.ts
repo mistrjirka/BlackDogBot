@@ -19,6 +19,7 @@ describe("tool-registry", () => {
       expect(toolRegistry.isToolAllowed("run_cmd", "read_only", {})).toBe(false);
       expect(toolRegistry.isToolAllowed("write_file", "read_only", {})).toBe(false);
       expect(toolRegistry.isToolAllowed("edit_file", "read_only", {})).toBe(false);
+      expect(toolRegistry.isToolAllowed("wait_for_cmd", "read_only", {})).toBe(false);
       expect(toolRegistry.isToolAllowed("add_cron", "read_only", {})).toBe(false);
       expect(toolRegistry.isToolAllowed("remove_cron", "read_only", {})).toBe(false);
       expect(toolRegistry.isToolAllowed("create_database", "read_only", {})).toBe(false);
@@ -92,6 +93,7 @@ describe("tool-registry", () => {
       expect(allowed).toContain("think");
       expect(allowed).toContain("send_message");
       expect(allowed).toContain("get_cron");
+      expect(allowed).toContain("wait_for_cmd");
       expect(allowed).not.toContain("start_job_creation");
     });
 
@@ -106,6 +108,7 @@ describe("tool-registry", () => {
       expect(allowed).toContain("think");
       expect(allowed).toContain("get_cron");
       expect(allowed).not.toContain("run_cmd");
+      expect(allowed).not.toContain("wait_for_cmd");
       expect(allowed).not.toContain("write_file");
       expect(allowed).not.toContain("add_cron");
     });
@@ -121,6 +124,7 @@ describe("tool-registry", () => {
     it("should return list of tools blocked in read_only mode", () => {
       const blocked = toolRegistry.getBlockedToolNamesForReadOnly();
       expect(blocked).toContain("run_cmd");
+      expect(blocked).toContain("wait_for_cmd");
       expect(blocked).toContain("write_file");
       expect(blocked).toContain("add_cron");
       expect(blocked).toContain("remove_cron");

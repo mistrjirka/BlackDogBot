@@ -7,6 +7,7 @@ import { runCmdTool } from "../../../src/tools/run-cmd.tool.js";
 import { runCmdInputTool } from "../../../src/tools/run-cmd-input.tool.js";
 import { getCmdStatusTool } from "../../../src/tools/get-cmd-status.tool.js";
 import { getCmdOutputTool } from "../../../src/tools/get-cmd-output.tool.js";
+import { waitForCmdTool } from "../../../src/tools/wait-for-cmd.tool.js";
 import { stopCmdTool } from "../../../src/tools/stop-cmd.tool.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { CommandProcessService } from "../../../src/services/command-process.service.js";
@@ -45,6 +46,21 @@ type ICmdOutputToolOutput = {
   stderr: string;
   totalStdoutBytes: number;
   totalStderrBytes: number;
+};
+
+type IWaitForCmdOutput = {
+  handleId: string;
+  completed: boolean;
+  status: string;
+  exitCode: number | null;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+  stdoutBytes: number;
+  stderrBytes: number;
+  timedOut: boolean;
+  waitTimedOut: boolean;
+  error: string | null;
 };
 
 type IRunCmdInputResult = {
@@ -104,6 +120,16 @@ async function execRunCmdInput(args: {
 }): Promise<IRunCmdInputResult> {
   return await (runCmdInputTool as unknown as {
     execute: (input: typeof args, options: typeof TOOL_OPTIONS) => Promise<IRunCmdInputResult>;
+  }).execute(args, TOOL_OPTIONS);
+}
+
+async function execWaitForCmd(args: {
+  handleId: string;
+  timeoutMs?: number;
+  maxBytes?: number;
+}): Promise<IWaitForCmdOutput> {
+  return await (waitForCmdTool as unknown as {
+    execute: (input: typeof args, options: typeof TOOL_OPTIONS) => Promise<IWaitForCmdOutput>;
   }).execute(args, TOOL_OPTIONS);
 }
 
@@ -284,6 +310,83 @@ describe("run_cmd control tools", () => {
 
     expect(stopResult.success).toBe(true);
     expect(stopResult.error).toBeNull();
+  });
+
+  it("wait_for_cmd waits for completion and returns output", async () => {
+    const runResult: IRunCmdOutput = await execRunCmd({
+      command: "bash -c 'sleep 0.2; echo wait-done'",
+      cwd: tempDir,
+      timeout: 15000,
+      mode: "background",
+      deterministicInputDetection: false,
+    });
+
+    expect(runResult.status).toBe("running");
+    expect(runResult.handleId).toBeTruthy();
+
+    const waited: IWaitForCmdOutput = await execWaitForCmd({
+      handleId: runResult.handleId!,
+      timeoutMs: 5000,
+      maxBytes: 65536,
+    });
+
+    expect(waited.completed).toBe(true);
+    expect(waited.waitTimedOut).toBe(false);
+    expect(waited.status).toBe("completed");
+    expect(waited.stdout).toContain("wait-done");
+  });
+
+  it("wait_for_cmd returns wait timeout when process is still waiting", async () => {
+    const fixturePath: string = path.join(__dirname, "../../fixtures/interactive/requires-input.sh");
+    await fs.chmod(fixturePath, 0o755);
+
+    const runResult: IRunCmdOutput = await execRunCmd({
+      command: `bash \"${fixturePath}\"`,
+      cwd: tempDir,
+      timeout: 15000,
+      mode: "background",
+      deterministicInputDetection: false,
+    });
+
+    expect(runResult.status).toBe("running");
+    expect(runResult.handleId).toBeTruthy();
+
+    const waited: IWaitForCmdOutput = await execWaitForCmd({
+      handleId: runResult.handleId!,
+      timeoutMs: 3000,
+      maxBytes: 65536,
+    });
+
+    expect(waited.completed).toBe(false);
+    expect(waited.waitTimedOut).toBe(true);
+    expect(waited.status).toBe("running");
+
+    await execStopCmd({ handleId: runResult.handleId!, signal: "SIGKILL" });
+  });
+
+  it("wait_for_cmd returns waitTimedOut for still-running process", async () => {
+    const runResult: IRunCmdOutput = await execRunCmd({
+      command: "sleep 5",
+      cwd: tempDir,
+      timeout: 15000,
+      mode: "background",
+      deterministicInputDetection: false,
+    });
+
+    expect(runResult.status).toBe("running");
+    expect(runResult.handleId).toBeTruthy();
+
+    const waited: IWaitForCmdOutput = await execWaitForCmd({
+      handleId: runResult.handleId!,
+      timeoutMs: 50,
+      maxBytes: 65536,
+    });
+
+    expect(waited.completed).toBe(false);
+    expect(waited.waitTimedOut).toBe(true);
+    expect(waited.status).toBe("running");
+
+    await execStopCmd({ handleId: runResult.handleId!, signal: "SIGKILL" });
   });
 
   it("run_cmd_input sends stdin and command output can be retrieved", async () => {

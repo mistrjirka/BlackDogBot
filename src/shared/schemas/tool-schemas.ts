@@ -141,6 +141,40 @@ export const getCmdOutputToolOutputSchema = z.object({
   totalStderrBytes: z.number().int().nonnegative(),
 });
 
+export const waitForCmdToolInputSchema = z.object({
+  handleId: z.string()
+    .min(1)
+    .describe("Process handle to wait for"),
+  timeoutMs: z.number()
+    .int()
+    .positive()
+    .default(120000)
+    .describe("Maximum time to wait for command completion in milliseconds"),
+  maxBytes: z.number()
+    .int()
+    .positive()
+    .default(65536)
+    .describe("Maximum bytes of stdout/stderr to return"),
+});
+
+export const waitForCmdToolOutputSchema = z.object({
+  handleId: z.string(),
+  completed: z.boolean()
+    .describe("True when command reached a terminal state before timeoutMs"),
+  status: z.enum(["completed", "awaiting_input", "running", "timed_out", "killed", "failed"]),
+  exitCode: z.number().nullable(),
+  signal: z.string().nullable(),
+  stdout: z.string(),
+  stderr: z.string(),
+  stdoutBytes: z.number().int().nonnegative(),
+  stderrBytes: z.number().int().nonnegative(),
+  timedOut: z.boolean()
+    .describe("True if the command itself was killed due to its run_cmd timeout"),
+  waitTimedOut: z.boolean()
+    .describe("True if wait_for_cmd reached timeoutMs before command completion"),
+  error: z.string().nullable(),
+});
+
 export const stopCmdToolInputSchema = z.object({
   handleId: z.string()
     .min(1)
@@ -543,6 +577,11 @@ export const CRON_TOOL_ALIASES: Readonly<Record<string, readonly string[]>> = {
 export const CRON_VALID_TOOL_NAMES = [
   "think",
   "run_cmd",
+  "run_cmd_input",
+  "get_cmd_status",
+  "get_cmd_output",
+  "wait_for_cmd",
+  "stop_cmd",
   "search_knowledge",
   "add_knowledge",
   "edit_knowledge",
