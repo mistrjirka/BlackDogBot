@@ -160,6 +160,11 @@ interface IPersistedSession {
   jobCreationMode: IJobCreationMode | null;
 }
 
+export interface IChatImageAttachment {
+  imageBuffer: Buffer;
+  mediaType: string;
+}
+
 interface IBufferMarker {
   __type: "Buffer";
   __data: string;
@@ -588,7 +593,11 @@ export class MainAgent extends BaseAgentBase {
     this._logger.info("MainAgent initialized for chat.", { chatId, permission });
   }
 
-  public async processMessageForChatAsync(chatId: string, userMessage: string): Promise<IAgentResult> {
+  public async processMessageForChatAsync(
+    chatId: string,
+    userMessage: string,
+    imageAttachments?: IChatImageAttachment[],
+  ): Promise<IAgentResult> {
     this._ensureInitialized();
 
     const session: IChatSession | undefined = this._sessions.get(chatId);
@@ -632,9 +641,27 @@ export class MainAgent extends BaseAgentBase {
     // Outer loop: restarts generate() when a tool rebuild occurs (e.g., create_table)
     while (true) {
       // Append the user message to session history
+      const resolvedImageAttachments: IChatImageAttachment[] = imageAttachments ?? [];
+      const userContent: Array<
+        { type: "text"; text: string } |
+        { type: "image"; image: Buffer; mediaType?: string }
+      > = [];
+
+      if (currentUserMessage.trim().length > 0 || resolvedImageAttachments.length === 0) {
+        userContent.push({ type: "text", text: currentUserMessage });
+      }
+
+      for (const imageAttachment of resolvedImageAttachments) {
+        userContent.push({
+          type: "image",
+          image: imageAttachment.imageBuffer,
+          mediaType: imageAttachment.mediaType,
+        });
+      }
+
       const userModelMessage: ModelMessage = {
         role: "user",
-        content: [{ type: "text", text: currentUserMessage }],
+        content: userContent,
       };
 
       // Reuse the AbortController from initializeForChatAsync (created during session

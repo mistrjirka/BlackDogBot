@@ -15,6 +15,7 @@ import {
   getLanceDbDir,
   getCronDir,
   getLogsDir,
+  getCacheDir,
   getPromptsDir,
   getPromptFragmentsDir,
   getSkillDir,
@@ -118,6 +119,7 @@ describe("paths utility", () => {
   it("should return cron, logs, prompts, and prompt-fragments directories", () => {
     expect(getCronDir()).toContain("cron");
     expect(getLogsDir()).toContain("logs");
+    expect(getCacheDir()).toContain("cache");
     expect(getPromptsDir()).toContain("prompts");
     expect(getPromptFragmentsDir()).toContain("prompt-fragments");
   });

@@ -65,6 +65,10 @@ export function getLogsDir(): string {
   return path.join(getBaseDir(), "logs");
 }
 
+export function getCacheDir(): string {
+  return path.join(getBaseDir(), "cache");
+}
+
 export function getJobLogsDir(): string {
   return path.join(getLogsDir(), "jobs");
 }
@@ -216,6 +220,7 @@ export async function ensureAllDirectoriesAsync(): Promise<void> {
     getLanceDbDir(),
     getCronDir(),
     getLogsDir(),
+    getCacheDir(),
     getJobLogsDir(),
     getWorkspaceDir(),
     getUploadsDir(),

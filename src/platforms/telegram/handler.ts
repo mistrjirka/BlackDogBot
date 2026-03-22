@@ -5,9 +5,11 @@ import { dirname } from "path";
 
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
+import { AiProviderService } from "../../services/ai-provider.service.js";
 import { MainAgent } from "../../agent/main-agent.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
 import type { IAgentResult, OnStepCallback, IToolCallSummary } from "../../agent/base-agent.js";
+import type { IChatImageAttachment } from "../../agent/main-agent.js";
 import type { IIncomingMessage } from "../../shared/types/messaging.types.js";
 import type { IPlatformDeps } from "../types.js";
 import type { ITelegramConfig } from "./types.js";
@@ -70,12 +72,11 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
 interface IPendingTelegramMessage {
   text: string;
   messageId: number | null;
+  imageAttachments: IChatImageAttachment[];
 }
 
 interface IPendingTelegramImage {
-  promptText: string;
-  mediaType: string;
-  savedPath: string;
+  imageAttachments: IChatImageAttachment[];
   timer: NodeJS.Timeout;
 }
 
@@ -164,12 +165,12 @@ export class TelegramHandler {
       return;
     }
 
+    let pendingImageAttachments: IChatImageAttachment[] = [];
     const pendingImage: IPendingTelegramImage | undefined = this._pendingImagesByChat.get(chatId);
     if (pendingImage) {
       clearTimeout(pendingImage.timer);
       this._pendingImagesByChat.delete(chatId);
-
-      message.text = `${pendingImage.promptText}\n\n${message.text}`;
+      pendingImageAttachments = pendingImage.imageAttachments;
     }
 
     // Auto-register channel if not exists
@@ -187,6 +188,7 @@ export class TelegramHandler {
       pendingForChat.push({
         text: message.text,
         messageId: message.message_id,
+        imageAttachments: pendingImageAttachments,
       });
       this._pendingMessages.set(chatId, pendingForChat);
 
@@ -327,7 +329,8 @@ export class TelegramHandler {
       try {
         const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(
           chatId,
-          incoming.text
+          incoming.text,
+          pendingImageAttachments.length > 0 ? pendingImageAttachments : undefined,
         );
 
         // Update progress message to done
@@ -490,6 +493,22 @@ export class TelegramHandler {
         return;
       }
 
+      if (!this._channelRegistry.hasChannel("telegram", chatId)) {
+        await this._channelRegistry.registerChannelAsync("telegram", chatId, {
+          permission: "full",
+          receiveNotifications: true,
+        });
+        this._logger.info("Auto-registered Telegram channel", { chatId });
+      }
+
+      if (!AiProviderService.getInstance().getSupportsVision()) {
+        await ctx.reply(
+          "Image analysis is currently unavailable because the active model does not support vision. " +
+          "Switch to a vision-capable model/provider and try again.",
+        );
+        return;
+      }
+
       const extraction = await this._extractTelegramImageAsync(ctx);
       if (!extraction) {
         return;
@@ -529,20 +548,23 @@ export class TelegramHandler {
 
       const uniquePath: string = await getUniqueUploadPathAsync(fileNameWithExt);
       await writeFile(uniquePath, imageBuffer);
+      const imageAttachment: IChatImageAttachment = {
+        imageBuffer,
+        mediaType: resolvedMediaType,
+      };
+      let combinedImageAttachments: IChatImageAttachment[] = [imageAttachment];
 
       const previousPending: IPendingTelegramImage | undefined = this._pendingImagesByChat.get(chatId);
       if (previousPending) {
         clearTimeout(previousPending.timer);
         this._pendingImagesByChat.delete(chatId);
+        combinedImageAttachments = [...previousPending.imageAttachments, imageAttachment];
       }
 
-      const imagePromptBase: string = this._buildImageAnalysisPrompt(uniquePath, resolvedMediaType);
       const captionText: string = extraction.captionText ?? "";
 
       if (captionText.length > 0) {
-        const combinedPrompt: string = `${imagePromptBase}\n\nUser caption: ${captionText}`;
-        await this._enqueueOrProcessPromptAsync(chatId, combinedPrompt, null);
-        await ctx.reply(`Image received and stored to ${uniquePath}. Processing with caption...`);
+        await this._enqueueOrProcessPromptAsync(chatId, captionText, null, combinedImageAttachments);
         return;
       }
 
@@ -556,13 +578,17 @@ export class TelegramHandler {
       }, 2000);
 
       this._pendingImagesByChat.set(chatId, {
-        promptText: imagePromptBase,
-        mediaType: resolvedMediaType,
-        savedPath: uniquePath,
+        imageAttachments: combinedImageAttachments,
         timer,
       });
 
-      await ctx.reply(`Image received and stored to ${uniquePath}. Send text within 2s to combine it, or it will auto-analyze.`);
+      this._logger.info("Telegram image saved and queued for normal multimodal processing", {
+        chatId,
+        savedPath: uniquePath,
+        mediaType: resolvedMediaType,
+        hasCaption: false,
+        pendingImageCount: combinedImageAttachments.length,
+      });
     } catch (error: unknown) {
       this._logger.error("Failed to handle Telegram image message", {
         chatId,
@@ -667,7 +693,12 @@ export class TelegramHandler {
       return;
     }
 
-    const mergedText: string = queuedMessages.map((queuedMessage: IPendingTelegramMessage): string => queuedMessage.text).join("\n");
+    const hasAnyImageAttachment: boolean = queuedMessages.some(
+      (queuedMessage: IPendingTelegramMessage): boolean => queuedMessage.imageAttachments.length > 0,
+    );
+    const mergedText: string = hasAnyImageAttachment
+      ? ""
+      : queuedMessages.map((queuedMessage: IPendingTelegramMessage): string => queuedMessage.text).join("\n");
 
     try {
       this._logger.info("Processing merged queued Telegram messages", {
@@ -682,16 +713,41 @@ export class TelegramHandler {
 
       await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
 
-      const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(chatId, mergedText);
+      if (!hasAnyImageAttachment) {
+        const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(chatId, mergedText);
 
-      if (result.text) {
-        await sender(result.text);
+        if (result.text) {
+          await sender(result.text);
+        }
+
+        this._logger.info("Merged queued Telegram messages processed", {
+          chatId,
+          stepsCount: result.stepsCount,
+          responseLength: result.text.length,
+        });
+        return;
+      }
+
+      let processedCount: number = 0;
+      for (const queuedMessage of queuedMessages) {
+        const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(
+          chatId,
+          queuedMessage.text,
+          queuedMessage.imageAttachments.length > 0 ? queuedMessage.imageAttachments : undefined,
+        );
+
+        if (result.text) {
+          await sender(result.text);
+        }
+
+        processedCount++;
       }
 
       this._logger.info("Merged queued Telegram messages processed", {
         chatId,
-        stepsCount: result.stepsCount,
-        responseLength: result.text.length,
+        queuedCount: queuedMessages.length,
+        processedCount,
+        includedImages: hasAnyImageAttachment,
       });
     } catch (error: unknown) {
       const errorDetails: IAiErrorDetails = extractAiErrorDetails(error);
@@ -716,11 +772,7 @@ export class TelegramHandler {
 
     this._pendingImagesByChat.delete(chatId);
 
-    const textWithImage: string =
-      `${pending.promptText}\n\n` +
-      "No caption was provided. Please analyze this image.";
-
-    await this._enqueueOrProcessPromptAsync(chatId, textWithImage, null);
+    await this._enqueueOrProcessPromptAsync(chatId, "", null, pending.imageAttachments);
   }
 
   private async _extractTelegramImageAsync(
@@ -777,21 +829,18 @@ export class TelegramHandler {
     };
   }
 
-  private _buildImageAnalysisPrompt(savedPath: string, mediaType: string): string {
-    return [
-      `Image received from Telegram and saved to: ${savedPath}`,
-      `Media type: ${mediaType}`,
-      "Use read_image with this file path to inspect and analyze the image.",
-      "If the image cannot be read, explain why and suggest a fix.",
-    ].join("\n");
-  }
-
-  private async _enqueueOrProcessPromptAsync(chatId: string, promptText: string, messageId: number | null): Promise<void> {
+  private async _enqueueOrProcessPromptAsync(
+    chatId: string,
+    promptText: string,
+    messageId: number | null,
+    imageAttachments: IChatImageAttachment[],
+  ): Promise<void> {
     if (this._processing.has(chatId)) {
       const pendingForChat: IPendingTelegramMessage[] = this._pendingMessages.get(chatId) ?? [];
       pendingForChat.push({
         text: promptText,
         messageId,
+        imageAttachments,
       });
       this._pendingMessages.set(chatId, pendingForChat);
       return;
@@ -800,7 +849,7 @@ export class TelegramHandler {
     this._processing.add(chatId);
 
     try {
-      await this._processMergedQueuedMessageAsync(chatId, [{ text: promptText, messageId }]);
+      await this._processMergedQueuedMessageAsync(chatId, [{ text: promptText, messageId, imageAttachments }]);
       await this._drainQueuedMessagesAsync(chatId);
     } finally {
       this._processing.delete(chatId);

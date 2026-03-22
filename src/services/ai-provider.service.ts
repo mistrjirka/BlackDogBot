@@ -37,7 +37,7 @@ import { FORCE_THINK_INTERVAL } from "../shared/constants.js";
 import { getCurrentLlmCallType } from "../utils/llm-call-context.js";
 import { runToolCallingProbeAsync } from "../utils/llm-probe-helpers.js";
 import { createHash } from "node:crypto";
-import { ensureDirectoryExistsAsync, getModelProfilesDir } from "../utils/paths.js";
+import { ensureDirectoryExistsAsync, getCacheDir } from "../utils/paths.js";
 import { ConfigService } from "./config.service.js";
 
 interface IOpenRouterModelListEntry {
@@ -75,24 +75,27 @@ function normalizeBaseUrl(url: string): string {
  */
 const HARD_GATE_THRESHOLD_PERCENTAGE: number = 0.85;
 const LM_STUDIO_MODEL_RECOVERY_RETRIES: number = 3;
-const PARALLEL_TOOL_CALL_PROBE_TIMEOUT_MS: number = 60000;
+const CAPABILITY_PROBE_TIMEOUT_MS: number = 300_000;
+const PARALLEL_TOOL_CALL_PROBE_TIMEOUT_MS: number = CAPABILITY_PROBE_TIMEOUT_MS;
 const DEFAULT_REQUEST_TIMEOUT_MS: number = 500_000; // 500 seconds
 const REQUEST_TIMEOUT_RETRY_MULTIPLIER: number = 2;
 const REQUEST_TIMEOUT_MAX_ATTEMPTS: number = 2; // initial + 1 retry
 const OPENROUTER_FREE_MODEL_RPM_LIMIT: number = 20;
-const VISION_PROBE_TIMEOUT_MS: number = 10000;
-const VISION_CACHE_FILE_NAME: string = "vision-support.json";
+const VISION_PROBE_TIMEOUT_MS: number = CAPABILITY_PROBE_TIMEOUT_MS;
+const TOOL_CALLING_PROBE_TIMEOUT_MS: number = CAPABILITY_PROBE_TIMEOUT_MS;
+const VISION_PROBE_MAX_TOKENS: number = 128;
+const CAPABILITY_CACHE_FILE_NAME: string = "capabilities.json";
 const tinyProbePngBase64: string = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
 
 const STRUCTURED_OUTPUT_STRATEGY_AUTO: StructuredOutputMode = "auto";
 
-interface IVisionSupportCacheEntry {
+interface ICapabilityCacheEntry {
   supportsVision: boolean;
   detectedAt: string;
   method: "api" | "probe";
 }
 
-type IVisionSupportCache = Record<string, IVisionSupportCacheEntry>;
+type ICapabilityCache = Record<string, ICapabilityCacheEntry>;
 
 export class AiProviderService {
   //#region Data members
@@ -1224,6 +1227,7 @@ export class AiProviderService {
         prompt: "Call the tool once.",
         toolChoice: "required",
         maxTokens: 40,
+        timeoutMs: TOOL_CALLING_PROBE_TIMEOUT_MS,
         apiKey: (config as IOpenRouterConfig).apiKey,
         providerPayload: {
           require_parameters: true,
@@ -1239,6 +1243,7 @@ export class AiProviderService {
       prompt: "Call the tool once.",
       toolChoice: "required",
       maxTokens: 40,
+      timeoutMs: TOOL_CALLING_PROBE_TIMEOUT_MS,
       apiKey: (config as IOpenAiCompatibleConfig | ILmStudioConfig).apiKey,
     });
 
@@ -1275,10 +1280,6 @@ export class AiProviderService {
         },
       },
     };
-
-    if (provider !== "openrouter" && this._supportsReasoningFormat) {
-      probeBody.reasoning_format = "none";
-    }
 
     const response: Response = await fetch(endpointUrl, {
       method: "POST",
@@ -1321,29 +1322,35 @@ export class AiProviderService {
       controller.abort();
     }, VISION_PROBE_TIMEOUT_MS);
 
+    const probeBody: Record<string, unknown> = {
+      model: modelId,
+      max_tokens: VISION_PROBE_MAX_TOKENS,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Describe this image in one short sentence." },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/png;base64,${tinyProbePngBase64}`,
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    if (provider !== "openrouter" && this._supportsReasoningFormat) {
+      probeBody.reasoning_format = "none";
+    }
+
     try {
       const response: Response = await fetch(endpointUrl, {
         method: "POST",
         headers,
         signal: controller.signal,
-        body: JSON.stringify({
-          model: modelId,
-          max_tokens: 32,
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: "Describe this image in one short sentence." },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: `data:image/png;base64,${tinyProbePngBase64}`,
-                  },
-                },
-              ],
-            },
-          ],
-        }),
+        body: JSON.stringify(probeBody),
       });
 
       if (!response.ok) {
@@ -1351,8 +1358,9 @@ export class AiProviderService {
       }
 
       const parsed: ILlmResponse = await response.json() as ILlmResponse;
-      const content: string = parsed.choices?.[0]?.message?.content ?? "";
-      return content.trim().length > 0;
+      const message = parsed.choices?.[0]?.message;
+      const candidate: string = this._resolveBestProbeCandidate(message);
+      return candidate.length > 0;
     } catch {
       return false;
     } finally {
@@ -1833,6 +1841,7 @@ export class AiProviderService {
           prompt: "Call the tool emit_probe once with ok:true. Use the tool, do not explain.",
           toolChoice: "required",
           maxTokens: 200,
+          timeoutMs: TOOL_CALLING_PROBE_TIMEOUT_MS,
           apiKey: (config as IOpenRouterConfig).apiKey,
           providerPayload: {
             require_parameters: true,
@@ -1854,6 +1863,7 @@ export class AiProviderService {
         prompt: "Call the tool emit_probe once with ok:true. Use the tool, do not explain.",
         toolChoice: "required",
         maxTokens: 200,
+        timeoutMs: TOOL_CALLING_PROBE_TIMEOUT_MS,
       });
 
       if (!result.ok) {
@@ -1889,6 +1899,7 @@ export class AiProviderService {
           prompt: "Call the tool emit_probe once with ok:true. Use the tool, do not explain.",
           toolChoice: "auto",
           maxTokens: 200,
+          timeoutMs: TOOL_CALLING_PROBE_TIMEOUT_MS,
           apiKey: (config as IOpenRouterConfig).apiKey,
         });
 
@@ -1907,6 +1918,7 @@ export class AiProviderService {
         prompt: "Call the tool emit_probe once with ok:true. Use the tool, do not explain.",
         toolChoice: "auto",
         maxTokens: 200,
+        timeoutMs: TOOL_CALLING_PROBE_TIMEOUT_MS,
       });
 
       if (!result.ok) {
@@ -2594,15 +2606,24 @@ export class AiProviderService {
 
     const cacheKey: string = `${providerKey}:${defaultModelId}`;
     const cachedSupport: boolean | null = await this._readVisionSupportCacheEntryAsync(cacheKey);
+
     if (cachedSupport !== null) {
-      this._supportsVision = cachedSupport;
-      logger.info("Vision support loaded from cache", {
+      if (cachedSupport) {
+        this._supportsVision = true;
+        logger.info("Vision support loaded from cache", {
+          provider: providerKey,
+          model: defaultModelId,
+          supportsVision: this._supportsVision,
+          source: "vision_cache",
+        });
+        return;
+      }
+
+      logger.info("Vision cache indicates unsupported; re-probing to avoid stale false negatives", {
         provider: providerKey,
         model: defaultModelId,
-        supportsVision: this._supportsVision,
         source: "vision_cache",
       });
-      return;
     }
 
     const probeResult: boolean = await this._probeVisionSupportAsync();
@@ -2644,29 +2665,35 @@ export class AiProviderService {
       controller.abort();
     }, VISION_PROBE_TIMEOUT_MS);
 
+    const probeBody: Record<string, unknown> = {
+      model: config.model,
+      max_tokens: VISION_PROBE_MAX_TOKENS,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Describe this image in one short sentence." },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/png;base64,${tinyProbePngBase64}`,
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    if (provider !== "openrouter" && this._supportsReasoningFormat) {
+      probeBody.reasoning_format = "none";
+    }
+
     try {
       const response: Response = await fetch(endpointUrl, {
         method: "POST",
         headers,
         signal: controller.signal,
-        body: JSON.stringify({
-          model: config.model,
-          max_tokens: 32,
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: "Describe this image in one short sentence." },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: `data:image/png;base64,${tinyProbePngBase64}`,
-                  },
-                },
-              ],
-            },
-          ],
-        }),
+        body: JSON.stringify(probeBody),
       });
 
       if (!response.ok) {
@@ -2679,8 +2706,15 @@ export class AiProviderService {
       }
 
       const parsed: ILlmResponse = await response.json() as ILlmResponse;
-      const content: string = parsed.choices?.[0]?.message?.content ?? "";
-      return content.trim().length > 0;
+      const message = parsed.choices?.[0]?.message;
+      const candidate: string = this._resolveBestProbeCandidate(message);
+      logger.debug("Vision probe response analysis", {
+        provider,
+        contentLength: (message?.content ?? "").trim().length,
+        reasoningContentLength: (message?.reasoning_content ?? "").trim().length,
+        candidateLength: candidate.length,
+      });
+      return candidate.length > 0;
     } catch (error: unknown) {
       logger.debug("Vision probe request failed", {
         provider,
@@ -2693,8 +2727,8 @@ export class AiProviderService {
   }
 
   private async _readVisionSupportCacheEntryAsync(cacheKey: string): Promise<boolean | null> {
-    const cache = await this._readVisionSupportCacheAsync();
-    const entry: IVisionSupportCacheEntry | undefined = cache[cacheKey];
+    const cache: ICapabilityCache = await this._readVisionSupportCacheAsync();
+    const entry: ICapabilityCacheEntry | undefined = cache[cacheKey];
     if (!entry || typeof entry.supportsVision !== "boolean") {
       return null;
     }
@@ -2711,7 +2745,7 @@ export class AiProviderService {
     const cacheDir: string = path.dirname(cachePath);
     await ensureDirectoryExistsAsync(cacheDir);
 
-    const cache = await this._readVisionSupportCacheAsync();
+    const cache: ICapabilityCache = await this._readVisionSupportCacheAsync();
     cache[cacheKey] = {
       supportsVision,
       detectedAt: new Date().toISOString(),
@@ -2721,14 +2755,14 @@ export class AiProviderService {
     await fs.writeFile(cachePath, JSON.stringify(cache, null, 2), "utf-8");
   }
 
-  private async _readVisionSupportCacheAsync(): Promise<IVisionSupportCache> {
+  private async _readVisionSupportCacheAsync(): Promise<ICapabilityCache> {
     const cachePath: string = this._getVisionSupportCachePath();
 
     try {
       const content: string = await fs.readFile(cachePath, "utf-8");
       const parsed: unknown = JSON.parse(content);
       if (parsed && typeof parsed === "object") {
-        return parsed as IVisionSupportCache;
+        return parsed as ICapabilityCache;
       }
       return {};
     } catch {
@@ -2737,7 +2771,16 @@ export class AiProviderService {
   }
 
   private _getVisionSupportCachePath(): string {
-    return path.join(getModelProfilesDir(), VISION_CACHE_FILE_NAME);
+    return path.join(getCacheDir(), CAPABILITY_CACHE_FILE_NAME);
+  }
+
+  private _resolveBestProbeCandidate(message: { content?: string; reasoning_content?: string } | undefined): string {
+    const contentCandidate: string = (message?.content ?? "").trim();
+    if (contentCandidate.length > 0) {
+      return contentCandidate;
+    }
+
+    return (message?.reasoning_content ?? "").trim();
   }
 
   private _promoteReasoningToRequiredIfNeeded(body: Record<string, unknown>): boolean {

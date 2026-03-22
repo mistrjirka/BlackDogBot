@@ -33,6 +33,7 @@ yarn-error.log*
 pnpm-debug.log*
 
 # Runtime data
+~/.blackdogbot/
 ~/.betterclaw/
 
 # Huggingface model cache (large files)
@@ -40,6 +41,18 @@ pnpm-debug.log*
 
 # Diagnostics
 .diagnostics/
+
+# OpenCode local data
+.opencode/
+
+# Session ledgers (developer-local continuity notes)
+thoughts/ledgers/
+
+# Local logs
+*.log
+
+# Accidental local home mirror folder
+~/
 
 # Heap snapshots
 Heap.*.heapsnapshot
