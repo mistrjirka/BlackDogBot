@@ -533,12 +533,13 @@ export class JobExecutorService {
 
     const wrappedCode: string = [
       "import sys, json, os, base64",
-      "input_data = json.loads(base64.b64decode(os.environ['BETTERCLAW_INPUT']).decode('utf-8'))",
+      "raw_input_env = os.environ.get('BLACKDOGBOT_INPUT') or os.environ.get('BETTERCLAW_INPUT')",
+      "input_data = json.loads(base64.b64decode(raw_input_env).decode('utf-8'))",
       pythonConfig.code,
     ].join("\n");
 
     // Write code to a temp file to avoid shell escaping issues with python3 -c
-    const tmpFile: string = path.join(os.tmpdir(), `betterclaw-py-${node.nodeId}-${Date.now()}.py`);
+    const tmpFile: string = path.join(os.tmpdir(), `blackdogbot-py-${node.nodeId}-${Date.now()}.py`);
 
     try {
       await fs.writeFile(tmpFile, wrappedCode, "utf-8");
@@ -547,7 +548,7 @@ export class JobExecutorService {
         `${pythonConfig.pythonPath || "python3"} ${JSON.stringify(tmpFile)}`,
         {
           timeout: pythonConfig.timeout || DEFAULT_PYTHON_TIMEOUT_MS,
-          env: { ...process.env, BETTERCLAW_INPUT: inputBase64 },
+          env: { ...process.env, BLACKDOGBOT_INPUT: inputBase64, BETTERCLAW_INPUT: inputBase64 },
         },
       );
 
@@ -734,7 +735,7 @@ export class JobExecutorService {
         method: "GET",
         headers: {
           "Accept": "application/rss+xml, application/xml, application/atom+xml, text/xml",
-          "User-Agent": "BetterClaw/1.0",
+          "User-Agent": "BlackDogBot/1.0",
         },
       },
     );

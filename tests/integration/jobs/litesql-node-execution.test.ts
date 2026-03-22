@@ -17,13 +17,13 @@ let originalHome: string;
 
 async function initServicesAsync(): Promise<void> {
   const loggerService: LoggerService = LoggerService.getInstance();
-  const sharedLogDir: string = path.join(os.tmpdir(), "betterclaw-test-logs");
+  const sharedLogDir: string = path.join(os.tmpdir(), "blackdogbot-test-logs");
   await fs.mkdir(sharedLogDir, { recursive: true });
   await loggerService.initializeAsync("error", sharedLogDir);
 
   const configService: ConfigService = ConfigService.getInstance();
-  const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-  const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+  const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+  const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
   await fs.mkdir(tempConfigDir, { recursive: true });
   await fs.cp(realConfigPath, path.join(tempConfigDir, "config.yaml"));
   await configService.initializeAsync(path.join(tempConfigDir, "config.yaml"));
@@ -32,7 +32,7 @@ async function initServicesAsync(): Promise<void> {
 
 describe("LITESQL node execution — object and array inserts", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-litesql-exec-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-litesql-exec-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 

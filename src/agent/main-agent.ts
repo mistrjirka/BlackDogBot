@@ -90,7 +90,7 @@ import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
 import { isContextExceededApiError } from "../utils/context-error.js";
-import { getSessionFilePath } from "../utils/paths.js";
+import { ensureDirectoryExistsAsync, getSessionsDir, getSessionFilePath } from "../utils/paths.js";
 import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
 import { extractAiErrorDetails } from "../utils/ai-error.js";
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
@@ -166,7 +166,10 @@ export class MainAgent extends BaseAgentBase {
   //#region Constructors
 
   private constructor() {
-    const rawSteps: number = parseInt(process.env.BETTERCLAW_MAIN_AGENT_MAX_STEPS ?? "", 10);
+    const rawSteps: number = parseInt(
+      process.env.BLACKDOGBOT_MAIN_AGENT_MAX_STEPS ?? process.env.BETTERCLAW_MAIN_AGENT_MAX_STEPS ?? "",
+      10,
+    );
 
     super({ maxSteps: isNaN(rawSteps) ? DEFAULT_AGENT_MAX_STEPS : rawSteps });
     this._sessions = new Map<string, IChatSession>();
@@ -892,6 +895,7 @@ export class MainAgent extends BaseAgentBase {
     };
 
     try {
+      await ensureDirectoryExistsAsync(getSessionsDir());
       const filePath: string = getSessionFilePath(chatId);
       await fs.writeFile(filePath, JSON.stringify(persistable, null, 2), "utf-8");
       this._logger.debug("Session saved to disk.", { chatId, messageCount: persistable.messages.length });

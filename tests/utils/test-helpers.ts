@@ -82,13 +82,13 @@ export function createTestEnvironment(prefix: string): ITestEnvironment {
       return originalHome;
     },
     setupAsync: async (options?: { logLevel?: LogLevel }) => {
-      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `betterclaw-${prefix}-`));
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `blackdogbot-${prefix}-`));
       originalHome = process.env.HOME ?? os.homedir();
       process.env.HOME = tempDir;
 
       resetSingletons();
 
-      const tempConfigDir = path.join(tempDir, ".betterclaw");
+      const tempConfigDir = path.join(tempDir, ".blackdogbot");
       await fs.mkdir(tempConfigDir, { recursive: true });
 
       const loggerService = LoggerService.getInstance();
@@ -116,7 +116,7 @@ export async function setupVectorStoreAsync(): Promise<void> {
 
   const vectorStoreService = VectorStoreService.getInstance();
   const tempDir = process.env.HOME ?? os.homedir();
-  const lanceDbPath = path.join(tempDir, ".betterclaw", "knowledge", "lancedb");
+  const lanceDbPath = path.join(tempDir, ".blackdogbot", "knowledge", "lancedb");
 
   await vectorStoreService.initializeAsync(
     lanceDbPath,

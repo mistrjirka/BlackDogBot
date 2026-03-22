@@ -36,7 +36,7 @@ export const runCmdToolInputSchema = z.object({
     .min(1)
     .describe("Shell command to execute"),
   cwd: z.string()
-    .default("~/.betterclaw")
+    .default("~/.blackdogbot")
     .describe("Working directory"),
   timeout: z.number()
     .int()

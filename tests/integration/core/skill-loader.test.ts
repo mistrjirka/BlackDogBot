@@ -14,7 +14,7 @@ let tempDir: string;
 let originalHome: string;
 
 async function setupTempHomeAsync(): Promise<void> {
-  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-skillloader-test-"));
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-skillloader-test-"));
   originalHome = process.env.HOME ?? os.homedir();
   process.env.HOME = tempDir;
 }
@@ -54,7 +54,7 @@ describe("SkillLoaderService", () => {
   });
 
   it("should load a skill from the default skills directory", async () => {
-    const skillsDir: string = path.join(tempDir, ".betterclaw", "skills");
+    const skillsDir: string = path.join(tempDir, ".blackdogbot", "skills");
 
     await createSkillOnDiskAsync(skillsDir, "hello-skill", "name: hello-skill\ndescription: Hello world skill", "Say hello.");
 
@@ -86,7 +86,7 @@ describe("SkillLoaderService", () => {
   });
 
   it("should return all loaded skills via getAllSkills", async () => {
-    const skillsDir: string = path.join(tempDir, ".betterclaw", "skills");
+    const skillsDir: string = path.join(tempDir, ".blackdogbot", "skills");
 
     await createSkillOnDiskAsync(skillsDir, "skill-a", "name: skill-a\ndescription: A", "A");
     await createSkillOnDiskAsync(skillsDir, "skill-b", "name: skill-b\ndescription: B", "B");
@@ -105,7 +105,7 @@ describe("SkillLoaderService", () => {
   });
 
   it("should return only available skills (setuped + model invocation enabled)", async () => {
-    const skillsDir: string = path.join(tempDir, ".betterclaw", "skills");
+    const skillsDir: string = path.join(tempDir, ".blackdogbot", "skills");
 
     await createSkillOnDiskAsync(skillsDir, "ready-skill", "name: ready-skill\ndescription: Ready\ndisableModelInvocation: false", "Ready.");
     await createSkillOnDiskAsync(skillsDir, "disabled-skill", "name: disabled-skill\ndescription: Disabled\ndisableModelInvocation: true", "Disabled.");
@@ -133,7 +133,7 @@ describe("SkillLoaderService", () => {
   });
 
   it("should skip directories without SKILL.md", async () => {
-    const skillsDir: string = path.join(tempDir, ".betterclaw", "skills");
+    const skillsDir: string = path.join(tempDir, ".blackdogbot", "skills");
 
     await fs.mkdir(path.join(skillsDir, "no-skill-file"), { recursive: true });
 
@@ -150,7 +150,7 @@ describe("SkillLoaderService", () => {
   });
 
   it("should skip skills with invalid frontmatter and continue loading others", async () => {
-    const skillsDir: string = path.join(tempDir, ".betterclaw", "skills");
+    const skillsDir: string = path.join(tempDir, ".blackdogbot", "skills");
 
     await createSkillOnDiskAsync(skillsDir, "bad-skill", "description: No name here", "Bad.");
 
@@ -167,7 +167,7 @@ describe("SkillLoaderService", () => {
   });
 
   it("should skip regular files in skills directory (not directories)", async () => {
-    const skillsDir: string = path.join(tempDir, ".betterclaw", "skills");
+    const skillsDir: string = path.join(tempDir, ".blackdogbot", "skills");
 
     await fs.mkdir(skillsDir, { recursive: true });
     await fs.writeFile(path.join(skillsDir, "not-a-dir.txt"), "hello", "utf-8");

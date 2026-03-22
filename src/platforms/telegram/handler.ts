@@ -1,7 +1,7 @@
 import { Context } from "grammy";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
-import { dirname, join } from "path";
+import { dirname } from "path";
 
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
@@ -22,6 +22,7 @@ import {
 import { extractErrorMessage } from "../../utils/error.js";
 import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 import { isCancelCommand } from "../../utils/command-utils.js";
+import { getTelegramChatsFilePath } from "../../utils/paths.js";
 
 //#region Constants
 
@@ -97,8 +98,7 @@ export class TelegramHandler {
     this._inFlightMessageIdByChat = new Map<string, number>();
     this._knownChatIds = new Set<string>();
 
-    const homeDir = process.env.HOME || process.env.USERPROFILE || "~";
-    this._chatIdsFilePath = join(homeDir, ".betterclaw", "known-telegram-chats.json");
+    this._chatIdsFilePath = getTelegramChatsFilePath();
   }
 
   //#endregion Constructor
@@ -336,6 +336,19 @@ export class TelegramHandler {
 
         // Send response
         if (result.text) {
+          const thinkLeakInfo: { hasThinkTags: boolean; hasReasoningPhrases: boolean } =
+            _detectThinkLeakInModelText(result.text);
+
+          if (thinkLeakInfo.hasThinkTags || thinkLeakInfo.hasReasoningPhrases) {
+            this._logger.info("Potential model thinking text detected in Telegram final reply", {
+              chatId,
+              hasThinkTags: thinkLeakInfo.hasThinkTags,
+              hasReasoningPhrases: thinkLeakInfo.hasReasoningPhrases,
+              responseLength: result.text.length,
+              preview: result.text.slice(0, 180),
+            });
+          }
+
           const htmlText: string = markdownToTelegramHtml(result.text);
           const chunks: string[] = splitTelegramMessage(htmlText);
           for (let i: number = 0; i < chunks.length; i++) {
@@ -686,6 +699,17 @@ function _formatReasoningSuffix(input: Record<string, unknown>): string {
   const preview: string = trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
 
   return `[reasoning: ${preview}]`;
+}
+
+function _detectThinkLeakInModelText(text: string): { hasThinkTags: boolean; hasReasoningPhrases: boolean } {
+  const hasThinkTags: boolean = /<\/?(think|thinking|reasoning)>/i.test(text);
+  const hasReasoningPhrases: boolean =
+    /\b(the user is asking|i should|let me think|i need to|my approach)\b/i.test(text);
+
+  return {
+    hasThinkTags,
+    hasReasoningPhrases,
+  };
 }
 
 //#endregion Private Functions

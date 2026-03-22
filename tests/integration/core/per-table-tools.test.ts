@@ -15,11 +15,11 @@ describe("Per-Table Write Tools", () => {
   let originalHome: string;
 
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-per-table-test-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-per-table-test-"));
     originalHome = process.env.HOME ?? "";
     process.env.HOME = tempDir;
 
-    await fs.mkdir(path.join(tempDir, ".betterclaw", "databases"), { recursive: true });
+    await fs.mkdir(path.join(tempDir, ".blackdogbot", "databases"), { recursive: true });
   });
 
   afterEach(async () => {

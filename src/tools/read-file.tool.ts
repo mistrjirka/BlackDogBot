@@ -22,7 +22,7 @@ interface IReadFileResult {
 export function createReadFileTool(readTracker: IFileReadTracker) {
   return tool({
     description:
-      "Read the contents of a file. The default location is the workspace directory (~/.betterclaw/workspace/). " +
+      "Read the contents of a file. The default location is the workspace directory (~/.blackdogbot/workspace/). " +
       "For most tasks, just provide a filename (e.g. 'notes.txt') without a full path. " +
       "Only specify an absolute path when accessing files outside the workspace.",
     inputSchema: readFileToolInputSchema,

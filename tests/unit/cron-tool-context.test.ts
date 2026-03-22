@@ -8,12 +8,12 @@ import { buildCronToolContextBlockAsync } from "../../src/utils/cron-tool-contex
 
 describe("buildCronToolContextBlockAsync", () => {
   it("uses dynamic write_table descriptions when table exists", async () => {
-    const tempDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-cron-tool-context-"));
+    const tempDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-cron-tool-context-"));
     const originalHome: string = process.env.HOME ?? os.homedir();
 
     try {
       process.env.HOME = tempDir;
-      await fs.mkdir(path.join(tempDir, ".betterclaw", "databases"), { recursive: true });
+      await fs.mkdir(path.join(tempDir, ".blackdogbot", "databases"), { recursive: true });
 
       await litesql.createDatabaseAsync("news");
       await litesql.createTableAsync("news", "articles", [

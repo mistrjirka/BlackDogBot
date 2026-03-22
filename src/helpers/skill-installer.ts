@@ -137,7 +137,7 @@ export function getSkillMissingDepsInstructions(missing: { bins: string[]; env: 
   }
 
   for (const configPath of missing.config) {
-    instructions.push(`Configure: \`${configPath}\` in BetterClaw config`);
+    instructions.push(`Configure: \`${configPath}\` in BlackDogBot config`);
   }
 
   return instructions;

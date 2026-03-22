@@ -1,7 +1,7 @@
 services:
   searxng:
     image: searxng/searxng:latest
-    container_name: betterclaw-searxng
+    container_name: blackdogbot-searxng
     ports:
       - "18731:8080"
     environment:
@@ -19,7 +19,7 @@ services:
 
   crawl4ai:
     image: unclecode/crawl4ai:latest
-    container_name: betterclaw-crawl4ai
+    container_name: blackdogbot-crawl4ai
     ports:
       - "18732:11235"
     environment:

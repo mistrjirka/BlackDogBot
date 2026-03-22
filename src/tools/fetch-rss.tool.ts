@@ -91,7 +91,7 @@ export const fetchRssTool = tool({
       method: "GET",
       headers: {
         Accept: "application/rss+xml, application/xml, application/atom+xml, text/xml",
-        "User-Agent": "BetterClaw/1.0",
+        "User-Agent": "BlackDogBot/1.0",
       },
     });
 

@@ -70,26 +70,26 @@ Implement status display in the frontend showing current operation status, conte
 
 ## File Operations
 ### Read
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/graph/graph.html`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/graph/graph.scss`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/graph/graph.ts`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/terminal/terminal.ts`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/models/brain.types.ts`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/services/brain-socket.service.ts`
-- `/home/jirka/programovani/better-claw/src/agent/base-agent.ts`
-- `/home/jirka/programovani/better-claw/src/brain-interface/service.ts`
-- `/home/jirka/programovani/better-claw/src/services/rate-limiter.service.ts`
-- `/home/jirka/programovani/better-claw/src/services/status.service.ts`
-- `/home/jirka/programovani/better-claw/src/utils/llm-retry.ts`
-- `/home/jirka/programovani/better-claw/vitest.integration.config.ts`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/graph/graph.html`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/graph/graph.scss`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/graph/graph.ts`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/terminal/terminal.ts`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/models/brain.types.ts`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/services/brain-socket.service.ts`
+- `/home/jirka/programovani/blackdogbot/src/agent/base-agent.ts`
+- `/home/jirka/programovani/blackdogbot/src/brain-interface/service.ts`
+- `/home/jirka/programovani/blackdogbot/src/services/rate-limiter.service.ts`
+- `/home/jirka/programovani/blackdogbot/src/services/status.service.ts`
+- `/home/jirka/programovani/blackdogbot/src/utils/llm-retry.ts`
+- `/home/jirka/programovani/blackdogbot/vitest.integration.config.ts`
 
 ### Modified
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/graph/graph.html` - Always-visible status bar with spinner, message, and context tokens
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/graph/graph.ts` - Added `contextTokens` computed signal, updated `formatStatus()`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/terminal/terminal.ts` - Added `status_update` icon
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/models/brain.types.ts` - Added `status_update` to event types, `contextTokens` to `IStatusState`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/services/brain-socket.service.ts` - Added `status_update` handler in `_handleEvent()`
-- `/home/jirka/programovani/better-claw/src/services/rate-limiter.service.ts` - Added `requestsUsedThisMinute`, `recordTokenUsage()` with console logging
-- `/home/jirka/programovani/better-claw/src/services/status.service.ts` - Added `contextTokens` field and methods
-- `/home/jirka/programovani/better-claw/src/utils/llm-retry.ts` - Added `recordTokenUsage()` call after LLM success
-- `/home/jirka/programovani/better-claw/vitest.integration.config.ts` - Increased timeouts to 600000ms (10 min)
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/graph/graph.html` - Always-visible status bar with spinner, message, and context tokens
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/graph/graph.ts` - Added `contextTokens` computed signal, updated `formatStatus()`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/terminal/terminal.ts` - Added `status_update` icon
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/models/brain.types.ts` - Added `status_update` to event types, `contextTokens` to `IStatusState`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/services/brain-socket.service.ts` - Added `status_update` handler in `_handleEvent()`
+- `/home/jirka/programovani/blackdogbot/src/services/rate-limiter.service.ts` - Added `requestsUsedThisMinute`, `recordTokenUsage()` with console logging
+- `/home/jirka/programovani/blackdogbot/src/services/status.service.ts` - Added `contextTokens` field and methods
+- `/home/jirka/programovani/blackdogbot/src/utils/llm-retry.ts` - Added `recordTokenUsage()` call after LLM success
+- `/home/jirka/programovani/blackdogbot/vitest.integration.config.ts` - Increased timeouts to 600000ms (10 min)

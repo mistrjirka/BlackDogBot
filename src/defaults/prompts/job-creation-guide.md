@@ -552,7 +552,7 @@ This is typically used at the **end of a pipeline** to persist data.
 **Config (`ILiteSqlConfig`):**
 | Property | Type | Description |
 |---|---|---|
-| `databaseName` | `string` | Name of the database (stored in `~/.betterclaw/databases/<name>.db`); supports `{{key}}` substitution |
+| `databaseName` | `string` | Name of the database (stored in `~/.blackdogbot/databases/<name>.db`); supports `{{key}}` substitution |
 | `tableName` | `string` | Target table name; supports `{{key}}` substitution |
 
 **Input:** The node expects JSON matching the table's columns. For example,
@@ -576,7 +576,7 @@ if the table has columns `id`, `name`, `email`, the input should be:
 - If primary key duplicate: Error with suggestion to fix
 
 **When to use:** At the end of a pipeline to persist transformed data to a
-SQLite database. The database files are stored in `~/.betterclaw/databases/`.
+SQLite database. The database files are stored in `~/.blackdogbot/databases/`.
 
 ---
 

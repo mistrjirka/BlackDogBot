@@ -16,39 +16,39 @@ let originalHome: string;
 
 describe("factoryResetAsync", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-factory-reset-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-factory-reset-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
-    const betterclawDir: string = path.join(tempDir, ".betterclaw");
+    const blackdogbotDir: string = path.join(tempDir, ".blackdogbot");
 
-    await fs.mkdir(path.join(betterclawDir, "cron"), { recursive: true });
-    await fs.mkdir(path.join(betterclawDir, "workspace"), { recursive: true });
-    await fs.mkdir(path.join(betterclawDir, "databases"), { recursive: true });
-    await fs.mkdir(path.join(betterclawDir, "rss-state"), { recursive: true });
-    await fs.mkdir(path.join(betterclawDir, "logs"), { recursive: true });
-    await fs.mkdir(path.join(betterclawDir, "knowledge", "lancedb", "knowledge.lance", "data"), { recursive: true });
-    await fs.mkdir(path.join(betterclawDir, "prompts"), { recursive: true });
-    await fs.mkdir(path.join(betterclawDir, "skills", "test-skill"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "cron"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "workspace"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "databases"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "rss-state"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "logs"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "knowledge", "lancedb", "knowledge.lance", "data"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "prompts"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "skills", "test-skill"), { recursive: true });
 
-    await fs.writeFile(path.join(betterclawDir, "cron", "test-task.json"), JSON.stringify({ taskId: "test", name: "Test" }));
-    await fs.writeFile(path.join(betterclawDir, "workspace", "testfile.txt"), "hello");
-    await fs.writeFile(path.join(betterclawDir, "databases", "test.db"), "");
-    await fs.writeFile(path.join(betterclawDir, "rss-state", "somehash.json"), "{}");
-    await fs.writeFile(path.join(betterclawDir, "logs", "betterclaw-2026-01-01.log"), "log entry");
-    await fs.writeFile(path.join(betterclawDir, "knowledge", "lancedb", "knowledge.lance", "data", "test.lance"), "data");
-    await fs.writeFile(path.join(betterclawDir, "known-telegram-chats.json"), '["123456"]');
-    await fs.writeFile(path.join(betterclawDir, "prompts", "system-prompt.md"), "default prompt");
-    await fs.writeFile(path.join(betterclawDir, "skills", "test-skill", "state.json"), "{}");
-    await fs.writeFile(path.join(betterclawDir, "skills", "test-skill", "SKILL.md"), "# Test Skill");
+    await fs.writeFile(path.join(blackdogbotDir, "cron", "test-task.json"), JSON.stringify({ taskId: "test", name: "Test" }));
+    await fs.writeFile(path.join(blackdogbotDir, "workspace", "testfile.txt"), "hello");
+    await fs.writeFile(path.join(blackdogbotDir, "databases", "test.db"), "");
+    await fs.writeFile(path.join(blackdogbotDir, "rss-state", "somehash.json"), "{}");
+    await fs.writeFile(path.join(blackdogbotDir, "logs", "blackdogbot-2026-01-01.log"), "log entry");
+    await fs.writeFile(path.join(blackdogbotDir, "knowledge", "lancedb", "knowledge.lance", "data", "test.lance"), "data");
+    await fs.writeFile(path.join(blackdogbotDir, "known-telegram-chats.json"), '["123456"]');
+    await fs.writeFile(path.join(blackdogbotDir, "prompts", "system-prompt.md"), "default prompt");
+    await fs.writeFile(path.join(blackdogbotDir, "skills", "test-skill", "state.json"), "{}");
+    await fs.writeFile(path.join(blackdogbotDir, "skills", "test-skill", "SKILL.md"), "# Test Skill");
 
     const logger: LoggerService = LoggerService.getInstance();
     silenceLogger(logger);
 
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const tempConfigPath: string = path.join(betterclawDir, "config.yaml");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const tempConfigPath: string = path.join(blackdogbotDir, "config.yaml");
     await fs.cp(realConfigPath, tempConfigPath);
 
     const configService: ConfigService = ConfigService.getInstance();
@@ -78,7 +78,7 @@ describe("factoryResetAsync", () => {
   it("should wipe the cron directory", async () => {
     await factoryResetAsync();
 
-    const cronDir: string = path.join(tempDir, ".betterclaw", "cron");
+    const cronDir: string = path.join(tempDir, ".blackdogbot", "cron");
     const files: string[] = await fs.readdir(cronDir);
     expect(files.length).toBe(0);
   });
@@ -86,7 +86,7 @@ describe("factoryResetAsync", () => {
   it("should wipe the workspace directory", async () => {
     await factoryResetAsync();
 
-    const workspaceDir: string = path.join(tempDir, ".betterclaw", "workspace");
+    const workspaceDir: string = path.join(tempDir, ".blackdogbot", "workspace");
     const files: string[] = await fs.readdir(workspaceDir);
     expect(files.length).toBe(0);
   });
@@ -94,7 +94,7 @@ describe("factoryResetAsync", () => {
   it("should wipe the databases directory", async () => {
     await factoryResetAsync();
 
-    const dbDir: string = path.join(tempDir, ".betterclaw", "databases");
+    const dbDir: string = path.join(tempDir, ".blackdogbot", "databases");
     const files: string[] = await fs.readdir(dbDir);
     expect(files.length).toBe(0);
   });
@@ -102,7 +102,7 @@ describe("factoryResetAsync", () => {
   it("should wipe the logs directory", async () => {
     await factoryResetAsync();
 
-    const logsDir: string = path.join(tempDir, ".betterclaw", "logs");
+    const logsDir: string = path.join(tempDir, ".blackdogbot", "logs");
     const files: string[] = await fs.readdir(logsDir);
     expect(files.length).toBe(0);
   });
@@ -110,7 +110,7 @@ describe("factoryResetAsync", () => {
   it("should wipe the RSS state directory", async () => {
     await factoryResetAsync();
 
-    const rssDir: string = path.join(tempDir, ".betterclaw", "rss-state");
+    const rssDir: string = path.join(tempDir, ".blackdogbot", "rss-state");
     const files: string[] = await fs.readdir(rssDir);
     expect(files.length).toBe(0);
   });
@@ -118,7 +118,7 @@ describe("factoryResetAsync", () => {
   it("should fully wipe the knowledge directory including LanceDB files", async () => {
     await factoryResetAsync();
 
-    const knowledgeDir: string = path.join(tempDir, ".betterclaw", "knowledge");
+    const knowledgeDir: string = path.join(tempDir, ".blackdogbot", "knowledge");
     const lancedbPath: string = path.join(knowledgeDir, "lancedb", "knowledge.lance", "data", "test.lance");
 
     await expect(fs.access(lancedbPath)).rejects.toThrow();
@@ -127,15 +127,15 @@ describe("factoryResetAsync", () => {
   it("should delete known-telegram-chats.json", async () => {
     await factoryResetAsync();
 
-    const chatsFile: string = path.join(tempDir, ".betterclaw", "known-telegram-chats.json");
+    const chatsFile: string = path.join(tempDir, ".blackdogbot", "known-telegram-chats.json");
     await expect(fs.access(chatsFile)).rejects.toThrow();
   });
 
   it("should delete skill state files but preserve skill definitions", async () => {
     await factoryResetAsync();
 
-    const stateFile: string = path.join(tempDir, ".betterclaw", "skills", "test-skill", "state.json");
-    const skillFile: string = path.join(tempDir, ".betterclaw", "skills", "test-skill", "SKILL.md");
+    const stateFile: string = path.join(tempDir, ".blackdogbot", "skills", "test-skill", "state.json");
+    const skillFile: string = path.join(tempDir, ".blackdogbot", "skills", "test-skill", "SKILL.md");
 
     await expect(fs.access(stateFile)).rejects.toThrow();
 

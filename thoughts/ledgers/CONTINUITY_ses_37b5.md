@@ -54,28 +54,28 @@ Add a database viewer UI to the Angular frontend that allows users to browse SQL
 
 ## Critical Context
 - The existing `LiteSqlService` provides all database operations: `listDatabasesAsync()`, `listTablesAsync()`, `queryTableAsync()`, `getTableSchemaAsync()`
-- Databases are stored as `.db` files in `~/.betterclaw/databases/`
+- Databases are stored as `.db` files in `~/.blackdogbot/databases/`
 - The dashboard uses tab-based navigation with `activeTab` signal controlling visibility
 - Angular components use standalone: true with explicit imports arrays
 
 ## File Operations
 ### Read
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/dashboard/dashboard.html`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/dashboard/dashboard.scss`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/dashboard/dashboard.ts`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/models/brain.types.ts`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/services/brain-socket.service.ts`
-- `/home/jirka/programovani/better-claw/src/brain-interface/service.ts`
-- `/home/jirka/programovani/better-claw/src/brain-interface/types.ts`
-- `/home/jirka/programovani/better-claw/src/services/litesql.service.ts`
-- `/home/jirka/programovani/better-claw/src/tools/query-database.tool.ts`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/dashboard/dashboard.html`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/dashboard/dashboard.scss`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/dashboard/dashboard.ts`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/models/brain.types.ts`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/services/brain-socket.service.ts`
+- `/home/jirka/programovani/blackdogbot/src/brain-interface/service.ts`
+- `/home/jirka/programovani/blackdogbot/src/brain-interface/types.ts`
+- `/home/jirka/programovani/blackdogbot/src/services/litesql.service.ts`
+- `/home/jirka/programovani/blackdogbot/src/tools/query-database.tool.ts`
 
 ### Modified
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/dashboard/dashboard.ts` - Added DatabaseComponent import, updated activeTab type
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/database/database.ts` - Created new component
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/database/database.html` - Created template
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/database/database.scss` - Created styles
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/models/brain.types.ts` - Added database types
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/services/brain-socket.service.ts` - Added queryDatabaseAsync method
-- `/home/jirka/programovani/better-claw/src/brain-interface/service.ts` - Added query_database command handler
-- `/home/jirka/programovani/better-claw/src/brain-interface/types.ts` - Added IQueryDatabaseCommand
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/dashboard/dashboard.ts` - Added DatabaseComponent import, updated activeTab type
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/database/database.ts` - Created new component
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/database/database.html` - Created template
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/database/database.scss` - Created styles
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/models/brain.types.ts` - Added database types
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/services/brain-socket.service.ts` - Added queryDatabaseAsync method
+- `/home/jirka/programovani/blackdogbot/src/brain-interface/service.ts` - Added query_database command handler
+- `/home/jirka/programovani/blackdogbot/src/brain-interface/types.ts` - Added IQueryDatabaseCommand

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-CONFIG_DIR="$HOME/.betterclaw"
+CONFIG_DIR="$HOME/.blackdogbot"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
 COMPOSE_FILE="$CONFIG_DIR/docker-compose.yaml"
 
@@ -17,7 +17,7 @@ CRAWL4AI_PORT=18732
 
 print_header() {
     echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║           BetterClaw Installation Script                  ║${NC}"
+    echo -e "${BLUE}║           BlackDogBot Installation Script                  ║${NC}"
     echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 }
@@ -179,7 +179,7 @@ setup_docker_services() {
     fi
     
     echo -e "${YELLOW}Docker Services Setup${NC}"
-    echo "BetterClaw can use SearXNG (web search) and Crawl4AI (web scraping) as Docker containers."
+    echo "BlackDogBot can use SearXNG (web search) and Crawl4AI (web scraping) as Docker containers."
     echo ""
     
     if prompt_yesno "Set up SearXNG for web search?" "y"; then
@@ -220,8 +220,8 @@ create_docker_compose() {
     mkdir -p "$CONFIG_DIR"
     
     cat > "$COMPOSE_FILE" << 'EOF'
-# BetterClaw optional services
-# Run with: docker compose -f ~/.betterclaw/docker-compose.yaml up -d
+# BlackDogBot optional services
+# Run with: docker compose -f ~/.blackdogbot/docker-compose.yaml up -d
 
 services:
 EOF
@@ -233,13 +233,13 @@ EOF
         SEARXNG_SECRET=$(openssl rand -hex 32)
         
         cat > "$CONFIG_DIR/searxng/settings.yml" << SEARXNG_EOF
-# SearXNG settings for BetterClaw
+# SearXNG settings for BlackDogBot
 # Bot detection disabled for local usage
 
 use_default_settings: true
 
 general:
-  instance_name: "BetterClaw Search"
+  instance_name: "BlackDogBot Search"
 
 search:
   safe_search: 0
@@ -293,7 +293,7 @@ SEARXNG_EOF
         cat >> "$COMPOSE_FILE" << EOF
   searxng:
     image: searxng/searxng:latest
-    container_name: betterclaw-searxng
+    container_name: blackdogbot-searxng
     ports:
       - "${SEARXNG_PORT}:8080"
     environment:
@@ -314,7 +314,7 @@ EOF
         cat >> "$COMPOSE_FILE" << EOF
   crawl4ai:
     image: unclecode/crawl4ai:latest
-    container_name: betterclaw-crawl4ai
+    container_name: blackdogbot-crawl4ai
     ports:
       - "${CRAWL4AI_PORT}:8000"
     environment:
@@ -607,7 +607,7 @@ EOF
     fi
 
     cat >> "$CONFIG_FILE" << EOF
-  lancedbPath: ~/.betterclaw/knowledge/lancedb
+  lancedbPath: ~/.blackdogbot/knowledge/lancedb
 
 skills:
   directories: []

@@ -11,12 +11,12 @@ import { buildPerTableToolsAsync } from "../../src/utils/per-table-tools.js";
 
 describe("agent-node-tool-pool", () => {
   it("includes per-table write tools when passed explicitly", async () => {
-    const tempDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-agent-node-pool-"));
+    const tempDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-agent-node-pool-"));
     const originalHome: string = process.env.HOME ?? os.homedir();
 
     try {
       process.env.HOME = tempDir;
-      await fs.mkdir(path.join(tempDir, ".betterclaw", "databases"), { recursive: true });
+      await fs.mkdir(path.join(tempDir, ".blackdogbot", "databases"), { recursive: true });
 
       await litesql.createDatabaseAsync("jobs");
       await litesql.createTableAsync("jobs", "artifacts", [
@@ -39,12 +39,12 @@ describe("agent-node-tool-pool", () => {
   });
 
   it("getAgentNodeToolNamesAsync includes dynamic write_table tool names", async () => {
-    const tempDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-agent-node-names-"));
+    const tempDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-agent-node-names-"));
     const originalHome: string = process.env.HOME ?? os.homedir();
 
     try {
       process.env.HOME = tempDir;
-      await fs.mkdir(path.join(tempDir, ".betterclaw", "databases"), { recursive: true });
+      await fs.mkdir(path.join(tempDir, ".blackdogbot", "databases"), { recursive: true });
 
       await litesql.createDatabaseAsync("jobs");
       await litesql.createTableAsync("jobs", "results", [

@@ -13,7 +13,7 @@ let originalHome: string;
 
 describe("MCP Agent Integration", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-mcp-agent-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-mcp-agent-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 

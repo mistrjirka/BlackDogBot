@@ -65,7 +65,7 @@ export class LoggerService {
     const resolvedLogDir: string = logDir ?? getLogsDir();
     const now: Date = new Date();
     const dateString: string = now.toISOString().split("T")[0];
-    const logFileName: string = `betterclaw-${dateString}.log`;
+    const logFileName: string = `blackdogbot-${dateString}.log`;
 
     await fs.mkdir(resolvedLogDir, { recursive: true });
 

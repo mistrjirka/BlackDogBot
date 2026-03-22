@@ -77,20 +77,20 @@ async function isEndpointReachableAsync(): Promise<boolean> {
 }
 
 beforeAll(async () => {
-  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-summarization-e2e-"));
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-summarization-e2e-"));
   originalHome = process.env.HOME ?? os.homedir();
   process.env.HOME = tempDir;
 
   resetSingletons();
 
-  const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-  const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+  const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+  const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
   tempConfigPath = path.join(tempConfigDir, "config.yaml");
 
   await fs.mkdir(tempConfigDir, { recursive: true });
   await fs.cp(realConfigPath, tempConfigPath);
 
-  artifactsRootDir = path.join(originalHome, ".betterclaw", "test-artifacts", "summarization-e2e");
+  artifactsRootDir = path.join(originalHome, ".blackdogbot", "test-artifacts", "summarization-e2e");
   await fs.mkdir(artifactsRootDir, { recursive: true });
 
   endpointReachable = await isEndpointReachableAsync();
@@ -331,7 +331,7 @@ async function initializeLocalOpenAiCompatibleAsync(): Promise<LanguageModel | n
   const rawConfig: IRawConfig = parseYaml(rawConfigText) as IRawConfig;
 
   const modelId: string | undefined =
-    process.env.BETTERCLAW_LOCAL_OPENAI_MODEL ||
+    process.env.BLACKDOGBOT_LOCAL_OPENAI_MODEL ||
     rawConfig.ai?.openaiCompatible?.model ||
     rawConfig.ai?.lmStudio?.model;
 
@@ -384,8 +384,8 @@ async function initializeLocalOpenAiCompatibleAsync(): Promise<LanguageModel | n
 
 describe.sequential("Summarization compaction E2E", () => {
   it("should summarize ~20k context in a single request path without stalling", async () => {
-    if (process.env.BETTERCLAW_RUN_SUMMARIZATION_E2E !== "1") {
-      console.log("Skipping: set BETTERCLAW_RUN_SUMMARIZATION_E2E=1 to run slow live summarization E2E");
+    if (process.env.BLACKDOGBOT_RUN_SUMMARIZATION_E2E !== "1") {
+      console.log("Skipping: set BLACKDOGBOT_RUN_SUMMARIZATION_E2E=1 to run slow live summarization E2E");
       return;
     }
 
@@ -454,8 +454,8 @@ describe.sequential("Summarization compaction E2E", () => {
   }, 900000);
 
   it("should compact medium history around 20k tokens without think tags", async () => {
-    if (process.env.BETTERCLAW_RUN_SUMMARIZATION_E2E !== "1") {
-      console.log("Skipping: set BETTERCLAW_RUN_SUMMARIZATION_E2E=1 to run slow live summarization E2E");
+    if (process.env.BLACKDOGBOT_RUN_SUMMARIZATION_E2E !== "1") {
+      console.log("Skipping: set BLACKDOGBOT_RUN_SUMMARIZATION_E2E=1 to run slow live summarization E2E");
       return;
     }
 

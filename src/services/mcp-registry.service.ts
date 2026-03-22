@@ -1,6 +1,6 @@
 import { writeFile, readFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
-import { join, dirname } from "path";
+import { dirname } from "path";
 
 import type {
   IMcpServerConfig,
@@ -10,6 +10,7 @@ import type {
 import { mcpServerConfigSchema } from "../shared/schemas/mcp.schemas.js";
 import { LoggerService } from "./logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { getMcpServersFilePath } from "../utils/paths.js";
 
 //#region Constants
 
@@ -20,7 +21,7 @@ const VALID_SERVER_ID_RE = /^[a-zA-Z0-9_-]+$/;
 //#region McpRegistryService
 
 /**
- * Manages MCP server configuration stored in ~/.betterclaw/mcp-servers.json.
+ * Manages MCP server configuration stored in ~/.blackdogbot/mcp-servers.json.
  *
  * Format matches VS Code / Claude Desktop MCP config:
  * { "mcpServers": { "serverName": { "command": "...", "args": [...] } } }
@@ -56,8 +57,7 @@ export class McpRegistryService {
     this._logger = LoggerService.getInstance();
     this._servers = new Map();
 
-    const homeDir = process.env.HOME || process.env.USERPROFILE || "~";
-    this._filePath = join(homeDir, ".betterclaw", "mcp-servers.json");
+    this._filePath = getMcpServersFilePath();
   }
 
   //#endregion Constructor

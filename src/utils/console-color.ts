@@ -2,7 +2,7 @@
  * Lightweight console color utility.
  *
  * - Uses ANSI escape codes directly (no external dependency).
- * - Respects TTY detection, NO_COLOR=1, BETTERCLAW_COLOR=0/1.
+ * - Respects TTY detection, NO_COLOR=1, BLACKDOGBOT_COLOR=0/1.
  * - File output stays unchanged (callers use these only for console output).
  */
 
@@ -10,9 +10,11 @@ const ESC = "\x1b[";
 const RESET = `${ESC}0m`;
 
 function isColorEnabled(): boolean {
-  // BETTERCLAW_COLOR=0 forces off, =1 forces on
-  if (process.env.BETTERCLAW_COLOR === "0") return false;
-  if (process.env.BETTERCLAW_COLOR === "1") return true;
+  // BLACKDOGBOT_COLOR=0 forces off, =1 forces on
+  const colorFlag: string | undefined = process.env.BLACKDOGBOT_COLOR ?? process.env.BETTERCLAW_COLOR;
+
+  if (colorFlag === "0") return false;
+  if (colorFlag === "1") return true;
 
   // NO_COLOR=1 forces off (https://no-color.org)
   if (process.env.NO_COLOR) return false;

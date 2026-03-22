@@ -38,8 +38,8 @@ async function initServicesAsync(): Promise<void> {
   await loggerService.initializeAsync("error", path.join(tempDir, "logs"));
 
   const configService: ConfigService = ConfigService.getInstance();
-  const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-  const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+  const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+  const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
   await fs.mkdir(tempConfigDir, { recursive: true });
   await fs.cp(realConfigPath, path.join(tempConfigDir, "config.yaml"));
   await configService.initializeAsync(path.join(tempConfigDir, "config.yaml"));
@@ -62,7 +62,7 @@ async function execTool<T>(toolObj: any, args: unknown): Promise<T> {
 
 describe("rss_fetcher output schema (integration)", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-rss-schema-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-rss-schema-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 

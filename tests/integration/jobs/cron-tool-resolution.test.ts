@@ -50,7 +50,7 @@ describe("CronAgent tool resolution", () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-cron-tool-res-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-cron-tool-res-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
@@ -62,8 +62,8 @@ describe("CronAgent tool resolution", () => {
     vi.spyOn(logger, "error").mockReturnValue(undefined);
     warnSpy = vi.spyOn(LoggerService.prototype, "warn").mockReturnValue(undefined);
 
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });

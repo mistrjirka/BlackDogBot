@@ -20,15 +20,15 @@ let originalHome: string;
 
 describe("AiProvider E2E", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-ai-e2e-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-ai-e2e-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
     // Copy real config to temp HOME
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });

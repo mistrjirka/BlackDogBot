@@ -38,7 +38,7 @@ async function isEndpointReachableAsync(): Promise<boolean> {
 }
 
 beforeAll(async () => {
-  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-editcron-e2e-"));
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-editcron-e2e-"));
   originalHome = process.env.HOME ?? os.homedir();
   process.env.HOME = tempDir;
 
@@ -47,8 +47,8 @@ beforeAll(async () => {
   const logger: LoggerService = LoggerService.getInstance();
   silenceLogger(logger);
 
-  const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-  const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+  const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+  const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
   const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
   await fs.mkdir(tempConfigDir, { recursive: true });

@@ -64,13 +64,13 @@ async function createJobWithNodeChain(
 
 describe("remove node cleanup", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-remove-node-cleanup-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-remove-node-cleanup-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     await fs.mkdir(tempConfigDir, { recursive: true });
 
     const loggerService: LoggerService = LoggerService.getInstance();

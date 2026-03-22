@@ -59,13 +59,13 @@ async function createTestJobWithNodes(
 
 describe("disconnect_nodes tool", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-disconnect-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-disconnect-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     await fs.mkdir(tempConfigDir, { recursive: true });
 
     const loggerService: LoggerService = LoggerService.getInstance();

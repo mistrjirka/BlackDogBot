@@ -94,7 +94,7 @@ async function execEditCronTool(args: {
 
 describe("editCronTool instruction verification", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-editcron-verif-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-editcron-verif-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
@@ -103,8 +103,8 @@ describe("editCronTool instruction verification", () => {
     const logger: LoggerService = LoggerService.getInstance();
     silenceLogger(logger);
 
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });

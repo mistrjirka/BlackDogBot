@@ -51,7 +51,7 @@ async function execAddCronTool(args: {
 
 describe("addCronTool", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-addcron-test-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-addcron-test-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
@@ -60,8 +60,8 @@ describe("addCronTool", () => {
     const logger: LoggerService = LoggerService.getInstance();
     silenceLogger(logger);
 
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });
@@ -117,7 +117,7 @@ describe("addCronTool", () => {
     expect(result.taskId).toBeDefined();
     expect(result.taskId.length).toBeGreaterThan(0);
 
-    const cronDir: string = path.join(tempDir, ".betterclaw", "cron");
+    const cronDir: string = path.join(tempDir, ".blackdogbot", "cron");
     const files: string[] = await fs.readdir(cronDir);
     const taskFile: string = files.find((f) => f.endsWith(".json"))!;
     const taskContent: string = await fs.readFile(path.join(cronDir, taskFile), "utf-8");
@@ -170,7 +170,7 @@ describe("addCronTool", () => {
   });
 
   it("should include a dynamic description for write_table tools in verifier prompt", async () => {
-    await fs.mkdir(path.join(tempDir, ".betterclaw", "databases"), { recursive: true });
+    await fs.mkdir(path.join(tempDir, ".blackdogbot", "databases"), { recursive: true });
     const dbModule = await import("../../../src/helpers/litesql.js");
     await dbModule.createDatabaseAsync("news");
     await dbModule.createTableAsync("news", "articles", [
@@ -248,7 +248,7 @@ describe("addCronTool", () => {
 
     expect(result.success).toBe(true);
 
-    const cronDir: string = path.join(tempDir, ".betterclaw", "cron");
+    const cronDir: string = path.join(tempDir, ".blackdogbot", "cron");
     const files: string[] = await fs.readdir(cronDir);
     const taskFile: string = files.find((f) => f.endsWith(".json"))!;
     const taskContent: string = await fs.readFile(path.join(cronDir, taskFile), "utf-8");
@@ -318,7 +318,7 @@ describe("addCronTool", () => {
     expect(result.success).toBe(true);
     expect(result.taskId.length).toBeGreaterThan(0);
 
-    const cronFilePath: string = path.join(tempDir, ".betterclaw", "cron", `${result.taskId}.json`);
+    const cronFilePath: string = path.join(tempDir, ".blackdogbot", "cron", `${result.taskId}.json`);
     const savedContent: string = await fs.readFile(cronFilePath, "utf-8");
     const savedTask = JSON.parse(savedContent);
 

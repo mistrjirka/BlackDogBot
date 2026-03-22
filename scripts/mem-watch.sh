@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mem-watch.sh — Monitor better-claw memory, keep the last 5 samples on disk,
+# mem-watch.sh — Monitor blackdogbot memory, keep the last 5 samples on disk,
 # and preserve the final window if the target process exits while mem-watch is
 # still running.
 #
@@ -131,7 +131,7 @@ fi
 if [[ -z "$PID" ]]; then
     PID="$(find_pid)"
     if [[ -z "$PID" ]]; then
-        echo "❌ Could not find better-claw process. Is it running?"
+        echo "❌ Could not find blackdogbot process. Is it running?"
         echo "   Start it with: ./scripts/launch.sh"
         exit 1
     fi

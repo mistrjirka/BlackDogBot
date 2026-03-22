@@ -31,12 +31,12 @@ import type {
   providedIn: "root",
 })
 export class BrainSocketService implements OnDestroy {
-  private static readonly _AuthTokenStorageKey: string = "betterclaw_brain_jwt";
+  private static readonly _AuthTokenStorageKey: string = "blackdogbot_brain_jwt";
   private _socket: Socket | null = null;
   private _connected = signal(false);
   private _events = signal<TerminalEntry[]>([]);
   private _graph = signal<GraphUpdatedEvent | null>(null);
-  private _currentChatId = signal<string | null>(localStorage.getItem("betterclaw_chat_id") || null);
+  private _currentChatId = signal<string | null>(localStorage.getItem("blackdogbot_chat_id") || null);
   private _jobs = signal<StoredJobInfo[]>([]);
   private _lastJobId = signal<string | null>(null);
   private _isExecuting = signal<boolean>(false);
@@ -155,7 +155,7 @@ export class BrainSocketService implements OnDestroy {
 
   public async startConversationAsync(chatId: string): Promise<BrainCommandResponse> {
     this._currentChatId.set(chatId);
-    localStorage.setItem("betterclaw_chat_id", chatId);
+    localStorage.setItem("blackdogbot_chat_id", chatId);
     return this.sendCommandAsync({ type: "start_conversation", chatId });
   }
 
@@ -307,7 +307,7 @@ export class BrainSocketService implements OnDestroy {
 
     // Clear local state regardless of result
     const newId: string = generateId();
-    localStorage.setItem("betterclaw_chat_id", newId);
+    localStorage.setItem("blackdogbot_chat_id", newId);
     this._currentChatId.set(newId);
     this._events.set([]);
     this._graph.set(null);
@@ -392,7 +392,7 @@ export class BrainSocketService implements OnDestroy {
 
     if (event.type === "conversation_started") {
       this._currentChatId.set(event.data.chatId);
-      localStorage.setItem("betterclaw_chat_id", event.data.chatId);
+      localStorage.setItem("blackdogbot_chat_id", event.data.chatId);
     }
 
     if (event.type === "conversation_ended") {

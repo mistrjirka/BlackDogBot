@@ -34,14 +34,14 @@ let crawl4aiUrl: string | undefined;
 
 
 beforeAll(async () => {
-  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-tools-test-"));
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-tools-test-"));
   originalHome = process.env.HOME ?? os.homedir();
   process.env.HOME = tempDir;
 
   resetSingletons();
 
-  const realConfigPath = path.join(originalHome, ".betterclaw", "config.yaml");
-  const configDir = path.join(tempDir, ".betterclaw");
+  const realConfigPath = path.join(originalHome, ".blackdogbot", "config.yaml");
+  const configDir = path.join(tempDir, ".blackdogbot");
   await fs.mkdir(configDir, { recursive: true });
   await fs.copyFile(realConfigPath, path.join(configDir, "config.yaml"));
 

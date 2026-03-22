@@ -9,7 +9,7 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
 
   run_cmd:
     "Execute a shell command and return stdout, stderr, and exit code. " +
-    "Args: command (string, required); cwd (string, default ~/.betterclaw); timeout (ms, default 30000).",
+    "Args: command (string, required); cwd (string, default ~/.blackdogbot); timeout (ms, default 30000).",
 
   search_knowledge:
     "Search the knowledge base for relevant information. Returns documents ranked by relevance. " +
@@ -36,7 +36,7 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Args: message (string, required — the message you plan to send).",
 
   read_file:
-    "Read the contents of a file. Default location is the workspace (~/.betterclaw/workspace/). " +
+    "Read the contents of a file. Default location is the workspace (~/.blackdogbot/workspace/). " +
     "For workspace files, pass just the filename (e.g. 'notes.txt'); use a full absolute path only for files outside the workspace. " +
     "Args: filePath (string, default '').",
 

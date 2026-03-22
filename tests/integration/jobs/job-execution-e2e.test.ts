@@ -29,14 +29,14 @@ async function writeConfigAsync(configPath: string, content: string): Promise<vo
 
 describe("Job Execution E2E", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-job-e2e-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-job-e2e-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const configPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });

@@ -45,7 +45,7 @@ let originalHome: string;
 const TOOL_OPTIONS = { toolCallId: "tc1", messages: [] as never[], abortSignal: undefined as unknown as AbortSignal };
 
 async function setupTempHomeAsync(): Promise<void> {
-  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-file-tools-"));
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-file-tools-"));
   originalHome = process.env.HOME ?? os.homedir();
   process.env.HOME = tempDir;
 
@@ -490,10 +490,10 @@ describe("workspace directory", () => {
     await teardownTempHomeAsync();
   });
 
-  it("should resolve to ~/.betterclaw/workspace", () => {
+  it("should resolve to ~/.blackdogbot/workspace", () => {
     const workspaceDir: string = getWorkspaceDir();
 
-    expect(workspaceDir).toBe(path.join(os.homedir(), ".betterclaw", "workspace"));
+    expect(workspaceDir).toBe(path.join(os.homedir(), ".blackdogbot", "workspace"));
   });
 });
 

@@ -13,7 +13,7 @@ let tempDir: string;
 let originalHome: string;
 
 async function setupTempHomeAsync(): Promise<void> {
-  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-skillstate-test-"));
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-skillstate-test-"));
   originalHome = process.env.HOME ?? os.homedir();
   process.env.HOME = tempDir;
 }

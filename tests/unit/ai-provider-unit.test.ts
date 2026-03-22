@@ -216,18 +216,18 @@ describe("AiProviderService unit", () => {
 
   describe("Scheduler legacy write tool migration", () => {
     it("should replace write_to_database with all write_table tools at startup", async () => {
-      const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-scheduler-migrate-"));
+      const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-scheduler-migrate-"));
       const originalHome = process.env.HOME ?? os.homedir();
 
       try {
         process.env.HOME = tempRoot;
 
-        const betterClawDir = path.join(tempRoot, ".betterclaw");
+        const betterClawDir = path.join(tempRoot, ".blackdogbot");
         const cronDir = path.join(betterClawDir, "cron");
         const configDir = betterClawDir;
         await fs.mkdir(cronDir, { recursive: true });
 
-        const realConfigPath = path.join(originalHome, ".betterclaw", "config.yaml");
+        const realConfigPath = path.join(originalHome, ".blackdogbot", "config.yaml");
         const tempConfigPath = path.join(configDir, "config.yaml");
         await fs.cp(realConfigPath, tempConfigPath);
 

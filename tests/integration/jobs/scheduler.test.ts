@@ -43,7 +43,7 @@ function createTask(overrides?: Partial<IScheduledTask>): IScheduledTask {
 
 describe("SchedulerService", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-sched-test-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-sched-test-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
@@ -52,8 +52,8 @@ describe("SchedulerService", () => {
     const logger: LoggerService = LoggerService.getInstance();
     silenceLogger(logger);
 
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
     await fs.mkdir(tempConfigDir, { recursive: true });
     await fs.cp(realConfigPath, tempConfigPath);
@@ -354,7 +354,7 @@ describe("SchedulerService", () => {
       executedTasks.push(task.taskId);
     });
 
-    const cronDir: string = path.join(tempDir, ".betterclaw", "cron");
+    const cronDir: string = path.join(tempDir, ".blackdogbot", "cron");
 
     await fs.mkdir(cronDir, { recursive: true });
 

@@ -26,22 +26,22 @@ let originalHome: string;
 
 describe("graph-audit E2E — real LLM calls", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-graphaudit-e2e-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-graphaudit-e2e-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
     // Copy real config to temp HOME so AiProviderService picks up the API key
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });
     await fs.cp(realConfigPath, tempConfigPath);
 
     // Copy prompts directory for graph-audit prompt
-    const realPromptsDir: string = path.join(originalHome, ".betterclaw", "prompts");
+    const realPromptsDir: string = path.join(originalHome, ".blackdogbot", "prompts");
     const tempPromptsDir: string = path.join(tempConfigDir, "prompts");
     await fs.mkdir(tempPromptsDir, { recursive: true });
     await fs.cp(realPromptsDir, tempPromptsDir, { recursive: true });

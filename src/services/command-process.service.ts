@@ -101,6 +101,7 @@ export class CommandProcessService {
     command: string,
     cwd: string,
     timeout: number,
+    env?: NodeJS.ProcessEnv,
   ): Promise<ISpawnResult> {
     const handleId: string = this._generateHandleId();
 
@@ -110,6 +111,7 @@ export class CommandProcessService {
       shell: true,
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
+      env,
     });
 
     const stdout: Buffer = Buffer.alloc(0);

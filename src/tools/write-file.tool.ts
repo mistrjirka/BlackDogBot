@@ -24,7 +24,7 @@ export function createWriteFileTool(readTracker: IFileReadTracker) {
       "Write content to a file, completely replacing its contents. " +
       "IMPORTANT: You MUST read the file with read_file first before overwriting it. " +
       "If the file does not exist yet, you can write to it without reading first. " +
-      "The default location is the workspace directory (~/.betterclaw/workspace/). " +
+      "The default location is the workspace directory (~/.blackdogbot/workspace/). " +
       "For most tasks, just provide a filename (e.g. 'notes.txt') without a full path. " +
       "Only specify an absolute path when accessing files outside the workspace.",
     inputSchema: writeFileToolInputSchema,

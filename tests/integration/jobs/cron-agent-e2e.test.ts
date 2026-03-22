@@ -38,15 +38,15 @@ function createExecutionContext(): IExecutionContext {
 
 describe("CronAgent E2E", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-cron-e2e-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-cron-e2e-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
     sentMessages.length = 0;
 
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });
@@ -82,7 +82,7 @@ describe("CronAgent E2E", () => {
     );
 
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
-    const lanceDbPath: string = path.join(tempDir, ".betterclaw", "knowledge", "lancedb");
+    const lanceDbPath: string = path.join(tempDir, ".blackdogbot", "knowledge", "lancedb");
 
     await vectorStoreService.initializeAsync(
       lanceDbPath,

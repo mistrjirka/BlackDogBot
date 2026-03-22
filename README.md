@@ -1,4 +1,4 @@
-# BetterClaw
+# BlackDogBot
 
 A proactive AI assistant daemon for Linux. It runs as a long-lived process, communicates via Telegram and/or Discord, and executes structured jobs, skills, and scheduled tasks autonomously.
 
@@ -6,7 +6,7 @@ A proactive AI assistant daemon for Linux. It runs as a long-lived process, comm
 
 | Document | Description |
 |----------|-------------|
-| [Installation Guide](docs/installation.md) | How to install and configure BetterClaw |
+| [Installation Guide](docs/installation.md) | How to install and configure BlackDogBot |
 | [Architecture](docs/architecture.md) | System architecture and components |
 | [Testing Guide](docs/testing.md) | How to run and write tests |
 | [Code Style](docs/code-style.md) | Coding conventions and patterns |
@@ -20,7 +20,7 @@ A proactive AI assistant daemon for Linux. It runs as a long-lived process, comm
 - **Scheduled Tasks** - Cron-like periodic tasks with `cron`, `interval`, and `once` schedule types, executed by a dedicated cron agent.
 - **Notification Broadcasting** - Cron tasks can broadcast to multiple channels simultaneously
 - **Knowledge** - Persistent vector database (LanceDB + configurable local/OpenRouter embeddings) for storing and retrieving information across sessions.
-- **Externalized Prompts** - All agent prompts live in `~/.betterclaw/prompts/` and can be modified at runtime via tools or reset to factory defaults.
+- **Externalized Prompts** - All agent prompts live in `~/.blackdogbot/prompts/` and can be modified at runtime via tools or reset to factory defaults.
 
 ## Quick Start
 
@@ -58,7 +58,7 @@ See [Architecture](docs/architecture.md) for full details.
 
 | Service | Purpose |
 |---|---|
-| `ConfigService` | Loads and validates `~/.betterclaw/config.yaml` |
+| `ConfigService` | Loads and validates `~/.blackdogbot/config.yaml` |
 | `LoggerService` | Structured logging with configurable levels |
 | `AiProviderService` | Creates LLM model instances (OpenRouter / OpenAI-compatible) |
 | `RateLimiterService` | Per-provider TPM/RPM rate limiting via Bottleneck |
@@ -66,7 +66,7 @@ See [Architecture](docs/architecture.md) for full details.
 | `EmbeddingService` | Configurable local/OpenRouter embeddings (default local Qwen3 ONNX) |
 | `VectorStoreService` | LanceDB vector storage with cosine similarity search |
 | `KnowledgeService` | High-level knowledge CRUD over the vector store |
-| `JobStorageService` | Persists jobs, nodes, and test cases to `~/.betterclaw/jobs/` |
+| `JobStorageService` | Persists jobs, nodes, and test cases to `~/.blackdogbot/jobs/` |
 | `JobExecutorService` | Executes job graphs in topological order with I/O validation |
 | `SkillLoaderService` | Discovers and loads skills from configured directories |
 | `SkillStateService` | Persists skill setup state |
@@ -116,10 +116,10 @@ See [Testing Guide](docs/testing.md) for full details.
 
 ## Data Storage
 
-All persistent data is stored under `~/.betterclaw/`:
+All persistent data is stored under `~/.blackdogbot/`:
 
 ```
-~/.betterclaw/
+~/.blackdogbot/
 ├── config.yaml          # Main configuration
 ├── channels.yaml        # Channel permissions and notification settings
 ├── prompts/             # Agent prompt templates (editable)

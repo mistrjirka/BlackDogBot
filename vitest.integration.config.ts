@@ -11,7 +11,7 @@ export default defineConfig({
     testTimeout: 600000,    // 10 minutes
     hookTimeout: 600000,    // 10 minutes
     env: {
-      BETTERCLAW_MODELS_DIR: path.join(os.homedir(), ".betterclaw", "models"),
+      BLACKDOGBOT_MODELS_DIR: path.join(os.homedir(), ".blackdogbot", "models"),
     },
   },
 });

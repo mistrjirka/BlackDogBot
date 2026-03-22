@@ -22,8 +22,8 @@ async function initServicesAsync(): Promise<void> {
   await loggerService.initializeAsync("error", path.join(tempDir, "logs"));
 
   const configService: ConfigService = ConfigService.getInstance();
-  const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-  const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+  const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+  const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
   await fs.mkdir(tempConfigDir, { recursive: true });
   await fs.cp(realConfigPath, path.join(tempConfigDir, "config.yaml"));
   await configService.initializeAsync(path.join(tempConfigDir, "config.yaml"));
@@ -72,7 +72,7 @@ async function buildReadyJobAsync(): Promise<{ job: IJob; startNode: INode; manu
 
 describe("job execution progress callbacks (unit)", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-exec-progress-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-exec-progress-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 

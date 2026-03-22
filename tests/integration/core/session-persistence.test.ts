@@ -35,7 +35,7 @@ knowledge:
   embeddingDtype: q8
   embeddingDevice: cpu
   embeddingOpenRouterModel: nvidia/llama-nemotron-embed-vl-1b-v2:free
-  lancedbPath: ~/.betterclaw/knowledge/lancedb
+  lancedbPath: ~/.blackdogbot/knowledge/lancedb
 
 skills:
   directories: []
@@ -54,7 +54,7 @@ async function initializeServicesAsync(): Promise<void> {
   await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
 
   const configService: ConfigService = ConfigService.getInstance();
-  const tempConfigPath: string = path.join(tempDir, ".betterclaw", "config.yaml");
+  const tempConfigPath: string = path.join(tempDir, ".blackdogbot", "config.yaml");
 
   await configService.initializeAsync(tempConfigPath);
 
@@ -84,13 +84,13 @@ function getAgentPrivate(agent: MainAgent): {
 
 describe("Session persistence", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-session-persist-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-session-persist-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });
@@ -227,6 +227,38 @@ describe("Session persistence", () => {
         startNodeId: "node-abc",
         auditAttempted: false,
       });
+    });
+
+    it("should create sessions directory automatically when missing", async () => {
+      await initializeServicesAsync();
+
+      const agent: MainAgent = MainAgent.getInstance();
+      const priv: ReturnType<typeof getAgentPrivate> = getAgentPrivate(agent);
+
+      const sessions: Map<string, unknown> = (
+        agent as unknown as { _sessions: Map<string, unknown> }
+      )._sessions;
+
+      sessions.set("auto-dir-chat", {
+        messages: [],
+        lastActivityAt: 1700000000000,
+        jobCreationMode: null,
+        paused: false,
+        resumeResolve: null,
+        abortController: null,
+        pendingToolRebuild: null,
+        toolRebuildCount: 0,
+        terminateCurrentRun: false,
+      });
+
+      await priv._saveSessionAsync("auto-dir-chat");
+
+      const exists: boolean = await fs
+        .access(getSessionFilePath("auto-dir-chat"))
+        .then(() => true)
+        .catch(() => false);
+
+      expect(exists).toBe(true);
     });
   });
 

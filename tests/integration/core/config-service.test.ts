@@ -11,7 +11,7 @@ let tempDir: string;
 let originalHome: string;
 
 async function setupTempHomeAsync(): Promise<void> {
-  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-cfg-test-"));
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-cfg-test-"));
   originalHome = process.env.HOME ?? os.homedir();
   process.env.HOME = tempDir;
 }
@@ -64,7 +64,7 @@ describe("ConfigService", () => {
   });
 
   it("should load a valid config from YAML", async () => {
-    const configPath: string = path.join(tempDir, ".betterclaw", "config.yaml");
+    const configPath: string = path.join(tempDir, ".blackdogbot", "config.yaml");
 
     await writeConfigAsync(configPath, VALID_YAML);
 
@@ -98,7 +98,7 @@ describe("ConfigService", () => {
   });
 
   it("should return telegram config when present", async () => {
-    const configPath: string = path.join(tempDir, ".betterclaw", "config.yaml");
+    const configPath: string = path.join(tempDir, ".blackdogbot", "config.yaml");
 
     await writeConfigAsync(configPath, VALID_YAML);
 
@@ -113,7 +113,7 @@ describe("ConfigService", () => {
   });
 
   it("should return undefined for telegram when not configured", async () => {
-    const configPath: string = path.join(tempDir, ".betterclaw", "config.yaml");
+    const configPath: string = path.join(tempDir, ".blackdogbot", "config.yaml");
 
     const yamlNoTelegram: string = `
 ai:

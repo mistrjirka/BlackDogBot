@@ -1,4 +1,4 @@
-# BetterClaw Installation Guide
+# BlackDogBot Installation Guide
 
 ## Requirements
 
@@ -17,8 +17,8 @@ Run the interactive install script:
 
 > **Tip:** For easiest updates, clone the repository instead of downloading a ZIP:
 > ```bash
-> git clone https://github.com/your-repo/better-claw.git
-> cd better-claw
+> git clone https://github.com/your-repo/blackdogbot.git
+> cd blackdogbot
 > ./install.sh
 > ```
 > Then later you can update with `git pull`.
@@ -42,7 +42,7 @@ pnpm install
 
 ### 2. Create Configuration
 
-Create `~/.betterclaw/config.yaml`:
+Create `~/.blackdogbot/config.yaml`:
 
 ```yaml
 ai:
@@ -70,7 +70,7 @@ knowledge:
   embeddingProvider: local
   embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
   embeddingOpenRouterModel: nvidia/llama-nemotron-embed-vl-1b-v2:free
-  lancedbPath: ~/.betterclaw/knowledge/lancedb
+  lancedbPath: ~/.blackdogbot/knowledge/lancedb
 
 skills:
   directories: []
@@ -85,13 +85,13 @@ services:
 
 ### 3. Set Up Docker Services (Optional)
 
-Create `~/.betterclaw/docker-compose.yaml`:
+Create `~/.blackdogbot/docker-compose.yaml`:
 
 ```yaml
 services:
   searxng:
     image: searxng/searxng:latest
-    container_name: betterclaw-searxng
+    container_name: blackdogbot-searxng
     ports:
       - "18731:8080"
     environment:
@@ -103,7 +103,7 @@ services:
 
   crawl4ai:
     image: unclecode/crawl4ai:latest
-    container_name: betterclaw-crawl4ai
+    container_name: blackdogbot-crawl4ai
     ports:
       - "18732:8000"
     restart: unless-stopped
@@ -111,13 +111,13 @@ services:
 
 **Important:** SearXNG requires a `settings.yml` file to enable JSON API access and disable bot detection for local use.
 
-Create `~/.betterclaw/searxng/settings.yml`:
+Create `~/.blackdogbot/searxng/settings.yml`:
 
 ```yaml
 use_default_settings: true
 
 general:
-  instance_name: "BetterClaw Search"
+  instance_name: "BlackDogBot Search"
 
 search:
   safe_search: 0
@@ -125,7 +125,7 @@ search:
   default_lang: "all"
   formats:
     - html
-    - json    # Required for BetterClaw API access
+    - json    # Required for BlackDogBot API access
 
 server:
   port: 8080
@@ -158,7 +158,7 @@ outgoing:
 Start services:
 
 ```bash
-docker compose -f ~/.betterclaw/docker-compose.yaml up -d
+docker compose -f ~/.blackdogbot/docker-compose.yaml up -d
 ```
 
 Verify SearXNG is working:
@@ -170,7 +170,7 @@ curl 'http://localhost:18731/search?q=test&format=json'
 ### 4. Create Required Directories
 
 ```bash
-mkdir -p ~/.betterclaw/{prompts,jobs,cron/tasks,knowledge/lancedb,skills/state,logs,workspace,databases,rss-state}
+mkdir -p ~/.blackdogbot/{prompts,jobs,cron/tasks,knowledge/lancedb,skills/state,logs,workspace,databases,rss-state}
 ```
 
 ### 5. Start the Daemon
@@ -197,14 +197,14 @@ After starting, enable notifications for your channel:
 ```
 
 **Discord:**
-Send any message to register the channel, then manually edit `~/.betterclaw/channels.yaml` to set `receiveNotifications: true`.
+Send any message to register the channel, then manually edit `~/.blackdogbot/channels.yaml` to set `receiveNotifications: true`.
 
 ### Verify Installation
 
 Check the logs:
 
 ```bash
-tail -f ~/.betterclaw/logs/betterclaw.log
+tail -f ~/.blackdogbot/logs/blackdogbot.log
 ```
 
 ## Configuration Reference
@@ -324,7 +324,7 @@ Configure skill loading and setup:
 ```yaml
 skills:
   directories:
-    - ~/.betterclaw/skills  # Directories to scan for skills
+    - ~/.blackdogbot/skills  # Directories to scan for skills
   autoSetup: true  # Automatically set up skills with missing dependencies
   autoSetupNotify: true  # Send notifications when skill setup completes/fails
   installTimeout: 300000  # Timeout in milliseconds for each install step (5 minutes)
@@ -362,7 +362,7 @@ services:
 
 1. Check if the bot token is correct
 2. Verify the bot is running: `pnpm start`
-3. Check logs for errors: `tail -f ~/.betterclaw/logs/betterclaw.log`
+3. Check logs for errors: `tail -f ~/.blackdogbot/logs/blackdogbot.log`
 
 ### Discord Bot Requires Privileged Intents
 
@@ -379,6 +379,6 @@ The first run downloads the embedding model (several hundred MB depending on qua
 
 ### Cron Tasks Not Sending Notifications
 
-1. Ensure channels have `receiveNotifications: true` in `~/.betterclaw/channels.yaml`
+1. Ensure channels have `receiveNotifications: true` in `~/.blackdogbot/channels.yaml`
 2. Run `/notifications_enable` in Telegram
 3. Check the cron task has `notifyUser: true`

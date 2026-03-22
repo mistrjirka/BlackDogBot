@@ -12,7 +12,7 @@ let originalHome: string;
 
 describe("McpRegistryService", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-mcp-registry-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-mcp-registry-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
@@ -85,7 +85,7 @@ describe("McpRegistryService", () => {
         args: ["hello"],
       });
 
-      const filePath = path.join(tempDir, ".betterclaw", "mcp-servers.json");
+      const filePath = path.join(tempDir, ".blackdogbot", "mcp-servers.json");
       const content = await fs.readFile(filePath, "utf-8");
       const parsed = JSON.parse(content);
 
@@ -147,7 +147,7 @@ describe("McpRegistryService", () => {
       await registry.addServerAsync("server2", { command: "echo" });
       await registry.removeServerAsync("server1");
 
-      const filePath = path.join(tempDir, ".betterclaw", "mcp-servers.json");
+      const filePath = path.join(tempDir, ".blackdogbot", "mcp-servers.json");
       const content = await fs.readFile(filePath, "utf-8");
       const parsed = JSON.parse(content);
 
@@ -238,7 +238,7 @@ describe("McpRegistryService", () => {
 
   describe("initializeAsync", () => {
     it("should load servers from existing config file", async () => {
-      const configDir = path.join(tempDir, ".betterclaw");
+      const configDir = path.join(tempDir, ".blackdogbot");
       await fs.mkdir(configDir, { recursive: true });
 
       const configContent = {
@@ -271,7 +271,7 @@ describe("McpRegistryService", () => {
     });
 
     it("should handle malformed JSON gracefully", async () => {
-      const configDir = path.join(tempDir, ".betterclaw");
+      const configDir = path.join(tempDir, ".blackdogbot");
       await fs.mkdir(configDir, { recursive: true });
 
       await fs.writeFile(path.join(configDir, "mcp-servers.json"), "not valid json");

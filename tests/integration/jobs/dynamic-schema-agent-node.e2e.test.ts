@@ -40,15 +40,15 @@ async function execTool<T>(toolObj: any, args: unknown): Promise<T> {
 
 describe("Dynamic schema generation and agent node execution (e2e)", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-dynamic-schema-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-dynamic-schema-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
     // Copy real config to temp HOME
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const configPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });

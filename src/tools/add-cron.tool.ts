@@ -144,7 +144,7 @@ RULES:
 
 3. The agent can derive values from tool descriptions and standard conventions — do NOT flag these as missing:
 
-   - Workspace file paths derived from a filename (e.g. "notes.txt" → ~/.betterclaw/workspace/notes.txt)
+   - Workspace file paths derived from a filename (e.g. "notes.txt" → ~/.blackdogbot/workspace/notes.txt)
    - Any argument value that is directly stated in the tool description above
 
 4. Criteria and rules do NOT need to be exhaustively rigid. An LLM agent can interpret general descriptions sensibly.

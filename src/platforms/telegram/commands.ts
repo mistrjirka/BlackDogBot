@@ -27,7 +27,7 @@ export function setupTelegramCommands(bot: Bot): void {
 
   // /start command
   bot.command("start", async (ctx: Context): Promise<void> => {
-    await ctx.reply("BetterClaw is ready. Send me a message to get started.");
+    await ctx.reply("BlackDogBot is ready. Send me a message to get started.");
   });
 
   // /help command

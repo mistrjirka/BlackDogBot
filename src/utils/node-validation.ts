@@ -17,7 +17,7 @@ export async function probeUrlAsync(url: string, method: string = "HEAD"): Promi
     const response: Response = await fetch(url, {
       method,
       signal: controller.signal,
-      headers: { "User-Agent": "BetterClaw/1.0" },
+      headers: { "User-Agent": "BlackDogBot/1.0" },
     });
 
     clearTimeout(timeoutId);

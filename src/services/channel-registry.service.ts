@@ -1,6 +1,6 @@
 import { writeFile, readFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
-import { join, dirname } from "path";
+import { dirname } from "path";
 import yaml from "yaml";
 
 import type {
@@ -11,13 +11,14 @@ import type {
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
 import { LoggerService } from "./logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { getChannelsFilePath } from "../utils/paths.js";
 
 //#region ChannelRegistryService
 
 /**
  * Manages registered communication channels and their settings.
  *
- * Channels are stored in ~/.betterclaw/channels.yaml and include:
+ * Channels are stored in ~/.blackdogbot/channels.yaml and include:
  * - Platform and channel identifiers
  * - Permission levels
  * - Notification preferences
@@ -54,8 +55,7 @@ export class ChannelRegistryService {
   private constructor() {
     this._logger = LoggerService.getInstance();
 
-    const homeDir = process.env.HOME || process.env.USERPROFILE || "~";
-    this._filePath = join(homeDir, ".betterclaw", "channels.yaml");
+    this._filePath = getChannelsFilePath();
 
     this._config = {
       version: 1,

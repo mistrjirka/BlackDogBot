@@ -1,6 +1,6 @@
 //#region Path Constants
 
-export const BASE_DIR_NAME: string = ".betterclaw";
+export const BASE_DIR_NAME: string = ".blackdogbot";
 export const CONFIG_FILE_NAME: string = "config.yaml";
 export const SKILL_FILE_NAME: string = "SKILL.md";
 export const SKILL_STATE_FILE_NAME: string = "state.json";

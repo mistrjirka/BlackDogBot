@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# launch.sh — Wrapper that detects CUDA 12 libraries before starting BetterClaw.
+# launch.sh — Wrapper that detects CUDA 12 libraries before starting BlackDogBot.
 #
 # onnxruntime-node 1.x ships pre-built binaries linked against CUDA 12.
 # If the system has CUDA 13+ (e.g. Arch Linux with cuda 13.1), the .so.12
@@ -53,7 +53,7 @@ if [[ -n "$cuda12_dir" ]]; then
     echo "[launch.sh] Prepended CUDA 12 libraries to LD_LIBRARY_PATH: $cuda12_dir"
 fi
 
-# ---------- Launch BetterClaw ----------
+# ---------- Launch BlackDogBot ----------
 
 cd "$PROJECT_DIR"
 

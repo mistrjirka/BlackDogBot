@@ -10,7 +10,7 @@ import { parseSkillFileAsync, type IParsedSkill } from "../../../src/skills/pars
 let tempDir: string;
 
 async function setupTempDirAsync(): Promise<void> {
-  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-parser-test-"));
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-parser-test-"));
 }
 
 async function cleanupTempDirAsync(): Promise<void> {

@@ -28,7 +28,7 @@ import { telegramPlatform } from "./platforms/telegram/index.js";
 import { discordPlatform } from "./platforms/discord/index.js";
 import type { IPlatformDeps } from "./platforms/types.js";
 import type { IConfig, IScheduledTask, IExecutionContext } from "./shared/types/index.js";
-import { getJobLogsDir, getBrainInterfaceTokenFilePath, ensureDirectoryExistsAsync } from "./utils/paths.js";
+import { getJobLogsDir, getBrainInterfaceTokenFilePath, ensureAllDirectoriesAsync, ensureDirectoryExistsAsync } from "./utils/paths.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
 import { extractErrorMessage } from "./utils/error.js";
 import { TelegramHandler } from "./platforms/telegram/handler.js";
@@ -73,6 +73,9 @@ async function mainAsync(): Promise<void> {
 
   await logger.initializeAsync(config.logging.level);
 
+  // Ensure runtime directories exist (including sessions/) before agents start.
+  await ensureAllDirectoriesAsync();
+
   const tokenFilePath: string = getBrainInterfaceTokenFilePath();
   const tokenDirPath: string = path.dirname(tokenFilePath);
   const nowEpochSeconds: number = Math.floor(Date.now() / 1000);
@@ -95,7 +98,7 @@ async function mainAsync(): Promise<void> {
   const statusService: StatusService = StatusService.getInstance();
   statusService.enableCliOutput(true);
 
-  logger.info("BetterClaw daemon starting...");
+  logger.info("BlackDogBot daemon starting...");
   logger.info("BrainInterface JWT token is ready for UI login", {
     tokenFilePath,
     hint: "Paste this token into the Brain Interface auth field. It is persisted in browser localStorage.",
@@ -313,7 +316,7 @@ async function mainAsync(): Promise<void> {
                 `⚠️ **Skill Needs Manual Setup**: \`${skill.name}\`\n\n` +
                 `This skill requires packages that cannot be auto-installed.\n\n` +
                 `**Manual steps:**\n${result.manualStepsRequired.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\n` +
-                `After completing these steps, restart BetterClaw or use the setup-skill tool.`;
+                `After completing these steps, restart BlackDogBot or use the setup-skill tool.`;
               await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
             }
           } else {
@@ -385,7 +388,7 @@ async function mainAsync(): Promise<void> {
           throw new Error(
             "No notification channels configured. " +
             "Use /notifications_enable in a Telegram or Discord channel, " +
-            "or manually configure ~/.betterclaw/channels.yaml"
+            "or manually configure ~/.blackdogbot/channels.yaml"
           );
         }
 
@@ -483,11 +486,11 @@ async function mainAsync(): Promise<void> {
 
   logger.info("BrainInterface WebSocket server started.", { port: BRAIN_INTERFACE_PORT });
 
-  logger.info("BetterClaw daemon is running.");
+  logger.info("BlackDogBot daemon is running.");
 
   // 11. Graceful shutdown
   const shutdownAsync = async (): Promise<void> => {
-    logger.info("Shutdown signal received. Stopping BetterClaw...");
+    logger.info("Shutdown signal received. Stopping BlackDogBot...");
 
     await McpService.getInstance().closeAsync().catch(() => {});
     await telegramPlatform.stop();
@@ -503,7 +506,7 @@ async function mainAsync(): Promise<void> {
       });
     });
 
-    logger.info("BetterClaw stopped. Goodbye.");
+    logger.info("BlackDogBot stopped. Goodbye.");
     process.exit(0);
   };
 
@@ -517,7 +520,7 @@ async function mainAsync(): Promise<void> {
 }
 
 mainAsync().catch((error: unknown): void => {
-  console.error("Fatal error starting BetterClaw:", error);
+  console.error("Fatal error starting BlackDogBot:", error);
   process.exit(1);
 });
 //#endregion Main

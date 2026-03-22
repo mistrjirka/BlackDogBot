@@ -1,4 +1,4 @@
-# BetterClaw Code Style Guide
+# BlackDogBot Code Style Guide
 
 This project maintains a strict coding style to ensure consistency across the daemon and its various components. All contributors must follow these guidelines.
 

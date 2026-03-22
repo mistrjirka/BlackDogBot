@@ -233,7 +233,7 @@ export class DiscordHandler {
 
     if (!channel || channel.permission === "ignore") {
       await interaction.reply({
-        content: "This channel is not registered for BetterClaw.",
+        content: "This channel is not registered for BlackDogBot.",
         ephemeral: true,
       });
       return;

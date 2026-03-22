@@ -35,7 +35,7 @@ knowledge:
   embeddingDtype: q8
   embeddingDevice: cpu
   embeddingOpenRouterModel: nvidia/llama-nemotron-embed-vl-1b-v2:free
-  lancedbPath: ~/.betterclaw/knowledge/lancedb
+  lancedbPath: ~/.blackdogbot/knowledge/lancedb
 
 skills:
   directories: []
@@ -62,7 +62,7 @@ async function initializeServicesAsync(): Promise<void> {
   await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
 
   const configService: ConfigService = ConfigService.getInstance();
-  const tempConfigPath: string = path.join(tempDir, ".betterclaw", "config.yaml");
+  const tempConfigPath: string = path.join(tempDir, ".blackdogbot", "config.yaml");
 
   await configService.initializeAsync(tempConfigPath);
 
@@ -83,14 +83,14 @@ const photoSender: PhotoSender = async (): Promise<string | null> => null;
 
 describe("MainAgent unit", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-agent-unit-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-agent-unit-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
     // Write deterministic config fixture into the temp home directory
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });

@@ -1,6 +1,4 @@
 import fs from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
 
 import { LoggerService } from "./logger.service.js";
 import { JobStorageService } from "./job-storage.service.js";
@@ -8,7 +6,7 @@ import { SchedulerService } from "./scheduler.service.js";
 import { PromptService } from "./prompt.service.js";
 import { MainAgent } from "../agent/main-agent.js";
 import { McpService } from "./mcp.service.js";
-import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, getSessionsDir, ensureDirectoryExistsAsync } from "../utils/paths.js";
+import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, getSessionsDir, getMcpServersFilePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
 import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
@@ -86,8 +84,7 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
   });
 
   await _safeStepAsync("Wipe MCP server config", errors, async (): Promise<void> => {
-    const homeDir = process.env.HOME ?? os.homedir();
-    const mcpConfigPath = path.join(homeDir, ".betterclaw", "mcp-servers.json");
+    const mcpConfigPath: string = getMcpServersFilePath();
     await fs.rm(mcpConfigPath, { recursive: true, force: true });
   });
 

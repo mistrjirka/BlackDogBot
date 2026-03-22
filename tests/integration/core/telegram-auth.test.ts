@@ -66,7 +66,7 @@ async function modifyYamlConfig(configPath: string, modifier: (config: any) => v
 
 describe("TelegramHandler authorization", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-telegram-auth-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-telegram-auth-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
@@ -76,11 +76,11 @@ describe("TelegramHandler authorization", () => {
     const logger: LoggerService = LoggerService.getInstance();
     silenceLogger(logger);
 
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const betterclawDir: string = path.join(tempDir, ".betterclaw");
-    const tempConfigPath: string = path.join(betterclawDir, "config.yaml");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const blackdogbotDir: string = path.join(tempDir, ".blackdogbot");
+    const tempConfigPath: string = path.join(blackdogbotDir, "config.yaml");
 
-    await fs.mkdir(betterclawDir, { recursive: true });
+    await fs.mkdir(blackdogbotDir, { recursive: true });
     await fs.cp(realConfigPath, tempConfigPath);
 
     const configService: ConfigService = ConfigService.getInstance();
@@ -116,7 +116,7 @@ describe("TelegramHandler authorization", () => {
     const knownChatIds = (handler as any)._knownChatIds as Set<string>;
     expect(knownChatIds.has("111")).toBe(true);
 
-    const chatsFile: string = path.join(tempDir, ".betterclaw", "known-telegram-chats.json");
+    const chatsFile: string = path.join(tempDir, ".blackdogbot", "known-telegram-chats.json");
     const content: string = await fs.readFile(chatsFile, "utf-8");
     expect(JSON.parse(content)).toContain("111");
   });
@@ -165,7 +165,7 @@ describe("TelegramHandler authorization", () => {
   });
 
   it("should override saved file when allowedUsers is set in config", async () => {
-    const knownChatsFile: string = path.join(tempDir, ".betterclaw", "known-telegram-chats.json");
+    const knownChatsFile: string = path.join(tempDir, ".blackdogbot", "known-telegram-chats.json");
     await fs.writeFile(knownChatsFile, '["555"]');
 
     const handler: TelegramHandler = TelegramHandler.getInstance();
@@ -176,12 +176,12 @@ describe("TelegramHandler authorization", () => {
   });
 
   it("should load saved chat IDs from file when no allowedUsers in config", async () => {
-    const knownChatsFile: string = path.join(tempDir, ".betterclaw", "known-telegram-chats.json");
+    const knownChatsFile: string = path.join(tempDir, ".blackdogbot", "known-telegram-chats.json");
     await fs.writeFile(knownChatsFile, '["777"]');
 
     (ConfigService as any)._instance = null;
     const configService: ConfigService = ConfigService.getInstance();
-    const configPath: string = path.join(tempDir, ".betterclaw", "config.yaml");
+    const configPath: string = path.join(tempDir, ".blackdogbot", "config.yaml");
     await configService.initializeAsync(configPath);
 
     const handler: TelegramHandler = TelegramHandler.getInstance();

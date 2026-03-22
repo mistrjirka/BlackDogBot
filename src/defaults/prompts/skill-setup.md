@@ -1,6 +1,6 @@
 # Skill Setup Instructions
 
-You are setting up a skill for BetterClaw.
+You are setting up a skill for BlackDogBot.
 
 <task>
 - Read the SKILL.md file to understand the skill's requirements.

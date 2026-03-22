@@ -206,7 +206,7 @@ export class McpService {
 
     try {
       transport = this._createTransport(entry);
-      client = new Client({ name: "better-claw", version: "0.1.0" });
+      client = new Client({ name: "blackdogbot", version: "0.1.0" });
 
       await client.connect(transport);
 

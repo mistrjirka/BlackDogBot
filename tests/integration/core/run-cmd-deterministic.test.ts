@@ -7,6 +7,7 @@ import { runCmdTool } from "../../../src/tools/run-cmd.tool.js";
 import { runCmdInputTool } from "../../../src/tools/run-cmd-input.tool.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { CommandProcessService } from "../../../src/services/command-process.service.js";
+import { CommandDetectorLinuxService } from "../../../src/services/command-detector-linux.service.js";
 import { resetSingletons, silenceLogger } from "../../utils/test-helpers.js";
 
 type IRunCmdOutput = {
@@ -50,10 +51,135 @@ async function execRunCmdInput(args: {
 describe("run_cmd tool", () => {
   let tempDir: string;
   let originalHome: string;
+  let originalPath: string;
+
+  async function setupSudoPacmanEmulatorAsync(password: string): Promise<void> {
+    const binDir: string = path.join(tempDir, "bin");
+    const sudoPath: string = path.join(binDir, "sudo");
+    const pacmanPath: string = path.join(binDir, "pacman");
+
+    await fs.mkdir(binDir, { recursive: true });
+
+    const sudoScript: string = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "if [[ ${1:-} == \"-A\" ]]; then",
+      "  shift",
+      "  if [[ -z ${SUDO_ASKPASS:-} ]]; then",
+      "    echo \"SUDO_ASKPASS is required for -A\" >&2",
+      "    exit 1",
+      "  fi",
+      "  entered=\"$(${SUDO_ASKPASS})\"",
+      `  if [[ \"\${entered}\" != \"${password}\" ]]; then`,
+      "    echo \"Sorry, try again.\" >&2",
+      "    exit 1",
+      "  fi",
+      "  exec \"$@\"",
+      "fi",
+      "if [[ ${1:-} != \"-S\" ]]; then",
+      "  echo \"sudo emulator requires -S\" >&2",
+      "  exit 1",
+      "fi",
+      "shift",
+      "printf \"[sudo] password for %s: \" \"${USER:-user}\" >&2",
+      "IFS= read -r entered || true",
+      `if [[ \"\${entered}\" != \"${password}\" ]]; then`,
+      "  echo \"Sorry, try again.\" >&2",
+      "  exit 1",
+      "fi",
+      "exec \"$@\"",
+      "",
+    ].join("\n");
+
+    const pacmanScript: string = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "if [[ \"$*\" != \"-Syu\" ]]; then",
+      "  echo \"pacman emulator only supports -Syu\" >&2",
+      "  exit 2",
+      "fi",
+      "echo \":: Synchronizing package databases...\"",
+      "echo \" core is up to date\"",
+      "echo \" extra is up to date\"",
+      "echo \":: Starting full system upgrade...\"",
+      "sleep 0.1",
+      "echo \" there is nothing to do\"",
+      "",
+    ].join("\n");
+
+    await fs.writeFile(sudoPath, sudoScript, "utf-8");
+    await fs.writeFile(pacmanPath, pacmanScript, "utf-8");
+    await fs.chmod(sudoPath, 0o755);
+    await fs.chmod(pacmanPath, 0o755);
+
+    process.env.PATH = `${binDir}:${originalPath}`;
+  }
+
+  async function setupRealisticSudoPacmanEmulatorAsync(password: string): Promise<void> {
+    const binDir: string = path.join(tempDir, "bin");
+    const sudoPath: string = path.join(binDir, "sudo");
+    const pacmanPath: string = path.join(binDir, "pacman");
+
+    await fs.mkdir(binDir, { recursive: true });
+
+    const sudoScript: string = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "if [[ ${1:-} == \"-A\" ]]; then",
+      "  shift",
+      "  if [[ -z ${SUDO_ASKPASS:-} ]]; then",
+      "    echo \"sudo: no askpass program specified\" >&2",
+      "    exit 1",
+      "  fi",
+      "  entered=\"$(${SUDO_ASKPASS})\"",
+      `  if [[ \"\${entered}\" != \"${password}\" ]]; then`,
+      "    echo \"Sorry, try again.\" >&2",
+      "    exit 1",
+      "  fi",
+      "  exec \"$@\"",
+      "fi",
+      "if [[ ${1:-} == \"-S\" ]]; then",
+      "  shift",
+      "  printf \"[sudo] password for %s: \" \"${USER:-user}\" >&2",
+      "  IFS= read -r entered || true",
+      `  if [[ \"\${entered}\" != \"${password}\" ]]; then`,
+      "    echo \"Sorry, try again.\" >&2",
+      "    exit 1",
+      "  fi",
+      "  exec \"$@\"",
+      "fi",
+      "",
+      "# Emulate real sudo without -S: prompt appears but stdin piping won't satisfy it.",
+      "printf \"[sudo] password for %s: \" \"${USER:-user}\" >&2",
+      "sleep 999",
+      "",
+    ].join("\n");
+
+    const pacmanScript: string = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "if [[ \"$*\" != \"-Syu\" ]]; then",
+      "  echo \"pacman emulator only supports -Syu\" >&2",
+      "  exit 2",
+      "fi",
+      "echo \":: Synchronizing package databases...\"",
+      "echo \":: Starting full system upgrade...\"",
+      "echo \" there is nothing to do\"",
+      "",
+    ].join("\n");
+
+    await fs.writeFile(sudoPath, sudoScript, "utf-8");
+    await fs.writeFile(pacmanPath, pacmanScript, "utf-8");
+    await fs.chmod(sudoPath, 0o755);
+    await fs.chmod(pacmanPath, 0o755);
+
+    process.env.PATH = `${binDir}:${originalPath}`;
+  }
 
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-run-cmd-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-run-cmd-"));
     originalHome = process.env.HOME ?? os.homedir();
+    originalPath = process.env.PATH ?? "";
     process.env.HOME = tempDir;
 
     resetSingletons();
@@ -66,6 +192,7 @@ describe("run_cmd tool", () => {
 
   afterEach(async () => {
     process.env.HOME = originalHome;
+    process.env.PATH = originalPath;
 
     try {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -149,11 +276,11 @@ describe("run_cmd tool", () => {
     });
   });
 
-  describe("deterministic stdin detection - strict mode", () => {
-    it("should fail immediately when detector is unavailable (no fallback)", async () => {
+  describe("deterministic stdin detection", () => {
+    it("should fall back to normal execution when detector is unavailable", async () => {
       if (process.platform === "linux") {
         // On Linux, detector may or may not be available (depends on strace/ptrace).
-        // We test the strict contract: if unavailable, must fail.
+        // If unavailable, run_cmd should continue without deterministic detection.
         const result = await execRunCmd({
           command: "sleep 30",
           cwd: tempDir,
@@ -162,17 +289,10 @@ describe("run_cmd tool", () => {
           deterministicInputDetection: true,
         });
 
-        // If detector IS available, this will timeout (30s command with 3s timeout).
-        // If detector is NOT available, it should fail with strict error.
-        // Both are valid — we just verify it never silently pretends to be deterministic.
-        if (result.status === "failed") {
-          expect(result.error).toContain("Deterministic stdin detection unavailable");
-          expect(result.deterministic).toBe(false);
-        } else if (result.status === "timed_out") {
-          expect(result.deterministic).toBe(true);
-        }
+        // Regardless of detector availability, command should run and timeout.
+        expect(result.status).toBe("timed_out");
       } else {
-        // Non-Linux: must fail immediately
+        // Non-Linux: deterministic detector still unsupported and should fail early.
         const result = await execRunCmd({
           command: "echo hello",
           cwd: tempDir,
@@ -220,12 +340,11 @@ describe("run_cmd tool", () => {
         deterministicInputDetection: true,
       });
 
-      // Strict mode contract on Linux:
-      // - If detector unavailable => hard failure (no fallback)
-      // - If detector available => awaiting_input with handleId
-      if (runResult.status === "failed") {
-        expect(runResult.error).toContain("Deterministic stdin detection unavailable");
+      // If detector unavailable, command runs without deterministic mode and exits normally.
+      // If detector available, command stops at awaiting_input and can be resumed via run_cmd_input.
+      if (runResult.status === "timed_out") {
         expect(runResult.deterministic).toBe(false);
+        expect(runResult.stdout).toContain("READY_FOR_INPUT");
         return;
       }
 
@@ -260,6 +379,124 @@ describe("run_cmd tool", () => {
       expect(finalStatus).toBe("completed");
       expect(finalStdout).toContain("READY_FOR_INPUT");
       expect(finalStdout).toContain("GOT_INPUT:test_value");
+
+      processService.removeHandle(handleId);
+    });
+
+    it("should return awaiting_input for sudo prompt when detector is unavailable", async () => {
+      if (process.platform !== "linux") {
+        console.log("Skipping: deterministic stdin detection behavior is Linux-only");
+        return;
+      }
+
+      await setupSudoPacmanEmulatorAsync("tev12345");
+
+      const detector: CommandDetectorLinuxService = CommandDetectorLinuxService.getInstance();
+      const detectorSpy = vi.spyOn(detector, "startAsync").mockResolvedValue({
+        handleId: "",
+        available: false,
+        error: "mock detector unavailable",
+      });
+
+      const runResult = await execRunCmd({
+        command: "sudo -S pacman -Syu",
+        cwd: tempDir,
+        timeout: 3000,
+        mode: "foreground",
+        deterministicInputDetection: true,
+      });
+
+      detectorSpy.mockRestore();
+
+      expect(runResult.status).toBe("awaiting_input");
+      expect(runResult.handleId).not.toBeNull();
+
+      const handleId: string = runResult.handleId!;
+      const inputResult = await execRunCmdInput({
+        handleId,
+        input: "tev12345",
+        closeStdin: true,
+      });
+
+      expect(inputResult.success).toBe(true);
+
+      const processService = CommandProcessService.getInstance();
+      await new Promise<void>((resolve): void => {
+        const interval = setInterval((): void => {
+          const status = processService.getStatus(handleId).status;
+          if (status === "completed" || status === "failed" || status === "timed_out" || status === "killed") {
+            clearInterval(interval);
+            resolve();
+          }
+        }, 50);
+      });
+
+      const finalStatus = processService.getStatus(handleId).status;
+      const finalStdout = processService.getOutput(handleId, "stdout", 65536).data;
+
+      expect(finalStatus).toBe("completed");
+      expect(finalStdout).toContain("Synchronizing package databases");
+
+      processService.removeHandle(handleId);
+    });
+
+    it("should normalize sudo without -S and complete via run_cmd_input", async () => {
+      if (process.platform !== "linux") {
+        console.log("Skipping: deterministic stdin detection behavior is Linux-only");
+        return;
+      }
+
+      await setupRealisticSudoPacmanEmulatorAsync("tev12345");
+
+      const detector: CommandDetectorLinuxService = CommandDetectorLinuxService.getInstance();
+      const detectorSpy = vi.spyOn(detector, "startAsync").mockResolvedValue({
+        handleId: "",
+        available: false,
+        error: "mock detector unavailable",
+      });
+
+      const startedAt: number = Date.now();
+      const runResult = await execRunCmd({
+        command: "sudo pacman -Syu",
+        cwd: tempDir,
+        timeout: 10000,
+        mode: "foreground",
+        deterministicInputDetection: true,
+      });
+      const elapsedMs: number = Date.now() - startedAt;
+
+      detectorSpy.mockRestore();
+
+      expect(runResult.status).toBe("awaiting_input");
+      expect(runResult.handleId).not.toBeNull();
+      expect(elapsedMs).toBeLessThan(5000);
+
+      const handleId: string = runResult.handleId!;
+      const inputResult = await execRunCmdInput({
+        handleId,
+        input: "tev12345",
+        closeStdin: true,
+      });
+
+      expect(inputResult.success).toBe(true);
+
+      const processService = CommandProcessService.getInstance();
+
+      await new Promise<void>((resolve): void => {
+        const interval = setInterval((): void => {
+          const status = processService.getStatus(handleId).status;
+          if (status === "completed" || status === "failed" || status === "timed_out" || status === "killed") {
+            clearInterval(interval);
+            resolve();
+          }
+        }, 50);
+      });
+
+      const finalStatus = processService.getStatus(handleId).status;
+      const finalStdout = processService.getOutput(handleId, "stdout", 65536).data;
+
+      expect(finalStatus).toBe("completed");
+      expect(finalStdout).toContain("Synchronizing package databases");
 
       processService.removeHandle(handleId);
     });

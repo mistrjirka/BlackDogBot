@@ -12,7 +12,7 @@ let originalHome: string;
 
 describe("McpRegistryService integration", () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-mcp-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-mcp-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 

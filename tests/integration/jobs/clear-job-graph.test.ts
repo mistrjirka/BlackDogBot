@@ -80,13 +80,13 @@ async function createTestJobWithNodes(
 
 describe("clear_job_graph tool", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-clear-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-clear-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     await fs.mkdir(tempConfigDir, { recursive: true });
 
     const loggerService: LoggerService = LoggerService.getInstance();

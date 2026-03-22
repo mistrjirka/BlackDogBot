@@ -1,4 +1,6 @@
 import os from "node:os";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 import { tool } from "ai";
 
@@ -12,6 +14,21 @@ import type { z } from "zod";
 type IRunCmdInput = z.infer<typeof runCmdToolInputSchema>;
 type IRunCmdOutput = z.infer<typeof runCmdToolOutputSchema>;
 
+const INTERACTIVE_PROMPT_PATTERNS: RegExp[] = [
+  /\[sudo\].*[: ]*$/im,
+  /password:\s*$/im,
+  /heslo[: ]*$/im,
+  /je vyzadovano heslo/i,
+  /je vyžadováno heslo/i,
+  /are you sure.*\[y\/n\]/i,
+  /do you want to continue.*\[y\/n\]/i,
+  /\[Y\/n\]/,
+  /\[y\/N\]/,
+  /passphrase:\s*$/im,
+];
+
+const IDLE_PROMPT_DETECTION_MS: number = 3000;
+
 export const runCmdTool = tool({
   description: "Execute a shell command and return stdout, stderr, and exit code.",
   inputSchema: runCmdToolInputSchema,
@@ -24,7 +41,23 @@ export const runCmdTool = tool({
       ? cwd.replace("~", os.homedir())
       : cwd || getBaseDir();
 
-    logger.info("run_cmd starting", { command, cwd: resolvedCwd, timeout, mode, deterministicInputDetection });
+    const normalizedCommand: string = _normalizeInteractiveCommand(command, deterministicInputDetection);
+    const childEnv: NodeJS.ProcessEnv = await _buildChildEnvAsync(normalizedCommand, deterministicInputDetection);
+
+    if (normalizedCommand !== command) {
+      logger.info("run_cmd command normalized for interactive stdin", {
+        originalCommand: command,
+        normalizedCommand,
+      });
+    }
+
+    logger.info("run_cmd starting", {
+      command: normalizedCommand,
+      cwd: resolvedCwd,
+      timeout,
+      mode,
+      deterministicInputDetection,
+    });
 
     // Strict mode pre-checks
     if (deterministicInputDetection) {
@@ -47,9 +80,10 @@ export const runCmdTool = tool({
     // Start the process
     const startTime: number = Date.now();
     const { handleId, child } = await processService.spawnProcessAsync(
-      command,
+      normalizedCommand,
       resolvedCwd,
       timeout,
+      childEnv,
     );
 
     const pid: number | undefined = child.pid;
@@ -72,8 +106,8 @@ export const runCmdTool = tool({
 
     // Foreground mode
     let detectorAvailable: boolean = false;
-    let detectorError: string | null = null;
     let detectorHandleId: string = "";
+    let heuristicInputDetectionUsed: boolean = false;
 
     if (deterministicInputDetection && pid) {
       // Start detector with per-handle callback
@@ -86,34 +120,62 @@ export const runCmdTool = tool({
         detectorAvailable = true;
         detectorHandleId = startResult.handleId;
       } else {
-        detectorError = startResult.error ?? "Unknown detector error";
-        logger.warn("run_cmd deterministic detector unavailable", { handleId, pid, error: detectorError });
+        const detectorError: string = startResult.error ?? "Unknown detector error";
 
-        // Strict mode: fail immediately — do not allow fallback
-        processService.stopAsync(handleId).catch((): void => {});
-        processService.removeHandle(handleId);
-
-        return {
-          stdout: "",
-          stderr: "",
-          exitCode: null,
-          status: "failed",
-          handleId: null,
-          timedOut: false,
-          durationMs: Date.now() - startTime,
-          signal: null,
-          deterministic: false,
-          error: `Deterministic stdin detection unavailable: ${detectorError}`,
-        };
+        logger.warn("run_cmd deterministic detector unavailable, continuing without detector", {
+          handleId,
+          pid,
+          error: detectorError,
+        });
       }
     }
 
     // Wait for process to complete or enter awaiting_input state
     await new Promise<void>((resolve): void => {
+      let lastStdoutLength: number = 0;
+      let lastStderrLength: number = 0;
+      let lastOutputAt: number = Date.now();
+
       const checkInterval: ReturnType<typeof setInterval> = setInterval((): void => {
         const currentStatus: ProcessStatus = processService.getStatus(handleId).status;
+        const stdoutTail: string = processService.getOutput(handleId, "stdout", 4096).data;
+        const stderrTail: string = processService.getOutput(handleId, "stderr", 4096).data;
 
-        if (currentStatus !== "running") {
+        if (stdoutTail.length !== lastStdoutLength || stderrTail.length !== lastStderrLength) {
+          lastStdoutLength = stdoutTail.length;
+          lastStderrLength = stderrTail.length;
+          lastOutputAt = Date.now();
+        }
+
+        if (
+          deterministicInputDetection &&
+          !detectorAvailable &&
+          !heuristicInputDetectionUsed &&
+          currentStatus === "running"
+        ) {
+          const combinedTail: string = `${stdoutTail}\n${stderrTail}`;
+
+          if (_looksLikeInteractivePrompt(command, combinedTail)) {
+            processService.onStdinBlocked(handleId);
+            heuristicInputDetectionUsed = true;
+            logger.info("run_cmd heuristic stdin prompt detected, switching to awaiting_input", {
+              handleId,
+              command: normalizedCommand,
+            });
+          } else if (_isLikelyInteractiveCommand(normalizedCommand) && Date.now() - lastOutputAt >= IDLE_PROMPT_DETECTION_MS) {
+            processService.onStdinBlocked(handleId);
+            heuristicInputDetectionUsed = true;
+            logger.info("run_cmd heuristic idle stdin wait detected, switching to awaiting_input", {
+              handleId,
+              command: normalizedCommand,
+              idleMs: Date.now() - lastOutputAt,
+            });
+          }
+        }
+
+        const effectiveStatus: ProcessStatus = processService.getStatus(handleId).status;
+
+        if (effectiveStatus !== "running") {
           clearInterval(checkInterval);
           resolve();
         }
@@ -144,7 +206,7 @@ export const runCmdTool = tool({
         timedOut: false,
         durationMs,
         signal: null,
-        deterministic: true,
+        deterministic: detectorAvailable,
         error: null,
       };
     }
@@ -212,3 +274,59 @@ export const runCmdTool = tool({
     };
   },
 });
+
+function _looksLikeInteractivePrompt(command: string, stderrOutput: string): boolean {
+  if (!command.toLowerCase().includes("sudo")) {
+    return false;
+  }
+
+  return INTERACTIVE_PROMPT_PATTERNS.some((pattern: RegExp): boolean => pattern.test(stderrOutput));
+}
+
+function _isLikelyInteractiveCommand(command: string): boolean {
+  return /\b(sudo|su|ssh|passwd|login|ftp|sftp)\b/i.test(command);
+}
+
+function _normalizeInteractiveCommand(command: string, deterministicInputDetection: boolean): string {
+  if (!deterministicInputDetection || !/\bsudo\b/i.test(command)) {
+    return command;
+  }
+
+  // Keep command semantics intact, but force sudo askpass mode.
+  // This allows stdin-provided passwords via run_cmd_input without requiring the model
+  // to explicitly write "-A" each time.
+  return command.replace(/\bsudo\b(?![^\n]*\s-(A|S)(\s|$))/gi, "sudo -A");
+}
+
+async function _buildChildEnvAsync(command: string, deterministicInputDetection: boolean): Promise<NodeJS.ProcessEnv> {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+
+  if (!deterministicInputDetection || !/\bsudo\b/i.test(command)) {
+    return env;
+  }
+
+  if (!env.SUDO_ASKPASS) {
+    const askpassPath: string = await _ensureAskpassScriptAsync();
+    env.SUDO_ASKPASS = askpassPath;
+  }
+
+  return env;
+}
+
+async function _ensureAskpassScriptAsync(): Promise<string> {
+  const scriptPath: string = path.join(getBaseDir(), "run-cmd-askpass.sh");
+
+  const scriptContent: string = [
+    "#!/usr/bin/env bash",
+    "set -euo pipefail",
+    "IFS= read -r password || true",
+    "printf \"%s\" \"${password}\"",
+    "",
+  ].join("\n");
+
+  await fs.mkdir(path.dirname(scriptPath), { recursive: true });
+  await fs.writeFile(scriptPath, scriptContent, { encoding: "utf-8", mode: 0o700 });
+  await fs.chmod(scriptPath, 0o700);
+
+  return scriptPath;
+}

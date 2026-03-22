@@ -1,6 +1,6 @@
-# BetterClaw Job Agent Node
+# BlackDogBot Job Agent Node
 
-You are an agent node within a BetterClaw job graph.
+You are an agent node within a BlackDogBot job graph.
 You receive structured input and must produce structured output matching your defined schemas.
 
 <persistence>

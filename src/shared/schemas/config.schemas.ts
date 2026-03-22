@@ -45,7 +45,7 @@ const openRouterSchema = z.object({
   profilesDir: z.string()
     .min(1)
     .optional()
-    .describe("Directory containing YAML model profiles. Defaults to ~/.betterclaw/model-profiles"),
+    .describe("Directory containing YAML model profiles. Defaults to ~/.blackdogbot/model-profiles"),
 });
 
 const openAiCompatibleSchema = z.object({
@@ -82,7 +82,7 @@ const openAiCompatibleSchema = z.object({
   profilesDir: z.string()
     .min(1)
     .optional()
-    .describe("Directory containing YAML model profiles. Defaults to ~/.betterclaw/model-profiles"),
+    .describe("Directory containing YAML model profiles. Defaults to ~/.blackdogbot/model-profiles"),
 });
 
 const lmStudioSchema = z.object({
@@ -120,7 +120,7 @@ const lmStudioSchema = z.object({
   profilesDir: z.string()
     .min(1)
     .optional()
-    .describe("Directory containing YAML model profiles. Defaults to ~/.betterclaw/model-profiles"),
+    .describe("Directory containing YAML model profiles. Defaults to ~/.blackdogbot/model-profiles"),
 });
 
 const aiConfigSchema = z.object({
@@ -194,14 +194,14 @@ const knowledgeConfigSchema = z.object({
     .optional()
     .describe("Optional OpenRouter API key override for embeddings. Falls back to ai.openrouter.apiKey."),
   lancedbPath: z.string()
-    .default("~/.betterclaw/knowledge/lancedb")
+    .default("~/.blackdogbot/knowledge/lancedb")
     .describe("Path to the LanceDB data directory"),
 });
 
 const skillsConfigSchema = z.object({
   directories: z.string()
     .array()
-    .default(["~/.betterclaw/skills"])
+    .default(["~/.blackdogbot/skills"])
     .describe("Directories to scan for skills"),
   autoSetup: z.boolean()
     .default(true)
@@ -247,7 +247,7 @@ const brainInterfaceConfigSchema = z.object({
     .describe("JWT signing secret for BrainInterface WebSocket authentication"),
   jwtIssuer: z.string()
     .min(1)
-    .default("betterclaw")
+    .default("blackdogbot")
     .describe("JWT issuer for BrainInterface tokens"),
   jwtAudience: z.string()
     .min(1)

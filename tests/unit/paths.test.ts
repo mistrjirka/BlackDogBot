@@ -37,7 +37,7 @@ let tempDir: string;
 let originalHome: string;
 
 async function setupTempHomeAsync(): Promise<void> {
-  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-paths-test-"));
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-paths-test-"));
   originalHome = process.env.HOME ?? os.homedir();
   process.env.HOME = tempDir;
 }
@@ -63,13 +63,13 @@ describe("paths utility", () => {
   it("should return the base directory under HOME", () => {
     const base: string = getBaseDir();
 
-    expect(base).toBe(path.join(tempDir, ".betterclaw"));
+    expect(base).toBe(path.join(tempDir, ".blackdogbot"));
   });
 
   it("should return the config path", () => {
     const configPath: string = getConfigPath();
 
-    expect(configPath).toContain(".betterclaw");
+    expect(configPath).toContain(".blackdogbot");
     expect(configPath).toContain("config.yaml");
   });
 

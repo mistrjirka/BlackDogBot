@@ -6,7 +6,7 @@ updated: 2026-02-22T11:55:06.115Z
 # Session Summary
 
 ## Goal
-Complete Task 2 (wire up toolCallHistory in JobExecutorService and run-node-test.tool.ts) and Task 3 (add context usage indicator with threshold/percentage to frontend status bar) for the BetterClaw AI assistant daemon.
+Complete Task 2 (wire up toolCallHistory in JobExecutorService and run-node-test.tool.ts) and Task 3 (add context usage indicator with threshold/percentage to frontend status bar) for the BlackDogBot AI assistant daemon.
 
 ## Constraints & Preferences
 - Do NOT use `temperature` parameter in LLM calls - let models use defaults
@@ -54,21 +54,21 @@ Complete Task 2 (wire up toolCallHistory in JobExecutorService and run-node-test
 
 ## File Operations
 ### Read
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/graph/graph.html`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/graph/graph.scss`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/graph/graph.ts`
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/models/brain.types.ts`
-- `/home/jirka/programovani/better-claw/src/agent/base-agent.ts`
-- `/home/jirka/programovani/better-claw/src/services/job-executor.service.ts`
-- `/home/jirka/programovani/better-claw/src/services/status.service.ts`
-- `/home/jirka/programovani/better-claw/src/shared/types/job.types.ts`
-- `/home/jirka/programovani/better-claw/src/tools/run-node-test.tool.ts`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/graph/graph.html`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/graph/graph.scss`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/graph/graph.ts`
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/models/brain.types.ts`
+- `/home/jirka/programovani/blackdogbot/src/agent/base-agent.ts`
+- `/home/jirka/programovani/blackdogbot/src/services/job-executor.service.ts`
+- `/home/jirka/programovani/blackdogbot/src/services/status.service.ts`
+- `/home/jirka/programovani/blackdogbot/src/shared/types/job.types.ts`
+- `/home/jirka/programovani/blackdogbot/src/tools/run-node-test.tool.ts`
 
 ### Modified
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/graph/graph.html` - Enhanced status bar with context progress display
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/components/graph/graph.ts` - Added computed signals for context percentage and color class, exposed Math
-- `/home/jirka/programovani/better-claw/brain-interface/src/app/models/brain.types.ts` - Added `compactionThreshold` and `contextPercentage` to IStatusState
-- `/home/jirka/programovani/better-claw/src/agent/base-agent.ts` - Added call to `setContextTokensWithThreshold` in prepareStep
-- `/home/jirka/programovani/better-claw/src/services/job-executor.service.ts` - Initialized `_lastToolCallHistory`, added clearing/building logic, included in test results
-- `/home/jirka/programovani/better-claw/src/services/status.service.ts` - Added threshold/percentage fields to IStatusState, added `setContextTokensWithThreshold` method
-- `/home/jirka/programovani/better-claw/src/tools/run-node-test.tool.ts` - Added `output` and `toolCallHistory` to result mapping
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/graph/graph.html` - Enhanced status bar with context progress display
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/components/graph/graph.ts` - Added computed signals for context percentage and color class, exposed Math
+- `/home/jirka/programovani/blackdogbot/brain-interface/src/app/models/brain.types.ts` - Added `compactionThreshold` and `contextPercentage` to IStatusState
+- `/home/jirka/programovani/blackdogbot/src/agent/base-agent.ts` - Added call to `setContextTokensWithThreshold` in prepareStep
+- `/home/jirka/programovani/blackdogbot/src/services/job-executor.service.ts` - Initialized `_lastToolCallHistory`, added clearing/building logic, included in test results
+- `/home/jirka/programovani/blackdogbot/src/services/status.service.ts` - Added threshold/percentage fields to IStatusState, added `setContextTokensWithThreshold` method
+- `/home/jirka/programovani/blackdogbot/src/tools/run-node-test.tool.ts` - Added `output` and `toolCallHistory` to result mapping

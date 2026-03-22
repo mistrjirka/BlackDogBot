@@ -1,4 +1,4 @@
-# BetterClaw Testing Guide
+# BlackDogBot Testing Guide
 
 ## Test Structure
 

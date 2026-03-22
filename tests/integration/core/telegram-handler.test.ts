@@ -109,14 +109,14 @@ describe("TelegramHandler", () => {
   const sentActions: Array<{ userId: string; action: string }> = [];
 
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-tg-handler-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-tg-handler-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
-    const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });
@@ -152,7 +152,7 @@ describe("TelegramHandler", () => {
     );
 
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
-    const lanceDbPath: string = path.join(tempDir, ".betterclaw", "knowledge", "lancedb");
+    const lanceDbPath: string = path.join(tempDir, ".blackdogbot", "knowledge", "lancedb");
 
     await vectorStoreService.initializeAsync(
       lanceDbPath,

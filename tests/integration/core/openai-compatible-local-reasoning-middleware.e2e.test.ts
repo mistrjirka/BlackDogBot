@@ -70,14 +70,14 @@ async function isEndpointReachableAsync(): Promise<boolean> {
 }
 
 beforeAll(async () => {
-  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-local-reasoning-e2e-"));
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-local-reasoning-e2e-"));
   originalHome = process.env.HOME ?? os.homedir();
   process.env.HOME = tempDir;
 
   resetSingletons();
 
-  const realConfigPath: string = path.join(originalHome, ".betterclaw", "config.yaml");
-  const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+  const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
+  const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
   tempConfigPath = path.join(tempConfigDir, "config.yaml");
 
   await fs.mkdir(tempConfigDir, { recursive: true });
@@ -107,7 +107,7 @@ describe("OpenAI-compatible local reasoning middleware E2E", () => {
     const rawConfig: IRawConfig = parseYaml(rawConfigText) as IRawConfig;
 
     const modelId: string | undefined =
-      process.env.BETTERCLAW_LOCAL_OPENAI_MODEL ||
+      process.env.BLACKDOGBOT_LOCAL_OPENAI_MODEL ||
       rawConfig.ai?.openaiCompatible?.model ||
       rawConfig.ai?.lmStudio?.model;
 

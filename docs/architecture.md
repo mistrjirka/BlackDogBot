@@ -1,6 +1,6 @@
-# BetterClaw Architecture
+# BlackDogBot Architecture
 
-BetterClaw is a proactive AI assistant daemon for Linux, designed to run as a long-lived Node.js process. It operates autonomously to manage personal tasks, knowledge, and scheduled jobs, interacting through Telegram, Discord, and a dedicated Angular-based web UI.
+BlackDogBot is a proactive AI assistant daemon for Linux, designed to run as a long-lived Node.js process. It operates autonomously to manage personal tasks, knowledge, and scheduled jobs, interacting through Telegram, Discord, and a dedicated Angular-based web UI.
 
 ## Tech Stack
 
@@ -22,7 +22,7 @@ BetterClaw is a proactive AI assistant daemon for Linux, designed to run as a lo
 ┌─────────────────────────────────────────────────────────────────┐
 │                     INITIALIZATION SEQUENCE                      │
 ├─────────────────────────────────────────────────────────────────┤
-│  1. ConfigService      → Load ~/.betterclaw/config.yaml         │
+│  1. ConfigService      → Load ~/.blackdogbot/config.yaml         │
 │  2. LoggerService      → Initialize logging                      │
 │  3. PromptService      → Load agent prompts                      │
 │  4. AiProviderService  → Initialize LLM connections              │
@@ -174,7 +174,7 @@ The agent proactively manages context window usage:
 
 Cron tasks can broadcast to multiple channels:
 
-1. Channels opt-in via `receiveNotifications: true` in `~/.betterclaw/channels.yaml`
+1. Channels opt-in via `receiveNotifications: true` in `~/.blackdogbot/channels.yaml`
 2. Cron task's `send_message` tool calls broadcast to ALL notification channels
 3. Final task result (if `notifyUser: true`) is also broadcast
 
@@ -191,7 +191,7 @@ Cron tasks can broadcast to multiple channels:
 
 ## Configuration & Persistence
 
-The application stores its state in `~/.betterclaw/`:
+The application stores its state in `~/.blackdogbot/`:
 
 | Path | Purpose |
 |------|---------|

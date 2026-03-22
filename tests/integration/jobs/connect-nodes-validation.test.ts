@@ -99,13 +99,13 @@ async function createTestJobWithNodes(
 
 describe("connect_nodes tool validation", () => {
   beforeAll(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-connect-validation-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-connect-validation-"));
     originalHome = process.env.HOME ?? os.homedir();
     process.env.HOME = tempDir;
 
     resetSingletons();
 
-    const tempConfigDir: string = path.join(tempDir, ".betterclaw");
+    const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     await fs.mkdir(tempConfigDir, { recursive: true });
 
     const loggerService: LoggerService = LoggerService.getInstance();

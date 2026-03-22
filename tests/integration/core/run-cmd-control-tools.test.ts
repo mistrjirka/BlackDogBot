@@ -138,10 +138,61 @@ async function waitForTerminalStatusAsync(handleId: string, timeoutMs: number): 
 describe("run_cmd control tools", () => {
   let tempDir: string;
   let originalHome: string;
+  let originalPath: string;
+
+  async function setupSudoPacmanEmulatorAsync(password: string): Promise<void> {
+    const binDir: string = path.join(tempDir, "bin");
+    const sudoPath: string = path.join(binDir, "sudo");
+    const pacmanPath: string = path.join(binDir, "pacman");
+
+    await fs.mkdir(binDir, { recursive: true });
+
+    const sudoScript: string = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "if [[ ${1:-} != \"-S\" ]]; then",
+      "  echo \"sudo emulator requires -S\" >&2",
+      "  exit 1",
+      "fi",
+      "shift",
+      "printf \"[sudo] password for %s: \" \"${USER:-user}\" >&2",
+      "IFS= read -r entered || true",
+      `if [[ \"\${entered}\" != \"${password}\" ]]; then`,
+      "  echo \"Sorry, try again.\" >&2",
+      "  exit 1",
+      "fi",
+      "exec \"$@\"",
+      "",
+    ].join("\n");
+
+    const pacmanScript: string = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "if [[ \"$*\" != \"-Syu\" ]]; then",
+      "  echo \"pacman emulator only supports -Syu\" >&2",
+      "  exit 2",
+      "fi",
+      "echo \":: Synchronizing package databases...\"",
+      "echo \" core is up to date\"",
+      "echo \" extra is up to date\"",
+      "echo \":: Starting full system upgrade...\"",
+      "sleep 0.1",
+      "echo \" there is nothing to do\"",
+      "",
+    ].join("\n");
+
+    await fs.writeFile(sudoPath, sudoScript, "utf-8");
+    await fs.writeFile(pacmanPath, pacmanScript, "utf-8");
+    await fs.chmod(sudoPath, 0o755);
+    await fs.chmod(pacmanPath, 0o755);
+
+    process.env.PATH = `${binDir}:${originalPath}`;
+  }
 
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "betterclaw-run-cmd-control-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-run-cmd-control-"));
     originalHome = process.env.HOME ?? os.homedir();
+    originalPath = process.env.PATH ?? "";
     process.env.HOME = tempDir;
 
     resetSingletons();
@@ -154,6 +205,7 @@ describe("run_cmd control tools", () => {
 
   afterEach(async () => {
     process.env.HOME = originalHome;
+    process.env.PATH = originalPath;
 
     try {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -274,6 +326,102 @@ describe("run_cmd control tools", () => {
 
     expect(outputResult.stdout).toContain("READY_FOR_INPUT");
     expect(outputResult.stdout).toContain("GOT_INPUT:hello-from-test");
+
+    const processService: CommandProcessService = CommandProcessService.getInstance();
+    processService.removeHandle(handleId);
+  });
+
+  it("emulates sudo pacman -Syu and accepts password via run_cmd_input", async () => {
+    await setupSudoPacmanEmulatorAsync("tev12345");
+
+    const runResult: IRunCmdOutput = await execRunCmd({
+      command: "sudo -S pacman -Syu",
+      cwd: tempDir,
+      timeout: 10000,
+      mode: "background",
+      deterministicInputDetection: false,
+    });
+
+    expect(runResult.status).toBe("running");
+    expect(runResult.handleId).toBeTruthy();
+
+    const handleId: string = runResult.handleId!;
+
+    await new Promise<void>((resolve): void => {
+      setTimeout(resolve, 120);
+    });
+
+    const promptOutput: ICmdOutputToolOutput = await execGetCmdOutput({
+      handleId,
+      channel: "both",
+      maxBytes: 65536,
+    });
+
+    expect(promptOutput.stderr).toContain("[sudo] password");
+
+    const inputResult: IRunCmdInputResult = await execRunCmdInput({
+      handleId,
+      input: "tev12345",
+      closeStdin: true,
+    });
+
+    expect(inputResult.success).toBe(true);
+
+    const finalStatus: string = await waitForTerminalStatusAsync(handleId, 5000);
+    expect(finalStatus).toBe("completed");
+
+    const finalOutput: ICmdOutputToolOutput = await execGetCmdOutput({
+      handleId,
+      channel: "both",
+      maxBytes: 65536,
+    });
+
+    expect(finalOutput.stdout).toContain("Synchronizing package databases");
+    expect(finalOutput.stdout).toContain("Starting full system upgrade");
+    expect(finalOutput.stdout).toContain("there is nothing to do");
+
+    const processService: CommandProcessService = CommandProcessService.getInstance();
+    processService.removeHandle(handleId);
+  });
+
+  it("emulates sudo pacman -Syu and fails on wrong password", async () => {
+    await setupSudoPacmanEmulatorAsync("correct-password");
+
+    const runResult: IRunCmdOutput = await execRunCmd({
+      command: "sudo -S pacman -Syu",
+      cwd: tempDir,
+      timeout: 10000,
+      mode: "background",
+      deterministicInputDetection: false,
+    });
+
+    expect(runResult.status).toBe("running");
+    expect(runResult.handleId).toBeTruthy();
+
+    const handleId: string = runResult.handleId!;
+
+    await new Promise<void>((resolve): void => {
+      setTimeout(resolve, 120);
+    });
+
+    const inputResult: IRunCmdInputResult = await execRunCmdInput({
+      handleId,
+      input: "wrong-password",
+      closeStdin: true,
+    });
+
+    expect(inputResult.success).toBe(true);
+
+    const finalStatus: string = await waitForTerminalStatusAsync(handleId, 5000);
+    expect(finalStatus).toBe("failed");
+
+    const finalOutput: ICmdOutputToolOutput = await execGetCmdOutput({
+      handleId,
+      channel: "both",
+      maxBytes: 65536,
+    });
+
+    expect(finalOutput.stderr).toContain("Sorry, try again");
 
     const processService: CommandProcessService = CommandProcessService.getInstance();
     processService.removeHandle(handleId);
