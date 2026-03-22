@@ -125,6 +125,14 @@ describe("markdownToTelegramHtml", () => {
       expect(result).toContain("line3");
     });
 
+    it("should strip unsupported hr tags generated from markdown separators", () => {
+      const result = markdownToTelegramHtml("before\n\n---\n\nafter");
+      expect(result).toContain("before");
+      expect(result).toContain("after");
+      expect(result).not.toContain("<hr>");
+      expect(result).not.toContain("</hr>");
+    });
+
     it("should handle lists", () => {
       const result = markdownToTelegramHtml("- item1\n- item2");
       expect(result).toContain("item1");

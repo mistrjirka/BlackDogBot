@@ -279,7 +279,8 @@ export function markdownToTelegramHtml(markdown: string): string {
   const withThinkBlocks = preprocessThinkTags(markdown);
   const withTablesConverted = convertTablesToBulletLists(withThinkBlocks);
   const html = marked.parse(withTablesConverted, { gfm: true, breaks: true }) as string;
-  return tghtml(html);
+  const htmlWithoutUnsupportedSeparators = html.replace(/<\/?hr\s*\/?>/gi, "\n\n");
+  return tghtml(htmlWithoutUnsupportedSeparators);
 }
 
 export function stripAllHtml(text: string): string {

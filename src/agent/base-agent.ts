@@ -551,26 +551,20 @@ export abstract class BaseAgentBase {
         }
 
         // Token-based history compaction:
-        // 1) Prefer actual provider-reported usage from the previous response.
-        // 2) Before first usage is available, use a byte-size request estimate.
+        // Recalculate request-size estimate on every step so long multi-step runs
+        // do not keep stale token counts between steps.
         const creationPrompt: string | null = (useExtraTools && getCreationModePrompt)
           ? getCreationModePrompt()
           : null;
-        let tokenCount: number = self._totalInputTokens;
-        let estimationSource: "actual_usage" | "bytes_fallback" = "actual_usage";
-
-        if (tokenCount <= 0) {
-          const requestEstimate: IRequestLikeByteTokenEstimate | null = estimateRequestLikeTokensByBytes(
-            messages,
-            instructions,
-            creationPrompt,
-            allTools,
-            activeToolNames,
-          );
-
-          tokenCount = requestEstimate?.estimatedTokens ?? countTokens(messages);
-          estimationSource = "bytes_fallback";
-        }
+        const requestEstimate: IRequestLikeByteTokenEstimate | null = estimateRequestLikeTokensByBytes(
+          messages,
+          instructions,
+          creationPrompt,
+          allTools,
+          activeToolNames,
+        );
+        const tokenCount: number = requestEstimate?.estimatedTokens ?? countTokens(messages);
+        const estimationSource: "bytes_fallback" | "tiktoken_fallback" = requestEstimate ? "bytes_fallback" : "tiktoken_fallback";
 
         // Keep a consistent internal token estimate for fallback/error diagnostics.
         self._totalInputTokens = tokenCount;

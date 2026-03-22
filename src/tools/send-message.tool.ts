@@ -36,7 +36,8 @@ export function createSendMessageToolWithHistory(
   return tool({
     description:
       "Send a message to the user. Use this to communicate progress, ask clarifying questions, or deliver results. " +
-      "IMPORTANT: Call get_previous_message before this tool. The system enforces this to prevent duplicate messages across crons.",
+      "IMPORTANT: Call get_previous_message before this tool. The system enforces this to prevent duplicate messages across crons. " +
+      "After reviewing previous messages, do NOT send a message with the same meaning (even if wording differs) unless the user explicitly asked you to repeat or restate it.",
     inputSchema: sendMessageToolInputSchema,
     execute: async ({
       message,

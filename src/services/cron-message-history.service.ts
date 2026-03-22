@@ -14,6 +14,7 @@ const APPROX_CONTEXT_SIZE_CHARS: number = 128_000 * 4;
 const MAX_SUMMARY_CHARS: number = Math.floor(APPROX_CONTEXT_SIZE_CHARS * CONTEXT_THRESHOLD_PERCENTAGE);
 const VECTOR_TABLE_NAME: string = "cron-messages";
 const SIMILARITY_SEARCH_LIMIT: number = 5;
+const SEARCH_LOG_PREVIEW_LENGTH: number = 120;
 
 //#endregion Constants
 
@@ -31,6 +32,11 @@ export interface ISimilarMessage {
   sentAt: string;
   score: number;
   taskId: string;
+}
+
+interface ISearchResultMetadata {
+  sentAt?: string;
+  taskId?: string;
 }
 
 //#endregion Interfaces
@@ -154,15 +160,8 @@ export class CronMessageHistoryService {
 
     const embedding: number[] = await embeddingService.embedAsync(message);
     const results = await vectorStore.searchAsync(embedding, SIMILARITY_SEARCH_LIMIT, undefined, VECTOR_TABLE_NAME);
-
-    return results.map((result) => {
-      let metadata: { sentAt?: string; taskId?: string } = {};
-
-      try {
-        metadata = JSON.parse(result.metadata);
-      } catch {
-        // Ignore parse errors
-      }
+    const similarMessages: ISimilarMessage[] = results.map((result) => {
+      const metadata: ISearchResultMetadata = this._parseSearchMetadata(result.metadata);
 
       return {
         content: result.content,
@@ -171,6 +170,21 @@ export class CronMessageHistoryService {
         taskId: metadata.taskId ?? result.collection,
       };
     });
+
+    this._logger.info("Cron similar message search completed", {
+      queryLength: message.length,
+      queryPreview: this._buildSearchPreview(message),
+      resultCount: similarMessages.length,
+      results: similarMessages.map((item: ISimilarMessage, index: number) => ({
+        rank: index + 1,
+        score: Number(item.score.toFixed(4)),
+        taskId: item.taskId,
+        sentAt: item.sentAt,
+        preview: this._buildSearchPreview(item.content),
+      })),
+    });
+
+    return similarMessages;
   }
 
   //#endregion Public methods
@@ -239,6 +253,24 @@ Output a single concise summary paragraph.`;
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private _parseSearchMetadata(rawMetadata: string): ISearchResultMetadata {
+    try {
+      return JSON.parse(rawMetadata) as ISearchResultMetadata;
+    } catch {
+      return {};
+    }
+  }
+
+  private _buildSearchPreview(content: string): string {
+    const normalized: string = content.replace(/\s+/g, " ").trim();
+
+    if (normalized.length <= SEARCH_LOG_PREVIEW_LENGTH) {
+      return normalized;
+    }
+
+    return `${normalized.slice(0, SEARCH_LOG_PREVIEW_LENGTH)}...`;
   }
 
   //#endregion Private methods
