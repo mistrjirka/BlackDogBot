@@ -5,6 +5,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { configSchema, ConfigSchemaType } from "../shared/schemas/index.js";
 import { IConfig } from "../shared/types/index.js";
 import { getConfigPath, ensureDirectoryExistsAsync } from "../utils/paths.js";
+import { maskSensitiveData } from "../utils/token-mask.js";
 
 export class ConfigService {
   //#region Data members
@@ -106,6 +107,16 @@ export class ConfigService {
     this._config = validatedConfig as IConfig;
 
     await this.saveConfigAsync();
+  }
+
+  /**
+   * Get a safe copy of the config with sensitive values masked.
+   * Use this for logging or diagnostic output.
+   * @returns Config object with tokens, keys, and secrets masked
+   */
+  public getSafeConfig(): Partial<IConfig> {
+    const config = this.getConfig();
+    return maskSensitiveData(config);
   }
 
   //#endregion Public methods
