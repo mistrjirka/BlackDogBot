@@ -56,8 +56,33 @@ export interface ILmStudioConfig {
 
 export type AiProvider = "openrouter" | "openai-compatible" | "lm-studio";
 
+export interface IAiFallbackEntry {
+  provider: AiProvider;
+  model?: string;
+}
+
+export interface IProviderModelListEntry {
+  id: string;
+  name: string;
+  contextWindow: number | null;
+  supportsTools: boolean | null;
+  promptPrice: string | null;
+  completionPrice: string | null;
+}
+
+export interface IProviderCapabilitySummary {
+  provider: AiProvider;
+  model: string;
+  supportsStructuredOutputs: boolean;
+  supportsToolCalling: boolean;
+  supportsVision: boolean;
+  contextWindow: number;
+  structuredOutputMode: ResolvedStructuredOutputMode;
+}
+
 export interface IAiConfig {
   provider: AiProvider;
+  fallbacks?: IAiFallbackEntry[];
   openrouter?: IOpenRouterConfig;
   openaiCompatible?: IOpenAiCompatibleConfig;
   lmStudio?: ILmStudioConfig;

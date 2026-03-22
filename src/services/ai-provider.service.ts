@@ -16,6 +16,9 @@ import {
   IOpenRouterConfig,
   IOpenAiCompatibleConfig,
   ILmStudioConfig,
+  IAiFallbackEntry,
+  IProviderModelListEntry,
+  IProviderCapabilitySummary,
   ResolvedStructuredOutputMode,
   StructuredOutputMode,
   ILlmResponse,
@@ -35,6 +38,30 @@ import { getCurrentLlmCallType } from "../utils/llm-call-context.js";
 import { runToolCallingProbeAsync } from "../utils/llm-probe-helpers.js";
 import { createHash } from "node:crypto";
 import { ensureDirectoryExistsAsync, getModelProfilesDir } from "../utils/paths.js";
+import { ConfigService } from "./config.service.js";
+
+interface IOpenRouterModelListEntry {
+  id: string;
+  name?: string;
+  context_length?: number;
+  supported_parameters?: string[];
+  pricing?: {
+    prompt?: string;
+    completion?: string;
+  };
+}
+
+interface IOpenRouterModelListResponse {
+  data?: IOpenRouterModelListEntry[];
+}
+
+interface IOpenAiCompatibleModelListEntry {
+  id: string;
+}
+
+interface IOpenAiCompatibleModelListResponse {
+  data?: IOpenAiCompatibleModelListEntry[];
+}
 
 function normalizeBaseUrl(url: string): string {
   const trimmed: string = url.trim();
@@ -85,6 +112,11 @@ export class AiProviderService {
   private _resolvedStructuredOutputMode: ResolvedStructuredOutputMode = "native_json_schema";
   private _requestTimeoutMs: number;
   private _activeProfileName: string | null;
+  private _persistedAiConfig: IAiConfig | null;
+  private _primaryProvider: AiProvider | null;
+  private _activeRuntimeProvider: AiProvider | null;
+  private _activeFallbackModelOverride: string | null;
+  private _fallbackCursor: number;
 
   //#endregion Data members
 
@@ -99,6 +131,11 @@ export class AiProviderService {
     this._contextWindow = 128000; // Default context window
     this._requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS;
     this._activeProfileName = null;
+    this._persistedAiConfig = null;
+    this._primaryProvider = null;
+    this._activeRuntimeProvider = null;
+    this._activeFallbackModelOverride = null;
+    this._fallbackCursor = 0;
   }
 
   //#endregion Constructors
@@ -113,7 +150,16 @@ export class AiProviderService {
     return AiProviderService._instance;
   }
 
-  public async initializeAsync(aiConfig: IAiConfig): Promise<void> {
+  public async initializeAsync(
+    aiConfig: IAiConfig,
+    options?: {
+      persistAsPrimary?: boolean;
+      resetFallbackState?: boolean;
+    },
+  ): Promise<void> {
+    const persistAsPrimary: boolean = options?.persistAsPrimary ?? true;
+    const resetFallbackState: boolean = options?.resetFallbackState ?? true;
+
     this._aiConfig = aiConfig;
     this._supportsVision = false;
 
@@ -262,6 +308,21 @@ export class AiProviderService {
         `reasoningFormat=${this._supportsReasoningFormat}, structuredOutputs=${this._supportsStructuredOutputs}`,
       );
     }
+
+    this._activeRuntimeProvider = aiConfig.provider;
+
+    if (persistAsPrimary) {
+      this._persistedAiConfig = this._cloneAiConfig(aiConfig);
+      this._primaryProvider = aiConfig.provider;
+      this._activeFallbackModelOverride = null;
+    }
+
+    if (resetFallbackState) {
+      this._fallbackCursor = 0;
+      if (persistAsPrimary) {
+        this._activeFallbackModelOverride = null;
+      }
+    }
   }
 
   public initialize(aiConfig: IAiConfig): void {
@@ -342,6 +403,12 @@ export class AiProviderService {
       supportsStructuredOutputs: this._supportsStructuredOutputs,
       supportsToolCalling: this._supportsToolCalling,
     });
+
+    this._persistedAiConfig = this._cloneAiConfig(aiConfig);
+    this._primaryProvider = aiConfig.provider;
+    this._activeRuntimeProvider = aiConfig.provider;
+    this._activeFallbackModelOverride = null;
+    this._fallbackCursor = 0;
   }
 
   public getDefaultModel(): LanguageModel {
@@ -365,11 +432,264 @@ export class AiProviderService {
   }
 
   public getActiveProvider(): AiProvider {
-    if (!this._aiConfig) {
+    if (!this._activeRuntimeProvider) {
       throw new Error("AiProviderService not initialized");
     }
 
-    return this._aiConfig.provider;
+    return this._activeRuntimeProvider;
+  }
+
+  public getPrimaryProvider(): AiProvider {
+    if (!this._primaryProvider) {
+      throw new Error("AiProviderService not initialized");
+    }
+
+    return this._primaryProvider;
+  }
+
+  public getFallbackChain(): IAiFallbackEntry[] {
+    const persistedConfig: IAiConfig = this._getPersistedAiConfig();
+    return [...(persistedConfig.fallbacks ?? [])];
+  }
+
+  public getActiveModelId(): string {
+    return this._getActiveModelId();
+  }
+
+  public maskApiKey(apiKey: string | undefined): string {
+    if (!apiKey || apiKey.trim().length === 0) {
+      return "(not set)";
+    }
+
+    if (apiKey.length <= 8) {
+      return "****";
+    }
+
+    return `****${apiKey.slice(-4)}`;
+  }
+
+  public async listModelsAsync(
+    provider: AiProvider,
+    filter?: string,
+    includeUnknownToolSupport: boolean = false,
+  ): Promise<IProviderModelListEntry[]> {
+    if (provider === "openrouter") {
+      return this._listOpenRouterModelsAsync(filter);
+    }
+
+    return this._listLocalProviderModelsAsync(provider, filter, includeUnknownToolSupport);
+  }
+
+  public async probeCapabilitiesForProviderModelAsync(
+    provider: AiProvider,
+    model: string,
+  ): Promise<IProviderCapabilitySummary> {
+    const runtimeConfig: IAiConfig = this._buildRuntimeConfigForProvider(provider, model);
+    return this._probeCapabilitiesForConfigAsync(runtimeConfig);
+  }
+
+  public async switchPrimaryProviderAsync(provider: AiProvider, modelOverride?: string): Promise<IProviderCapabilitySummary> {
+    const nextConfig: IAiConfig = this._buildRuntimeConfigForProvider(provider, modelOverride);
+
+    await this.initializeAsync(nextConfig, {
+      persistAsPrimary: true,
+      resetFallbackState: true,
+    });
+
+    await this._persistAiConfigAsync(nextConfig);
+
+    return {
+      provider: this.getActiveProvider(),
+      model: this.getActiveModelId(),
+      supportsStructuredOutputs: this.getSupportsStructuredOutputs(),
+      supportsToolCalling: this.getSupportsToolCalling(),
+      supportsVision: this.getSupportsVision(),
+      contextWindow: this.getContextWindow(),
+      structuredOutputMode: this.getStructuredOutputMode(),
+    };
+  }
+
+  public async addOrUpdateProviderConfigAsync(provider: AiProvider, configPatch: Record<string, unknown>): Promise<void> {
+    const persistedConfig: IAiConfig = this._getPersistedAiConfig();
+    const nextConfig: IAiConfig = this._cloneAiConfig(persistedConfig);
+
+    if (provider === "openrouter") {
+      nextConfig.openrouter = {
+        ...(nextConfig.openrouter ?? {} as IOpenRouterConfig),
+        ...(configPatch as Partial<IOpenRouterConfig>),
+      } as IOpenRouterConfig;
+    } else if (provider === "openai-compatible") {
+      nextConfig.openaiCompatible = {
+        ...(nextConfig.openaiCompatible ?? {} as IOpenAiCompatibleConfig),
+        ...(configPatch as Partial<IOpenAiCompatibleConfig>),
+      } as IOpenAiCompatibleConfig;
+    } else {
+      nextConfig.lmStudio = {
+        ...(nextConfig.lmStudio ?? {} as ILmStudioConfig),
+        ...(configPatch as Partial<ILmStudioConfig>),
+      } as ILmStudioConfig;
+    }
+
+    await this._persistAiConfigAsync(nextConfig);
+  }
+
+  public async addFallbackAsync(provider: AiProvider, modelOverride?: string): Promise<IProviderCapabilitySummary> {
+    const persistedConfig: IAiConfig = this._getPersistedAiConfig();
+
+    this._ensureProviderConfigured(persistedConfig, provider);
+
+    const existingFallbacks: IAiFallbackEntry[] = [...(persistedConfig.fallbacks ?? [])];
+    const filteredFallbacks: IAiFallbackEntry[] = existingFallbacks
+      .filter((entry: IAiFallbackEntry): boolean => entry.provider !== provider);
+
+    filteredFallbacks.push({
+      provider,
+      ...(modelOverride ? { model: modelOverride } : {}),
+    });
+
+    const nextConfig: IAiConfig = {
+      ...this._cloneAiConfig(persistedConfig),
+      fallbacks: filteredFallbacks,
+    };
+
+    await this._persistAiConfigAsync(nextConfig);
+
+    return this.probeCapabilitiesForProviderModelAsync(
+      provider,
+      modelOverride ?? this._getProviderModelFromConfig(nextConfig, provider),
+    );
+  }
+
+  public async removeFallbackAsync(provider: AiProvider): Promise<void> {
+    const persistedConfig: IAiConfig = this._getPersistedAiConfig();
+    const existingFallbacks: IAiFallbackEntry[] = [...(persistedConfig.fallbacks ?? [])];
+    const nextFallbacks: IAiFallbackEntry[] = existingFallbacks
+      .filter((entry: IAiFallbackEntry): boolean => entry.provider !== provider);
+
+    const nextConfig: IAiConfig = {
+      ...this._cloneAiConfig(persistedConfig),
+      ...(nextFallbacks.length > 0 ? { fallbacks: nextFallbacks } : { fallbacks: undefined }),
+    };
+
+    await this._persistAiConfigAsync(nextConfig);
+  }
+
+  public async swapPrimaryWithFirstFallbackAsync(): Promise<IProviderCapabilitySummary> {
+    const persistedConfig: IAiConfig = this._getPersistedAiConfig();
+    const fallbacks: IAiFallbackEntry[] = [...(persistedConfig.fallbacks ?? [])];
+
+    if (fallbacks.length === 0) {
+      throw new Error("No fallback provider configured to swap with primary.");
+    }
+
+    const firstFallback: IAiFallbackEntry = fallbacks[0];
+    const remainingFallbacks: IAiFallbackEntry[] = fallbacks.slice(1);
+
+    this._ensureProviderConfigured(persistedConfig, firstFallback.provider);
+
+    const previousPrimary: AiProvider = persistedConfig.provider;
+    const previousPrimaryModel: string = this._getProviderModelFromConfig(persistedConfig, previousPrimary);
+
+    const swappedConfig: IAiConfig = this._cloneAiConfig(persistedConfig);
+    swappedConfig.provider = firstFallback.provider;
+
+    if (firstFallback.model) {
+      this._setProviderModelInConfig(swappedConfig, firstFallback.provider, firstFallback.model);
+    }
+
+    swappedConfig.fallbacks = [
+      {
+        provider: previousPrimary,
+        model: previousPrimaryModel,
+      },
+      ...remainingFallbacks,
+    ];
+
+    await this.initializeAsync(swappedConfig, {
+      persistAsPrimary: true,
+      resetFallbackState: true,
+    });
+
+    await this._persistAiConfigAsync(swappedConfig);
+
+    return {
+      provider: this.getActiveProvider(),
+      model: this.getActiveModelId(),
+      supportsStructuredOutputs: this.getSupportsStructuredOutputs(),
+      supportsToolCalling: this.getSupportsToolCalling(),
+      supportsVision: this.getSupportsVision(),
+      contextWindow: this.getContextWindow(),
+      structuredOutputMode: this.getStructuredOutputMode(),
+    };
+  }
+
+  public async activateNextFallbackProviderAsync(): Promise<IProviderCapabilitySummary | null> {
+    if (!this._primaryProvider) {
+      throw new Error("AiProviderService not initialized");
+    }
+
+    const persistedConfig: IAiConfig = this._getPersistedAiConfig();
+    const fallbacks: IAiFallbackEntry[] = persistedConfig.fallbacks ?? [];
+
+    while (this._fallbackCursor < fallbacks.length) {
+      const nextEntry: IAiFallbackEntry = fallbacks[this._fallbackCursor];
+      this._fallbackCursor++;
+
+      try {
+        this._ensureProviderConfigured(persistedConfig, nextEntry.provider);
+        const runtimeConfig: IAiConfig = this._buildRuntimeConfigForProvider(nextEntry.provider, nextEntry.model);
+
+        await this.initializeAsync(runtimeConfig, {
+          persistAsPrimary: false,
+          resetFallbackState: false,
+        });
+
+        this._activeFallbackModelOverride = nextEntry.model ?? null;
+
+        return {
+          provider: this.getActiveProvider(),
+          model: this.getActiveModelId(),
+          supportsStructuredOutputs: this.getSupportsStructuredOutputs(),
+          supportsToolCalling: this.getSupportsToolCalling(),
+          supportsVision: this.getSupportsVision(),
+          contextWindow: this.getContextWindow(),
+          structuredOutputMode: this.getStructuredOutputMode(),
+        };
+      } catch (error: unknown) {
+        LoggerService.getInstance().warn("Failed to activate fallback provider", {
+          provider: nextEntry.provider,
+          model: nextEntry.model,
+          error: extractErrorMessage(error),
+        });
+      }
+    }
+
+    return null;
+  }
+
+  public async resetToPrimaryProviderAsync(): Promise<boolean> {
+    if (!this._primaryProvider || !this._persistedAiConfig) {
+      throw new Error("AiProviderService not initialized");
+    }
+
+    const shouldResetRuntimeProvider: boolean =
+      this._activeRuntimeProvider !== this._primaryProvider ||
+      this._activeFallbackModelOverride !== null;
+
+    this._fallbackCursor = 0;
+    this._activeFallbackModelOverride = null;
+
+    if (!shouldResetRuntimeProvider) {
+      return false;
+    }
+
+    const runtimeConfig: IAiConfig = this._buildRuntimeConfigForProvider(this._primaryProvider);
+    await this.initializeAsync(runtimeConfig, {
+      persistAsPrimary: false,
+      resetFallbackState: false,
+    });
+
+    return true;
   }
 
   public getRateLimiter(): Bottleneck {
@@ -605,6 +925,424 @@ export class AiProviderService {
   //#endregion Public methods
 
   //#region Private methods
+
+  private _cloneAiConfig(aiConfig: IAiConfig): IAiConfig {
+    return structuredClone(aiConfig);
+  }
+
+  private _getPersistedAiConfig(): IAiConfig {
+    if (!this._persistedAiConfig) {
+      throw new Error("AiProviderService not initialized");
+    }
+
+    return this._cloneAiConfig(this._persistedAiConfig);
+  }
+
+  private async _persistAiConfigAsync(aiConfig: IAiConfig): Promise<void> {
+    const configService: ConfigService = ConfigService.getInstance();
+    await configService.updateConfigAsync({ ai: aiConfig });
+    this._persistedAiConfig = this._cloneAiConfig(aiConfig);
+  }
+
+  private _getProviderConfigFromAiConfig(
+    aiConfig: IAiConfig,
+    provider: AiProvider,
+  ): IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig {
+    if (provider === "openrouter") {
+      if (!aiConfig.openrouter) {
+        throw new Error("OpenRouter provider is not configured.");
+      }
+      return aiConfig.openrouter;
+    }
+
+    if (provider === "openai-compatible") {
+      if (!aiConfig.openaiCompatible) {
+        throw new Error("OpenAI-compatible provider is not configured.");
+      }
+      return aiConfig.openaiCompatible;
+    }
+
+    if (!aiConfig.lmStudio) {
+      throw new Error("LM Studio provider is not configured.");
+    }
+
+    return aiConfig.lmStudio;
+  }
+
+  private _ensureProviderConfigured(aiConfig: IAiConfig, provider: AiProvider): void {
+    this._getProviderConfigFromAiConfig(aiConfig, provider);
+  }
+
+  private _getProviderModelFromConfig(aiConfig: IAiConfig, provider: AiProvider): string {
+    const config: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
+      this._getProviderConfigFromAiConfig(aiConfig, provider);
+    return config.model;
+  }
+
+  private _setProviderModelInConfig(aiConfig: IAiConfig, provider: AiProvider, model: string): void {
+    const config: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
+      this._getProviderConfigFromAiConfig(aiConfig, provider);
+    config.model = model;
+  }
+
+  private _buildRuntimeConfigForProvider(provider: AiProvider, modelOverride?: string): IAiConfig {
+    const persistedConfig: IAiConfig = this._getPersistedAiConfig();
+    this._ensureProviderConfigured(persistedConfig, provider);
+
+    const runtimeConfig: IAiConfig = this._cloneAiConfig(persistedConfig);
+    runtimeConfig.provider = provider;
+
+    if (modelOverride && modelOverride.trim().length > 0) {
+      this._setProviderModelInConfig(runtimeConfig, provider, modelOverride.trim());
+    }
+
+    return runtimeConfig;
+  }
+
+  private _buildProviderAuthHeaders(
+    provider: AiProvider,
+    config: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig,
+  ): Record<string, string> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    if (provider === "openrouter") {
+      headers.Authorization = `Bearer ${(config as IOpenRouterConfig).apiKey}`;
+      return headers;
+    }
+
+    const apiKey: string | undefined = (config as IOpenAiCompatibleConfig | ILmStudioConfig).apiKey;
+    if (apiKey && apiKey.trim().length > 0) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+
+    return headers;
+  }
+
+  private async _listOpenRouterModelsAsync(filter?: string): Promise<IProviderModelListEntry[]> {
+    const filterNeedle: string = (filter ?? "").trim().toLowerCase();
+
+    const response: Response = await fetch(
+      "https://openrouter.ai/api/v1/models?supported_parameters=tools",
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`OpenRouter model listing failed (${response.status} ${response.statusText}).`);
+    }
+
+    const parsed: IOpenRouterModelListResponse = await response.json() as IOpenRouterModelListResponse;
+    const data: IOpenRouterModelListEntry[] = Array.isArray(parsed.data) ? parsed.data : [];
+
+    const rows: IProviderModelListEntry[] = data
+      .map((entry: IOpenRouterModelListEntry): IProviderModelListEntry => {
+        const supportedParams: string[] = Array.isArray(entry.supported_parameters)
+          ? entry.supported_parameters.map((param: string): string => param.toLowerCase())
+          : [];
+
+        const supportsTools: boolean = supportedParams.includes("tools");
+
+        return {
+          id: entry.id,
+          name: entry.name ?? entry.id,
+          contextWindow: typeof entry.context_length === "number" ? entry.context_length : null,
+          supportsTools,
+          promptPrice: entry.pricing?.prompt ?? null,
+          completionPrice: entry.pricing?.completion ?? null,
+        };
+      })
+      .filter((entry: IProviderModelListEntry): boolean => entry.supportsTools === true)
+      .filter((entry: IProviderModelListEntry): boolean => {
+        if (filterNeedle.length === 0) {
+          return true;
+        }
+
+        const haystack: string = `${entry.id} ${entry.name}`.toLowerCase();
+        return haystack.includes(filterNeedle);
+      })
+      .sort((left: IProviderModelListEntry, right: IProviderModelListEntry): number =>
+        left.id.localeCompare(right.id),
+      );
+
+    return rows;
+  }
+
+  private async _listLocalProviderModelsAsync(
+    provider: AiProvider,
+    filter?: string,
+    includeUnknownToolSupport: boolean = false,
+  ): Promise<IProviderModelListEntry[]> {
+    const persistedConfig: IAiConfig = this._getPersistedAiConfig();
+    const config: IOpenAiCompatibleConfig | ILmStudioConfig =
+      this._getProviderConfigFromAiConfig(persistedConfig, provider) as IOpenAiCompatibleConfig | ILmStudioConfig;
+    const baseUrl: string = this._getLocalBaseUrl(config);
+    const headers: Record<string, string> = this._buildProviderAuthHeaders(provider, config);
+
+    const response: Response = await fetch(`${baseUrl}/v1/models`, {
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Model listing failed for ${provider} (${response.status} ${response.statusText}).`);
+    }
+
+    const parsed: IOpenAiCompatibleModelListResponse = await response.json() as IOpenAiCompatibleModelListResponse;
+    const modelEntries: IOpenAiCompatibleModelListEntry[] = Array.isArray(parsed.data) ? parsed.data : [];
+    const filterNeedle: string = (filter ?? "").trim().toLowerCase();
+
+    const filteredIds: string[] = modelEntries
+      .map((entry: IOpenAiCompatibleModelListEntry): string => entry.id)
+      .filter((id: string): boolean => id.trim().length > 0)
+      .filter((id: string): boolean => {
+        if (filterNeedle.length === 0) {
+          return true;
+        }
+
+        return id.toLowerCase().includes(filterNeedle);
+      });
+
+    const maxProbeModels: number = filterNeedle.length > 0 ? filteredIds.length : Math.min(filteredIds.length, 40);
+    const supportMap: Map<string, boolean | null> = new Map<string, boolean | null>();
+
+    for (let i: number = 0; i < filteredIds.length; i++) {
+      const modelId: string = filteredIds[i];
+      if (i >= maxProbeModels) {
+        supportMap.set(modelId, null);
+        continue;
+      }
+
+      try {
+        const supportsTools: boolean = await this._probeToolCallingForProviderModelAsync(provider, config, modelId);
+        supportMap.set(modelId, supportsTools);
+      } catch {
+        supportMap.set(modelId, null);
+      }
+    }
+
+    return filteredIds
+      .map((modelId: string): IProviderModelListEntry => ({
+        id: modelId,
+        name: modelId,
+        contextWindow: null,
+        supportsTools: supportMap.get(modelId) ?? null,
+        promptPrice: null,
+        completionPrice: null,
+      }))
+      .filter((entry: IProviderModelListEntry): boolean => {
+        if (entry.supportsTools === true) {
+          return true;
+        }
+
+        return includeUnknownToolSupport && entry.supportsTools === null;
+      });
+  }
+
+  private async _probeCapabilitiesForConfigAsync(runtimeConfig: IAiConfig): Promise<IProviderCapabilitySummary> {
+    const provider: AiProvider = runtimeConfig.provider;
+    const model: string = this._getProviderModelFromConfig(runtimeConfig, provider);
+
+    if (provider === "openrouter") {
+      const supportedParameters: Set<string> | null = await this._modelInfoService.fetchSupportedParametersAsync(model);
+      const supportsImages: boolean | null = await this._modelInfoService.fetchSupportsImagesAsync(model);
+      const contextWindow: number = await this._modelInfoService.fetchContextWindowAsync(model);
+
+      const hasStructuredOutputs: boolean = supportedParameters?.has("structured_outputs") === true ||
+        supportedParameters?.has("response_format") === true;
+      const hasTools: boolean = supportedParameters?.has("tools") === true;
+      const hasToolChoice: boolean = supportedParameters?.has("tool_choice") === true;
+
+      const mode: ResolvedStructuredOutputMode = hasStructuredOutputs
+        ? "native_json_schema"
+        : hasTools && hasToolChoice
+          ? "tool_emulated"
+          : "tool_auto";
+
+      return {
+        provider,
+        model,
+        supportsStructuredOutputs: hasStructuredOutputs,
+        supportsToolCalling: hasTools,
+        supportsVision: supportsImages === true,
+        contextWindow,
+        structuredOutputMode: mode,
+      };
+    }
+
+    const config: IOpenAiCompatibleConfig | ILmStudioConfig =
+      this._getProviderConfigFromAiConfig(runtimeConfig, provider) as IOpenAiCompatibleConfig | ILmStudioConfig;
+
+    const supportsStructuredOutputs: boolean = await this._probeStructuredOutputsForProviderModelAsync(provider, config, model);
+    const supportsToolCalling: boolean = await this._probeToolCallingForProviderModelAsync(provider, config, model);
+    const supportsVision: boolean = await this._probeVisionSupportForProviderModelAsync(provider, config, model);
+    const mode: ResolvedStructuredOutputMode = supportsStructuredOutputs
+      ? "native_json_schema"
+      : supportsToolCalling
+        ? "tool_emulated"
+        : "tool_auto";
+
+    return {
+      provider,
+      model,
+      supportsStructuredOutputs,
+      supportsToolCalling,
+      supportsVision,
+      contextWindow: config.contextWindow ?? 32768,
+      structuredOutputMode: mode,
+    };
+  }
+
+  private async _probeToolCallingForProviderModelAsync(
+    provider: AiProvider,
+    config: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig,
+    modelId: string,
+  ): Promise<boolean> {
+    if (provider === "openrouter") {
+      const probeResult = await runToolCallingProbeAsync({
+        url: "https://openrouter.ai/api/v1/chat/completions",
+        model: modelId,
+        prompt: "Call the tool once.",
+        toolChoice: "required",
+        maxTokens: 40,
+        apiKey: (config as IOpenRouterConfig).apiKey,
+        providerPayload: {
+          require_parameters: true,
+        },
+      });
+
+      return probeResult.ok && probeResult.hasToolCalls;
+    }
+
+    const probeResult = await runToolCallingProbeAsync({
+      url: `${this._getLocalBaseUrl(config)}/v1/chat/completions`,
+      model: modelId,
+      prompt: "Call the tool once.",
+      toolChoice: "required",
+      maxTokens: 40,
+      apiKey: (config as IOpenAiCompatibleConfig | ILmStudioConfig).apiKey,
+    });
+
+    return probeResult.ok && probeResult.hasToolCalls;
+  }
+
+  private async _probeStructuredOutputsForProviderModelAsync(
+    provider: AiProvider,
+    config: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig,
+    modelId: string,
+  ): Promise<boolean> {
+    const endpointUrl: string = provider === "openrouter"
+      ? "https://openrouter.ai/api/v1/chat/completions"
+      : `${this._getLocalBaseUrl(config)}/v1/chat/completions`;
+    const headers: Record<string, string> = this._buildProviderAuthHeaders(provider, config);
+
+    const probeBody: Record<string, unknown> = {
+      model: modelId,
+      messages: [{ role: "user", content: 'Reply with: {"ok": true}' }],
+      max_tokens: 50,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "probe",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+            },
+            required: ["ok"],
+            additionalProperties: false,
+          },
+        },
+      },
+    };
+
+    if (provider !== "openrouter" && this._supportsReasoningFormat) {
+      probeBody.reasoning_format = "none";
+    }
+
+    const response: Response = await fetch(endpointUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(probeBody),
+    });
+
+    if (!response.ok) {
+      return false;
+    }
+
+    const parsed: ILlmResponse = await response.json() as ILlmResponse;
+    const message = parsed.choices?.[0]?.message;
+    const candidate: string = (message?.content ?? message?.reasoning_content ?? "").trim();
+
+    if (candidate.length === 0) {
+      return false;
+    }
+
+    try {
+      const payload = JSON.parse(candidate) as Record<string, unknown>;
+      return typeof payload.ok === "boolean";
+    } catch {
+      return false;
+    }
+  }
+
+  private async _probeVisionSupportForProviderModelAsync(
+    provider: AiProvider,
+    config: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig,
+    modelId: string,
+  ): Promise<boolean> {
+    const endpointUrl: string = provider === "openrouter"
+      ? "https://openrouter.ai/api/v1/chat/completions"
+      : `${this._getLocalBaseUrl(config)}/v1/chat/completions`;
+    const headers: Record<string, string> = this._buildProviderAuthHeaders(provider, config);
+
+    const controller: AbortController = new AbortController();
+    const timeoutId: NodeJS.Timeout = setTimeout((): void => {
+      controller.abort();
+    }, VISION_PROBE_TIMEOUT_MS);
+
+    try {
+      const response: Response = await fetch(endpointUrl, {
+        method: "POST",
+        headers,
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: modelId,
+          max_tokens: 32,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "Describe this image in one short sentence." },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:image/png;base64,${tinyProbePngBase64}`,
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        return false;
+      }
+
+      const parsed: ILlmResponse = await response.json() as ILlmResponse;
+      const content: string = parsed.choices?.[0]?.message?.content ?? "";
+      return content.trim().length > 0;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
 
   /**
    * Fixes responses where content is in reasoning_content instead of content.
@@ -1767,38 +2505,7 @@ export class AiProviderService {
       throw new Error("AiProviderService not initialized");
     }
 
-    const provider: AiProvider = this._aiConfig.provider;
-
-    if (provider === "openrouter") {
-      if (!this._aiConfig.openrouter) {
-        throw new Error(
-          `No configuration found for provider: ${provider}`,
-        );
-      }
-      return this._aiConfig.openrouter;
-    }
-
-    if (provider === "openai-compatible") {
-      if (!this._aiConfig.openaiCompatible) {
-        throw new Error(
-          `No configuration found for provider: ${provider}`,
-        );
-      }
-      return this._aiConfig.openaiCompatible;
-    }
-
-    if (provider === "lm-studio") {
-      if (!this._aiConfig.lmStudio) {
-        throw new Error(
-          `No configuration found for provider: ${provider}`,
-        );
-      }
-      return this._aiConfig.lmStudio;
-    }
-
-    throw new Error(
-      `No configuration found for provider: ${provider as string}`,
-    );
+    return this._getProviderConfigFromAiConfig(this._aiConfig, this._aiConfig.provider);
   }
 
   private _getLargestComponent(breakdown: IRequestTokenBreakdown): string {

@@ -126,6 +126,11 @@ const lmStudioSchema = z.object({
 const aiConfigSchema = z.object({
   provider: z.enum(["openrouter", "openai-compatible", "lm-studio"])
     .describe("Active AI provider"),
+  fallbacks: z.object({
+    provider: z.enum(["openrouter", "openai-compatible", "lm-studio"]),
+    model: z.string().min(1).optional(),
+  }).array().optional()
+    .describe("Ordered fallback providers used when the primary provider repeatedly fails"),
   openrouter: openRouterSchema
     .optional(),
   openaiCompatible: openAiCompatibleSchema

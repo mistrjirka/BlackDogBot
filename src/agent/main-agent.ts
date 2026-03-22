@@ -142,6 +142,10 @@ interface IChatSession {
   messages: ModelMessage[];
   lastActivityAt: number;
   jobCreationMode: IJobCreationMode | null;
+  messageSender: MessageSender;
+  photoSender: PhotoSender;
+  onStepAsync?: OnStepCallback;
+  platform: MessagePlatform;
   paused: boolean;
   resumeResolve: (() => void) | null;
   abortController: AbortController | null;
@@ -228,6 +232,10 @@ export class MainAgent extends BaseAgentBase {
         messages: saved?.messages ?? [],
         lastActivityAt: saved?.lastActivityAt ?? Date.now(),
         jobCreationMode: saved?.jobCreationMode ?? null,
+        messageSender,
+        photoSender,
+        onStepAsync,
+        platform,
         paused: false,
         resumeResolve: null,
         abortController: new AbortController(),
@@ -257,6 +265,10 @@ export class MainAgent extends BaseAgentBase {
     const jobCreationGuide: string = await promptService.getPromptAsync(PROMPT_JOB_CREATION_GUIDE);
 
     const session: IChatSession = this._sessions.get(chatId)!;
+    session.messageSender = messageSender;
+    session.photoSender = photoSender;
+    session.onStepAsync = onStepAsync;
+    session.platform = platform;
 
     // Per-chat job creation mode tracker — closes over this chat's session object
     const creationModeTracker: IJobCreationModeTracker = {
@@ -594,9 +606,28 @@ export class MainAgent extends BaseAgentBase {
     this._logger.debug("Processing user message", { chatId, messageLength: userMessage.length });
 
     // Mutable user message — gets replaced with injected message on restart
+    const aiProviderService: AiProviderService = AiProviderService.getInstance();
+    try {
+      const resetPerformed: boolean = await aiProviderService.resetToPrimaryProviderAsync();
+      if (resetPerformed) {
+        await this.initializeForChatAsync(
+          chatId,
+          session.messageSender,
+          session.photoSender,
+          session.onStepAsync,
+          session.platform,
+        );
+      }
+    } catch (error: unknown) {
+      this._logger.warn("Failed to reset runtime provider to primary before processing chat", {
+        chatId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     let currentUserMessage: string = userMessage;
     let finalResult: IAgentResult = { text: "Unexpected error.", stepsCount: 0 };
-    const compactionModel: LanguageModel = AiProviderService.getInstance().getModel();
+    let compactionModel: LanguageModel = aiProviderService.getModel();
 
     // Outer loop: restarts generate() when a tool rebuild occurs (e.g., create_table)
     while (true) {
@@ -726,6 +757,18 @@ export class MainAgent extends BaseAgentBase {
             }
 
             // All retries exhausted — persist conversation even on failure so history stays consistent
+            const fallbackFromEmpty: boolean = await this._activateFallbackAndReinitializeAsync(
+              chatId,
+              session,
+              "empty_response_exhausted",
+            );
+
+            if (fallbackFromEmpty) {
+              compactionModel = aiProviderService.getModel();
+              attempt--; // Retry current request on fallback model
+              continue;
+            }
+
             _appendResponseToSession(session.messages, userModelMessage, generateResult.response?.messages);
 
             session.messages = await _compactSessionMessagesAsync(
@@ -801,6 +844,19 @@ export class MainAgent extends BaseAgentBase {
               continue;
             }
 
+            const fallbackActivated: boolean = await this._activateFallbackAndReinitializeAsync(
+              chatId,
+              session,
+              "error_after_retries",
+              genError,
+            );
+
+            if (fallbackActivated) {
+              compactionModel = aiProviderService.getModel();
+              attempt--; // Retry current request on fallback model
+              continue;
+            }
+
             // Re-throw non-context errors
             throw genError;
           }
@@ -860,6 +916,40 @@ export class MainAgent extends BaseAgentBase {
     }
 
     return finalResult;
+  }
+
+  private async _activateFallbackAndReinitializeAsync(
+    chatId: string,
+    session: IChatSession,
+    reason: string,
+    error?: unknown,
+  ): Promise<boolean> {
+    const aiProviderService: AiProviderService = AiProviderService.getInstance();
+    const fallback = await aiProviderService.activateNextFallbackProviderAsync();
+
+    if (!fallback) {
+      return false;
+    }
+
+    this._logger.warn("Activated fallback provider for chat request", {
+      chatId,
+      reason,
+      fallbackProvider: fallback.provider,
+      fallbackModel: fallback.model,
+      supportsToolCalling: fallback.supportsToolCalling,
+      structuredMode: fallback.structuredOutputMode,
+      error: error instanceof Error ? error.message : (error ? String(error) : undefined),
+    });
+
+    await this.initializeForChatAsync(
+      chatId,
+      session.messageSender,
+      session.photoSender,
+      session.onStepAsync,
+      session.platform,
+    );
+
+    return true;
   }
 
   public pauseChat(chatId: string): boolean {

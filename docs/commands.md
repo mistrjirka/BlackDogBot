@@ -14,6 +14,15 @@
 | `/notifications_enable` | Enable cron notifications for this chat. |
 | `/notifications_disable` | Disable cron notifications for this chat. |
 | `/status` | Show chat permission and notification status. |
+| `/models` | Show active provider/model, configured providers, and fallback chain. |
+| `/models list [provider] [filter]` | List tool-capable models (supports filter text, e.g. `free`). |
+| `/models switch <provider> [model]` | Switch primary provider/model and persist to `config.yaml`. |
+| `/models add <provider> ...` | Add/update provider config (API key/base URL/model), persisted to `config.yaml`. |
+| `/models fallback list` | Show fallback provider chain. |
+| `/models fallback add <provider> [model]` | Add fallback provider (with optional model override), persisted. |
+| `/models fallback remove <provider>` | Remove fallback provider from chain, persisted. |
+| `/models fallback swap` | Swap primary provider with first fallback provider. |
+| `/models reset` | Reset runtime provider to primary provider (used on next request). |
 | `/add_mcp_server` | Add an MCP server from JSON config. |
 | `/list_mcp_servers` | List configured MCP servers. |
 | `/remove_mcp_server <id>` | Remove an MCP server by id. |
