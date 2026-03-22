@@ -50,6 +50,7 @@ import {
   createRenderGraphTool,
   type PhotoSender,
   createReadFileTool,
+  createReadImageTool,
   createWriteFileTool,
   appendFileTool,
   editFileTool,
@@ -90,7 +91,7 @@ import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
-import { isContextExceededApiError } from "../utils/context-error.js";
+import { isContextExceededApiError, isRetryableApiError } from "../utils/context-error.js";
 import { ensureDirectoryExistsAsync, getSessionsDir, getSessionFilePath } from "../utils/paths.js";
 import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
 import { extractAiErrorDetails } from "../utils/ai-error.js";
@@ -130,6 +131,7 @@ const _GraphMutatingTools: Set<string> = new Set([
 /** Max times generate() can be restarted due to tool rebuild (create_table). */
 const MAX_TOOL_REBUILD_RESTARTS: number = 2;
 const MAX_429_RETRIES: number = 8;
+const MAX_GENERIC_RETRIES: number = 3;
 const SESSION_COMPACTION_HEADROOM_TOKENS: number = 4000;
 
 //#endregion Constants
@@ -153,6 +155,13 @@ interface IPersistedSession {
   lastActivityAt: number;
   jobCreationMode: IJobCreationMode | null;
 }
+
+interface IBufferMarker {
+  __type: "Buffer";
+  __data: string;
+}
+
+const _BufferMarkerType: IBufferMarker["__type"] = "Buffer";
 
 //#endregion Interfaces
 
@@ -310,6 +319,10 @@ export class MainAgent extends BaseAgentBase {
       searxng: searxngTool,
       crawl4ai: crawl4aiTool,
     };
+
+    if (aiProviderService.getSupportsVision()) {
+      tools.read_image = createReadImageTool(readTracker);
+    }
 
     // Only include job tools if job creation is enabled
     if (config.jobCreation.enabled) {
@@ -608,6 +621,7 @@ export class MainAgent extends BaseAgentBase {
 
         let contextRetries: number = 0;
         let _429Retries: number = 0;
+        let _genericRetries: number = 0;
 
         for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
           // Reset token count so prepareStep doesn't use stale values from a failed attempt
@@ -769,6 +783,24 @@ export class MainAgent extends BaseAgentBase {
               continue;
             }
 
+            if (isRetryableApiError(genError) && _genericRetries < MAX_GENERIC_RETRIES) {
+              _genericRetries++;
+              this._logger.warn("Retryable API error in main agent loop, waiting before retry", {
+                chatId,
+                attempt,
+                emptyResponseAttempt: attempt,
+                genericRetryCount: _genericRetries,
+                maxGenericRetries: MAX_GENERIC_RETRIES,
+                statusCode: aiErrorDetails.statusCode,
+                provider: aiErrorDetails.provider,
+                model: aiErrorDetails.model,
+                message: aiErrorDetails.message,
+                providerMessage: aiErrorDetails.providerMessage,
+              });
+              attempt--; // Don't burn the empty-response retry budget
+              continue;
+            }
+
             // Re-throw non-context errors
             throw genError;
           }
@@ -906,7 +938,7 @@ export class MainAgent extends BaseAgentBase {
     try {
       await ensureDirectoryExistsAsync(getSessionsDir());
       const filePath: string = getSessionFilePath(chatId);
-      await fs.writeFile(filePath, JSON.stringify(persistable, null, 2), "utf-8");
+      await fs.writeFile(filePath, JSON.stringify(persistable, _sessionStringifyReplacer, 2), "utf-8");
       this._logger.debug("Session saved to disk.", { chatId, messageCount: persistable.messages.length });
     } catch (error: unknown) {
       const message: string = error instanceof Error ? error.message : String(error);
@@ -919,7 +951,7 @@ export class MainAgent extends BaseAgentBase {
 
     try {
       const content: string = await fs.readFile(filePath, "utf-8");
-      const parsed: IPersistedSession = JSON.parse(content);
+      const parsed: IPersistedSession = JSON.parse(content, _sessionParseReviver) as IPersistedSession;
 
       if (!Array.isArray(parsed.messages)) {
         this._logger.warn("Session file has invalid messages array, ignoring.", { chatId });
@@ -991,6 +1023,39 @@ function _appendResponseToSession(
   for (const responseMsg of responseMessages) {
     sessionMessages.push(responseMsg as ModelMessage);
   }
+}
+
+function _sessionStringifyReplacer(_key: string, value: unknown): unknown {
+  if (Buffer.isBuffer(value)) {
+    return {
+      __type: _BufferMarkerType,
+      __data: value.toString("base64"),
+    } satisfies IBufferMarker;
+  }
+
+  if (value instanceof Uint8Array) {
+    return {
+      __type: _BufferMarkerType,
+      __data: Buffer.from(value).toString("base64"),
+    } satisfies IBufferMarker;
+  }
+
+  return value;
+}
+
+function _sessionParseReviver(_key: string, value: unknown): unknown {
+  if (
+    value &&
+    typeof value === "object" &&
+    "__type" in value &&
+    (value as { __type?: unknown }).__type === _BufferMarkerType &&
+    "__data" in value &&
+    typeof (value as { __data?: unknown }).__data === "string"
+  ) {
+    return (value as { __data: string }).__data;
+  }
+
+  return value;
 }
 
 async function _compactSessionMessagesAsync(

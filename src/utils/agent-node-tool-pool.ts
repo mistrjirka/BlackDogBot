@@ -1,6 +1,7 @@
 import { type ToolSet } from "ai";
 
 import { LoggerService } from "../services/logger.service.js";
+import { AiProviderService } from "../services/ai-provider.service.js";
 import {
   runCmdTool,
   runCmdInputTool,
@@ -14,6 +15,7 @@ import {
   thinkTool,
   createSendMessageTool,
   createReadFileTool,
+  createReadImageTool,
   createWriteFileTool,
   appendFileTool,
   editFileTool,
@@ -43,6 +45,12 @@ export function createAgentNodeToolPool(
   });
 
   const readTracker: FileReadTracker = new FileReadTracker();
+  let supportsVision: boolean = false;
+  try {
+    supportsVision = AiProviderService.getInstance().getSupportsVision();
+  } catch {
+    supportsVision = false;
+  }
 
   const staticTools: Record<string, ToolSet[string]> = {
     think: thinkTool,
@@ -70,6 +78,10 @@ export function createAgentNodeToolPool(
     create_table: createTableTool,
     drop_table: dropTableTool,
   };
+
+  if (supportsVision) {
+    staticTools.read_image = createReadImageTool(readTracker);
+  }
 
   if (!perTableTools) {
     return staticTools;

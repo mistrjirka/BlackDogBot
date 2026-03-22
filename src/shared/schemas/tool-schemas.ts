@@ -588,6 +588,7 @@ export const CRON_VALID_TOOL_NAMES = [
   "send_message",
   "get_previous_message",
   "read_file",
+  "read_image",
   "write_file",
   "append_file",
   "edit_file",
@@ -861,6 +862,28 @@ export const readFileToolOutputSchema = z.object({
   success: z.boolean(),
   content: z.string()
     .optional(),
+  message: z.string(),
+});
+
+export const readImageToolInputSchema = z.object({
+  filePath: z.string()
+    .default("")
+    .describe("Path to an image file. Use just a filename for the default workspace directory. Use an absolute path only for files outside the workspace."),
+});
+
+export const readImageToolOutputSchema = z.object({
+  success: z.boolean(),
+  data: z.string()
+    .optional()
+    .describe("Base64 image data (without data URL prefix)"),
+  mediaType: z.string()
+    .optional()
+    .describe("Detected media type, for example image/png"),
+  bytes: z.number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe("Image file size in bytes"),
   message: z.string(),
 });
 

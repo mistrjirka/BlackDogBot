@@ -16,7 +16,7 @@ import { getDuplicateToolCallDirective } from "../utils/prepare-step.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
-import { isContextExceededApiError } from "../utils/context-error.js";
+import { isContextExceededApiError, isRetryableApiError } from "../utils/context-error.js";
 import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
 import { extractAiErrorDetails } from "../utils/ai-error.js";
 import {
@@ -63,6 +63,12 @@ export const CONTEXT_EXCEEDED_RETRIES: number = 2;
  * How many times to wait and retry when receiving 429 rate limit errors.
  */
 const MAX_429_RETRIES: number = 8;
+
+/**
+ * How many times to retry transient non-429 provider errors
+ * (e.g., invalid JSON provider responses on unstable models).
+ */
+const MAX_GENERIC_RETRIES: number = 3;
 
 /**
  * Token budget reserved for predictive compaction headroom.
@@ -156,6 +162,7 @@ export abstract class BaseAgentBase {
       statusService.beginInFlight("llm_request", "Thinking...", {});
 
       let _429Retries: number = 0;
+      let _genericRetries: number = 0;
 
       for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
         // Reset token count so prepareStep doesn't use stale values from a failed attempt
@@ -216,6 +223,25 @@ export abstract class BaseAgentBase {
                 current429RetryCount: _429Retries,
                 max429Retries: MAX_429_RETRIES,
               },
+            });
+            attempt--; // Don't burn the empty-response retry budget
+            continue;
+          }
+
+          if (isRetryableApiError(error) && _genericRetries < MAX_GENERIC_RETRIES) {
+            _genericRetries++;
+            this._logger.warn("Retryable API error in agent loop, retrying", {
+              attempt,
+              emptyResponseAttempt: attempt,
+              agentAttempt: currentAgentAttempt,
+              agentAttemptTotal: totalAgentAttempts,
+              genericRetryCount: _genericRetries,
+              maxGenericRetries: MAX_GENERIC_RETRIES,
+              statusCode: aiErrorDetails.statusCode,
+              provider: aiErrorDetails.provider,
+              model: aiErrorDetails.model,
+              message: aiErrorDetails.message,
+              providerMessage: aiErrorDetails.providerMessage,
             });
             attempt--; // Don't burn the empty-response retry budget
             continue;

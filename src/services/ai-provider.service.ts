@@ -4,6 +4,8 @@ import { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { LMStudioClient } from "@lmstudio/sdk";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 import { LoggerService } from "./logger.service.js";
 import { SchedulerService } from "./scheduler.service.js";
@@ -32,6 +34,7 @@ import { FORCE_THINK_INTERVAL } from "../shared/constants.js";
 import { getCurrentLlmCallType } from "../utils/llm-call-context.js";
 import { runToolCallingProbeAsync } from "../utils/llm-probe-helpers.js";
 import { createHash } from "node:crypto";
+import { ensureDirectoryExistsAsync, getModelProfilesDir } from "../utils/paths.js";
 
 function normalizeBaseUrl(url: string): string {
   const trimmed: string = url.trim();
@@ -50,8 +53,19 @@ const DEFAULT_REQUEST_TIMEOUT_MS: number = 500_000; // 500 seconds
 const REQUEST_TIMEOUT_RETRY_MULTIPLIER: number = 2;
 const REQUEST_TIMEOUT_MAX_ATTEMPTS: number = 2; // initial + 1 retry
 const OPENROUTER_FREE_MODEL_RPM_LIMIT: number = 20;
+const VISION_PROBE_TIMEOUT_MS: number = 10000;
+const VISION_CACHE_FILE_NAME: string = "vision-support.json";
+const tinyProbePngBase64: string = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
 
 const STRUCTURED_OUTPUT_STRATEGY_AUTO: StructuredOutputMode = "auto";
+
+interface IVisionSupportCacheEntry {
+  supportsVision: boolean;
+  detectedAt: string;
+  method: "api" | "probe";
+}
+
+type IVisionSupportCache = Record<string, IVisionSupportCacheEntry>;
 
 export class AiProviderService {
   //#region Data members
@@ -67,6 +81,7 @@ export class AiProviderService {
   private _supportsReasoningFormat: boolean = false;
   private _supportsParallelToolCalls: boolean = false;
   private _supportsToolCalling: boolean = true;
+  private _supportsVision: boolean = false;
   private _resolvedStructuredOutputMode: ResolvedStructuredOutputMode = "native_json_schema";
   private _requestTimeoutMs: number;
   private _activeProfileName: string | null;
@@ -100,6 +115,7 @@ export class AiProviderService {
 
   public async initializeAsync(aiConfig: IAiConfig): Promise<void> {
     this._aiConfig = aiConfig;
+    this._supportsVision = false;
 
     const providerKey: AiProvider = aiConfig.provider;
     const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
@@ -221,6 +237,8 @@ export class AiProviderService {
     // Detect/request capabilities and resolve strict structured output mode.
     await this._resolveStructuredOutputModeAsync(defaultModelId, logger);
 
+    await this._resolveVisionSupportAsync(defaultModelId, logger);
+
     // Autodetect parallel tool call support (local openai-compatible endpoints)
     if (this._isLocalProvider(providerKey)) {
       this._supportsParallelToolCalls = await this._testParallelToolCallSupportAsync();
@@ -250,6 +268,7 @@ export class AiProviderService {
     // Sync wrapper - does not fetch context window from API
     // Use initializeAsync() for full initialization
     this._aiConfig = aiConfig;
+    this._supportsVision = false;
 
     const providerKey: AiProvider = aiConfig.provider;
     const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
@@ -389,6 +408,10 @@ export class AiProviderService {
 
   public getSupportsToolCalling(): boolean {
     return this._supportsToolCalling;
+  }
+
+  public getSupportsVision(): boolean {
+    return this._supportsVision;
   }
 
   public getStructuredProviderOptions(): SharedV3ProviderOptions | undefined {
@@ -1804,6 +1827,176 @@ export class AiProviderService {
     } catch {
       return {};
     }
+  }
+
+  private async _resolveVisionSupportAsync(defaultModelId: string, logger: LoggerService): Promise<void> {
+    if (!this._aiConfig) {
+      this._supportsVision = false;
+      return;
+    }
+
+    const providerKey: AiProvider = this._aiConfig.provider;
+
+    if (this._isOpenRouter(providerKey)) {
+      const supportsImagesFromApi: boolean | null = await this._modelInfoService.fetchSupportsImagesAsync(defaultModelId);
+      if (supportsImagesFromApi !== null) {
+        this._supportsVision = supportsImagesFromApi;
+        logger.info("Vision support resolved from OpenRouter metadata", {
+          provider: providerKey,
+          model: defaultModelId,
+          supportsVision: this._supportsVision,
+          source: "openrouter_model_metadata",
+        });
+        return;
+      }
+    }
+
+    const cacheKey: string = `${providerKey}:${defaultModelId}`;
+    const cachedSupport: boolean | null = await this._readVisionSupportCacheEntryAsync(cacheKey);
+    if (cachedSupport !== null) {
+      this._supportsVision = cachedSupport;
+      logger.info("Vision support loaded from cache", {
+        provider: providerKey,
+        model: defaultModelId,
+        supportsVision: this._supportsVision,
+        source: "vision_cache",
+      });
+      return;
+    }
+
+    const probeResult: boolean = await this._probeVisionSupportAsync();
+    this._supportsVision = probeResult;
+
+    await this._writeVisionSupportCacheEntryAsync(cacheKey, probeResult, this._isOpenRouter(providerKey) ? "api" : "probe");
+
+    logger.info("Vision support resolved by probe", {
+      provider: providerKey,
+      model: defaultModelId,
+      supportsVision: this._supportsVision,
+      source: "vision_probe",
+    });
+  }
+
+  private async _probeVisionSupportAsync(): Promise<boolean> {
+    if (!this._aiConfig) {
+      return false;
+    }
+
+    const config = this._getActiveProviderConfig();
+    const provider: AiProvider = this._aiConfig.provider;
+    const logger: LoggerService = LoggerService.getInstance();
+
+    const endpointUrl: string = provider === "openrouter"
+      ? "https://openrouter.ai/api/v1/chat/completions"
+      : `${this._getLocalBaseUrl(config)}/v1/chat/completions`;
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    if (provider === "openrouter") {
+      headers.Authorization = `Bearer ${(config as IOpenRouterConfig).apiKey}`;
+    }
+
+    const controller: AbortController = new AbortController();
+    const timeoutId: NodeJS.Timeout = setTimeout((): void => {
+      controller.abort();
+    }, VISION_PROBE_TIMEOUT_MS);
+
+    try {
+      const response: Response = await fetch(endpointUrl, {
+        method: "POST",
+        headers,
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: config.model,
+          max_tokens: 32,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "Describe this image in one short sentence." },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:image/png;base64,${tinyProbePngBase64}`,
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        logger.debug("Vision probe failed with non-OK status", {
+          provider,
+          status: response.status,
+          statusText: response.statusText,
+        });
+        return false;
+      }
+
+      const parsed: ILlmResponse = await response.json() as ILlmResponse;
+      const content: string = parsed.choices?.[0]?.message?.content ?? "";
+      return content.trim().length > 0;
+    } catch (error: unknown) {
+      logger.debug("Vision probe request failed", {
+        provider,
+        error: extractErrorMessage(error),
+      });
+      return false;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  private async _readVisionSupportCacheEntryAsync(cacheKey: string): Promise<boolean | null> {
+    const cache = await this._readVisionSupportCacheAsync();
+    const entry: IVisionSupportCacheEntry | undefined = cache[cacheKey];
+    if (!entry || typeof entry.supportsVision !== "boolean") {
+      return null;
+    }
+
+    return entry.supportsVision;
+  }
+
+  private async _writeVisionSupportCacheEntryAsync(
+    cacheKey: string,
+    supportsVision: boolean,
+    method: "api" | "probe",
+  ): Promise<void> {
+    const cachePath: string = this._getVisionSupportCachePath();
+    const cacheDir: string = path.dirname(cachePath);
+    await ensureDirectoryExistsAsync(cacheDir);
+
+    const cache = await this._readVisionSupportCacheAsync();
+    cache[cacheKey] = {
+      supportsVision,
+      detectedAt: new Date().toISOString(),
+      method,
+    };
+
+    await fs.writeFile(cachePath, JSON.stringify(cache, null, 2), "utf-8");
+  }
+
+  private async _readVisionSupportCacheAsync(): Promise<IVisionSupportCache> {
+    const cachePath: string = this._getVisionSupportCachePath();
+
+    try {
+      const content: string = await fs.readFile(cachePath, "utf-8");
+      const parsed: unknown = JSON.parse(content);
+      if (parsed && typeof parsed === "object") {
+        return parsed as IVisionSupportCache;
+      }
+      return {};
+    } catch {
+      return {};
+    }
+  }
+
+  private _getVisionSupportCachePath(): string {
+    return path.join(getModelProfilesDir(), VISION_CACHE_FILE_NAME);
   }
 
   private _promoteReasoningToRequiredIfNeeded(body: Record<string, unknown>): boolean {

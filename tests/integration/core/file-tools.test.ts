@@ -5,6 +5,7 @@ import os from "node:os";
 
 import { FileReadTracker, resolveFilePath } from "../../../src/utils/file-tools-helper.js";
 import { createReadFileTool } from "../../../src/tools/read-file.tool.js";
+import { createReadImageTool } from "../../../src/tools/read-image.tool.js";
 import { createWriteFileTool } from "../../../src/tools/write-file.tool.js";
 import { appendFileTool } from "../../../src/tools/append-file.tool.js";
 import { editFileTool } from "../../../src/tools/edit-file.tool.js";
@@ -16,6 +17,14 @@ import { getWorkspaceDir } from "../../../src/utils/paths.js";
 interface IReadFileResult {
   success: boolean;
   content: string | undefined;
+  message: string;
+}
+
+interface IReadImageResult {
+  success: boolean;
+  data: string | undefined;
+  mediaType: string | undefined;
+  bytes: number | undefined;
   message: string;
 }
 
@@ -206,6 +215,63 @@ describe("read_file tool", () => {
 });
 
 //#endregion read_file Tool Tests
+
+//#region read_image Tool Tests
+
+describe("read_image tool", () => {
+  let tracker: FileReadTracker;
+  let executeReadImage: (input: { filePath: string }) => Promise<IReadImageResult>;
+
+  beforeEach(async () => {
+    await setupTempHomeAsync();
+
+    const loggerService: LoggerService = LoggerService.getInstance();
+
+    await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
+
+    tracker = new FileReadTracker();
+
+    const readImageTool = createReadImageTool(tracker);
+
+    executeReadImage = async (input: { filePath: string }): Promise<IReadImageResult> => {
+      return await readImageTool.execute!(input, TOOL_OPTIONS) as IReadImageResult;
+    };
+  });
+
+  afterEach(async () => {
+    (LoggerService as unknown as { _instance: null })._instance = null;
+    await teardownTempHomeAsync();
+  });
+
+  it("should read a png image file from workspace", async () => {
+    const pngBase64: string =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
+    const workspaceDir: string = getWorkspaceDir();
+    const imagePath: string = path.join(workspaceDir, "tiny.png");
+    await fs.writeFile(imagePath, Buffer.from(pngBase64, "base64"));
+
+    const result: IReadImageResult = await executeReadImage({ filePath: "tiny.png" });
+
+    expect(result.success).toBe(true);
+    expect(result.mediaType).toBe("image/png");
+    expect(result.data).toBeTruthy();
+    expect(result.bytes).toBeGreaterThan(0);
+    expect(tracker.hasBeenRead(imagePath)).toBe(true);
+  });
+
+  it("should reject unsupported file extension", async () => {
+    const workspaceDir: string = getWorkspaceDir();
+    const filePath: string = path.join(workspaceDir, "not-image.txt");
+    await fs.writeFile(filePath, "hello", "utf-8");
+
+    const result: IReadImageResult = await executeReadImage({ filePath: "not-image.txt" });
+
+    expect(result.success).toBe(false);
+    expect(result.message.toLowerCase()).toContain("unsupported image extension");
+  });
+});
+
+//#endregion read_image Tool Tests
 
 //#region write_file Tool Tests
 

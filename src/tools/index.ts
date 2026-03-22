@@ -40,6 +40,7 @@ export { setJobScheduleTool } from "./set-job-schedule.tool.js";
 export { removeJobScheduleTool } from "./remove-job-schedule.tool.js";
 export { createRenderGraphTool, type PhotoSender } from "./render-graph.tool.js";
 export { createReadFileTool } from "./read-file.tool.js";
+export { createReadImageTool } from "./read-image.tool.js";
 export { createWriteFileTool } from "./write-file.tool.js";
 export { appendFileTool } from "./append-file.tool.js";
 export { editFileTool } from "./edit-file.tool.js";

@@ -27,6 +27,7 @@ Method:
 - **create_table execution order:** If you need to create a table and then continue with more work, do all prerequisite tool calls first and call `create_table` last. After a successful `create_table`, continue by using the new `write_table_<tableName>` tool.
 - **run_cmd mode choice:** Use `foreground` for short commands where you need immediate completion output. Use `background` for long-running commands and then prefer `wait_for_cmd` to block until completion (or use `get_cmd_status` / `get_cmd_output` and `stop_cmd` only when you need manual polling/control).
 - **run_cmd stdin handling:** If a command may wait for input, use `deterministicInputDetection` in foreground mode. When status is `awaiting_input`, continue with `run_cmd_input` using the returned `handleId`.
+- **Image file analysis:** If you need to inspect a local screenshot or image file and `read_image` is available, use `read_image` instead of `read_file`. The `read_image` tool passes media content directly to vision-capable models.
 
 {{include:prompt-fragments/cron-update-workflow.md}}
 

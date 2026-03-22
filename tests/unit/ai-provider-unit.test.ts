@@ -151,6 +151,7 @@ describe("AiProviderService unit", () => {
       expect(service.getStructuredOutputMode()).toBe("tool_auto");
       expect(service.getSupportsStructuredOutputs()).toBe(false);
       expect(service.getSupportsToolCalling()).toBe(true);
+      expect(service.getSupportsVision()).toBe(false);
     });
 
     it("should clamp OpenRouter free model local RPM to 20", async () => {
@@ -175,6 +176,8 @@ describe("AiProviderService unit", () => {
       vi.spyOn(modelInfoService, "fetchContextWindowAsync").mockResolvedValue(256000);
       vi.spyOn(modelInfoService, "fetchSupportedParametersAsync")
         .mockResolvedValue(new Set<string>(["tools"]));
+      vi.spyOn(modelInfoService, "fetchSupportsImagesAsync")
+        .mockResolvedValue(false);
 
       const service: AiProviderService = AiProviderService.getInstance();
       vi.spyOn(service, "testResponseFormatAsync").mockResolvedValue({ ok: false, reason: "skipped" });
@@ -191,6 +194,7 @@ describe("AiProviderService unit", () => {
       expect(service.getStructuredOutputMode()).toBe("tool_auto");
       expect(service.getSupportsStructuredOutputs()).toBe(false);
       expect(service.getSupportsToolCalling()).toBe(true);
+      expect(typeof service.getSupportsVision()).toBe("boolean");
     });
   });
 

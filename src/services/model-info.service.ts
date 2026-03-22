@@ -7,6 +7,9 @@ interface IOpenRouterModel {
   id: string;
   context_length?: number;
   supported_parameters?: string[];
+  architecture?: {
+    input_modalities?: string[];
+  };
 }
 
 interface IOpenRouterModelsResponse {
@@ -28,6 +31,7 @@ export class ModelInfoService {
   private _logger: LoggerService;
   private _contextWindowCache: Map<string, number>;
   private _supportedParametersCache: Map<string, Set<string>>;
+  private _inputModalitiesCache: Map<string, Set<string>>;
   private _modelsFetched: boolean;
   private _fetchPromise: Promise<void> | null;
 
@@ -39,6 +43,7 @@ export class ModelInfoService {
     this._logger = LoggerService.getInstance();
     this._contextWindowCache = new Map<string, number>();
     this._supportedParametersCache = new Map<string, Set<string>>();
+    this._inputModalitiesCache = new Map<string, Set<string>>();
     this._modelsFetched = false;
     this._fetchPromise = null;
   }
@@ -131,11 +136,35 @@ export class ModelInfoService {
   }
 
   /**
+   * Detects whether a model supports image input based on OpenRouter metadata.
+   * Returns null when metadata is unavailable.
+   */
+  public async fetchSupportsImagesAsync(modelId: string): Promise<boolean | null> {
+    const cached: Set<string> | undefined = this._getCachedInputModalities(modelId);
+    if (cached) {
+      return cached.has("image");
+    }
+
+    if (!this._modelsFetched) {
+      await this._ensureModelsFetchedAsync();
+    }
+
+    const cachedAfterFetch: Set<string> | undefined = this._getCachedInputModalities(modelId);
+    if (cachedAfterFetch) {
+      return cachedAfterFetch.has("image");
+    }
+
+    this._logger.warn("Model modalities not found in OpenRouter API response", { modelId });
+    return null;
+  }
+
+  /**
    * Clears the model info cache.
    */
   public clearCache(): void {
     this._contextWindowCache.clear();
     this._supportedParametersCache.clear();
+    this._inputModalitiesCache.clear();
     this._modelsFetched = false;
     this._fetchPromise = null;
   }
@@ -201,6 +230,17 @@ export class ModelInfoService {
             ),
           );
         }
+
+        if (model.id && Array.isArray(model.architecture?.input_modalities)) {
+          this._inputModalitiesCache.set(
+            model.id,
+            new Set<string>(
+              model.architecture.input_modalities
+                .filter((value: string): boolean => typeof value === "string")
+                .map((value: string): string => value.toLowerCase()),
+            ),
+          );
+        }
       }
 
       this._modelsFetched = true;
@@ -222,6 +262,16 @@ export class ModelInfoService {
 
     const baseModelId: string = modelId.split(":")[0] ?? modelId;
     return this._supportedParametersCache.get(baseModelId);
+  }
+
+  private _getCachedInputModalities(modelId: string): Set<string> | undefined {
+    const exact: Set<string> | undefined = this._inputModalitiesCache.get(modelId);
+    if (exact) {
+      return exact;
+    }
+
+    const baseModelId: string = modelId.split(":")[0] ?? modelId;
+    return this._inputModalitiesCache.get(baseModelId);
   }
 
   //#endregion Private methods

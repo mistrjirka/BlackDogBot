@@ -60,6 +60,11 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "For workspace files, pass just the filename (e.g. 'notes.txt'); use a full absolute path only for files outside the workspace. " +
     "Args: filePath (string, default '').",
 
+  read_image:
+    "Read an image file and provide it to the model as media content (for vision-capable models). " +
+    "Supports png/jpg/jpeg/gif/webp/bmp/svg up to 10MB. " +
+    "Args: filePath (string, default '').",
+
   write_file:
     "Write content to a file, completely replacing its contents. Must read the file first if it already exists. " +
     "Args: filePath (string, default ''); content (string, required).",

@@ -32,6 +32,7 @@ import {
   getJobsTool,
   listCronsTool,
   createReadFileTool,
+  createReadImageTool,
   createWriteFileTool,
   appendFileTool,
   editFileTool,
@@ -280,6 +281,7 @@ export class CronAgent extends BaseAgentBase {
   ): Promise<ToolSet> {
     const readTracker: FileReadTracker = new FileReadTracker();
     const jobTracker: JobActivityTracker = new JobActivityTracker();
+    const supportsVision: boolean = AiProviderService.getInstance().getSupportsVision();
 
     const availableTools: Record<string, Tool> = {
       think: thinkTool,
@@ -314,6 +316,10 @@ export class CronAgent extends BaseAgentBase {
       update_database: updateDatabaseTool,
       delete_from_database: deleteFromDatabaseTool,
     };
+
+    if (supportsVision) {
+      availableTools.read_image = createReadImageTool(readTracker);
+    }
 
     // Merge per-table write tools
     try {

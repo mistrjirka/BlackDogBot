@@ -138,6 +138,7 @@ not the same as node types.
 | `edit_knowledge` | Edit existing knowledge entries |
 | `send_message` | Send a message to the execution user/chat when messaging context is available. In headless runs, it falls back to internal logging. |
 | `read_file` | Read a file from the workspace |
+| `read_image` | Read an image file and pass it to the model as media content |
 | `write_file` | Write a file to the workspace |
 | `append_file` | Append content to a file |
 | `edit_file` | Edit a file in place |
@@ -169,6 +170,7 @@ not the same as node types.
 - `send_message` requires execution messaging context (for example when the job
    is run from a chat). In headless runs (e.g., some scheduled/background
    executions), messages are logged instead of being delivered to a user chat.
+- Use `read_image` (not `read_file`) when the agent must inspect image/screenshot files.
 - `run_cmd` mode guidance: use `foreground` for short commands where you need
   final output immediately; use `background` for long-running commands and then
   prefer `wait_for_cmd` (use `get_cmd_status`/`get_cmd_output`/`stop_cmd` when you need manual control).
