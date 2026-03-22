@@ -105,7 +105,7 @@ services:
     image: unclecode/crawl4ai:latest
     container_name: blackdogbot-crawl4ai
     ports:
-      - "18732:8000"
+      - "18732:11235"
     restart: unless-stopped
 ```
 
@@ -170,7 +170,7 @@ curl 'http://localhost:18731/search?q=test&format=json'
 ### 4. Create Required Directories
 
 ```bash
-mkdir -p ~/.blackdogbot/{prompts,jobs,cron/tasks,knowledge/lancedb,skills/state,logs,workspace,databases,rss-state}
+mkdir -p ~/.blackdogbot/{prompts/prompt-fragments,jobs,cron,knowledge/lancedb,skills,logs/jobs,workspace,databases,rss-state,model-profiles,sessions,models}
 ```
 
 ### 5. Start the Daemon
@@ -207,178 +207,5 @@ Check the logs:
 tail -f ~/.blackdogbot/logs/blackdogbot.log
 ```
 
-## Configuration Reference
-
-### AI Providers
-
-**OpenRouter (recommended):**
-```yaml
-ai:
-  provider: openrouter
-  openrouter:
-    apiKey: sk-or-v1-xxx
-    model: anthropic/claude-sonnet-4
-    rateLimits:
-      rpm: 60
-      tpm: 100000
-```
-
-**OpenAI-compatible (Ollama, etc.):**
-```yaml
-ai:
-  provider: openai-compatible
-  openaiCompatible:
-    baseUrl: http://localhost:11434/v1
-    apiKey: ollama
-    model: llama3
-    contextWindow: 8192  # Optional: specify context window size
-    rateLimits:
-      rpm: 120
-      tpm: 200000
-```
-
-**LM Studio:**
-```yaml
-ai:
-  provider: lm-studio
-  lmStudio:
-    baseUrl: http://localhost:1234/v1
-    apiKey: lm-studio  # Default API key for LM Studio
-    model: models/YourModelName  # Model identifier as shown in LM Studio
-    contextWindow: 8192  # Optional: auto-detected if not specified
-    rateLimits:
-      rpm: 120
-      tpm: 200000
-```
-
-### Messaging Platforms
-
-**Telegram:**
-```yaml
-telegram:
-  botToken: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-  allowedUsers: ["123456789"]  # Optional: restrict to specific users
-```
-
-**Discord:**
-```yaml
-discord:
-  botToken: "MTk4NjIyNDgzNDc..."
-  allowedGuilds: ["123456789"]  # Optional: restrict to specific servers
-```
-
-### Embeddings
-
-**Local (default):**
-```yaml
-knowledge:
-  embeddingProvider: local
-  embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
-  embeddingDevice: auto  # Options: auto, cpu, cuda
-  embeddingDtype: q8     # Options: fp32, fp16, q8, q4, q4f16
-```
-
-**OpenRouter:**
-```yaml
-knowledge:
-  embeddingProvider: openrouter
-  embeddingOpenRouterModel: nvidia/llama-nemotron-embed-vl-1b-v2:free
-```
-
-#### Embedding Device Configuration
-
-For local embeddings, you can control the compute device:
-- `auto` (default): Automatically detects and uses GPU (CUDA) if available, falls back to CPU
-- `cpu`: Force CPU usage regardless of GPU availability
-- `cuda`: Force CUDA (NVIDIA GPU) usage
-
-To force CPU usage (e.g., on systems without CUDA 12 libraries or to reduce memory usage):
-```yaml
-knowledge:
-  embeddingProvider: local
-  embeddingDevice: cpu
-```
-
-### Scheduler
-
-Configure the cron-like scheduler:
-```yaml
-scheduler:
-  enabled: true  # Enable/disable the scheduler
-  timezone: Europe/Prague  # Optional: timezone for cron expressions
-```
-
-### Job Creation
-
-Configure job creation behavior:
-```yaml
-jobCreation:
-  enabled: true  # Enable/disable job creation feature
-  requirePassingNodeTests: true  # Require all node tests to pass before finish_job_creation
-  requireSuccessfulRunBeforeFinish: true  # Require successful job execution before marking ready
-```
-
-### Skills
-
-Configure skill loading and setup:
-```yaml
-skills:
-  directories:
-    - ~/.blackdogbot/skills  # Directories to scan for skills
-  autoSetup: true  # Automatically set up skills with missing dependencies
-  autoSetupNotify: true  # Send notifications when skill setup completes/fails
-  installTimeout: 300000  # Timeout in milliseconds for each install step (5 minutes)
-  allowedInstallKinds:
-    - brew
-    - node
-    - go
-    - uv
-    # - pacman  # Requires manual steps
-    # - apt     # Requires manual steps
-    # - download  # Requires manual steps
-  skipOsCheck: false  # Skip OS compatibility check for skills
-```
-
-### Logging
-
-Configure logging behavior:
-```yaml
-logging:
-  level: info  # Options: debug, info, warn, error
-```
-
-### Services
-
-Configure external services:
-```yaml
-services:
-  searxngUrl: http://localhost:18731  # SearXNG instance URL
-  crawl4aiUrl: http://localhost:18732  # Crawl4AI instance URL
-```
-
-## Troubleshooting
-
-### Bot Not Responding
-
-1. Check if the bot token is correct
-2. Verify the bot is running: `pnpm start`
-3. Check logs for errors: `tail -f ~/.blackdogbot/logs/blackdogbot.log`
-
-### Discord Bot Requires Privileged Intents
-
-Enable these in the Discord Developer Portal:
-- Message Content Intent
-- Server Members Intent (if needed)
-
-### Embedding Model Download Fails
-
-The first run downloads the embedding model (several hundred MB depending on quantization). If it fails:
-1. Check internet connection
-2. Try clearing the cache: `rm -rf ~/.cache/huggingface/`
-3. Run again
-
-### Cron Tasks Not Sending Notifications
-
-1. Ensure channels have `receiveNotifications: true` in `~/.blackdogbot/channels.yaml`
-2. Run `/notifications_enable` in Telegram
-3. Check the cron task has `notifyUser: true`
+For full config options, see [Configuration Guide](./configuration.md).
+For troubleshooting, see [Troubleshooting Guide](./troubleshooting.md).

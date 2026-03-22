@@ -316,12 +316,12 @@ EOF
     image: unclecode/crawl4ai:latest
     container_name: blackdogbot-crawl4ai
     ports:
-      - "${CRAWL4AI_PORT}:8000"
+      - "${CRAWL4AI_PORT}:11235"
     environment:
       - CRAWL4AI_API_TOKEN=
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -515,7 +515,7 @@ create_config() {
         else
             prompt_required "OpenRouter API key for embeddings" EMBEDDING_OR_KEY
         fi
-        prompt_input "Embedding model" "openai/text-embedding-3-small" EMBEDDING_OR_MODEL
+        prompt_input "Embedding model" "nvidia/llama-nemotron-embed-vl-1b-v2:free" EMBEDDING_OR_MODEL
     fi
     
     echo ""
@@ -638,10 +638,13 @@ create_directories() {
     mkdir -p "$CONFIG_DIR/knowledge/lancedb"
     mkdir -p "$CONFIG_DIR/cron"
     mkdir -p "$CONFIG_DIR/logs"
+    mkdir -p "$CONFIG_DIR/logs/jobs"
     mkdir -p "$CONFIG_DIR/workspace"
     mkdir -p "$CONFIG_DIR/prompts/prompt-fragments"
+    mkdir -p "$CONFIG_DIR/model-profiles"
     mkdir -p "$CONFIG_DIR/rss-state"
     mkdir -p "$CONFIG_DIR/databases"
+    mkdir -p "$CONFIG_DIR/sessions"
     mkdir -p "$CONFIG_DIR/models"
     
     print_success "Created all required directories"
