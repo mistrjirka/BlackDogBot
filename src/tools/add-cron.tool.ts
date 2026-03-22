@@ -26,6 +26,7 @@ const TOOL_NAME: string = "add-cron";
 const TOOL_DESCRIPTION: string =
   "Add a new scheduled task (cron job) to the scheduler. " +
   "Required inputs: name, description, instructions, tools, scheduleType, notifyUser. " +
+  "If tools include send_message, get_previous_message is auto-included at runtime so the cron can deduplicate notifications against previous cron messages. " +
   "Schedule-specific required input: scheduleRunAt for scheduleType='once', scheduleIntervalMs for scheduleType='interval', scheduleCron for scheduleType='cron'. " +
   "Examples: once => scheduleRunAt='2026-03-20T08:00:00Z'; interval => scheduleIntervalMs=7200000; cron => scheduleCron='0 */2 * * *'. " +
   "If the task's instructions reference a database, ensure the database and table(s) have been created first using create_database and create_table, then reference them by name (without .db extension) in the instructions.";
@@ -141,6 +142,8 @@ RULES:
 
 2. Tools that handle routing or delivery implicitly do NOT need extra config in the instructions.
    Example: "send_message" always reaches the correct user — instructions that say "send the results" or "notify the user" are VALID without specifying a chat ID or destination.
+   IMPORTANT: If the cron has send_message in its tools list, get_previous_message is auto-included at runtime.
+   The agent should use get_previous_message to avoid sending notifications with the same meaning as previous cron messages unless explicitly asked to repeat.
 
 3. The agent can derive values from tool descriptions and standard conventions — do NOT flag these as missing:
 

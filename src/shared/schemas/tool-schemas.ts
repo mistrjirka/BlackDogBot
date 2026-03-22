@@ -627,7 +627,7 @@ export const addCronToolInputSchema = z.object({
     .min(1)
     .array()
     .min(1)
-    .describe("Tool names available to the task agent (required, at least one)"),
+    .describe("Tool names available to the task agent (required, at least one). If send_message is included, get_previous_message is auto-injected at runtime for deduplication."),
   scheduleType: z.enum(["once", "interval", "cron"])
     .describe("Schedule type (required): once, interval, or cron"),
   scheduleRunAt: z.string()
@@ -732,7 +732,7 @@ export const editCronToolInputSchema = z.object({
     .array()
     .min(1)
     .optional()
-    .describe("Updated list of available tool names"),
+    .describe("Updated list of available tool names. If send_message is included, get_previous_message is auto-injected at runtime for deduplication."),
   scheduleType: z.enum(["once", "interval", "cron"])
     .optional()
     .describe("Optional schedule type hint. Schedule type is immutable and cannot be changed by edit_cron."),

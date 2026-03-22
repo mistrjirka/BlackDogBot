@@ -28,6 +28,7 @@ const TOOL_NAME: string = "edit-cron";
 const TOOL_DESCRIPTION: string =
   "Modify an existing scheduled task (cron job). " +
   "You can patch any subset of fields. If instructions are changed, they will be re-verified by the LLM. " +
+  "If tools include send_message, get_previous_message is auto-included at runtime so the cron can deduplicate notifications against previous cron messages. " +
   "IMPORTANT: You MUST call 'get_cron' first to retrieve the current task configuration before using this tool.";
 
 //#endregion Const
@@ -139,6 +140,8 @@ RULES:
 
 2. Tools that handle routing or delivery implicitly do NOT need extra config in the instructions.
    Example: "send_message" always reaches the correct user — instructions that say "send the results" or "notify the user" are VALID without specifying a chat ID or destination.
+   IMPORTANT: If the cron has send_message in its tools list, get_previous_message is auto-included at runtime.
+   The agent should use get_previous_message to avoid sending notifications with the same meaning as previous cron messages unless explicitly asked to repeat.
 
 3. The agent can derive values from tool descriptions and standard conventions — do NOT flag these as missing:
 
