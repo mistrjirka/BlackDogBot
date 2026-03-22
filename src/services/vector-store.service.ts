@@ -65,6 +65,10 @@ export class VectorStoreService {
     return VectorStoreService._instance;
   }
 
+  public isInitialized(): boolean {
+    return this._initialized;
+  }
+
   public async initializeAsync(
     dbPath?: string,
     embeddingDimension?: number,

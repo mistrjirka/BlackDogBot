@@ -75,6 +75,14 @@ export function getPromptFragmentsDir(): string {
   return path.join(getPromptsDir(), "prompt-fragments");
 }
 
+export function getSessionsDir(): string {
+  return path.join(getBaseDir(), "sessions");
+}
+
+export function getSessionFilePath(chatId: string): string {
+  return path.join(getSessionsDir(), `${chatId}.json`);
+}
+
 export function getSkillDir(skillName: string): string {
   return path.join(getSkillsDir(), skillName);
 }
@@ -158,6 +166,7 @@ export async function ensureAllDirectoriesAsync(): Promise<void> {
     getPromptFragmentsDir(),
     getModelProfilesDir(),
     getDatabasesDir(),
+    getSessionsDir(),
     getModelsDir(),
   ];
 

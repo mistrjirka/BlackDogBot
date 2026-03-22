@@ -57,6 +57,9 @@ export function createSendMessageToolWithHistory(
           const historyService: CronMessageHistoryService = CronMessageHistoryService.getInstance();
 
           await historyService.recordMessageAsync(taskId, message);
+          historyService.recordToVectorStoreAsync(taskId, message).catch(() => {
+            // Fire-and-forget — vector store recording failure should not block the send
+          });
         }
 
         return { sent: true, messageId };

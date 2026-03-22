@@ -27,7 +27,7 @@ async function execTool(
 describe("send_message tool with validation", () => {
   let context: { toolCallHistory: string[] };
   let mockSender: ReturnType<typeof vi.fn>;
-  let mockHistoryService: { recordMessageAsync: ReturnType<typeof vi.fn> };
+  let mockHistoryService: { recordMessageAsync: ReturnType<typeof vi.fn>; recordToVectorStoreAsync: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -35,6 +35,7 @@ describe("send_message tool with validation", () => {
     mockSender = vi.fn().mockResolvedValue("msg-123");
     mockHistoryService = {
       recordMessageAsync: vi.fn(),
+      recordToVectorStoreAsync: vi.fn().mockResolvedValue(undefined),
     };
     vi.mocked(CronMessageHistoryService.getInstance).mockReturnValue(
       mockHistoryService as unknown as CronMessageHistoryService,
@@ -107,8 +108,33 @@ describe("send_message tool with validation", () => {
 
     expect(mockHistoryService.recordMessageAsync).toHaveBeenCalledWith(
       "task-123",
-      "Test message"
+      "Test message",
     );
+  });
+
+  it("records message to vector store when send succeeds", async () => {
+    context.toolCallHistory.push("get_previous_message");
+
+    const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
+
+    await execTool(tool, "Test message");
+
+    expect(mockHistoryService.recordToVectorStoreAsync).toHaveBeenCalledWith(
+      "task-123",
+      "Test message",
+    );
+  });
+
+  it("send succeeds even if vector store recording fails", async () => {
+    context.toolCallHistory.push("get_previous_message");
+    mockHistoryService.recordToVectorStoreAsync.mockRejectedValue(new Error("Vector store unavailable"));
+
+    const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
+
+    const result = await execTool(tool, "Test message");
+
+    expect(result.sent).toBe(true);
+    expect(result.messageId).toBe("msg-123");
   });
 
   it("returns error with helpful message", async () => {

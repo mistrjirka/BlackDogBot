@@ -9,29 +9,30 @@ vi.mock("../../../src/services/cron-message-history.service.js", () => ({
 }));
 
 interface IGetPreviousMessageResult {
-  messages: Array<{ messageId: string; content: string; sentAt: string }>;
-  summary: string | null;
-  summaryGeneratedAt: string | null;
-  totalMessageCount: number;
+  similarMessages: Array<{ content: string; sentAt: string; score: number; taskId: string }>;
+  message: string;
 }
 
-async function execTool(tool: ReturnType<typeof createGetPreviousMessageTool>): Promise<IGetPreviousMessageResult> {
+async function execTool(
+  tool: ReturnType<typeof createGetPreviousMessageTool>,
+  input: Record<string, unknown>,
+): Promise<IGetPreviousMessageResult> {
   return (tool as any).execute(
-    {},
+    input,
     { toolCallId: "test", messages: [], abortSignal: new AbortController().signal },
   ) as Promise<IGetPreviousMessageResult>;
 }
 
 describe("get_previous_message tool", () => {
   let mockHistoryService: {
-    getHistoryAsync: ReturnType<typeof vi.fn>;
+    getSimilarMessagesAsync: ReturnType<typeof vi.fn>;
   };
   let context: { toolCallHistory: string[] };
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockHistoryService = {
-      getHistoryAsync: vi.fn(),
+      getSimilarMessagesAsync: vi.fn(),
     };
     vi.mocked(CronMessageHistoryService.getInstance).mockReturnValue(
       mockHistoryService as unknown as CronMessageHistoryService,
@@ -39,50 +40,81 @@ describe("get_previous_message tool", () => {
     context = { toolCallHistory: [] };
   });
 
-  it("returns empty result and tracks tool call", async () => {
-    mockHistoryService.getHistoryAsync.mockResolvedValue({
-      messages: [],
-      summary: null,
-      summaryGeneratedAt: null,
-      totalMessageCount: 0,
-    });
+  it("returns similar messages and tracks tool call", async () => {
+    mockHistoryService.getSimilarMessagesAsync.mockResolvedValue([
+      { content: "BTC price is $85,432", sentAt: "2024-01-01T10:00:00Z", score: 0.97, taskId: "task-1" },
+      { content: "ETH price update", sentAt: "2024-01-01T11:00:00Z", score: 0.82, taskId: "task-1" },
+    ]);
 
     const tool = createGetPreviousMessageTool(context);
 
-    const result = await execTool(tool);
+    const result = await execTool(tool, { message: "BTC price is $85,500" });
 
-    expect(result.messages).toEqual([]);
-    expect(result.summary).toBeNull();
-    expect(result.totalMessageCount).toBe(0);
+    expect(result.similarMessages).toHaveLength(2);
+    expect(result.similarMessages[0].content).toBe("BTC price is $85,432");
+    expect(result.similarMessages[0].score).toBe(0.97);
+    expect(result.message).toContain("Consider whether sending this message is necessary");
     expect(context.toolCallHistory).toContain("get_previous_message");
+    expect(mockHistoryService.getSimilarMessagesAsync).toHaveBeenCalledWith("BTC price is $85,500");
   });
 
-  it("returns history from service and tracks tool call", async () => {
-    mockHistoryService.getHistoryAsync.mockResolvedValue({
-      messages: [
-        { messageId: "msg-1", content: "Hello", sentAt: "2024-01-01T10:00:00Z" },
-        { messageId: "msg-2", content: "World", sentAt: "2024-01-01T11:00:00Z" },
-      ],
-      summary: "Previous summary",
-      summaryGeneratedAt: "2024-01-01T09:00:00Z",
-      totalMessageCount: 3,
-    });
+  it("returns empty array when no similar messages found", async () => {
+    mockHistoryService.getSimilarMessagesAsync.mockResolvedValue([]);
 
     const tool = createGetPreviousMessageTool(context);
-    const result = await execTool(tool);
 
-    expect(mockHistoryService.getHistoryAsync).toHaveBeenCalledOnce();
-    expect(result.messages).toHaveLength(2);
-    expect(result.summary).toBe("Previous summary");
-    expect(result.totalMessageCount).toBe(3);
+    const result = await execTool(tool, { message: "Brand new topic" });
+
+    expect(result.similarMessages).toHaveLength(0);
+    expect(result.message).toContain("Consider whether sending this message is necessary");
     expect(context.toolCallHistory).toContain("get_previous_message");
   });
 
-  it("has correct description emphasizing shared history", () => {
+  it("returns messages from different tasks", async () => {
+    mockHistoryService.getSimilarMessagesAsync.mockResolvedValue([
+      { content: "Weather alert", sentAt: "2024-01-01T08:00:00Z", score: 0.95, taskId: "weather-task" },
+      { content: "Weather summary", sentAt: "2024-01-01T09:00:00Z", score: 0.88, taskId: "daily-task" },
+    ]);
+
+    const tool = createGetPreviousMessageTool(context);
+
+    const result = await execTool(tool, { message: "Today's weather forecast" });
+
+    expect(result.similarMessages).toHaveLength(2);
+    expect(result.similarMessages[0].taskId).toBe("weather-task");
+    expect(result.similarMessages[1].taskId).toBe("daily-task");
+  });
+
+  it("throws when embeddings are not configured", async () => {
+    mockHistoryService.getSimilarMessagesAsync.mockRejectedValue(
+      new Error("Embeddings not configured. Cron message dedup requires an embedding provider."),
+    );
+
+    const tool = createGetPreviousMessageTool(context);
+
+    await expect(execTool(tool, { message: "Test message" })).rejects.toThrow(
+      "Embeddings not configured",
+    );
+  });
+
+  it("throws when vector store is not initialized", async () => {
+    mockHistoryService.getSimilarMessagesAsync.mockRejectedValue(
+      new Error("Vector store not initialized."),
+    );
+
+    const tool = createGetPreviousMessageTool(context);
+
+    await expect(execTool(tool, { message: "Test message" })).rejects.toThrow(
+      "Vector store not initialized",
+    );
+  });
+
+  it("has correct description emphasizing similarity search", () => {
     const tool = createGetPreviousMessageTool({ toolCallHistory: [] });
 
-    expect(tool.description).toContain("any cron task in the system");
-    expect(tool.description).toContain("IMPORTANT");
-    expect(tool.description).toContain("duplicate");
+    expect(tool.description).toContain("similarity");
+    expect(tool.description).toContain("before send_message");
+    expect(tool.description).toContain("send_message");
+    expect(tool.description).toContain("message you intend to send");
   });
 });

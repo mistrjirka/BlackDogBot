@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { ToolSet, LanguageModel, type ModelMessage } from "ai";
 
 import { AiProviderService } from "../services/ai-provider.service.js";
@@ -89,6 +90,7 @@ import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
 import { isContextExceededApiError } from "../utils/context-error.js";
+import { getSessionFilePath } from "../utils/paths.js";
 import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
 import { extractAiErrorDetails } from "../utils/ai-error.js";
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
@@ -140,6 +142,12 @@ interface IChatSession {
   pendingToolRebuild: { toolName: string; tableName: string } | null;
   toolRebuildCount: number;
   terminateCurrentRun: boolean;
+}
+
+interface IPersistedSession {
+  messages: ModelMessage[];
+  lastActivityAt: number;
+  jobCreationMode: IJobCreationMode | null;
 }
 
 //#endregion Interfaces
@@ -198,10 +206,12 @@ export class MainAgent extends BaseAgentBase {
     // Create the AbortController immediately so /cancel can abort during initialization
     // (prompt building, tool loading, model setup) before processMessageForChatAsync runs.
     if (!this._sessions.has(chatId)) {
+      const saved: IPersistedSession | null = await this._loadSessionAsync(chatId);
+
       this._sessions.set(chatId, {
-        messages: [],
-        lastActivityAt: Date.now(),
-        jobCreationMode: null,
+        messages: saved?.messages ?? [],
+        lastActivityAt: saved?.lastActivityAt ?? Date.now(),
+        jobCreationMode: saved?.jobCreationMode ?? null,
         paused: false,
         resumeResolve: null,
         abortController: new AbortController(),
@@ -209,6 +219,10 @@ export class MainAgent extends BaseAgentBase {
         toolRebuildCount: 0,
         terminateCurrentRun: false,
       });
+
+      if (saved !== null) {
+        this._logger.info("Session restored from disk.", { chatId, messageCount: saved.messages.length });
+      }
     }
 
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
@@ -658,6 +672,7 @@ export class MainAgent extends BaseAgentBase {
               }
 
               result = { text, stepsCount };
+              await this._saveSessionAsync(chatId);
               break;
             }
 
@@ -796,6 +811,7 @@ export class MainAgent extends BaseAgentBase {
 
       // No rebuild needed — return result
       finalResult = result;
+      await this._saveSessionAsync(chatId);
       break;
     }
 
@@ -847,6 +863,9 @@ export class MainAgent extends BaseAgentBase {
   public clearChatHistory(chatId: string): void {
     this._sessions.delete(chatId);
     ToolHotReloadService.getInstance().unregisterRebuildCallback(chatId);
+    fs.unlink(getSessionFilePath(chatId)).catch(() => {
+      // File may not exist, ignore
+    });
     this._logger.info("Chat history cleared.", { chatId });
   }
 
@@ -856,6 +875,56 @@ export class MainAgent extends BaseAgentBase {
   }
 
   //#endregion Public methods
+
+  //#region Private methods
+
+  private async _saveSessionAsync(chatId: string): Promise<void> {
+    const session: IChatSession | undefined = this._sessions.get(chatId);
+
+    if (!session) {
+      return;
+    }
+
+    const persistable: IPersistedSession = {
+      messages: session.messages,
+      lastActivityAt: session.lastActivityAt,
+      jobCreationMode: session.jobCreationMode,
+    };
+
+    try {
+      const filePath: string = getSessionFilePath(chatId);
+      await fs.writeFile(filePath, JSON.stringify(persistable, null, 2), "utf-8");
+      this._logger.debug("Session saved to disk.", { chatId, messageCount: persistable.messages.length });
+    } catch (error: unknown) {
+      const message: string = error instanceof Error ? error.message : String(error);
+      this._logger.warn("Failed to save session to disk, continuing without persistence.", { chatId, error: message });
+    }
+  }
+
+  private async _loadSessionAsync(chatId: string): Promise<IPersistedSession | null> {
+    const filePath: string = getSessionFilePath(chatId);
+
+    try {
+      const content: string = await fs.readFile(filePath, "utf-8");
+      const parsed: IPersistedSession = JSON.parse(content);
+
+      if (!Array.isArray(parsed.messages)) {
+        this._logger.warn("Session file has invalid messages array, ignoring.", { chatId });
+        return null;
+      }
+
+      return parsed;
+    } catch (error: unknown) {
+      if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      const message: string = error instanceof Error ? error.message : String(error);
+      this._logger.warn("Failed to load session from disk, starting fresh.", { chatId, error: message });
+      return null;
+    }
+  }
+
+  //#endregion Private methods
 }
 
 //#endregion MainAgent

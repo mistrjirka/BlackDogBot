@@ -1,6 +1,8 @@
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
 import { LoggerService } from "./logger.service.js";
 import { AiProviderService } from "./ai-provider.service.js";
+import { EmbeddingService } from "./embedding.service.js";
+import { VectorStoreService } from "./vector-store.service.js";
 import { generateId } from "../utils/id.js";
 import type { ICronMessageHistory } from "../shared/types/index.js";
 
@@ -10,6 +12,8 @@ const MAX_KEEP_MESSAGES: number = 3;
 const CONTEXT_THRESHOLD_PERCENTAGE: number = 0.15;
 const APPROX_CONTEXT_SIZE_CHARS: number = 128_000 * 4;
 const MAX_SUMMARY_CHARS: number = Math.floor(APPROX_CONTEXT_SIZE_CHARS * CONTEXT_THRESHOLD_PERCENTAGE);
+const VECTOR_TABLE_NAME: string = "cron-messages";
+const SIMILARITY_SEARCH_LIMIT: number = 5;
 
 //#endregion Constants
 
@@ -20,6 +24,13 @@ export interface ICronHistoryResult {
   summary: string | null;
   summaryGeneratedAt: string | null;
   totalMessageCount: number;
+}
+
+export interface ISimilarMessage {
+  content: string;
+  sentAt: string;
+  score: number;
+  taskId: string;
 }
 
 //#endregion Interfaces
@@ -91,6 +102,75 @@ export class CronMessageHistoryService {
     }
 
     return messageId;
+  }
+
+  public async recordToVectorStoreAsync(taskId: string, content: string): Promise<void> {
+    try {
+      const embeddingService: EmbeddingService = EmbeddingService.getInstance();
+      const vectorStore: VectorStoreService = VectorStoreService.getInstance();
+
+      const embedding: number[] = await embeddingService.embedAsync(content);
+      const now: string = new Date().toISOString();
+
+      await vectorStore.addAsync(
+        [
+          {
+            id: generateId(),
+            content,
+            collection: taskId,
+            vector: embedding,
+            metadata: JSON.stringify({ sentAt: now, taskId }),
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        VECTOR_TABLE_NAME,
+      );
+
+      this._logger.debug("Recorded cron message to vector store", { taskId });
+    } catch (error: unknown) {
+      const message: string = error instanceof Error ? error.message : String(error);
+      this._logger.warn("Failed to record cron message to vector store, continuing without vector dedup.", { taskId, error: message });
+    }
+  }
+
+  public async getSimilarMessagesAsync(message: string): Promise<ISimilarMessage[]> {
+    const embeddingService: EmbeddingService = EmbeddingService.getInstance();
+
+    if (!embeddingService.isInitialized()) {
+      throw new Error(
+        "Embeddings not configured. Cron message dedup requires an embedding provider. " +
+          "Set 'embeddingProvider' in config (e.g. 'local' or 'openrouter').",
+      );
+    }
+
+    const vectorStore: VectorStoreService = VectorStoreService.getInstance();
+
+    if (!vectorStore.isInitialized()) {
+      throw new Error(
+        "Vector store not initialized. Cron message dedup requires the vector store to be initialized.",
+      );
+    }
+
+    const embedding: number[] = await embeddingService.embedAsync(message);
+    const results = await vectorStore.searchAsync(embedding, SIMILARITY_SEARCH_LIMIT, undefined, VECTOR_TABLE_NAME);
+
+    return results.map((result) => {
+      let metadata: { sentAt?: string; taskId?: string } = {};
+
+      try {
+        metadata = JSON.parse(result.metadata);
+      } catch {
+        // Ignore parse errors
+      }
+
+      return {
+        content: result.content,
+        sentAt: metadata.sentAt ?? "",
+        score: result.score,
+        taskId: metadata.taskId ?? result.collection,
+      };
+    });
   }
 
   //#endregion Public methods

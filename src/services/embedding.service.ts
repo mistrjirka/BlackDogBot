@@ -90,6 +90,10 @@ export class EmbeddingService {
     return EmbeddingService._instance;
   }
 
+  public isInitialized(): boolean {
+    return this._initialized;
+  }
+
   public async initializeAsync(
     modelPath?: string,
     dtype?: EmbeddingDtype,

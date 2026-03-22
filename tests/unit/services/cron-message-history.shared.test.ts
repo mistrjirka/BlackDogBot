@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CronMessageHistoryService } from "../../../src/services/cron-message-history.service.js";
+import { EmbeddingService } from "../../../src/services/embedding.service.js";
+import { VectorStoreService } from "../../../src/services/vector-store.service.js";
 
 describe("CronMessageHistoryService - Shared History", () => {
   let service: CronMessageHistoryService;
@@ -8,6 +10,7 @@ describe("CronMessageHistoryService - Shared History", () => {
     // Initialize service and reset shared history before each test
     service = CronMessageHistoryService.getInstance();
     (CronMessageHistoryService as any)._sharedHistory = [];
+    vi.restoreAllMocks();
     vi.clearAllMocks();
   });
 
@@ -138,5 +141,110 @@ describe("CronMessageHistoryService - Shared History", () => {
       expect(result.messages[0].messageId).toBeTruthy();
       expect(new Date(result.messages[0].sentAt)).toBeInstanceOf(Date);
     }
+  });
+
+  it("recordToVectorStoreAsync writes embedded message to vector table", async () => {
+    const embeddingMock = {
+      embedAsync: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+    } as unknown as EmbeddingService;
+    const vectorStoreMock = {
+      addAsync: vi.fn().mockResolvedValue(undefined),
+    } as unknown as VectorStoreService;
+
+    vi.spyOn(EmbeddingService, "getInstance").mockReturnValue(embeddingMock);
+    vi.spyOn(VectorStoreService, "getInstance").mockReturnValue(vectorStoreMock);
+
+    await expect(service.recordToVectorStoreAsync("task-123", "hello world")).resolves.not.toThrow();
+
+    expect((embeddingMock as any).embedAsync).toHaveBeenCalledWith("hello world");
+    expect((vectorStoreMock as any).addAsync).toHaveBeenCalledOnce();
+    expect((vectorStoreMock as any).addAsync.mock.calls[0][1]).toBe("cron-messages");
+  });
+
+  it("recordToVectorStoreAsync swallows storage errors", async () => {
+    const embeddingMock = {
+      embedAsync: vi.fn().mockRejectedValue(new Error("embedding failed")),
+    } as unknown as EmbeddingService;
+
+    vi.spyOn(EmbeddingService, "getInstance").mockReturnValue(embeddingMock);
+
+    await expect(service.recordToVectorStoreAsync("task-123", "hello world")).resolves.not.toThrow();
+  });
+
+  it("getSimilarMessagesAsync throws when embeddings are not initialized", async () => {
+    const embeddingMock = {
+      isInitialized: vi.fn().mockReturnValue(false),
+    } as unknown as EmbeddingService;
+
+    vi.spyOn(EmbeddingService, "getInstance").mockReturnValue(embeddingMock);
+
+    await expect(service.getSimilarMessagesAsync("candidate message")).rejects.toThrow("Embeddings not configured");
+  });
+
+  it("getSimilarMessagesAsync throws when vector store is not initialized", async () => {
+    const embeddingMock = {
+      isInitialized: vi.fn().mockReturnValue(true),
+      embedAsync: vi.fn().mockResolvedValue([0.1, 0.2]),
+    } as unknown as EmbeddingService;
+    const vectorStoreMock = {
+      isInitialized: vi.fn().mockReturnValue(false),
+    } as unknown as VectorStoreService;
+
+    vi.spyOn(EmbeddingService, "getInstance").mockReturnValue(embeddingMock);
+    vi.spyOn(VectorStoreService, "getInstance").mockReturnValue(vectorStoreMock);
+
+    await expect(service.getSimilarMessagesAsync("candidate message")).rejects.toThrow("Vector store not initialized");
+  });
+
+  it("getSimilarMessagesAsync returns mapped similarity results", async () => {
+    const embeddingMock = {
+      isInitialized: vi.fn().mockReturnValue(true),
+      embedAsync: vi.fn().mockResolvedValue([0.1, 0.2]),
+    } as unknown as EmbeddingService;
+    const vectorStoreMock = {
+      isInitialized: vi.fn().mockReturnValue(true),
+      searchAsync: vi.fn().mockResolvedValue([
+        {
+          id: "a",
+          content: "first",
+          collection: "task-a",
+          metadata: JSON.stringify({ sentAt: "2026-01-01T00:00:00.000Z", taskId: "task-a" }),
+          score: 0.95,
+        },
+        {
+          id: "b",
+          content: "second",
+          collection: "task-b",
+          metadata: "{bad-json",
+          score: 0.87,
+        },
+      ]),
+    } as unknown as VectorStoreService;
+
+    vi.spyOn(EmbeddingService, "getInstance").mockReturnValue(embeddingMock);
+    vi.spyOn(VectorStoreService, "getInstance").mockReturnValue(vectorStoreMock);
+
+    const results = await service.getSimilarMessagesAsync("candidate message");
+
+    expect((vectorStoreMock as any).searchAsync).toHaveBeenCalledWith(
+      [0.1, 0.2],
+      5,
+      undefined,
+      "cron-messages",
+    );
+    expect(results).toEqual([
+      {
+        content: "first",
+        sentAt: "2026-01-01T00:00:00.000Z",
+        score: 0.95,
+        taskId: "task-a",
+      },
+      {
+        content: "second",
+        sentAt: "",
+        score: 0.87,
+        taskId: "task-b",
+      },
+    ]);
   });
 });

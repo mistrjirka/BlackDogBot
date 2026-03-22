@@ -30,10 +30,10 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Args: message (string, required).",
 
   get_previous_message:
-    "Get previous messages sent by this cron task in earlier runs. " +
-    "Returns the last 3 messages verbatim (with timestamps) plus a summary of older messages. " +
+    "Get previously sent messages ranked by similarity to your proposed message. " +
+    "Returns the top 5 most similar past messages (with timestamps and similarity scores). " +
     "CRITICAL: You MUST call this BEFORE send_message to avoid sending duplicate or repetitive content. " +
-    "Args: none.",
+    "Args: message (string, required — the message you plan to send).",
 
   read_file:
     "Read the contents of a file. Default location is the workspace (~/.betterclaw/workspace/). " +

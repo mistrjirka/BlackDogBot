@@ -8,7 +8,7 @@ import { SchedulerService } from "./scheduler.service.js";
 import { PromptService } from "./prompt.service.js";
 import { MainAgent } from "../agent/main-agent.js";
 import { McpService } from "./mcp.service.js";
-import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
+import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, getSessionsDir, ensureDirectoryExistsAsync } from "../utils/paths.js";
 import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
@@ -99,6 +99,11 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
   // 9. Wipe logs
   await _safeStepAsync("Wipe logs", errors, async (): Promise<void> => {
     await _wipeDirAsync(getLogsDir());
+  });
+
+  // 9b. Wipe chat sessions
+  await _safeStepAsync("Wipe chat sessions", errors, async (): Promise<void> => {
+    await _wipeDirAsync(getSessionsDir());
   });
 
   // 10. Wipe user databases
