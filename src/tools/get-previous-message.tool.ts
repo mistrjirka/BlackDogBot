@@ -6,7 +6,7 @@ import type { IExecutionContext } from "../shared/types/index.js";
 
 const TOOL_DESCRIPTION: string =
   "Get previously sent messages ranked by similarity to your proposed message. " +
-  "IMPORTANT: You MUST call this tool before send_message to see what other crons have sent and avoid duplicate or repetitive messages. " +
+  "Use this to inspect what other crons have sent and avoid duplicate or repetitive messages. " +
   "Pass the message you intend to send as the `message` parameter — the tool finds the most similar past messages using embedding similarity search.";
 
 function buildPreview(message: string, maxLength: number = 120): string {

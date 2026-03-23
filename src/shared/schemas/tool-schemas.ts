@@ -15,20 +15,6 @@ export const thinkToolOutputSchema = z.object({
 
 //#endregion Think Tool
 
-//#region Done Tool
-
-export const doneToolInputSchema = z.object({
-  summary: z.string()
-    .min(1)
-    .describe("Summary of what was accomplished"),
-});
-
-export const doneToolOutputSchema = z.object({
-  finished: z.boolean(),
-});
-
-//#endregion Done Tool
-
 //#region Run Command Tool
 
 export const runCmdToolInputSchema = z.object({
@@ -627,7 +613,7 @@ export const addCronToolInputSchema = z.object({
     .min(1)
     .array()
     .min(1)
-    .describe("Tool names available to the task agent (required, at least one). If send_message is included, get_previous_message is auto-injected at runtime for deduplication."),
+    .describe("Tool names available to the task agent (required, at least one). send_message performs internal deduplication against previous cron messages."),
   scheduleType: z.enum(["once", "interval", "cron"])
     .describe("Schedule type (required): once, interval, or cron"),
   scheduleRunAt: z.string()
@@ -732,7 +718,7 @@ export const editCronToolInputSchema = z.object({
     .array()
     .min(1)
     .optional()
-    .describe("Updated list of available tool names. If send_message is included, get_previous_message is auto-injected at runtime for deduplication."),
+    .describe("Updated list of available tool names. send_message performs internal deduplication against previous cron messages."),
   scheduleType: z.enum(["once", "interval", "cron"])
     .optional()
     .describe("Optional schedule type hint. Schedule type is immutable and cannot be changed by edit_cron."),

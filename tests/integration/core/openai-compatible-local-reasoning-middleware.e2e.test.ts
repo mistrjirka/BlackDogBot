@@ -251,7 +251,7 @@ describe("OpenAI-compatible local reasoning middleware E2E", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
-  }, 120000);
+  }, 600000);
 });
 
 //#endregion Tests

@@ -36,27 +36,32 @@ export function createSendMessageToolWithHistory(
   return tool({
     description:
       "Send a message to the user. Use this to communicate progress, ask clarifying questions, or deliver results. " +
-      "IMPORTANT: Call get_previous_message before this tool. The system enforces this to prevent duplicate messages across crons. " +
-      "After reviewing previous messages, do NOT send a message with the same meaning (even if wording differs) unless the user explicitly asked you to repeat or restate it.",
+      "This tool performs automatic deduplication against previous cron messages and silently skips sending when the message does not add new information.",
     inputSchema: sendMessageToolInputSchema,
     execute: async ({
       message,
     }: {
       message: string;
     }): Promise<{ sent: boolean; messageId: string | null; error?: string }> => {
-      if (!context.toolCallHistory.includes("get_previous_message")) {
-        return { sent: false, messageId: null, error: "You must call get_previous_message first to see what previous messages were sent." };
-      }
       try {
+        const taskId: string | null = taskIdProvider();
+        const historyService: CronMessageHistoryService = CronMessageHistoryService.getInstance();
+
+        if (taskId) {
+          const novelty = await historyService.checkMessageNoveltyAsync(taskId, message);
+
+          if (!novelty.isNewInformation) {
+            context.toolCallHistory.push("send_message");
+
+            return { sent: true, messageId: null };
+          }
+        }
+
         const messageId: string | null = await sender(message);
 
         context.toolCallHistory.push("send_message");
 
-        const taskId: string | null = taskIdProvider();
-
         if (taskId && messageId) {
-          const historyService: CronMessageHistoryService = CronMessageHistoryService.getInstance();
-
           await historyService.recordMessageAsync(taskId, message);
           historyService.recordToVectorStoreAsync(taskId, message).catch(() => {
             // Fire-and-forget — vector store recording failure should not block the send

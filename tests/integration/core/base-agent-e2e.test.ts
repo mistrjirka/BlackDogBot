@@ -57,7 +57,7 @@ describe("BaseAgentBase E2E", () => {
 
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     aiProviderService.initialize(configService.getConfig().ai);
-  }, 120000);
+  }, 600000);
 
   afterAll(async () => {
     process.env.HOME = originalHome;
@@ -71,19 +71,19 @@ describe("BaseAgentBase E2E", () => {
 
     agent.initializeWithModel(
       model,
-      "You are a helpful assistant. When asked a question, you MUST call done with a non-empty text field that includes the numeric answer (e.g., '4'). Answer with just the number.",
+      "You are a helpful assistant. When asked a question, answer with just the number.",
       { think: thinkTool },
     );
 
     const result: IAgentResult = await agent.processMessageAsync(
-      "What is 2 + 2? Answer with just the number and call done.",
+      "What is 2 + 2? Answer with just the number.",
     );
 
     expect(result).toBeDefined();
     expect(typeof result.text).toBe("string");
     expect(result.text).toContain("4");
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
-  }, 120000);
+  }, 600000);
 
   it("should return stepsCount matching the number of agent steps", async () => {
     const model: LanguageModel = AiProviderService.getInstance().getModel();
@@ -91,18 +91,18 @@ describe("BaseAgentBase E2E", () => {
 
     agent.initializeWithModel(
       model,
-      "You are a helpful assistant. Always use the think tool before answering. Then call done.",
+      "You are a helpful assistant. Always use the think tool before answering.",
       { think: thinkTool },
     );
 
     const result: IAgentResult = await agent.processMessageAsync(
-      "Think about what 3 * 7 equals using the think tool, then call done.",
+      "Think about what 3 * 7 equals using the think tool.",
     );
 
     expect(result).toBeDefined();
     // At minimum: at least one step should be recorded
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
-  }, 120000);
+  }, 600000);
 });
 
 //#endregion Tests

@@ -68,7 +68,6 @@ const JOB_CREATION_TOOLS: Set<string> = new Set([
 
 const CORE_TOOL_NAMES: string[] = [
   "think",
-  "done",
   "run_cmd",
   "run_cmd_input",
   "get_cmd_status",

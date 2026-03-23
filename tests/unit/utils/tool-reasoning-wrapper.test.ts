@@ -44,7 +44,7 @@ function _buildOptions(messages: ModelMessage[]): ToolCallOptions {
 //#endregion Helpers
 
 describe("tool-reasoning-wrapper", () => {
-  it("should add optional reasoning to non-think/non-done tool schemas", () => {
+  it("should add optional reasoning to non-think tool schemas", () => {
     const tools: ToolSet = {
       run_cmd: tool({
         inputSchema: z.object({ command: z.string() }),
@@ -121,22 +121,4 @@ describe("tool-reasoning-wrapper", () => {
     expect(receivedInput).not.toHaveProperty("reasoning");
   });
 
-  it("should keep done exempt from reasoning enforcement", async () => {
-    const tools: ToolSet = {
-      done: tool({
-        inputSchema: z.object({ summary: z.string() }),
-        execute: async ({ summary }: { summary: string }): Promise<{ summary: string }> => ({ summary }),
-      }),
-    };
-
-    const wrapped: ToolSet = wrapToolSetWithReasoning(tools);
-    const execute = wrapped.done.execute!;
-
-    const result = await Promise.resolve(execute(
-      { summary: "Complete." },
-      _buildOptions(_messagesAtReasoningThreshold()),
-    ));
-
-    expect(result).toEqual({ summary: "Complete." });
-  });
 });

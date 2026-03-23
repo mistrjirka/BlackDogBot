@@ -138,7 +138,7 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
       {
         systemPrompt: `You are a sentiment analysis expert. Given text, analyze its sentiment and extract keywords.
 
-        You MUST call the 'done' tool with a JSON object containing:
+        Return a JSON object containing:
         - sentiment: one of "positive", "negative", or "neutral"
         - confidence: a number between 0 and 1 indicating your confidence
         - keywords: an array of important keywords from the text
@@ -246,7 +246,7 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
     console.log("✓ Agent node executed successfully");
     console.log("✓ Output validated against dynamic schema");
     console.log("==============================\n");
-  }, 180000);
+  }, 600000);
 
   it("should handle blueprint-compatible schema and validate output", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
@@ -281,7 +281,7 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
       {
         systemPrompt: `You are a data analyzer. Given data, produce a structured analysis.
 
-        You MUST call the 'done' tool with:
+        Return a JSON object with:
         - summary: a brief text summary
         - score: number 0-100
         - tags: array of short string labels`,
@@ -317,7 +317,7 @@ describe("Dynamic schema generation and agent node execution (e2e)", () => {
     expect(output.summary).toBeDefined();
     expect(typeof output.score).toBe("number");
     expect(Array.isArray(output.tags)).toBe(true);
-  }, 180000);
+  }, 600000);
 });
 
 //#endregion Tests

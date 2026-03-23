@@ -211,7 +211,6 @@ export class CronAgent extends BaseAgentBase {
       undefined,
       undefined,
       undefined,
-      undefined,
       (): boolean => pendingRebuild !== null,
     );
 
@@ -240,7 +239,6 @@ export class CronAgent extends BaseAgentBase {
           instructions,
           tools,
           onStepAsync,
-          undefined,
           undefined,
           undefined,
           undefined,
@@ -359,18 +357,6 @@ export class CronAgent extends BaseAgentBase {
       } else {
         effectiveToolNames.push(name);
       }
-    }
-
-    // If send_message is available, force-include get_previous_message so the
-    // model can satisfy the send-message prerequisite consistently.
-    if (
-      effectiveToolNames.includes("send_message") &&
-      !effectiveToolNames.includes("get_previous_message")
-    ) {
-      effectiveToolNames.push("get_previous_message");
-      this._logger.warn(
-        "Auto-injecting get_previous_message for cron task because send_message is enabled.",
-      );
     }
 
     for (const toolName of effectiveToolNames) {

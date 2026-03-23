@@ -65,7 +65,7 @@ describe("llm-retry E2E — real LLM calls", () => {
     expect(result.text).toBeDefined();
     expect(typeof result.text).toBe("string");
     expect(result.text.toLowerCase()).toContain("ok");
-  }, 60000);
+  }, 600000);
 
   it("should honour the system prompt when forwarding to the real LLM", async () => {
     // Verify that the optional `system` field is correctly forwarded to generateText.
@@ -78,7 +78,7 @@ describe("llm-retry E2E — real LLM calls", () => {
     });
 
     expect(result.text).toContain("7");
-  }, 60000);
+  }, 600000);
 
   it("should resolve and expose strict structured output mode", async () => {
     const aiProvider = AiProviderService.getInstance();
@@ -87,7 +87,7 @@ describe("llm-retry E2E — real LLM calls", () => {
     expect(["native_json_schema", "tool_emulated", "tool_auto"]).toContain(mode);
     expect(typeof aiProvider.getSupportsStructuredOutputs()).toBe("boolean");
     expect(typeof aiProvider.getSupportsToolCalling()).toBe("boolean");
-  }, 60000);
+  }, 600000);
 
   it("should generate structured object with configured strict mode", async () => {
     const model: LanguageModel = AiProviderService.getInstance().getDefaultModel();
@@ -105,7 +105,7 @@ describe("llm-retry E2E — real LLM calls", () => {
     expect(result.object.name.toLowerCase()).toContain("jane");
     expect(result.object.age).toBeGreaterThan(0);
     expect(result.object.city.length).toBeGreaterThan(0);
-  }, 90000);
+  }, 600000);
 
   it("should honor strict tool_emulated mode without native fallback", async () => {
     const configService: ConfigService = ConfigService.getInstance();
@@ -192,7 +192,7 @@ describe("llm-retry E2E — real LLM calls", () => {
       globalThis.fetch = originalFetch;
       await aiProvider.initializeAsync(originalAiConfig);
     }
-  }, 120000);
+  }, 600000);
 
   it("should honor strict tool_auto mode with best-effort tool call", async () => {
     const configService: ConfigService = ConfigService.getInstance();
@@ -233,7 +233,7 @@ describe("llm-retry E2E — real LLM calls", () => {
     } finally {
       await aiProvider.initializeAsync(originalAiConfig);
     }
-  }, 120000);
+  }, 600000);
 });
 
 //#endregion Tests

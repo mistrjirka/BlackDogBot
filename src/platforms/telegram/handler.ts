@@ -1,4 +1,4 @@
-import { Context } from "grammy";
+import { Bot, Context } from "grammy";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import { dirname } from "path";
@@ -66,7 +66,6 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
   list_crons: "taskId",
   run_cron: "taskId",
   think: "thought",
-  done: "summary",
 };
 
 interface IPendingTelegramMessage {
@@ -98,6 +97,7 @@ export class TelegramHandler {
   private _knownChatIds: Set<string>;
   private _chatIdsFilePath: string;
   private _config: ITelegramConfig | null = null;
+  private _bot: Bot | null;
   private _pendingImagesByChat: Map<string, IPendingTelegramImage>;
 
   //#endregion Data Members
@@ -114,6 +114,7 @@ export class TelegramHandler {
     this._inFlightMessageIdByChat = new Map<string, number>();
     this._knownChatIds = new Set<string>();
     this._pendingImagesByChat = new Map<string, IPendingTelegramImage>();
+    this._bot = null;
 
     this._chatIdsFilePath = getTelegramChatsFilePath();
   }
@@ -141,6 +142,10 @@ export class TelegramHandler {
       await this._saveKnownChatIdsAsync();
       this._logger.info("Telegram allowedUsers set in config, using that as authorized users");
     }
+  }
+
+  public setBot(bot: Bot): void {
+    this._bot = bot;
   }
 
   public getKnownChatIds(): string[] {
@@ -693,12 +698,28 @@ export class TelegramHandler {
       return;
     }
 
+    let progressMsgId: number | null = null;
+    const stepLogs: string[] = [];
+
+    const buildProgressText = (status: string): string => {
+      if (stepLogs.length === 0) {
+        return status;
+      }
+
+      const escapedStepLogs: string = stepLogs
+        .map((line: string): string => _escapeTelegramHtml(line))
+        .join("\n");
+
+      return `${status}\n\n<blockquote expandable>${escapedStepLogs}</blockquote>`;
+    };
+
     const hasAnyImageAttachment: boolean = queuedMessages.some(
       (queuedMessage: IPendingTelegramMessage): boolean => queuedMessage.imageAttachments.length > 0,
     );
     const mergedText: string = hasAnyImageAttachment
       ? ""
       : queuedMessages.map((queuedMessage: IPendingTelegramMessage): string => queuedMessage.text).join("\n");
+    const bot: Bot | null = this._bot;
 
     try {
       this._logger.info("Processing merged queued Telegram messages", {
@@ -709,7 +730,39 @@ export class TelegramHandler {
       const sender = this._messagingService.createSenderForChat("telegram", chatId);
       const photoSender = this._messagingService.createPhotoSenderForChat("telegram", chatId);
 
-      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, undefined, "telegram");
+      if (bot) {
+        try {
+          const progressMessage = await bot.api.sendMessage(chatId, "⚙️ Working...", { parse_mode: "HTML" });
+          progressMsgId = progressMessage.message_id;
+        } catch (progressError: unknown) {
+          this._logger.warn("Failed to send queued Telegram progress message", {
+            chatId,
+            error: progressError instanceof Error ? progressError.message : String(progressError),
+          });
+        }
+      }
+
+      const onStepAsync: OnStepCallback | undefined =
+        progressMsgId !== null
+          ? async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
+              if (toolCalls.length > 0) {
+                const formatted: string = toolCalls
+                  .map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input))
+                  .join(", ");
+                stepLogs.push(`Step ${stepNumber}: ${formatted}`);
+              }
+
+              try {
+                await bot!.api.editMessageText(chatId, progressMsgId!, buildProgressText("⚙️ Working..."), {
+                  parse_mode: "HTML",
+                });
+              } catch {
+                // Ignore transient progress edit failures.
+              }
+            }
+          : undefined;
+
+      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
 
       await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
 
@@ -718,6 +771,20 @@ export class TelegramHandler {
 
         if (result.text) {
           await sender(result.text);
+        }
+
+        if (progressMsgId !== null) {
+          try {
+            const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
+            await bot!.api.editMessageText(
+              chatId,
+              progressMsgId,
+              buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`),
+              { parse_mode: "HTML" },
+            );
+          } catch {
+            // Ignore done-state edit failures.
+          }
         }
 
         this._logger.info("Merged queued Telegram messages processed", {
@@ -729,6 +796,7 @@ export class TelegramHandler {
       }
 
       let processedCount: number = 0;
+      let totalStepsCount: number = 0;
       for (const queuedMessage of queuedMessages) {
         const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(
           chatId,
@@ -741,6 +809,21 @@ export class TelegramHandler {
         }
 
         processedCount++;
+        totalStepsCount += result.stepsCount;
+      }
+
+      if (progressMsgId !== null) {
+        try {
+          const stepWord: string = totalStepsCount === 1 ? "step" : "steps";
+          await bot!.api.editMessageText(
+            chatId,
+            progressMsgId,
+            buildProgressText(`✅ Done (${totalStepsCount} ${stepWord})`),
+            { parse_mode: "HTML" },
+          );
+        } catch {
+          // Ignore done-state edit failures.
+        }
       }
 
       this._logger.info("Merged queued Telegram messages processed", {
@@ -761,6 +844,16 @@ export class TelegramHandler {
         model: errorDetails.model,
         retryable: errorDetails.isRetryable,
       });
+
+      if (progressMsgId !== null) {
+        try {
+          await bot!.api.editMessageText(chatId, progressMsgId, buildProgressText("❌ Error"), {
+            parse_mode: "HTML",
+          });
+        } catch {
+          // Ignore error-state edit failures.
+        }
+      }
     }
   }
 

@@ -35,7 +35,7 @@ export interface ICronTaskExecutorDeps {
  * - The `send_message` tool (toolMessageSender) broadcasts to ALL notification channels.
  *   When the agent explicitly calls send_message, the message goes through unconditionally.
  *
- * - The agent's final text output (result.text from the done tool summary)
+ * - The agent's final text output (result.text from the model response)
  *   is forwarded to notification channels ONLY when `task.notifyUser` is true.
  *
  * - Logs and UI broadcast always happen regardless of notifyUser.

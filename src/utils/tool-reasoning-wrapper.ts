@@ -6,7 +6,7 @@ import { LoggerService } from "../services/logger.service.js";
 
 //#region Constants
 
-const _ReasoningExemptToolNames: Set<string> = new Set(["think", "done"]);
+const _ReasoningExemptToolNames: Set<string> = new Set(["think"]);
 
 const _ReasoningDescription: string =
   "Optional concise reasoning for this tool call. " +
@@ -26,7 +26,7 @@ export interface IToolWrapperOptions {
 //#region Public functions
 
 /**
- * Wraps a ToolSet so every non-think/non-done tool:
+ * Wraps a ToolSet so every non-think tool:
  * - accepts an optional `reasoning` input field in schema, and
  * - enforces non-empty `reasoning` at runtime when reasoning policy requires it.
  */

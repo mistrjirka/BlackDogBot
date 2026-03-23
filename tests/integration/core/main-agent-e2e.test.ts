@@ -116,7 +116,7 @@ describe("MainAgent E2E", () => {
       },
       "telegram",
     );
-  }, 300000);
+  }, 600000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
@@ -132,27 +132,27 @@ describe("MainAgent E2E", () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
     const result: IAgentResult = await mainAgent.processMessageForChatAsync(
       "test-chat",
-      "Say exactly 'hello world' and nothing else. Then call the done tool.",
+      "Say exactly 'hello world' and nothing else.",
     );
 
   expect(result).toBeDefined();
   expect(typeof result.text).toBe("string");
   expect(result.text.length).toBeGreaterThan(0);
   expect(result.stepsCount).toBeGreaterThanOrEqual(1);
-  }, 60000);
+  }, 600000);
 
   it("should use the think tool when asked to reason", async () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
     const result: IAgentResult = await mainAgent.processMessageForChatAsync(
       "test-chat",
-      "Think about what 15 * 17 equals using the think tool first, then tell me the answer and call done.",
+      "Think about what 15 * 17 equals using the think tool first, then tell me the answer.",
     );
 
     expect(result).toBeDefined();
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
     expect(result.text.length).toBeGreaterThan(0);
     expect(result.text).toContain("255");
-  }, 60000);
+  }, 600000);
 
   it("should create table and then use write_table tool with temp database", async () => {
     stepTraces.length = 0;
@@ -194,7 +194,7 @@ describe("MainAgent E2E", () => {
     const testDbInfo = dbs.find((d) => d.name === "test_db");
     expect(testDbInfo).toBeDefined();
     expect(testDbInfo!.path.startsWith(tempDir)).toBe(true);
-  }, 180000);
+  }, 600000);
 });
 
 //#endregion Tests

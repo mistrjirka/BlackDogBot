@@ -1,4 +1,4 @@
-import { ToolLoopAgent, ToolSet, hasToolCall, stepCountIs, LanguageModel } from "ai";
+import { ToolLoopAgent, ToolSet, stepCountIs, LanguageModel } from "ai";
 import { ISkill } from "../shared/types/index.js";
 import { PROMPT_SKILL_SETUP } from "../shared/constants.js";
 import { PromptService } from "../services/prompt.service.js";
@@ -7,7 +7,7 @@ import * as skillState from "../helpers/skill-state.js";
 import { LoggerService } from "../services/logger.service.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
-import { thinkTool, doneTool, runCmdTool } from "../tools/index.js";
+import { thinkTool, runCmdTool } from "../tools/index.js";
 
 //#region Interfaces
 
@@ -39,7 +39,6 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
 
     const tools: ToolSet = {
       think: thinkTool,
-      done: doneTool,
       run_cmd: runCmdTool,
     };
 
@@ -51,7 +50,7 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
       model,
       instructions: `${setupPrompt}\n\n${context}`,
       tools: wrappedTools,
-      stopWhen: [hasToolCall("done"), stepCountIs(10)],
+      stopWhen: [stepCountIs(10)],
       experimental_repairToolCall: repairToolCallJsonAsync,
     });
 

@@ -27,13 +27,21 @@ async function execTool(
 describe("send_message tool with validation", () => {
   let context: { toolCallHistory: string[] };
   let mockSender: ReturnType<typeof vi.fn>;
-  let mockHistoryService: { recordMessageAsync: ReturnType<typeof vi.fn>; recordToVectorStoreAsync: ReturnType<typeof vi.fn> };
+  let mockHistoryService: {
+    checkMessageNoveltyAsync: ReturnType<typeof vi.fn>;
+    recordMessageAsync: ReturnType<typeof vi.fn>;
+    recordToVectorStoreAsync: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     context = { toolCallHistory: [] };
     mockSender = vi.fn().mockResolvedValue("msg-123");
     mockHistoryService = {
+      checkMessageNoveltyAsync: vi.fn().mockResolvedValue({
+        isNewInformation: true,
+        similarCount: 2,
+      }),
       recordMessageAsync: vi.fn(),
       recordToVectorStoreAsync: vi.fn().mockResolvedValue(undefined),
     };
@@ -42,20 +50,7 @@ describe("send_message tool with validation", () => {
     );
   });
 
-  it("returns error when get_previous_message not called first", async () => {
-    const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
-
-    const result = await execTool(tool, "Hello");
-
-    expect(result.sent).toBe(false);
-    expect(result.messageId).toBeNull();
-    expect(result.error).toContain("get_previous_message");
-    expect(context.toolCallHistory).not.toContain("send_message");
-  });
-
-  it("allows send after get_previous_message is called", async () => {
-    context.toolCallHistory.push("get_previous_message");
-
+  it("allows send without requiring get_previous_message", async () => {
     const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
 
     const result = await execTool(tool, "Hello");
@@ -65,33 +60,43 @@ describe("send_message tool with validation", () => {
     expect(context.toolCallHistory).toContain("send_message");
   });
 
-  it("allows send if get_previous_message was called earlier in execution", async () => {
-    context.toolCallHistory.push("get_previous_message");
-    context.toolCallHistory.push("other_tool");
-
+  it("checks novelty before sending", async () => {
     const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
 
-    const result = await execTool(tool, "Hello");
+    await execTool(tool, "Hello");
 
-    expect(result.sent).toBe(true);
+    expect(mockHistoryService.checkMessageNoveltyAsync).toHaveBeenCalledWith("task-123", "Hello");
   });
 
-  it("returns error even if send_message was already called in this execution", async () => {
-    // Simulate that get_previous_message is never called, but send_message might have been attempted
-    context.toolCallHistory.push("send_message"); // This should not bypass validation for new sends
-    context.toolCallHistory.push("think");
+  it("silently skips duplicate messages", async () => {
+    mockHistoryService.checkMessageNoveltyAsync.mockResolvedValue({
+      isNewInformation: false,
+      similarCount: 10,
+    });
 
     const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
+
+    const result = await execTool(tool, "Duplicate update");
+
+    expect(result.sent).toBe(true);
+    expect(result.messageId).toBeNull();
+    expect(mockSender).not.toHaveBeenCalled();
+    expect(mockHistoryService.recordMessageAsync).not.toHaveBeenCalled();
+    expect(mockHistoryService.recordToVectorStoreAsync).not.toHaveBeenCalled();
+    expect(context.toolCallHistory).toContain("send_message");
+  });
+
+  it("skips novelty check when task id is unavailable", async () => {
+    const tool = createSendMessageToolWithHistory(mockSender, () => null, context);
 
     const result = await execTool(tool, "Hello again");
 
-    expect(result.sent).toBe(false);
-    expect(result.error).toContain("get_previous_message");
+    expect(result.sent).toBe(true);
+    expect(result.messageId).toBe("msg-123");
+    expect(mockHistoryService.checkMessageNoveltyAsync).not.toHaveBeenCalled();
   });
 
   it("tracks send_message in tool call history on success", async () => {
-    context.toolCallHistory.push("get_previous_message");
-
     const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
 
     await execTool(tool, "Hello");
@@ -100,8 +105,6 @@ describe("send_message tool with validation", () => {
   });
 
   it("records message in history when send succeeds", async () => {
-    context.toolCallHistory.push("get_previous_message");
-
     const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
 
     await execTool(tool, "Test message");
@@ -113,8 +116,6 @@ describe("send_message tool with validation", () => {
   });
 
   it("records message to vector store when send succeeds", async () => {
-    context.toolCallHistory.push("get_previous_message");
-
     const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
 
     await execTool(tool, "Test message");
@@ -126,7 +127,6 @@ describe("send_message tool with validation", () => {
   });
 
   it("send succeeds even if vector store recording fails", async () => {
-    context.toolCallHistory.push("get_previous_message");
     mockHistoryService.recordToVectorStoreAsync.mockRejectedValue(new Error("Vector store unavailable"));
 
     const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
@@ -135,15 +135,5 @@ describe("send_message tool with validation", () => {
 
     expect(result.sent).toBe(true);
     expect(result.messageId).toBe("msg-123");
-  });
-
-  it("returns error with helpful message", async () => {
-    const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
-
-    const result = await execTool(tool, "Hello");
-
-    expect(result.error).toBe(
-      "You must call get_previous_message first to see what previous messages were sent."
-    );
   });
 });

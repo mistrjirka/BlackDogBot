@@ -2875,10 +2875,6 @@ export class AiProviderService {
           continue;
         }
 
-        if (name === "done") {
-          continue;
-        }
-
         hasRelevantToolCalls = true;
 
         if (name === "think") {

@@ -2,13 +2,10 @@ import {
   ToolLoopAgent,
   ToolSet,
   LanguageModel,
-  hasToolCall,
   stepCountIs,
   type ModelMessage,
-  type Tool,
 } from "ai";
 
-import { doneTool } from "../tools/done.tool.js";
 import { LoggerService } from "../services/logger.service.js";
 import { StatusService } from "../services/status.service.js";
 import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
@@ -289,41 +286,6 @@ export abstract class BaseAgentBase {
 
         let text: string = result.text ?? "";
 
-        if (text.trim().length === 0) {
-          const steps = result.steps;
-
-          if (Array.isArray(steps)) {
-            for (let i: number = steps.length - 1; i >= 0; i--) {
-              const step = steps[i] as { toolCalls?: unknown };
-              const toolCalls = step.toolCalls;
-
-              if (Array.isArray(toolCalls)) {
-                for (let j: number = toolCalls.length - 1; j >= 0; j--) {
-                  const toolCall = toolCalls[j] as { toolName?: unknown; name?: unknown; args?: unknown; input?: unknown };
-                  const toolName: string | undefined =
-                    typeof toolCall.toolName === "string"
-                      ? toolCall.toolName
-                      : (typeof toolCall.name === "string" ? toolCall.name : undefined);
-
-                  if (toolName === "done") {
-                    const args = (toolCall.args ?? toolCall.input) as { summary?: unknown } | undefined;
-                    const summary: string = typeof args?.summary === "string" ? args.summary : "";
-
-                    if (summary.trim().length > 0) {
-                      text = summary;
-                      break;
-                    }
-                  }
-                }
-              }
-
-              if (text.trim().length > 0) {
-                break;
-              }
-            }
-          }
-        }
-
         // Track API-reported token usage
         const inputTokens = result.totalUsage?.inputTokens ?? result.usage?.inputTokens;
         if (inputTokens !== undefined) {
@@ -336,7 +298,7 @@ export abstract class BaseAgentBase {
         const stepsCount: number = result.steps?.length ?? 1;
 
         // External terminal conditions (e.g. create_table-triggered rebuild)
-        // may intentionally end the current run without a done summary.
+        // may intentionally end the current run without final output text.
         if (this._shouldTerminateRunCallback && this._shouldTerminateRunCallback()) {
           this._logger.info("Current run terminated by external condition");
           return { text, stepsCount };
@@ -386,7 +348,6 @@ export abstract class BaseAgentBase {
     instructions: string,
     tools: ToolSet,
     onStepAsync?: OnStepCallback,
-    customDoneTool?: Tool,
     getExtraTools?: () => ToolSet | null,
     extraTools?: ToolSet,
     getPausePromise?: () => Promise<void> | null,
@@ -405,7 +366,6 @@ export abstract class BaseAgentBase {
     const rawTools: ToolSet = {
       ...tools,
       ...(extraTools ?? {}),
-      done: customDoneTool ?? doneTool,
     };
 
     // Wrap tools with reasoning field augmentation and enforcement.
@@ -414,7 +374,7 @@ export abstract class BaseAgentBase {
     });
 
     /** Names of the base tools (always visible). */
-    const baseToolNames: string[] = Object.keys({ ...tools, done: customDoneTool ?? doneTool });
+    const baseToolNames: string[] = Object.keys(tools);
     /** Names of extra (mode-gated) tools — registered but hidden by default. */
     const extraToolNames: string[] = Object.keys(extraTools ?? {});
 
@@ -424,7 +384,6 @@ export abstract class BaseAgentBase {
       maxRetries: 0,
       tools: allTools,
       stopWhen: [
-        hasToolCall("done"),
         stepCountIs(maxSteps),
         (): boolean => {
           if (!shouldTerminateRun) {
@@ -492,40 +451,18 @@ export abstract class BaseAgentBase {
           }
         }
 
-        // Detect silent exit: if the previous step was the model producing text
-        // without calling any tools, force it to call done so the user gets a summary.
-        if (stepNumber > 0) {
-          const lastMsg: ModelMessage = messages[messages.length - 1];
-
-          if (lastMsg.role === "assistant" && Array.isArray(lastMsg.content)) {
-            const hasToolCalls: boolean = lastMsg.content.some(
-              (p: unknown) =>
-                typeof p === "object" && p !== null && "type" in p &&
-                (p as { type: string }).type === "tool-call",
-            );
-
-            if (!hasToolCalls) {
-              logger.warn("Model tried to stop without calling done — forcing done tool", { stepNumber });
-
-              return {
-                activeTools: ["done"] as (keyof typeof allTools)[],
-              };
-            }
-          }
-        }
-
         // Detect duplicate tool calls (loop prevention) early to break
         // repeated non-productive tool loops with a forced think step.
         const hasDuplicateToolLoop: boolean = getDuplicateToolCallDirective(stepNumber, messages);
 
         if (hasDuplicateToolLoop) {
-          logger.warn("Duplicate tool call pattern detected, restricting to think + done", {
+          logger.warn("Duplicate tool call pattern detected, restricting to think", {
             stepNumber,
             action: "restrict_tools",
           });
 
           return {
-            activeTools: ["think", "done"] as (keyof typeof allTools)[],
+            activeTools: ["think"] as (keyof typeof allTools)[],
           };
         }
 
@@ -536,18 +473,6 @@ export abstract class BaseAgentBase {
           logger.info("Agent paused, waiting for resume...");
           await pausePromise;
           logger.info("Agent resumed.");
-        }
-
-        // Force done tool on last step
-        if (stepNumber >= maxSteps - 1) {
-          logger.warn("Agent reached max steps, forcing done tool", {
-            stepNumber,
-            maxSteps,
-          });
-
-          return {
-            activeTools: ["done"] as (keyof typeof allTools)[],
-          };
         }
 
         // Token-based history compaction:

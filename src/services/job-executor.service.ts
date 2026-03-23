@@ -4,8 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
-import { ToolLoopAgent, ToolSet, LanguageModel, hasToolCall, stepCountIs, tool } from "ai";
-import { z } from "zod";
+import { ToolLoopAgent, ToolSet, LanguageModel, stepCountIs } from "ai";
 
 import {
   IJob,
@@ -55,6 +54,55 @@ import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 
 // Default timeout for HTTP requests in node execution (30 seconds)
 const DEFAULT_FETCH_TIMEOUT_MS: number = 30000;
+
+function extractJsonObjectFromText(text: string): Record<string, unknown> | null {
+  const trimmedText: string = text.trim();
+
+  if (trimmedText.length === 0) {
+    return null;
+  }
+
+  const candidates: string[] = [trimmedText];
+
+  const fencedMatch: RegExpMatchArray | null = trimmedText.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch && fencedMatch[1]) {
+    candidates.push(fencedMatch[1].trim());
+  }
+
+  const firstBraceIndex: number = trimmedText.indexOf("{");
+  const lastBraceIndex: number = trimmedText.lastIndexOf("}");
+  if (firstBraceIndex >= 0 && lastBraceIndex > firstBraceIndex) {
+    candidates.push(trimmedText.slice(firstBraceIndex, lastBraceIndex + 1));
+  }
+
+  for (const candidate of candidates) {
+    if (candidate.length === 0) {
+      continue;
+    }
+
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        const parsedObject: Record<string, unknown> = parsed as Record<string, unknown>;
+
+        if (
+          Object.keys(parsedObject).length === 1 &&
+          typeof parsedObject.result === "object" &&
+          parsedObject.result !== null &&
+          !Array.isArray(parsedObject.result)
+        ) {
+          return parsedObject.result as Record<string, unknown>;
+        }
+
+        return parsedObject;
+      }
+    } catch {
+      // Try next candidate.
+    }
+  }
+
+  return null;
+}
 
 /**
  * Fetch with timeout using AbortController.
@@ -846,7 +894,7 @@ export class JobExecutorService {
     const selectedTools: ToolSet = {};
 
     for (const toolName of config.selectedTools) {
-      if (toolName === 'done' || toolName === 'think') continue;
+      if (toolName === 'think') continue;
 
       if (toolPool[toolName]) {
         selectedTools[toolName] = toolPool[toolName];
@@ -860,34 +908,17 @@ export class JobExecutorService {
       selectedTools.think = thinkTool;
     }
 
-    // Add the done tool
-    // Create dynamic Zod schema from node's outputSchema for strong validation
-    const outputZodSchema: z.ZodType<Record<string, unknown>> = createOutputZodSchema(node.outputSchema);
-
-    const doneTool = tool({
-      description: "Call this when the task is complete. Return the final result as JSON matching the expected output schema.",
-      inputSchema: z.object({
-        result: outputZodSchema
-          .describe("The final output of this agent node. Must match the expected output schema."),
-      }),
-      execute: async (_input: { result: Record<string, unknown> }): Promise<{ finished: boolean }> => {
-        return { finished: true };
-      },
-    });
-
-    selectedTools.done = doneTool;
-
     // Build instructions with output schema if provided
     let outputSchemaInstructions: string = "";
 
     if (node.outputSchema) {
-      outputSchemaInstructions = `\n\n## Expected Output Schema\nYour output must match this JSON schema:\n\`\`\`json\n${JSON.stringify(node.outputSchema, null, 2)}\n\`\`\`\n\nMake sure your "done" tool call returns a result object that conforms to this schema.`;
+      outputSchemaInstructions = `\n\n## Expected Output Schema\nYour output must match this JSON schema:\n\`\`\`json\n${JSON.stringify(node.outputSchema, null, 2)}\n\`\`\``;
     }
 
     const currentDateTime: string = getCurrentDateTime(
       ConfigService.getInstance().getConfig().scheduler?.timezone,
     );
-    const instructions: string = `Current date and time: ${currentDateTime}\n\n${config.systemPrompt}${outputSchemaInstructions}\n\n## Input Data\nYou have been given the following input data:\n${JSON.stringify(input, null, 2)}\n\nWhen you are done, call the "done" tool with your final result as a JSON object.`;
+    const instructions: string = `Current date and time: ${currentDateTime}\n\n${config.systemPrompt}${outputSchemaInstructions}\n\n## Input Data\nYou have been given the following input data:\n${JSON.stringify(input, null, 2)}\n\nWhen you are done, return ONLY the final result as a valid JSON object matching the expected output schema. Do not wrap it in markdown fences.`;
 
     this._logger.debug("Executing agent node", { nodeId: node.nodeId, toolCount: Object.keys(selectedTools).length, maxSteps, reasoningEffort: config.reasoningEffort });
 
@@ -900,7 +931,6 @@ export class JobExecutorService {
       instructions,
       tools: wrappedTools,
       stopWhen: [
-        hasToolCall("done"),
         stepCountIs(maxSteps),
       ],
       experimental_repairToolCall: repairToolCallJsonAsync,
@@ -909,50 +939,42 @@ export class JobExecutorService {
 
     const agentResult = await agent.generate({ prompt: "Begin the task." });
 
-    // Extract the result from the done tool call
+    // Extract the result from the model's final text response.
     let output: Record<string, unknown> = {};
 
-    if (agentResult.steps) {
-      for (const step of agentResult.steps) {
-        if (step.toolCalls) {
-          for (const toolCall of step.toolCalls) {
-            if (toolCall.toolName === "done" && toolCall.input) {
-              const inputData: Record<string, unknown> = toolCall.input as Record<string, unknown>;
-              output = (inputData.result ?? inputData) as Record<string, unknown>;
-            }
-          }
-        }
-      }
+    const parsedOutput: Record<string, unknown> | null = extractJsonObjectFromText(agentResult.text ?? "");
+    if (parsedOutput !== null) {
+      output = parsedOutput;
     }
 
-    // Build tool call history (excluding 'done' tool)
+    // Build tool call history
     if (agentResult.steps) {
       for (const step of agentResult.steps) {
         if (step.toolCalls) {
           for (let i = 0; i < step.toolCalls.length; i++) {
             const toolCall = step.toolCalls[i];
-            if (toolCall.toolName !== "done") {
-              // Get the corresponding step result if available
-              const toolResult = step.toolResults?.[i];
-              let stepResult: unknown = null;
-              if (toolResult && typeof toolResult === "object") {
-                const tr = toolResult as Record<string, unknown>;
-                // Handle LanguageModelV3ToolResultOutput format
-                if (tr.output !== undefined) {
-                  const outputObj = tr.output as Record<string, unknown>;
-                  if (outputObj && typeof outputObj === "object" && outputObj.value !== undefined) {
-                    stepResult = outputObj.value;
-                  } else {
-                    stepResult = tr.output;
-                  }
+
+            // Get the corresponding step result if available
+            const toolResult = step.toolResults?.[i];
+            let stepResult: unknown = null;
+            if (toolResult && typeof toolResult === "object") {
+              const tr = toolResult as Record<string, unknown>;
+              // Handle LanguageModelV3ToolResultOutput format
+              if (tr.output !== undefined) {
+                const outputObj = tr.output as Record<string, unknown>;
+                if (outputObj && typeof outputObj === "object" && outputObj.value !== undefined) {
+                  stepResult = outputObj.value;
+                } else {
+                  stepResult = tr.output;
                 }
               }
-              this._lastToolCallHistory.push({
-                toolName: toolCall.toolName,
-                input: toolCall.input as Record<string, unknown>,
-                output: stepResult,
-              });
             }
+
+            this._lastToolCallHistory.push({
+              toolName: toolCall.toolName,
+              input: toolCall.input as Record<string, unknown>,
+              output: stepResult,
+            });
           }
         }
       }
@@ -960,8 +982,8 @@ export class JobExecutorService {
 
     if (Object.keys(output).length === 0) {
       throw new Error(
-        `Agent node "${node.nodeId}" completed without calling the done tool. ` +
-        `Ensure the agent returns output via done with a result matching the output schema.`,
+        `Agent node "${node.nodeId}" completed without returning a valid JSON object in the final text response. ` +
+        `Ensure the final response is a JSON object matching the output schema.`,
       );
     }
 

@@ -15,6 +15,7 @@ import * as knowledge from "../../../src/helpers/knowledge.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import { JobExecutorService } from "../../../src/services/job-executor.service.js";
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
+import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
 import * as litesql from "../../../src/helpers/litesql.js";
 import { MainAgent, type IAgentResult } from "../../../src/agent/main-agent.js";
 import type { IJob } from "../../../src/shared/types/index.js";
@@ -94,10 +95,17 @@ describe("AI-Driven Job Creation E2E", () => {
 
     await skillLoaderService.loadAllSkillsAsync([]);
 
+    const channelRegistry: ChannelRegistryService = ChannelRegistryService.getInstance();
+    await channelRegistry.initializeAsync();
+    await channelRegistry.registerChannelAsync("telegram", "test-chat", {
+      permission: "full",
+      receiveNotifications: false,
+    });
+
     const mainAgent: MainAgent = MainAgent.getInstance();
 
     await mainAgent.initializeForChatAsync("test-chat", mockMessageSender, mockPhotoSender);
-  }, 300000);
+  }, 600000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
@@ -114,7 +122,7 @@ describe("AI-Driven Job Creation E2E", () => {
 
     const result: IAgentResult = await mainAgent.processMessageForChatAsync(
       "test-chat",
-      "Create a new job called 'Text Uppercaser' with description 'Converts text to uppercase'. Use start_job_creation, then add_job, do not add any nodes, then call done.",
+      "Create a new job called 'Text Uppercaser' with description 'Converts text to uppercase'. Use start_job_creation, then add_job, and do not add any nodes.",
     );
 
     expect(result).toBeDefined();
@@ -134,7 +142,7 @@ describe("AI-Driven Job Creation E2E", () => {
 
     expect(createdJob).toBeDefined();
     expect(createdJob!.status).toBe("creating");
-  }, 300000);
+  }, 600000);
 });
 
 //#endregion Tests

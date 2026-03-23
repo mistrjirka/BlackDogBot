@@ -46,13 +46,12 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
   send_message:
     "Send a Telegram message directly to the user who owns this agent. " +
     "No chat ID, token, or destination config is needed — it always reaches the correct user automatically. " +
-    "IMPORTANT: Call get_previous_message first to check what was sent previously and avoid sending duplicates. " +
+    "The tool automatically checks previous cron messages and silently skips sending when the message does not add new information. " +
     "Args: message (string, required).",
 
   get_previous_message:
     "Get previously sent messages ranked by similarity to your proposed message. " +
-    "Returns the top 5 most similar past messages (with timestamps and similarity scores). " +
-    "CRITICAL: You MUST call this BEFORE send_message to avoid sending duplicate or repetitive content. " +
+    "Returns the top 10 most similar past messages (with timestamps and similarity scores). " +
     "Args: message (string, required — the message you plan to send).",
 
   read_file:

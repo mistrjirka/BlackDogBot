@@ -15,13 +15,13 @@ const DUPLICATE_CONSECUTIVE_STEPS: number = 3;
 //#region Public functions
 
 /**
- * Returns whether non-think/non-done tool calls must include a non-empty
+ * Returns whether non-think tool calls must include a non-empty
  * `reasoning` argument based on the rolling window policy.
  *
  * Reasoning is required when there were at least
  * {@link FORCE_THINK_INTERVAL} consecutive assistant tool-call steps without:
  * - a `think` tool call, and
- * - a non-think/non-done tool call containing non-empty `reasoning`.
+ * - a non-think tool call containing non-empty `reasoning`.
  */
 export function isReasoningRequired(messages: ModelMessage[]): boolean {
   const stepsSinceReasoningOrThink: number = _stepsSinceLastReasoningOrThink(messages);
@@ -156,10 +156,6 @@ function _stepsSinceLastReasoningOrThink(messages: ModelMessage[]): number {
           }
 
           const toolName: string = (part as { toolName: string }).toolName;
-
-          if (toolName === "done") {
-            continue;
-          }
 
           hasRelevantToolCalls = true;
 

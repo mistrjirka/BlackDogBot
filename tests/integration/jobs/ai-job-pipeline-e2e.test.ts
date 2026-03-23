@@ -15,6 +15,7 @@ import * as knowledge from "../../../src/helpers/knowledge.js";
 import { JobStorageService } from "../../../src/services/job-storage.service.js";
 import { JobExecutorService } from "../../../src/services/job-executor.service.js";
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
+import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
 import * as skillState from "../../../src/helpers/skill-state.js";
 import * as rssState from "../../../src/helpers/rss-state.js";
 import * as litesql from "../../../src/helpers/litesql.js";
@@ -179,10 +180,17 @@ describe("AI Job Pipeline E2E — RSS + Agent", () => {
 
     await skillLoaderService.loadAllSkillsAsync([]);
 
+    const channelRegistry: ChannelRegistryService = ChannelRegistryService.getInstance();
+    await channelRegistry.initializeAsync();
+    await channelRegistry.registerChannelAsync("telegram", "test-chat", {
+      permission: "full",
+      receiveNotifications: false,
+    });
+
     const mainAgent: MainAgent = MainAgent.getInstance();
 
     await mainAgent.initializeForChatAsync("test-chat", mockMessageSender, mockPhotoSender);
-  }, 300_000);
+  }, 600000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
@@ -209,7 +217,7 @@ The job should have exactly two nodes wired in a pipeline:
 
 2. Agent node named "Headline Summarizer":
    - type: agent
-   - config: systemPrompt "You receive RSS feed data. Extract only the titles from the items array and return them as a JSON array of strings. Call the done tool with { \"result\": { \"titles\": [\"title1\", \"title2\"] } }.", selectedTools ["think"], model null, reasoningEffort null, maxSteps 5
+   - config: systemPrompt "You receive RSS feed data. Extract only the titles from the items array and return them as a JSON array of strings.", selectedTools ["think"], model null, reasoningEffort null, maxSteps 5
    - inputSchema: { "type": "object", "properties": { "items": { "type": "array" }, "totalItems": { "type": "number" } }, "required": ["items", "totalItems"] }
    - outputSchema: { "type": "object", "properties": { "titles": { "type": "array", "items": { "type": "string" } } }, "required": ["titles"] }
 
@@ -221,7 +229,7 @@ Then for each node, add a test case and run it:
 
 After all tests pass, call finish_job to mark the job ready.
 Then run the full job with run_job using input {}.
-Then call done.`;
+Then summarize what happened.`;
 
     const result: IAgentResult = await mainAgent.processMessageForChatAsync("test-chat", prompt);
 
@@ -397,7 +405,7 @@ Then call done.`;
       console.log(`  [${i}]: ${sentMessages[i]}`);
     }
     console.log("====================================\n");
-  }, 300_000);
+  }, 600000);
 });
 
 //#endregion Tests

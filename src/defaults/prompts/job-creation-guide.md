@@ -32,8 +32,8 @@ When creating a job, follow this structured process:
   > `add_agent_node`, you MUST first call `create_output_schema` to generate
   > a strict blueprint, then pass the returned `blueprint` object as the
   > `outputSchema` parameter. The runtime converts this blueprint to JSON
-  > Schema internally. The `outputSchema` defines the shape of the `done()` tool —
-  > i.e., what the agent returns as its final result. Calling `add_agent_node`
+  > Schema internally. The `outputSchema` defines the shape of the agent's final
+  > result. Calling `add_agent_node`
   > without `outputSchema` will fail.
 
 5. **Add tests** — for each node **except `start` nodes** (which are passthroughs with no logic), add at least one test with `add_node_test` and run it with `run_node_test` to verify behavior.
@@ -504,21 +504,21 @@ all the data and let the model reason about it.
 ## agent
 A full agentic LLM node with its own system prompt and access to a subset
 of tools. The agent runs in a loop: it receives instructions, calls tools,
-reasons, and eventually calls the `done` tool with its final result.
+reasons, and eventually returns its final result as text.
 
 **Config (`IAgentNodeConfig`):**
 | Property | Type | Description |
 |---|---|---|
 | `systemPrompt` | `string` | The agent's system prompt / instructions |
-| `selectedTools` | `string[]` | Names of tools to make available (see agent-node-guide for the full list). `think` and `done` are always injected automatically. |
+| `selectedTools` | `string[]` | Names of tools to make available (see agent-node-guide for the full list). `think` is always injected automatically. |
 | `model` | `string \| null` | AI model identifier; `null` uses system default |
 | `reasoningEffort` | `"low" \| "medium" \| "high" \| null` | Reasoning effort level |
 | `maxSteps` | `number` | Maximum agentic loop iterations (recommended: **50**) |
 
-> **Note:** `think` and `done` are always injected automatically — do NOT include them in `selectedTools`.
+> **Note:** `think` is always injected automatically — do NOT include it in `selectedTools`.
 
 **Output schema (required):** The `outputSchema` defines the JSON format of
-the `done()` tool — i.e., what the agent returns as its final result. For
+the agent's final result — i.e., what the agent returns as its final result. For
 typed node-creation tools, `outputSchema` must be a strict blueprint in this
 shape: `{ type: "object"|"array", fields: [{ name, type }] }` where
 `type` is one of `string | number | boolean | stringArray | numberArray`.

@@ -2,7 +2,7 @@
 
 **Goal:** Eliminate remaining structured-output violations in `JobExecutorService` and harden e2e tests so they validate correctness instead of always passing.
 
-**Architecture:** Replace ad-hoc `generateText` + `JSON.parse` paths with schema-aware `generateObjectWithRetryAsync` for crawl4ai extraction and enforce the `done` tool as the only agent output channel. Update integration tests to assert concrete values/structures. Design requires structured output; I’m implementing schema-type branching with explicit object vs text behavior to preserve legitimate text outputs.
+**Architecture:** Replace ad-hoc `generateText` + `JSON.parse` paths with schema-aware `generateObjectWithRetryAsync` for crawl4ai extraction and enforce structured final text output for agent nodes. Update integration tests to assert concrete values/structures. Design requires structured output; I’m implementing schema-type branching with explicit object vs text behavior to preserve legitimate text outputs.
 
 **Design:** `thoughts/shared/designs/2026-02-22-structured-output-and-test-audit-design.md`
 
@@ -20,7 +20,7 @@ Batch 3 (parallel): 3.1 [tests - depends on 1.1]
 
 ## Batch 1: Core (parallel - 1 implementer)
 
-### Task 1.1: Enforce structured output for crawl4ai + agent done tool
+### Task 1.1: Enforce structured output for crawl4ai + agent output
 **File:** `src/services/job-executor.service.ts`
 **Test:** `tests/integration/job-execution-e2e.test.ts` (crawl4ai extraction test)
 **Depends:** none
@@ -30,7 +30,7 @@ Batch 3 (parallel): 3.1 [tests - depends on 1.1]
 - Use `generateObjectWithRetryAsync` + `createOutputZodSchema(extractedSchema)` when `extracted` is an object schema with properties.
 - Keep `generateTextWithRetryAsync` for `type: "string"` or missing `extracted`.
 - Remove JSON.parse fallback.
-- Agent fallback: remove JSON.parse block and throw error if no `done` output.
+- Agent fallback: remove JSON.parse block and throw error if no valid structured output.
 
 ```typescript
 // Replace the crawl4ai extraction block (around lines ~618-637)
@@ -77,8 +77,8 @@ Batch 3 (parallel): 3.1 [tests - depends on 1.1]
 
     if (Object.keys(output).length === 0) {
       throw new Error(
-        `Agent node "${node.nodeId}" completed without calling the done tool. ` +
-        `Ensure the agent returns output via done with a result matching the output schema.`,
+        `Agent node "${node.nodeId}" completed without returning a valid structured output. ` +
+        `Ensure the final response matches the output schema.`,
       );
     }
 ```
@@ -87,7 +87,7 @@ Batch 3 (parallel): 3.1 [tests - depends on 1.1]
 - `pnpm vitest run --config vitest.integration.config.ts --reporter=verbose tests/integration/job-execution-e2e.test.ts`
 - `pnpm typecheck`
 
-**Commit:** `fix(job-executor): enforce structured crawl4ai extraction and done-only agent output`
+**Commit:** `fix(job-executor): enforce structured crawl4ai extraction and structured agent output`
 
 ---
 

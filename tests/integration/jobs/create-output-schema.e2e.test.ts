@@ -88,7 +88,7 @@ describe("create_output_schema tool (e2e)", () => {
       const propertyRecord = property as Record<string, unknown>;
       expect(propertyRecord.type).toBeDefined();
     });
-  }, 120000);
+  }, 600000);
 
   it("should create a valid schema for array output", async () => {
     const toolObj = createCreateOutputSchemaTool();
@@ -130,7 +130,7 @@ describe("create_output_schema tool (e2e)", () => {
     });
 
     expect(hasArraySchemaItems || !!arrayProperty).toBe(true);
-  }, 120000);
+  }, 600000);
 
   it("should produce non-empty blueprint fields", async () => {
     const toolObj = createCreateOutputSchemaTool();
@@ -154,7 +154,7 @@ describe("create_output_schema tool (e2e)", () => {
       expect(field.name).not.toBe("");
       expect(["string", "number", "boolean", "stringArray", "numberArray"]).toContain(field.type);
     }
-  }, 120000);
+  }, 600000);
 
   it("should map array field types to array item schemas", async () => {
     const toolObj = createCreateOutputSchemaTool();
@@ -179,7 +179,7 @@ describe("create_output_schema tool (e2e)", () => {
     }) as Record<string, unknown> | undefined;
     expect(arrayProperty).toBeDefined();
     expect(arrayProperty?.items).toBeDefined();
-  }, 120000);
+  }, 600000);
 });
 
 //#endregion Tests

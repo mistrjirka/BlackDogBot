@@ -34,13 +34,16 @@ function createFakeSkill(overrides?: Partial<ISkill>): ISkill {
         openclaw: null,
       },
     },
-    instructions: "This skill requires no special setup. Just verify you can respond and call done.",
+    instructions: "This skill requires no special setup. Just verify you can respond.",
     directory: "/tmp/fake-skill",
     state: {
       state: "never-touched",
       lastError: null,
       setupAt: null,
       lastCheckedAt: null,
+      missingDeps: null,
+      manualStepsRequired: [],
+      attemptedInstalls: [],
     },
     ...overrides,
   };
@@ -75,7 +78,7 @@ describe("Setup Runner E2E", () => {
 
     const promptService: PromptService = PromptService.getInstance();
     await promptService.initializeAsync();
-  }, 120000);
+  }, 600000);
 
   afterAll(async () => {
     process.env.HOME = originalHome;
@@ -97,12 +100,12 @@ describe("Setup Runner E2E", () => {
     expect(persistedState.state).toBe("ready");
     expect(persistedState.lastError).toBeNull();
     expect(persistedState.setupAt).not.toBeNull();
-  }, 120000);
+  }, 600000);
 
   it("should set up a skill with openclaw requirements metadata and verify binary via run_cmd", async () => {
     const skill: ISkill = createFakeSkill({
       name: "metadata-skill",
-      instructions: "Check whether the required binary 'node' is available using run_cmd. Then call done.",
+      instructions: "Check whether the required binary 'node' is available using run_cmd.",
       frontmatter: {
         name: "metadata-skill",
         description: "A skill with openclaw requirements metadata",
@@ -140,7 +143,7 @@ describe("Setup Runner E2E", () => {
     const persistedState: ISkillStateInfo = await skillState.getSkillStateAsync("metadata-skill");
     expect(persistedState.state).toBe("ready");
     expect(persistedState.setupAt).not.toBeNull();
-  }, 120000);
+  }, 600000);
 });
 
 //#endregion Tests

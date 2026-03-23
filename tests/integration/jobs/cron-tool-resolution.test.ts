@@ -12,6 +12,7 @@ import { PromptService } from "../../../src/services/prompt.service.js";
 import { CronAgent } from "../../../src/agent/cron-agent.js";
 import type { IScheduledTask, IExecutionContext } from "../../../src/shared/types/index.js";
 import type { MessageSender } from "../../../src/tools/index.js";
+import type { ToolSet } from "ai";
 
 let tempDir: string;
 let originalHome: string;
@@ -110,14 +111,25 @@ describe("CronAgent tool resolution", () => {
     const executionContext: IExecutionContext = createExecutionContext();
     const taskIdProvider = (): string | null => task.taskId;
 
-    await agent.executeTaskAsync(task, mockSender, taskIdProvider, executionContext);
+    const resolvedTools: ToolSet = await (agent as unknown as {
+      _resolveTools: (
+        toolNames: string[],
+        messageSender: MessageSender,
+        taskIdProvider: () => string | null,
+        executionContext: IExecutionContext,
+      ) => Promise<ToolSet>;
+    })._resolveTools(task.tools, mockSender, taskIdProvider, executionContext);
+
+    expect(Object.keys(resolvedTools)).toEqual(
+      expect.arrayContaining(["think", "fetch_rss", "searxng"]),
+    );
 
     const unknownToolWarnings = warnSpy.mock.calls
       .map((call: unknown[]): string => String(call[0]))
       .filter((msg: string): boolean => msg.includes("Unknown tool name"));
 
     expect(unknownToolWarnings.length).toBe(0);
-  });
+  }, 600000);
 
   it("should log a warning and skip unknown tool names", async () => {
     const task: IScheduledTask = createTask({
@@ -133,13 +145,24 @@ describe("CronAgent tool resolution", () => {
     const executionContext: IExecutionContext = createExecutionContext();
     const taskIdProvider = (): string | null => task.taskId;
 
-    await agent.executeTaskAsync(task, mockSender, taskIdProvider, executionContext);
+    const resolvedTools: ToolSet = await (agent as unknown as {
+      _resolveTools: (
+        toolNames: string[],
+        messageSender: MessageSender,
+        taskIdProvider: () => string | null,
+        executionContext: IExecutionContext,
+      ) => Promise<ToolSet>;
+    })._resolveTools(task.tools, mockSender, taskIdProvider, executionContext);
+
+    expect(Object.keys(resolvedTools)).toContain("think");
+    expect(Object.keys(resolvedTools)).not.toContain("websearch");
+    expect(Object.keys(resolvedTools)).not.toContain("fake_tool");
 
     const warnMessages: string[] = warnSpy.mock.calls.map((call: unknown[]): string => String(call[0]));
 
     expect(warnMessages.some((msg: string): boolean => msg.includes("Unknown tool name \"websearch\""))).toBe(true);
     expect(warnMessages.some((msg: string): boolean => msg.includes("Unknown tool name \"fake_tool\""))).toBe(true);
-  });
+  }, 600000);
 
   it("should work with all valid tool names without warnings", async () => {
     const task: IScheduledTask = createTask({
@@ -155,12 +178,23 @@ describe("CronAgent tool resolution", () => {
     const executionContext: IExecutionContext = createExecutionContext();
     const taskIdProvider = (): string | null => task.taskId;
 
-    await agent.executeTaskAsync(task, mockSender, taskIdProvider, executionContext);
+    const resolvedTools: ToolSet = await (agent as unknown as {
+      _resolveTools: (
+        toolNames: string[],
+        messageSender: MessageSender,
+        taskIdProvider: () => string | null,
+        executionContext: IExecutionContext,
+      ) => Promise<ToolSet>;
+    })._resolveTools(task.tools, mockSender, taskIdProvider, executionContext);
+
+    expect(Object.keys(resolvedTools)).toEqual(
+      expect.arrayContaining(task.tools),
+    );
 
     const warnCalls = warnSpy.mock.calls;
     const toolWarnings = warnCalls.filter((call: unknown[]): boolean =>
       typeof call[0] === "string" && (call[0] as string).includes("Unknown tool")
     );
     expect(toolWarnings.length).toBe(0);
-  });
+  }, 600000);
 });

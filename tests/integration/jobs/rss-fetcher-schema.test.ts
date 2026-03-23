@@ -98,5 +98,5 @@ describe("rss_fetcher output schema (integration)", () => {
     const node = await storageService.getNodeAsync(job.jobId, result.nodeId);
     expect(node).toBeDefined();
     expect(node?.outputSchema).toEqual(RssOutputSchema);
-  }, 60000);
+  }, 600000);
 });

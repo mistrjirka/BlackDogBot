@@ -22,7 +22,7 @@ Two related issues:
 - Tests use real LLM calls (no mocking)
 - `generateObjectWithRetryAsync` is the wrapper for structured LLM output (handles retries, rate limiting, in-flight status)
 - `createOutputZodSchema()` and `jsonSchemaToZod()` convert JSON Schema to Zod for use with generateObject
-- Agent nodes use the `done` tool with Zod-validated `inputSchema` as their structured output mechanism
+- Agent nodes return final structured output as text that matches `outputSchema`
 
 ## Part A: Fix Remaining generateText Violations
 
@@ -59,10 +59,10 @@ if (Object.keys(output).length === 0 && agentResult.text) {
 
 **Fix approach:**
 - Remove this entire fallback block
-- If the agent didn't produce output via the `done` tool, that's an error — throw it
-- The `done` tool with Zod-validated `inputSchema` IS the structured output mechanism for agents
+- If the agent didn't produce valid structured output in final text, that's an error — throw it
+- Final text JSON matching `outputSchema` IS the structured output mechanism for agents
 - Silent degradation to unvalidated JSON parsing defeats the purpose of schema enforcement
-- Replace with: if output is empty and agent completed, throw an error indicating the agent failed to call the `done` tool with valid output
+- Replace with: if output is empty and agent completed, throw an error indicating the agent failed to return valid structured output
 
 ## Part B: Fix Always-Pass Tests
 

@@ -17,7 +17,7 @@ describe("EmbeddingService", () => {
     expect(embedding.length).toBe(service.getDimension());
     expect(service.getModelPath().length).toBeGreaterThan(0);
     expect(typeof embedding[0]).toBe("number");
-  }, 120000); // Model download can be slow
+  }, 600000); // Model download can be slow
 
   it("should produce similar embeddings for similar texts", async () => {
     const service: EmbeddingService = EmbeddingService.getInstance();
@@ -51,7 +51,7 @@ describe("EmbeddingService", () => {
     // Similar sentences should have higher similarity than dissimilar ones
     expect(similarScore).toBeGreaterThan(dissimilarScore);
     expect(similarScore).toBeGreaterThan(0.8);
-  }, 60000);
+  }, 600000);
 });
 
 //#endregion Tests

@@ -11,7 +11,7 @@ describe("KnowledgeService", () => {
   beforeAll(async () => {
     await env.setupAsync();
     await setupVectorStoreAsync();
-  }, 300000);
+  }, 600000);
 
   afterAll(async () => {
     const vectorStoreService = VectorStoreService.getInstance();
@@ -42,7 +42,7 @@ describe("KnowledgeService", () => {
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].content).toContain("TypeScript");
     expect(results[0].score).toBeGreaterThan(0.5);
-  }, 60000);
+  }, 600000);
 
   it("should return relevant results when multiple documents exist", async () => {
     await knowledge.addKnowledgeDocumentAsync(
@@ -82,7 +82,7 @@ describe("KnowledgeService", () => {
     if (cakeResult) {
       expect(cakeResult.score).toBeLessThan(programmingResult.score);
     }
-  }, 60000);
+  }, 600000);
 
   it("should edit a knowledge document and find updated content", async () => {
     const doc: IKnowledgeDocument = await knowledge.addKnowledgeDocumentAsync(
@@ -108,7 +108,7 @@ describe("KnowledgeService", () => {
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].content).toContain("vector databases");
     expect(results[0].content).toContain("semantic search");
-  }, 60000);
+  }, 600000);
 
   it("should report correct document counts", async () => {
     const count: number = await knowledge.getKnowledgeDocumentCountAsync("test-collection");

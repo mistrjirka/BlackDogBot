@@ -160,7 +160,7 @@ export const runNodeTestToolOutputSchema = z.object({
 
 ```ts
 export { thinkTool } from "./think.tool.js";
-export { doneTool, createDoneTool } from "./done.tool.js";
+// legacy export removed
 export { runCmdTool } from "./run-cmd.tool.js";
 export { createSendMessageTool, type MessageSender } from "./send-message.tool.js";
 export { modifyPromptTool } from "./modify-prompt.tool.js";
@@ -279,7 +279,7 @@ import {
   createTableTool,
   dropTableTool,
   queryDatabaseTool,
-  createDoneTool,
+  // legacy creator removed
   FileReadTracker,
   JobActivityTracker,
   type IJobCreationModeTracker,
@@ -433,7 +433,7 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
     }
 
     for (const toolName of config.selectedTools) {
-      if (toolName === 'done' || toolName === 'think') continue;
+      if (toolName === 'think') continue;
 
       if (toolPool[toolName]) {
         selectedTools[toolName] = toolPool[toolName];

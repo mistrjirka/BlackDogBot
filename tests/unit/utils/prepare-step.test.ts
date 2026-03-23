@@ -113,15 +113,6 @@ describe("prepare-step reasoning requirement", () => {
     expect(isReasoningRequired(messages)).toBe(false);
   });
 
-  it("should ignore done steps for requirement satisfaction", () => {
-    const messages: ModelMessage[] = [
-      ..._repeatNonReasoningSteps(FORCE_THINK_INTERVAL - 1),
-      _assistantToolCallMessage("done", { summary: "finished" }),
-      _assistantToolCallMessage("run_cmd", { command: "echo after-done" }),
-    ];
-
-    expect(isReasoningRequired(messages)).toBe(true);
-  });
 });
 
 describe("prepare-step duplicate tool-call detection", () => {

@@ -41,6 +41,7 @@ export const telegramPlatform: IPlatform<ITelegramConfig> = {
     // Initialize handler
     const handler = TelegramHandler.getInstance();
     await handler.initializeAsync(config, deps);
+    handler.setBot(bot);
 
     // Set up commands
     setupTelegramCommands(bot);

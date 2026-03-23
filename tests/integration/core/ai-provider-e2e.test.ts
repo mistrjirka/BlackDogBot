@@ -76,7 +76,7 @@ describe("AiProvider E2E", () => {
     expect(typeof result.text).toBe("string");
     expect(result.text.length).toBeGreaterThan(0);
     expect(result.text.toLowerCase()).toContain("pong");
-  }, 60000);
+  }, 600000);
 
   it("should handle a slightly more complex prompt", async () => {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
@@ -90,7 +90,7 @@ describe("AiProvider E2E", () => {
     expect(result).toBeDefined();
     expect(result.text).toBeDefined();
     expect(result.text).toContain("4");
-  }, 60000);
+  }, 600000);
 });
 
 //#endregion Tests

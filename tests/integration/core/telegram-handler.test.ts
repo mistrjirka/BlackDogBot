@@ -172,7 +172,7 @@ describe("TelegramHandler", () => {
 
     const handler: TelegramHandler = TelegramHandler.getInstance();
     await handler.initializeAsync(createMockTelegramConfig(), createMockDeps());
-  }, 350000);
+  }, 600000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
@@ -205,12 +205,12 @@ describe("TelegramHandler", () => {
 
   it("should process a normal message end-to-end without error", async () => {
     const handler: TelegramHandler = TelegramHandler.getInstance();
-    const ctx: Context = makeCtx({ text: "Say 'pong' and call done." });
+    const ctx: Context = makeCtx({ text: "Say 'pong'." });
 
     await handler.handleMessageAsync(ctx);
 
     expect(sentActions.some((a) => a.action === "typing")).toBe(true);
-  }, 300000);
+  }, 600000);
 
   it("should reply with agent text when the agent returns non-empty text", async () => {
     const replyTexts: string[] = [];
@@ -227,7 +227,7 @@ describe("TelegramHandler", () => {
 
     expect(replyTexts.length).toBeGreaterThan(0);
     expect(replyTexts[0].length).toBeGreaterThan(0);
-  }, 300000);
+  }, 600000);
 
   it("should skip processing when ctx.message is absent", async () => {
     const ctx: Context = { message: undefined } as unknown as Context;
@@ -296,7 +296,7 @@ describe("TelegramHandler", () => {
     const secondInvocationArgs: unknown[] = processSpy.mock.calls[1] ?? [];
 
     expect(secondInvocationArgs[1]).toBe("second\nthird");
-  }, 120000);
+  }, 600000);
 
   it("should send an error reply when the agent throws", async () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
@@ -314,7 +314,7 @@ describe("TelegramHandler", () => {
     expect(replySpy).toHaveBeenCalledWith(
       expect.stringContaining("agent boom"),
     );
-  }, 120000);
+  }, 600000);
 
   it("should escape HTML in progress trace tool calls", async () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
@@ -365,7 +365,7 @@ describe("TelegramHandler", () => {
     expect(serializedCalls).toContain("&lt;unsafe&gt;");
     expect(serializedCalls).toContain("&amp;");
     expect(serializedCalls).not.toContain("<unsafe>");
-  }, 120000);
+  }, 600000);
 
   it("should cancel in-flight run, delete prompt, and clear all queued messages on /cancel", async () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
@@ -443,7 +443,7 @@ describe("TelegramHandler", () => {
     expect(deleteSpy).toHaveBeenCalledWith("100", 104);
     expect(cancelReplies.some((reply: string): boolean => reply.toLowerCase().includes("cancelled"))).toBe(true);
     expect(cancelReplies.some((reply: string): boolean => reply.toLowerCase().includes("cleared 2 queued messages"))).toBe(true);
-  }, 120000);
+  }, 600000);
 
   it("should include provider details in error reply when an APICallError is thrown", async () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
@@ -471,7 +471,7 @@ describe("TelegramHandler", () => {
     expect(userReply).toContain("Authentication failed");
     expect(userReply).toContain("openrouter.ai");
     expect(userReply).toContain("minimax/minimax-m2.5");
-  }, 120000);
+  }, 600000);
 
   it("should log but not throw when even the error reply fails", async () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
@@ -490,7 +490,7 @@ describe("TelegramHandler", () => {
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
     await expect(handler.handleMessageAsync(ctx)).resolves.toBeUndefined();
-  }, 120000);
+  }, 600000);
 });
 
 //#endregion Tests

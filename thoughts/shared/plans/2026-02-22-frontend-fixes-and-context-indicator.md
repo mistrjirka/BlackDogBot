@@ -86,7 +86,7 @@ toolCallHistory?: IAgentToolCall[];
 **In `_executeAgentAsync`, after the existing step iteration (lines 890-903):**
 - Build a `toolCallHistory: IAgentToolCall[]` array by iterating `agentResult.steps`
 - For each step, for each `toolCall`, push `{ toolName, input, output: toolResult }`
-- Exclude the `done` tool call from the history (it's just the final output)
+- Capture all tool calls in history (final output is returned as text)
 - Include `toolCallHistory` in the returned result
 
 ### Step 2d: Include output and toolCallHistory in run-node-test response

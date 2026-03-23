@@ -63,7 +63,7 @@ describe("Job Execution E2E", () => {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
 
     aiProviderService.initialize(configService.getAiConfig());
-  }, 300000);
+  }, 600000);
 
   afterAll(async () => {
     process.env.HOME = originalHome;
@@ -433,7 +433,7 @@ describe("Job Execution E2E", () => {
     expect(output.statusCode).toBe(200);
     expect(output.headers).toBeDefined();
     expect(output.body).toBeDefined();
-  }, 30000);
+  }, 600000);
 
   it("should execute a curl_fetcher node with template substitution", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
@@ -489,7 +489,7 @@ describe("Job Execution E2E", () => {
     const output: Record<string, unknown> = result.output as Record<string, unknown>;
 
     expect(output.statusCode).toBe(200);
-  }, 30000);
+  }, 600000);
 
   //#endregion curl_fetcher Node Tests
 
@@ -548,7 +548,7 @@ describe("Job Execution E2E", () => {
     expect(output.query).toBe("TypeScript documentation");
     expect(Array.isArray(output.results)).toBe(true);
     expect(typeof output.totalResults).toBe("number");
-  }, 30000);
+  }, 600000);
 
   it("should execute a searxng node with template query from input", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
@@ -604,7 +604,7 @@ describe("Job Execution E2E", () => {
 
     expect(output.query).toBe("Rust programming language");
     expect(Array.isArray(output.results)).toBe(true);
-  }, 30000);
+  }, 600000);
 
   //#endregion searxng Node Tests
 
@@ -670,7 +670,7 @@ describe("Job Execution E2E", () => {
     expect((output.items as unknown[]).length).toBeLessThanOrEqual(5);
     expect(output.totalItems).toBeDefined();
     expect(output.feedUrl).toBe("https://news.ycombinator.com/rss");
-  }, 30000);
+  }, 600000);
 
   it("should execute an rss_fetcher node with template substitution", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
@@ -727,7 +727,7 @@ describe("Job Execution E2E", () => {
 
     expect((output.items as unknown[]).length).toBeLessThanOrEqual(3);
     expect(output.feedUrl).toBe("https://news.ycombinator.com/rss");
-  }, 30000);
+  }, 600000);
 
   it("should return mode field in output for latest mode", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
@@ -755,7 +755,7 @@ describe("Job Execution E2E", () => {
     expect(Array.isArray(output.items)).toBe(true);
     expect((output.items as unknown[]).length).toBeLessThanOrEqual(3);
     expect(output.unseenCount).toBeUndefined();
-  }, 30000);
+  }, 600000);
 
   it("should parse an Atom feed (The Verge) and return items", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
@@ -796,7 +796,7 @@ describe("Job Execution E2E", () => {
     const firstItem: Record<string, unknown> = (output.items as Record<string, unknown>[])[0];
 
     expect(firstItem.id ?? firstItem.link).toBeDefined();
-  }, 30000);
+  }, 600000);
 
   it("should execute unseen mode: first fetch returns items, second fetch returns empty", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
@@ -863,7 +863,7 @@ describe("Job Execution E2E", () => {
       await fs.rm(stateFilePath);
     } catch {
     }
-  }, 60000);
+  }, 600000);
 
   it("should unseen mode: maxItems caps returned items even when more are unseen", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
@@ -909,7 +909,7 @@ describe("Job Execution E2E", () => {
       await fs.rm(stateFilePath);
     } catch {
     }
-  }, 30000);
+  }, 600000);
 
   //#endregion rss_fetcher Node Tests
 
@@ -971,7 +971,7 @@ describe("Job Execution E2E", () => {
     expect(typeof output.markdown).toBe("string");
     expect((output.markdown as string).length).toBeGreaterThan(0);
     expect(typeof output.html).toBe("string");
-  }, 60000);
+  }, 600000);
 
   it("should execute a crawl4ai node with extraction prompt", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
@@ -1034,7 +1034,7 @@ describe("Job Execution E2E", () => {
     expect(typeof output.extracted).toBe("object");
     expect(output.extracted).toHaveProperty("title");
     expect(typeof (output.extracted as Record<string, unknown>).title).toBe("string");
-  }, 120000);
+  }, 600000);
 
   //#endregion crawl4ai Node Tests
 
@@ -1096,7 +1096,7 @@ describe("Job Execution E2E", () => {
     expect(typeof output.wordCount).toBe("number");
     expect(typeof output.language).toBe("string");
     expect((output.language as string).toLowerCase()).toContain("english");
-  }, 120000);
+  }, 600000);
 
   //#endregion output_to_ai Node Tests
 
@@ -1139,7 +1139,7 @@ describe("Job Execution E2E", () => {
       inputSchema,
       outputSchema,
       {
-        systemPrompt: "You are a math assistant. Given an array of numbers, calculate the sum, average, and count. When done, call the done tool with a JSON object containing sum (number), average (number), and count (number).",
+        systemPrompt: "You are a math assistant. Given an array of numbers, calculate the sum, average, and count. Return your final result as a JSON object containing sum (number), average (number), and count (number).",
         selectedTools: ["think"],
         model: null,
         reasoningEffort: "low",
@@ -1165,7 +1165,7 @@ describe("Job Execution E2E", () => {
     expect(output.sum).toBe(150);
     expect(output.average).toBe(30);
     expect(output.count).toBe(5);
-  }, 120000);
+  }, 600000);
 
   it("should execute an agent node with file tools (read_file, write_file) in selectedTools", async () => {
     const storageService: JobStorageService = JobStorageService.getInstance();
@@ -1204,7 +1204,7 @@ describe("Job Execution E2E", () => {
           "You have file tools available. Your task:",
           "1. Use write_file to write the input content to a file named 'agent-test-output.txt'.",
           "2. Use read_file to read 'agent-test-output.txt' back.",
-          "3. Call the done tool with { \"result\": { \"written\": true, \"readBack\": \"<the content you read>\" } }.",
+          "3. Return your final result as JSON: { \"written\": true, \"readBack\": \"<the content you read>\" }.",
         ].join("\n"),
         selectedTools: ["read_file", "write_file"],
         model: null,
@@ -1230,7 +1230,7 @@ describe("Job Execution E2E", () => {
     expect(output.written).toBe(true);
     expect(typeof output.readBack).toBe("string");
     expect((output.readBack as string)).toContain("hello from agent file tools test");
-  }, 120000);
+  }, 600000);
 
   //#endregion agent Node Tests
 
@@ -1332,7 +1332,7 @@ describe("Job Execution E2E", () => {
 
     expect(typeof output.summary).toBe("string");
     expect((output.summary as string).length).toBeGreaterThan(0);
-  }, 120000);
+  }, 600000);
 
   //#endregion Pipeline Tests with New Node Types
 

@@ -64,7 +64,6 @@ import {
   readFromDatabaseTool,
   updateDatabaseTool,
   deleteFromDatabaseTool,
-  createDoneTool,
   FileReadTracker,
   JobActivityTracker,
   type IJobCreationModeTracker,
@@ -435,8 +434,6 @@ export class MainAgent extends BaseAgentBase {
       jobCreationEnabled: config.jobCreation.enabled,
     });
 
-    const trackedDoneTool = createDoneTool(jobTracker);
-
     const combinedOnStepAsync = async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
       this._logger.debug("MainAgent combinedOnStep callback invoked", {
         chatId,
@@ -508,14 +505,13 @@ export class MainAgent extends BaseAgentBase {
       }
     };
 
-    this._buildAgent(
-      model,
-      instructions,
-      filteredTools,
-      combinedOnStepAsync,
-      trackedDoneTool,
-      // getExtraTools: returns node-creation tools when current chat is in creation mode
-      nodeCreationTools
+      this._buildAgent(
+        model,
+        instructions,
+        filteredTools,
+        combinedOnStepAsync,
+        // getExtraTools: returns node-creation tools when current chat is in creation mode
+        nodeCreationTools
         ? (): ToolSet | null => session.jobCreationMode !== null ? nodeCreationTools : null
         : undefined,
       nodeCreationTools,
@@ -560,7 +556,6 @@ export class MainAgent extends BaseAgentBase {
         instructions,
         reFilteredTools,
         combinedOnStepAsync,
-        trackedDoneTool,
         nodeCreationTools
           ? (): ToolSet | null => session.jobCreationMode !== null ? nodeCreationTools : null
           : undefined,
@@ -717,19 +712,6 @@ export class MainAgent extends BaseAgentBase {
             this._logger.debug("Agent response generated", { chatId, stepsCount, historyLength: session.messages.length });
 
             let text: string = generateResult.text ?? "";
-
-            if (!text && generateResult.steps) {
-              interface IToolCallLike { toolName: string; input: Record<string, unknown>; }
-              interface IStepLike { toolCalls?: IToolCallLike[]; }
-
-              const doneCall: IToolCallLike | undefined = (generateResult.steps as IStepLike[])
-                .flatMap((s: IStepLike): IToolCallLike[] => s.toolCalls ?? [])
-                .find((tc: IToolCallLike): boolean => tc.toolName === "done");
-
-              if (doneCall && typeof doneCall.input?.summary === "string") {
-                text = doneCall.input.summary;
-              }
-            }
 
             // If create_table requested a tool rebuild, end this run immediately and restart.
             // Do not treat missing text as an empty-response failure in this case.

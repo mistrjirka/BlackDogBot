@@ -15,7 +15,7 @@ This is a **silent bug** - the system appears to work, but the configuration has
 ### Pattern 1: The "Mentioned but Missing" Bug
 ```typescript
 // BAD: Schema is mentioned but never injected
-const instructions = `Output must match the expected schema. Call done() when finished.`;
+const instructions = `Output must match the expected schema. Return a final JSON object when finished.`;
 // The schema exists in `config.outputSchema` but is never shown to the LLM!
 ```
 

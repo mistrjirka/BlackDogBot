@@ -113,8 +113,7 @@ describe("get_previous_message tool", () => {
     const tool = createGetPreviousMessageTool({ toolCallHistory: [] });
 
     expect(tool.description).toContain("similarity");
-    expect(tool.description).toContain("before send_message");
-    expect(tool.description).toContain("send_message");
+    expect(tool.description).toContain("other crons");
     expect(tool.description).toContain("message you intend to send");
   });
 });

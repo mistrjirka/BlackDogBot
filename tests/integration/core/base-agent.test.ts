@@ -144,10 +144,9 @@ describe("BaseAgentBase", () => {
     ).toBe(140_000);
   });
 
-  it("should force done by limiting activeTools on max steps without provider error", async () => {
-    // Use maxSteps: 2 so the agent hits the force-done path on step 1 (>= maxSteps - 1).
-    // This verifies the fix: enforce done by limiting activeTools to ["done"],
-    // without sending forced toolChoice values.
+  it("should complete on low max steps without forcing a terminal tool", async () => {
+    // Use maxSteps: 2 so the agent reaches the step cap quickly.
+    // The agent should complete naturally without forcing a dedicated terminal tool.
     const model: LanguageModel = AiProviderService.getInstance().getModel();
     const agent: TestAgent = new TestAgent({ maxSteps: 2 });
 
@@ -160,18 +159,14 @@ describe("BaseAgentBase", () => {
     );
 
     // The agent should complete without throwing a tool_choice provider error.
-    // Step 0: model does something (think or text).
-    // Step 1: stepNumber (1) >= maxSteps - 1 (1) → force done by restricting activeTools.
     expect(result).toBeDefined();
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
     expect(result.text.length).toBeGreaterThan(0);
-  }, 120_000);
+  }, 600000);
 
-  it("should force done by limiting activeTools on silent exit without provider error", async () => {
+  it("should complete when the model returns plain text without tool calls", async () => {
     // Give the model a prompt that encourages a plain text response without calling tools.
-    // If the model produces text without a tool call, the silent-exit detection fires
-    // and forces done by restricting activeTools to ["done"].
-    // Either way (silent exit or normal done), the agent must complete without error.
+    // The tool loop should end naturally when no tool calls are emitted.
     const model: LanguageModel = AiProviderService.getInstance().getModel();
     const agent: TestAgent = new TestAgent({ maxSteps: 10 });
 
@@ -182,13 +177,10 @@ describe("BaseAgentBase", () => {
     const result: IAgentResult = await agent.processMessageAsync("Say hello.");
 
     // The agent should complete without throwing a tool_choice provider error.
-    // If the model tried to exit without calling done, the silent-exit handler fires
-    // and forces done by restricting activeTools. If the model called done voluntarily,
-    // that also works. Either path must succeed.
     expect(result).toBeDefined();
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
     expect(result.text.length).toBeGreaterThan(0);
-  }, 120_000);
+  }, 600000);
 
   it("should keep the same limiter instance across repeated initialize calls", () => {
     const configService: ConfigService = ConfigService.getInstance();

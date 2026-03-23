@@ -106,7 +106,7 @@ almost always better to allow more steps than too few.
 ## Output Schema (required)
 
 Every agent node **requires** an `outputSchema` — this defines the JSON format
-of the `done()` tool that the agent calls to return its final result. The
+of the agent's final result returned by the model. The
 workflow is:
 
 1. Call `create_output_schema` with a description of what the agent should
@@ -152,10 +152,8 @@ not the same as node types.
 | `create_table` | Create a new table in a database with specified columns and types. |
 
 **Notes:**
-- `think` and `done` are always injected automatically — you do not need
-  to include them in `selectedTools`, but listing `think` is harmless.
-- `done` is the tool the agent calls when it has finished its task. It is
-  always available.
+- `think` is always injected automatically — you do not need
+  to include it in `selectedTools`, but listing `think` is harmless.
 - For inserts, always use the exact `write_table_<tableName>` tool for the target
   table. Do not use `write_to_database` and do not use `run_cmd`/`sqlite3` for DB writes.
 - `write_table_<tableName>` tools enforce column names/types and auto-fill common

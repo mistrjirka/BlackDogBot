@@ -1,10 +1,12 @@
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
+import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { LoggerService } from "./logger.service.js";
 import { AiProviderService } from "./ai-provider.service.js";
 import { EmbeddingService } from "./embedding.service.js";
 import { VectorStoreService } from "./vector-store.service.js";
 import { generateId } from "../utils/id.js";
 import type { ICronMessageHistory } from "../shared/types/index.js";
+import { z } from "zod";
 
 //#region Constants
 
@@ -13,8 +15,12 @@ const CONTEXT_THRESHOLD_PERCENTAGE: number = 0.15;
 const APPROX_CONTEXT_SIZE_CHARS: number = 128_000 * 4;
 const MAX_SUMMARY_CHARS: number = Math.floor(APPROX_CONTEXT_SIZE_CHARS * CONTEXT_THRESHOLD_PERCENTAGE);
 const VECTOR_TABLE_NAME: string = "cron-messages";
-const SIMILARITY_SEARCH_LIMIT: number = 5;
+const SIMILARITY_SEARCH_LIMIT: number = 10;
 const SEARCH_LOG_PREVIEW_LENGTH: number = 120;
+
+const MessageNoveltySchema = z.object({
+  isNewInformation: z.boolean(),
+});
 
 //#endregion Constants
 
@@ -32,6 +38,11 @@ export interface ISimilarMessage {
   sentAt: string;
   score: number;
   taskId: string;
+}
+
+export interface ICheckMessageNoveltyResult {
+  isNewInformation: boolean;
+  similarCount: number;
 }
 
 interface ISearchResultMetadata {
@@ -185,6 +196,81 @@ export class CronMessageHistoryService {
     });
 
     return similarMessages;
+  }
+
+  public async checkMessageNoveltyAsync(taskId: string, message: string): Promise<ICheckMessageNoveltyResult> {
+    try {
+      const similarMessages: ISimilarMessage[] = await this.getSimilarMessagesAsync(message);
+
+      if (similarMessages.length === 0) {
+        return {
+          isNewInformation: true,
+          similarCount: 0,
+        };
+      }
+
+      const model = AiProviderService.getInstance().getModel();
+      const candidateMessage: string = message.trim();
+      const similarMessagesBlock: string = similarMessages
+        .map((item: ISimilarMessage, index: number): string => {
+          const score: number = Number(item.score.toFixed(4));
+          return [
+            `#${index + 1}`,
+            `score: ${score}`,
+            `taskId: ${item.taskId}`,
+            `sentAt: ${item.sentAt || "unknown"}`,
+            `content: ${item.content}`,
+          ].join("\n");
+        })
+        .join("\n\n");
+
+      const noveltyPrompt: string = `You are a strict deduplication checker for cron notifications.
+
+Decide whether the candidate message introduces materially new information compared to previous similar messages.
+
+Return isNewInformation=true only when the candidate contains at least one meaningful new fact, update, result, or actionable detail that is not already conveyed by the previous messages.
+
+Return isNewInformation=false when the candidate is a duplicate or near-duplicate of prior messages, including paraphrases, wording/style changes, reordered wording, or cosmetic formatting differences.
+
+Candidate message:
+${candidateMessage}
+
+Top similar previous messages:
+${similarMessagesBlock}`;
+
+      const decision = await generateObjectWithRetryAsync({
+        model,
+        schema: MessageNoveltySchema,
+        prompt: noveltyPrompt,
+        retryOptions: {
+          callType: "schema_extraction",
+        },
+      });
+
+      this._logger.info("Cron message novelty decision computed", {
+        taskId,
+        isNewInformation: decision.object.isNewInformation,
+        similarCount: similarMessages.length,
+        queryPreview: this._buildSearchPreview(message),
+      });
+
+      return {
+        isNewInformation: decision.object.isNewInformation,
+        similarCount: similarMessages.length,
+      };
+    } catch (error: unknown) {
+      const details: string = error instanceof Error ? error.message : String(error);
+
+      this._logger.warn("Cron message novelty check failed, allowing send", {
+        taskId,
+        error: details,
+      });
+
+      return {
+        isNewInformation: true,
+        similarCount: 0,
+      };
+    }
   }
 
   //#endregion Public methods

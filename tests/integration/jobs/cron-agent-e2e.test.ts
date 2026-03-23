@@ -88,7 +88,7 @@ describe("CronAgent E2E", () => {
       lanceDbPath,
       embeddingService.getDimension(),
     );
-  }, 300000);
+  }, 600000);
 
   afterAll(async () => {
     const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
@@ -107,7 +107,7 @@ describe("CronAgent E2E", () => {
       taskId: "test-cron-task-001",
       name: "E2E Test Task",
       description: "A simple test task for E2E testing",
-      instructions: "Think about the number 42 using the think tool, then call done with a summary mentioning the number 42.",
+      instructions: "Think about the number 42 using the think tool, then provide a summary mentioning the number 42.",
       tools: ["think"],
       schedule: { type: "once", runAt: new Date().toISOString() },
       notifyUser: false,
@@ -136,7 +136,7 @@ describe("CronAgent E2E", () => {
     expect(typeof result.text).toBe("string");
     expect(result.text).toContain('42');
     expect(result.stepsCount).toBeGreaterThanOrEqual(1);
-  }, 60000);
+  }, 600000);
 
   it("should execute a task that uses the send_message tool", async () => {
     const cronAgent: CronAgent = CronAgent.getInstance();
@@ -146,7 +146,7 @@ describe("CronAgent E2E", () => {
       taskId: "test-cron-task-002",
       name: "Message Sending Task",
       description: "A task that sends a message",
-      instructions: "Send a message to the user saying 'Hello from cron!' using the send_message tool, then call done.",
+      instructions: "Send a message to the user saying 'Hello from cron!' using the send_message tool.",
       tools: ["send_message"],
       schedule: { type: "once", runAt: new Date().toISOString() },
       notifyUser: false,
@@ -179,7 +179,7 @@ describe("CronAgent E2E", () => {
     );
 
     expect(anyMessageMatchesCron).toBe(true);
-  }, 60000);
+  }, 600000);
 
   it("should rebuild tools mid-run after create_table and use write_table tool", async () => {
     const cronAgent: CronAgent = CronAgent.getInstance();
@@ -238,7 +238,7 @@ describe("CronAgent E2E", () => {
       limit: 5,
     });
     expect(rows.totalCount).toBeGreaterThanOrEqual(1);
-  }, 120000);
+  }, 600000);
 });
 
 //#endregion Tests

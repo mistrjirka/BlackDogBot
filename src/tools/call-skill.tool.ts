@@ -1,4 +1,4 @@
-import { tool, ToolLoopAgent, hasToolCall, stepCountIs, LanguageModel, ToolSet } from "ai";
+import { tool, ToolLoopAgent, stepCountIs, LanguageModel, ToolSet } from "ai";
 
 import { callSkillToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
@@ -7,7 +7,6 @@ import { AiProviderService } from "../services/ai-provider.service.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { thinkTool } from "./think.tool.js";
-import { doneTool } from "./done.tool.js";
 import { runCmdTool } from "./run-cmd.tool.js";
 import { searchKnowledgeTool } from "./search-knowledge.tool.js";
 import { addKnowledgeTool } from "./add-knowledge.tool.js";
@@ -69,7 +68,6 @@ export function createCallSkillTool(availableSkillNames: string[]) {
 
         const tools: ToolSet = {
           think: thinkTool,
-          done: doneTool,
           run_cmd: runCmdTool,
           search_knowledge: searchKnowledgeTool,
           add_knowledge: addKnowledgeTool,
@@ -83,7 +81,7 @@ export function createCallSkillTool(availableSkillNames: string[]) {
           model,
           instructions: skill.instructions,
           tools: wrappedTools,
-          stopWhen: [hasToolCall("done"), stepCountIs(MAX_SKILL_STEPS)],
+          stopWhen: [stepCountIs(MAX_SKILL_STEPS)],
           experimental_repairToolCall: repairToolCallJsonAsync,
         });
 

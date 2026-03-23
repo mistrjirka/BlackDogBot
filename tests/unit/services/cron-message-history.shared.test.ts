@@ -228,7 +228,7 @@ describe("CronMessageHistoryService - Shared History", () => {
 
     expect((vectorStoreMock as any).searchAsync).toHaveBeenCalledWith(
       [0.1, 0.2],
-      5,
+      10,
       undefined,
       "cron-messages",
     );

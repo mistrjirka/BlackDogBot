@@ -78,7 +78,7 @@ describe("EmbeddingService OpenRouter E2E", () => {
     }
 
     shouldRunLiveTest = true;
-  }, 120000);
+  }, 600000);
 
   afterAll(async () => {
     process.env.HOME = originalHome;
@@ -131,7 +131,7 @@ describe("EmbeddingService OpenRouter E2E", () => {
     expect(batch.length).toBe(2);
     expect(batch[0].length).toBe(v1.length);
     expect(batch[1].length).toBe(v1.length);
-  }, 120000);
+  }, 600000);
 });
 
 //#endregion Tests
