@@ -61,6 +61,7 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
   render_graph: "jobId",
   add_cron: "name",
   edit_cron: "taskId",
+  edit_cron_instructions: "taskId",
   remove_cron: "taskId",
   get_cron: "taskId",
   list_crons: "taskId",
