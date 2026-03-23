@@ -137,4 +137,192 @@ describe("summarization compaction task-aware", () => {
       }
     }
   });
+
+  it("keeps previously compacted earlier-context summary pinned", async () => {
+    const pinnedSummaryText: string =
+      "[EARLIER CONTEXT SUMMARY - Messages before the latest user request were compacted]\n\n" +
+      "Pinned summary that should be preserved verbatim.\n\n" +
+      "[END OF EARLIER CONTEXT SUMMARY]";
+
+    const messages: ModelMessage[] = [
+      { role: "system", content: "System anchor" } as ModelMessage,
+      { role: "user", content: [{ type: "text", text: pinnedSummaryText }] } as ModelMessage,
+      { role: "assistant", content: [{ type: "text", text: "Old assistant detail that can be summarized." }] } as ModelMessage,
+      { role: "user", content: "LATEST USER: preserve id XYZ and continue" } as ModelMessage,
+      { role: "assistant", content: [{ type: "text", text: "working" }] } as ModelMessage,
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "tp", output: { type: "text", value: "latest tool output huge ".repeat(120) } }] } as ModelMessage,
+    ];
+
+    const promptsSeen: string[] = [];
+    vi.mocked(llmRetry.generateTextWithRetryAsync).mockImplementation(async (params: unknown) => {
+      const prompt: string = (params as { prompt?: string }).prompt ?? "";
+      promptsSeen.push(prompt);
+
+      if (prompt.includes("TASK CONTRACT")) {
+        return { text: "Goal: preserve id XYZ.", usage: { inputTokens: 100, outputTokens: 25 } } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+      }
+
+      if (prompt.includes("Tool output")) {
+        return { text: "Tool result summary", usage: { inputTokens: 120, outputTokens: 30 } } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+      }
+
+      return { text: "Compact summary of non-pinned prefix.", usage: { inputTokens: 180, outputTokens: 40 } } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+    });
+
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    } as unknown as LoggerService;
+
+    const result = await compactMessagesSummaryOnlyAsync(
+      messages,
+      {} as unknown as LanguageModel,
+      logger,
+      Math.floor(countApprox(messages) * 0.35),
+      countApprox,
+      true,
+    );
+
+    const serializedMessages: string = JSON.stringify(result.messages);
+    expect(serializedMessages.includes("Pinned summary that should be preserved verbatim.")).toBe(true);
+
+    const oneshotPrompts: string[] = promptsSeen.filter((prompt: string): boolean =>
+      prompt.includes("Conversation excerpt:"),
+    );
+    expect(oneshotPrompts.length).toBeGreaterThan(0);
+    expect(oneshotPrompts.some((prompt: string): boolean =>
+      prompt.includes("Pinned summary that should be preserved verbatim."),
+    )).toBe(false);
+  });
+
+  it("prioritizes fresh tool outputs over previously compacted ones", async () => {
+    const messages: ModelMessage[] = [
+      { role: "system", content: "System anchor" } as ModelMessage,
+      { role: "user", content: "LATEST USER: analyze all tool outputs" } as ModelMessage,
+      { role: "assistant", content: [{ type: "text", text: "calling tools" }] } as ModelMessage,
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "c1",
+          output: {
+            type: "text",
+            value: "[COMPACTED TOOL RESULT]\n[COMPACTION COUNT: 1]\nALREADY_COMPACTED_HUGE ".repeat(280),
+          },
+        }],
+      } as ModelMessage,
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "f1",
+          output: {
+            type: "text",
+            value: "FRESH_LARGE ".repeat(240),
+          },
+        }],
+      } as ModelMessage,
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "f2",
+          output: {
+            type: "text",
+            value: "FRESH_MEDIUM ".repeat(200),
+          },
+        }],
+      } as ModelMessage,
+    ];
+
+    const toolOutputPrompts: string[] = [];
+    vi.mocked(llmRetry.generateTextWithRetryAsync).mockImplementation(async (params: unknown) => {
+      const prompt: string = (params as { prompt?: string }).prompt ?? "";
+
+      if (prompt.includes("Tool output")) {
+        toolOutputPrompts.push(prompt);
+        return { text: "Tool summary", usage: { inputTokens: 120, outputTokens: 30 } } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+      }
+
+      if (prompt.includes("TASK CONTRACT")) {
+        return { text: "Task contract", usage: { inputTokens: 100, outputTokens: 25 } } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+      }
+
+      return { text: "Prefix summary", usage: { inputTokens: 180, outputTokens: 40 } } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+    });
+
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    } as unknown as LoggerService;
+
+    await compactMessagesSummaryOnlyAsync(
+      messages,
+      {} as unknown as LanguageModel,
+      logger,
+      Math.floor(countApprox(messages) * 0.18),
+      countApprox,
+      true,
+    );
+
+    expect(toolOutputPrompts.length).toBeGreaterThan(0);
+    expect(toolOutputPrompts[0].includes("FRESH_LARGE") || toolOutputPrompts[0].includes("FRESH_MEDIUM")).toBe(true);
+    expect(toolOutputPrompts[0].includes("ALREADY_COMPACTED_HUGE")).toBe(false);
+  });
+
+  it("increments tool compaction count when re-compacting a tool result", async () => {
+    const messages: ModelMessage[] = [
+      { role: "system", content: "System anchor" } as ModelMessage,
+      { role: "user", content: "LATEST USER: compact this output again" } as ModelMessage,
+      { role: "assistant", content: [{ type: "text", text: "calling tool" }] } as ModelMessage,
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "c2",
+          output: {
+            type: "text",
+            value: "[COMPACTED TOOL RESULT]\n[COMPACTION COUNT: 1]\nALREADY_COMPACTED ".repeat(320),
+          },
+        }],
+      } as ModelMessage,
+    ];
+
+    vi.mocked(llmRetry.generateTextWithRetryAsync).mockImplementation(async (params: unknown) => {
+      const prompt: string = (params as { prompt?: string }).prompt ?? "";
+
+      if (prompt.includes("Tool output")) {
+        return { text: "Re-compacted tool summary", usage: { inputTokens: 120, outputTokens: 30 } } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+      }
+
+      if (prompt.includes("TASK CONTRACT")) {
+        return { text: "Task contract", usage: { inputTokens: 100, outputTokens: 25 } } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+      }
+
+      return { text: "Prefix summary", usage: { inputTokens: 180, outputTokens: 40 } } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+    });
+
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    } as unknown as LoggerService;
+
+    const result = await compactMessagesSummaryOnlyAsync(
+      messages,
+      {} as unknown as LanguageModel,
+      logger,
+      Math.floor(countApprox(messages) * 0.2),
+      countApprox,
+      true,
+    );
+
+    const resultText: string = JSON.stringify(result.messages);
+    expect(resultText.includes("[COMPACTION COUNT: 2]")).toBe(true);
+  });
 });

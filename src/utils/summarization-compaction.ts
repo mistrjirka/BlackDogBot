@@ -188,18 +188,41 @@ async function _compactPrefixBeforeLastUserAsync(
   const firstMessage: ModelMessage = messages[0];
   const prefixMessages: ModelMessage[] = messages.slice(1, lastUserIndex);
   const activeSuffix: ModelMessage[] = messages.slice(lastUserIndex);
+  const pinnedSummaryMessages: ModelMessage[] = prefixMessages.filter((message: ModelMessage): boolean =>
+    _isEarlierContextSummaryMessage(message),
+  );
+  const unpinnedPrefixMessages: ModelMessage[] = prefixMessages.filter((message: ModelMessage): boolean =>
+    !_isEarlierContextSummaryMessage(message),
+  );
 
   if (prefixMessages.length === 0) {
     return messages;
   }
 
+  if (unpinnedPrefixMessages.length === 0) {
+    const resultWithPinnedOnly: ModelMessage[] = [firstMessage, ...pinnedSummaryMessages, ...activeSuffix];
+
+    logger.info("Compaction stage finished", {
+      stage: "prefix_before_latest_user",
+      before: countTokens(messages),
+      after: countTokens(resultWithPinnedOnly),
+      reducedBy: countTokens(messages) - countTokens(resultWithPinnedOnly),
+      prefixMessageCount: prefixMessages.length,
+      pinnedSummaryCount: pinnedSummaryMessages.length,
+      summarizedPrefixCount: 0,
+      keptSuffixCount: activeSuffix.length,
+    });
+
+    return resultWithPinnedOnly;
+  }
+
   const summaryBudgetTokens: number = Math.max(
     600,
-    Math.floor(targetTokenCount - countTokens([firstMessage, ...activeSuffix]) - 180),
+    Math.floor(targetTokenCount - countTokens([firstMessage, ...pinnedSummaryMessages, ...activeSuffix]) - 180),
   );
 
   const summaryText: string = await _summarizeMessagesSingleShotAsync(
-    prefixMessages,
+    unpinnedPrefixMessages,
     model,
     logger,
     summaryBudgetTokens,
@@ -215,7 +238,7 @@ async function _compactPrefixBeforeLastUserAsync(
     ],
   };
 
-  const result: ModelMessage[] = [firstMessage, summaryMessage, ...activeSuffix];
+  const result: ModelMessage[] = [firstMessage, ...pinnedSummaryMessages, summaryMessage, ...activeSuffix];
 
   logger.info("Compaction stage finished", {
     stage: "prefix_before_latest_user",
@@ -223,6 +246,8 @@ async function _compactPrefixBeforeLastUserAsync(
     after: countTokens(result),
     reducedBy: countTokens(messages) - countTokens(result),
     prefixMessageCount: prefixMessages.length,
+    pinnedSummaryCount: pinnedSummaryMessages.length,
+    summarizedPrefixCount: unpinnedPrefixMessages.length,
     keptSuffixCount: activeSuffix.length,
   });
 
@@ -317,7 +342,7 @@ async function _compactToolResultsAfterLatestUserAsync(
     return messages;
   }
 
-  const indexedToolMessages: Array<{ index: number; tokens: number }> = [];
+  const indexedToolMessages: Array<{ index: number; tokens: number; compactionCount: number }> = [];
   for (let i: number = lastUserIndex + 1; i < messages.length; i++) {
     const msg: ModelMessage = messages[i];
     if (msg.role !== "tool") {
@@ -326,14 +351,21 @@ async function _compactToolResultsAfterLatestUserAsync(
 
     const text: string = _extractTextContent(msg);
     const tokenApprox: number = _estimateTokens(text);
-    indexedToolMessages.push({ index: i, tokens: tokenApprox });
+    const compactionCount: number = _getToolResultCompactionCount(msg);
+    indexedToolMessages.push({ index: i, tokens: tokenApprox, compactionCount });
   }
 
   if (indexedToolMessages.length === 0) {
     return messages;
   }
 
-  indexedToolMessages.sort((a, b) => b.tokens - a.tokens);
+  indexedToolMessages.sort((a, b) => {
+    if (a.compactionCount !== b.compactionCount) {
+      return a.compactionCount - b.compactionCount;
+    }
+
+    return b.tokens - a.tokens;
+  });
 
   const resultMessages: ModelMessage[] = [...messages];
 
@@ -379,7 +411,12 @@ function _replaceToolMessageContentWithSummary(
   originalMsg: ModelMessage,
   summarized: string,
 ): ModelMessage {
-  const compactedText: string = `[COMPACTED TOOL RESULT]\n${summarized}`;
+  const currentCompactionCount: number = _getToolResultCompactionCount(originalMsg);
+  const nextCompactionCount: number = currentCompactionCount > 0 ? currentCompactionCount + 1 : 1;
+  const compactedText: string =
+    `[COMPACTED TOOL RESULT]\n` +
+    `[COMPACTION COUNT: ${nextCompactionCount}]\n` +
+    `${summarized}`;
 
   if (!Array.isArray(originalMsg.content)) {
     return originalMsg;
@@ -425,6 +462,29 @@ function _replaceToolMessageContentWithSummary(
     ...originalMsg,
     content: newContent as ModelMessage["content"],
   } as unknown as ModelMessage;
+}
+
+function _isEarlierContextSummaryMessage(message: ModelMessage): boolean {
+  const textContent: string = _extractTextContent(message);
+  return textContent.includes("[EARLIER CONTEXT SUMMARY");
+}
+
+function _getToolResultCompactionCount(message: ModelMessage): number {
+  const textContent: string = _extractTextContent(message);
+
+  if (!textContent.includes("[COMPACTED TOOL RESULT]")) {
+    return 0;
+  }
+
+  const countMatch: RegExpMatchArray | null = textContent.match(/\[COMPACTION COUNT:\s*(\d+)\]/i);
+  if (countMatch && countMatch[1]) {
+    const parsedCount: number = Number.parseInt(countMatch[1], 10);
+    if (Number.isFinite(parsedCount) && parsedCount > 0) {
+      return parsedCount;
+    }
+  }
+
+  return 1;
 }
 
 async function _summarizeMessagesSingleShotAsync(
