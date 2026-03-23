@@ -91,7 +91,12 @@ import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
-import { isContextExceededApiError, isRetryableApiError } from "../utils/context-error.js";
+import {
+  getConnectionRetryDelayMs,
+  isConnectionError,
+  isContextExceededApiError,
+  isRetryableApiError,
+} from "../utils/context-error.js";
 import { ensureDirectoryExistsAsync, getSessionsDir, getSessionFilePath } from "../utils/paths.js";
 import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
 import { extractAiErrorDetails } from "../utils/ai-error.js";
@@ -839,18 +844,32 @@ export class MainAgent extends BaseAgentBase {
 
             if (isRetryableApiError(genError) && _genericRetries < MAX_GENERIC_RETRIES) {
               _genericRetries++;
+              const isConnectionRelatedError: boolean = isConnectionError(genError);
+              const retryDelayMs: number = isConnectionRelatedError
+                ? getConnectionRetryDelayMs(_genericRetries)
+                : 0;
+
               this._logger.warn("Retryable API error in main agent loop, waiting before retry", {
                 chatId,
                 attempt,
                 emptyResponseAttempt: attempt,
                 genericRetryCount: _genericRetries,
                 maxGenericRetries: MAX_GENERIC_RETRIES,
+                retryType: isConnectionRelatedError ? "connection" : "generic",
+                retryDelayMs,
                 statusCode: aiErrorDetails.statusCode,
                 provider: aiErrorDetails.provider,
                 model: aiErrorDetails.model,
                 message: aiErrorDetails.message,
                 providerMessage: aiErrorDetails.providerMessage,
               });
+
+              if (retryDelayMs > 0) {
+                await new Promise<void>((resolve: () => void): void => {
+                  setTimeout(resolve, retryDelayMs);
+                });
+              }
+
               attempt--; // Don't burn the empty-response retry budget
               continue;
             }

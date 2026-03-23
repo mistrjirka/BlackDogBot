@@ -8,6 +8,7 @@ import { RateLimiterService } from "../services/rate-limiter.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { extractAiErrorDetails, formatAiErrorForLog } from "./ai-error.js";
+import { getConnectionRetryDelayMs, isConnectionError } from "./context-error.js";
 import { apply429BackoffAsync } from "./rate-limit-retry.js";
 import { runWithLlmCallTypeAsync } from "./llm-call-context.js";
 
@@ -279,6 +280,23 @@ export async function generateTextWithRetryAsync(
               maxAttempts,
             },
           });
+        } else {
+          const isConnectionRelatedError: boolean = isConnectionError(error);
+          if (isConnectionRelatedError) {
+            const retryDelayMs: number = getConnectionRetryDelayMs(attempt);
+            logger.warn("LLM call connection error, waiting before retry", {
+              llmCallId,
+              callType,
+              attempt,
+              maxAttempts,
+              retryDelayMs,
+              retryType: "connection",
+            });
+
+            await new Promise<void>((resolve: () => void): void => {
+              setTimeout(resolve, retryDelayMs);
+            });
+          }
         }
       }
     }
@@ -579,6 +597,24 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
               maxAttempts,
             },
           });
+        } else {
+          const isConnectionRelatedError: boolean = isConnectionError(error);
+          if (isConnectionRelatedError) {
+            const retryDelayMs: number = getConnectionRetryDelayMs(attempt);
+            logger.warn("LLM structured call connection error, waiting before retry", {
+              llmCallId,
+              callType,
+              attempt,
+              maxAttempts,
+              structuredMode,
+              retryDelayMs,
+              retryType: "connection",
+            });
+
+            await new Promise<void>((resolve: () => void): void => {
+              setTimeout(resolve, retryDelayMs);
+            });
+          }
         }
       }
     }

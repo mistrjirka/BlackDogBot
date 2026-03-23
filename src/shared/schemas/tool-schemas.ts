@@ -760,6 +760,8 @@ export const listCronsToolOutputSchema = z.object({
     taskId: z.string(),
     name: z.string(),
     description: z.string(),
+    tools: z.string()
+      .array(),
     schedule: z.object({
       type: z.string(),
       expression: z.string()

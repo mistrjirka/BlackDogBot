@@ -9,6 +9,7 @@ interface IListCronsTaskSummary {
   taskId: string;
   name: string;
   description: string;
+  tools: string[];
   schedule: {
     type: string;
     expression?: string;
@@ -55,6 +56,7 @@ function _mapTaskToSummary(task: IScheduledTask): IListCronsTaskSummary {
     taskId: task.taskId,
     name: task.name,
     description: task.description,
+    tools: task.tools,
     schedule: scheduleSummary,
     enabled: task.enabled,
     lastRunAt: task.lastRunAt,
