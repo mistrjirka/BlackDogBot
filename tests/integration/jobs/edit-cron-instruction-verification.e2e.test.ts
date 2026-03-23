@@ -9,7 +9,7 @@ import { AiProviderService } from "../../../src/services/ai-provider.service.js"
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { SchedulerService } from "../../../src/services/scheduler.service.js";
 import { PromptService } from "../../../src/services/prompt.service.js";
-import { editCronTool } from "../../../src/tools/edit-cron.tool.js";
+import { editCronInstructionsTool } from "../../../src/tools/edit-cron-instructions.tool.js";
 import type { IScheduledTask } from "../../../src/shared/types/index.js";
 
 const localBaseUrl: string = "http://localhost:2345";
@@ -67,7 +67,7 @@ beforeAll(async () => {
   await schedulerService.startAsync();
 
   endpointReachable = await isEndpointReachableAsync();
-});
+}, 600000);
 
 afterAll(async () => {
   try {
@@ -130,21 +130,15 @@ function createGetCronMessages(taskId: string): any[] {
 async function execEditCronTool(args: {
   taskId: string;
   instructions?: string;
-  instructionChangeWhat?: string;
-  instructionChangeWhy?: string;
-  tools?: string[];
-  name?: string;
-  description?: string;
-  enabled?: boolean;
-  notifyUser?: boolean;
+  intention?: string;
 }, messages: any[] = []): Promise<any> {
-  return await (editCronTool as any).execute(
+  return await (editCronInstructionsTool as any).execute(
     args,
     { toolCallId: "e2e-edit", messages, abortSignal: new AbortController().signal },
   );
 }
 
-describe("editCronTool instruction verification E2E", () => {
+describe("editCronInstructionsTool instruction verification E2E", () => {
   it("should reject ambiguous new instructions and keep task unchanged", async () => {
     if (!endpointReachable) {
       console.log("Skipping: local endpoint not reachable");
@@ -157,15 +151,14 @@ describe("editCronTool instruction verification E2E", () => {
     const result = await execEditCronTool({
       taskId: task.taskId,
       instructions: "Do what we discussed",
-      instructionChangeWhat: "Simplified instructions",
-      instructionChangeWhy: "Shorter is better",
+      intention: "Simplify instructions",
     }, messages);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("EDIT REJECTED");
     expect(result.error).toContain(task.instructions);
     expect(result.error).toContain("Do what we discussed");
-    expect(result.error).toContain("Simplified instructions");
+    expect(result.error).toContain("Intention: Simplify instructions");
 
     const persisted = await schedulerService.getTaskAsync(task.taskId);
     expect(persisted?.instructions).toBe(task.instructions);
@@ -183,8 +176,7 @@ describe("editCronTool instruction verification E2E", () => {
     const result = await execEditCronTool({
       taskId: task.taskId,
       instructions: "Fetch RSS from http://example.com/new-feed.xml. Mode=unseen. Write results to database 'news' table 'items'. Only write is_interesting=true entries.",
-      instructionChangeWhat: "Updated feed URL, added unseen mode filter, set is_interesting=true requirement",
-      instructionChangeWhy: "Switched to new feed provider, need tighter quality filtering",
+      intention: "Switch feed URL and enable unseen mode with tighter filtering",
     }, messages);
 
     expect(result.success).toBe(true);

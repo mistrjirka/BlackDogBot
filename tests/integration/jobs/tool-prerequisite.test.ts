@@ -11,6 +11,7 @@ import { SchedulerService } from "../../../src/services/scheduler.service.js";
 import { PromptService } from "../../../src/services/prompt.service.js";
 import { getCronTool } from "../../../src/tools/get-cron.tool.js";
 import { editCronTool } from "../../../src/tools/edit-cron.tool.js";
+import { editCronInstructionsTool } from "../../../src/tools/edit-cron-instructions.tool.js";
 import type { IScheduledTask } from "../../../src/shared/types/index.js";
 
 let tempDir: string;
@@ -52,9 +53,6 @@ async function execEditCronTool(args: {
   taskId: string;
   name?: string;
   description?: string;
-  instructions?: string;
-  instructionChangeWhat?: string;
-  instructionChangeWhy?: string;
   tools?: string[];
   scheduleType?: "once" | "interval" | "cron";
   scheduleRunAt?: string;
@@ -66,6 +64,17 @@ async function execEditCronTool(args: {
   return await (editCronTool as any).execute(
     args,
     { toolCallId: "test-edit", messages, abortSignal: new AbortController().signal },
+  );
+}
+
+async function execEditCronInstructionsTool(args: {
+  taskId: string;
+  instructions: string;
+  intention: string;
+}, messages: any[] = []): Promise<any> {
+  return await (editCronInstructionsTool as any).execute(
+    args,
+    { toolCallId: "test-edit-instructions", messages, abortSignal: new AbortController().signal },
   );
 }
 
@@ -124,6 +133,53 @@ describe("editCronTool prerequisites", () => {
     expect(editResult.success).toBe(false);
     expect(editResult.error).toContain("MISSING PREREQUISITE");
     expect(editResult.error).toContain("get_cron");
+  });
+
+  it("should reject edit_cron_instructions if get_cron was never called", async () => {
+    const taskId = await createTaskDirectly("Test Task");
+
+    const editResult = await execEditCronInstructionsTool({
+      taskId,
+      instructions: "Updated full instructions",
+      intention: "Need to refine task behavior",
+    }, []);
+
+    expect(editResult.success).toBe(false);
+    expect(editResult.error).toContain("MISSING PREREQUISITE");
+    expect(editResult.error).toContain("get_cron");
+  });
+
+  it("should allow edit_cron_instructions if get_cron was called with same taskId", async () => {
+    const taskId = await createTaskDirectly("Test Task");
+
+    const messagesWithGetCron = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "get_cron",
+            input: { taskId },
+            toolCallId: "call_789",
+          },
+        ],
+      },
+      {
+        role: "tool",
+        toolCallId: "call_789",
+        content: JSON.stringify({ success: true, task: {} }),
+      },
+    ];
+
+    const editResult = await execEditCronInstructionsTool({
+      taskId,
+      instructions: "Think through the current task and produce one concise internal summary of what should happen next.",
+      intention: "Clarify the instruction text while preserving intent",
+    }, messagesWithGetCron as any);
+
+    expect(editResult.success).toBe(true);
+    expect(editResult.task).toBeDefined();
+    expect(editResult.task?.instructions).toContain("current task");
   });
 
   it("should reject edit_cron if get_cron was called with different taskId", async () => {

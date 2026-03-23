@@ -18,7 +18,7 @@ import { AiProviderService } from "../../../src/services/ai-provider.service.js"
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { SchedulerService } from "../../../src/services/scheduler.service.js";
 import { PromptService } from "../../../src/services/prompt.service.js";
-import { editCronTool } from "../../../src/tools/edit-cron.tool.js";
+import { editCronInstructionsTool } from "../../../src/tools/edit-cron-instructions.tool.js";
 import { generateObjectWithRetryAsync } from "../../../src/utils/llm-retry.js";
 import type { IScheduledTask } from "../../../src/shared/types/index.js";
 
@@ -73,26 +73,16 @@ function createGetCronMessages(taskId: string): any[] {
 
 async function execEditCronTool(args: {
   taskId: string;
-  name?: string;
-  description?: string;
   instructions?: string;
-  instructionChangeWhat?: string;
-  instructionChangeWhy?: string;
-  tools?: string[];
-  scheduleType?: "once" | "interval" | "cron";
-  scheduleRunAt?: string;
-  scheduleIntervalMs?: number;
-  scheduleCron?: string;
-  notifyUser?: boolean;
-  enabled?: boolean;
+  intention?: string;
 }, messages: any[] = []): Promise<any> {
-  return await (editCronTool as any).execute(
+  return await (editCronInstructionsTool as any).execute(
     args,
     { toolCallId: "test-edit", messages, abortSignal: new AbortController().signal },
   );
 }
 
-describe("editCronTool instruction verification", () => {
+describe("editCronInstructionsTool instruction verification", () => {
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-editcron-verif-"));
     originalHome = process.env.HOME ?? os.homedir();
@@ -144,51 +134,34 @@ describe("editCronTool instruction verification", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it("should reject when instructions change but instructionChangeWhat is missing", async () => {
+  it("should reject when instructions change but intention is missing", async () => {
     const task = await createTaskDirectly();
     const messages = createGetCronMessages(task.taskId);
 
     const result = await execEditCronTool({
       taskId: task.taskId,
       instructions: "Fetch RSS from http://example.com/new-feed.xml and store in database.",
-      instructionChangeWhy: "Feed URL changed",
     }, messages);
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("instructionChangeWhat");
+    expect(result.error).toContain("intention");
 
     const persisted = await schedulerService.getTaskAsync(task.taskId);
     expect(persisted?.instructions).toBe(task.instructions);
   });
 
-  it("should reject when instructions change but instructionChangeWhy is missing", async () => {
+  it("should reject when instructions are unchanged", async () => {
     const task = await createTaskDirectly();
     const messages = createGetCronMessages(task.taskId);
 
     const result = await execEditCronTool({
       taskId: task.taskId,
-      instructions: "Fetch RSS from http://example.com/new-feed.xml and store in database.",
-      instructionChangeWhat: "Changed feed URL",
+      instructions: "Fetch RSS from http://example.com/feed.xml and store in database.",
+      intention: "No-op check",
     }, messages);
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("instructionChangeWhy");
-
-    const persisted = await schedulerService.getTaskAsync(task.taskId);
-    expect(persisted?.instructions).toBe(task.instructions);
-  });
-
-  it("should reject when instructions change and both metadata fields are missing", async () => {
-    const task = await createTaskDirectly();
-    const messages = createGetCronMessages(task.taskId);
-
-    const result = await execEditCronTool({
-      taskId: task.taskId,
-      instructions: "Fetch RSS from http://example.com/new-feed.xml and store in database.",
-    }, messages);
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("instructionChangeWhat");
+    expect(result.error).toContain("No instruction change detected");
 
     const persisted = await schedulerService.getTaskAsync(task.taskId);
     expect(persisted?.instructions).toBe(task.instructions);
@@ -208,30 +181,27 @@ describe("editCronTool instruction verification", () => {
     const result = await execEditCronTool({
       taskId: task.taskId,
       instructions: "Fetch that feed we talked about",
-      instructionChangeWhat: "Shortened instructions",
-      instructionChangeWhy: "Make it simpler",
+      intention: "Simplify wording while keeping behavior",
     }, messages);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("EDIT REJECTED");
     expect(result.error).toContain(task.instructions);
     expect(result.error).toContain("Fetch that feed we talked about");
-    expect(result.error).toContain("Shortened instructions");
-    expect(result.error).toContain("Make it simpler");
+    expect(result.error).toContain("Intention: Simplify wording while keeping behavior");
 
     const persisted = await schedulerService.getTaskAsync(task.taskId);
     expect(persisted?.instructions).toBe(task.instructions);
   });
 
-  it("should approve when instructions change with valid metadata and verifier approves", async () => {
+  it("should approve when instructions change with valid intention and verifier approves", async () => {
     const task = await createTaskDirectly();
     const messages = createGetCronMessages(task.taskId);
 
     const result = await execEditCronTool({
       taskId: task.taskId,
       instructions: "Fetch RSS from http://example.com/new-feed.xml and store in database. Only unseen items.",
-      instructionChangeWhat: "Updated feed URL and added unseen-only mode",
-      instructionChangeWhy: "Old feed URL is deprecated, switched to new provider",
+      intention: "Switch to new feed URL and unseen mode for dedup",
     }, messages);
 
     expect(result.success).toBe(true);
@@ -242,45 +212,17 @@ describe("editCronTool instruction verification", () => {
     expect(persisted?.instructions).toContain("new-feed.xml");
   });
 
-  it("should allow non-instruction edits without change metadata", async () => {
-    const task = await createTaskDirectly();
-    const messages = createGetCronMessages(task.taskId);
-
-    const result = await execEditCronTool({
-      taskId: task.taskId,
-      name: "Updated Name",
-      description: "Updated description",
-      enabled: false,
-    }, messages);
-
-    expect(result.success).toBe(true);
-    expect(result.task?.name).toBe("Updated Name");
-    expect(result.task?.enabled).toBe(false);
-  });
-
-  it("should accept write_table_* tools when editing tools", async () => {
-    const task = await createTaskDirectly();
-    const messages = createGetCronMessages(task.taskId);
-
-    const result = await execEditCronTool({
-      taskId: task.taskId,
-      tools: ["fetch_rss", "write_table_articles", "send_message"],
-    }, messages);
-
-    expect(result.success).toBe(true);
-    expect(result.task?.tools).toContain("write_table_articles");
-  });
-
-  it("should allow instruction edits with only whitespace difference without metadata", async () => {
+  it("should reject instruction edits with only whitespace difference", async () => {
     const task = await createTaskDirectly();
     const messages = createGetCronMessages(task.taskId);
 
     const result = await execEditCronTool({
       taskId: task.taskId,
       instructions: "Fetch RSS from http://example.com/feed.xml and store in database.  ",
+      intention: "Whitespace-only",
     }, messages);
 
-    expect(result.success).toBe(true);
-    expect(result.task?.instructions).toContain("example.com/feed.xml");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("No instruction change detected");
   });
 });

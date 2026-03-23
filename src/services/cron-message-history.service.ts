@@ -19,10 +19,12 @@ const SIMILARITY_SEARCH_LIMIT: number = 10;
 const SEARCH_LOG_PREVIEW_LENGTH: number = 120;
 
 const MessageNoveltySchema = z.object({
+  reasoning: z.string(),
   isNewInformation: z.boolean(),
 });
 
 const MessageDispatchPolicySchema = z.object({
+  reasoning: z.string(),
   shouldDispatch: z.boolean(),
 });
 
@@ -251,15 +253,31 @@ export class CronMessageHistoryService {
 
       const noveltyPrompt: string = `You are a strict deduplication checker for cron notifications.
 
-Decide whether the candidate message introduces materially new information compared to previous similar messages.
+Your job: determine whether the CANDIDATE MESSAGE contains information that users do NOT already know from the SIMILAR PREVIOUS MESSAGES.
 
-Use the task context to determine whether the candidate is merely a routine progress/status update that should be silent, or a meaningful deliverable/update that should be sent.
+RULES:
+- A message is a DUPLICATE when it conveys the same core facts, conclusions, outcomes, or alerts as any previous message, even if wording differs.
+- A message is NEW only when it introduces at least one concrete new fact, number, event, entity, error, or conclusion that does not appear in any previous message.
+- Rephrasing, different tone, reordered wording, timestamp formatting, or style changes are NOT new information.
+- Status/progress chatter ("task done", "fetched X", "processing complete") is NOT new information unless task instructions explicitly require those updates.
+- When uncertain, choose isNewInformation=false.
 
-Default behavior: status/progress chatter is NOT new information unless task instructions explicitly require progress updates.
+DEFINITION:
+Semantic duplicate = same user-facing meaning and actionable conclusion, even if sentence text is different.
 
-Return isNewInformation=true only when the candidate contains at least one meaningful new fact, update, result, or actionable detail that is not already conveyed by the previous messages.
+EXAMPLE A (duplicate -> false):
+Candidate: "ENERGY ALERT: Trump threatens Iranian power plants; US weighs Kharg Island seizure"
+Previous:  "ENERGY ALERT: Trump's ultimatum threatens Iranian power infrastructure; US considers seizing Kharg Island"
+Reason: same core alert and conclusions, only wording differs.
 
-Return isNewInformation=false when the candidate is a duplicate or near-duplicate of prior messages, including paraphrases, wording/style changes, reordered wording, or cosmetic formatting differences.
+EXAMPLE B (new -> true):
+Candidate: "ENERGY ALERT: Slovenia starts fuel rationing at 50L/day"
+Previous:  "ENERGY ALERT: Trump threatens Iranian power plants; Kharg Island risk"
+Reason: candidate introduces a new country, new event, and new quantitative fact (50L/day).
+
+OUTPUT REQUIREMENTS:
+1) In \`reasoning\`, explicitly list the key facts in the candidate and state whether each fact already exists in previous messages.
+2) If no concrete new fact remains after comparison, isNewInformation MUST be false.
 
 ${taskContextBlock}
 
@@ -281,6 +299,7 @@ ${similarMessagesBlock}`;
       this._logger.info("Cron message novelty decision computed", {
         taskId,
         isNewInformation: decision.object.isNewInformation,
+        reasoning: decision.object.reasoning,
         similarCount: similarMessages.length,
         queryPreview: this._buildSearchPreview(message),
       });
@@ -330,7 +349,23 @@ Allow dispatch only when at least one is true:
 2) Candidate message contains a critical error/warning requiring user action, or
 3) Candidate message is the requested final deliverable/output.
 
+Status/progress messages include: "task complete", "fetched X", "processed Y", "stored records", "silent operation complete", and similar operational summaries.
+
 If unsure, prefer shouldDispatch=false.
+
+EXAMPLE A (dispatch=false):
+Task instructions: "Run silently. Send only critical alerts."
+Candidate: "Task complete: fetched 16 articles, stored in DB."
+Reason: routine status update, not a critical alert, must be suppressed.
+
+EXAMPLE B (dispatch=true):
+Task instructions: "Run silently. Send only critical alerts."
+Candidate: "ENERGY ALERT: Strait disruption now impacting Czechia-relevant supply routes."
+Reason: this is a critical alert class explicitly allowed by instructions.
+
+OUTPUT REQUIREMENTS:
+1) In \`reasoning\`, cite which instruction lines allow or forbid this message type.
+2) Decide shouldDispatch accordingly.
 
 Task context:
 taskName: ${taskName ?? "unknown"}
@@ -352,6 +387,7 @@ ${candidateMessage}`;
 
       this._logger.info("Cron message dispatch policy decision computed", {
         shouldDispatch: decision.object.shouldDispatch,
+        reasoning: decision.object.reasoning,
         queryPreview: this._buildSearchPreview(message),
       });
 

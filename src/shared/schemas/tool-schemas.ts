@@ -701,18 +701,6 @@ export const editCronToolInputSchema = z.object({
   description: z.string()
     .optional()
     .describe("Updated description"),
-  instructions: z.string()
-    .min(1)
-    .optional()
-    .describe("Updated instructions for the agent. If changed, the instructions will be re-verified."),
-  instructionChangeWhat: z.string()
-    .min(1)
-    .optional()
-    .describe("REQUIRED when instructions change. Describe what is being changed and how."),
-  instructionChangeWhy: z.string()
-    .min(1)
-    .optional()
-    .describe("REQUIRED when instructions change. Explain why this change is needed."),
   tools: z.string()
     .min(1)
     .array()
@@ -740,6 +728,20 @@ export const editCronToolInputSchema = z.object({
 });
 
 export const editCronToolOutputSchema = getCronToolOutputSchema;
+
+export const editCronInstructionsToolInputSchema = z.object({
+  taskId: z.string()
+    .min(1)
+    .describe("ID of the cron task to update"),
+  instructions: z.string()
+    .min(1)
+    .describe("Complete NEW instructions text for the cron task (full replacement)."),
+  intention: z.string()
+    .min(1)
+    .describe("Why this instruction update is needed. Metadata only; does not modify instructions by itself."),
+});
+
+export const editCronInstructionsToolOutputSchema = getCronToolOutputSchema;
 
 export const listCronsToolInputSchema = z.object({
   enabledOnly: z.boolean()
@@ -1351,6 +1353,9 @@ const TASK_ID_PLACEHOLDER = "TASK_ID_PLACEHOLDER";
  */
 export const TOOL_PREREQUISITES: Record<string, { tool: string; args: Record<string, unknown> }[]> = {
   edit_cron: [
+    { tool: "get_cron", args: { taskId: TASK_ID_PLACEHOLDER } },
+  ],
+  edit_cron_instructions: [
     { tool: "get_cron", args: { taskId: TASK_ID_PLACEHOLDER } },
   ],
 };
