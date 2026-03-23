@@ -90,9 +90,16 @@ const tinyProbePngBase64: string = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC
 const STRUCTURED_OUTPUT_STRATEGY_AUTO: StructuredOutputMode = "auto";
 
 interface ICapabilityCacheEntry {
-  supportsVision: boolean;
+  supportsVision?: boolean;
+  supportsReasoningFormat?: boolean;
+  supportsStructuredOutputs?: boolean;
+  supportsToolCalling?: boolean;
+  supportsParallelToolCalls?: boolean;
+  resolvedStructuredOutputMode?: ResolvedStructuredOutputMode;
+  responseFormatOk?: boolean;
+  responseFormatReason?: string;
   detectedAt: string;
-  method: "api" | "probe";
+  method?: "api" | "probe";
 }
 
 type ICapabilityCache = Record<string, ICapabilityCacheEntry>;
@@ -185,6 +192,9 @@ export class AiProviderService {
     }
 
     const defaultModelId: string = this._getActiveModelId();
+    const capabilityCacheKey: string = this._getCapabilityCacheKey(defaultModelId);
+    const cachedCapabilities: ICapabilityCacheEntry | null =
+      await this._readCapabilityCacheEntryAsync(capabilityCacheKey);
 
     const effectiveRateLimits: IRateLimitConfig = this._resolveEffectiveRateLimits(
       providerKey,
@@ -272,25 +282,94 @@ export class AiProviderService {
     }
 
     // Test response format to detect reasoning_content issue
-    const responseFormat = await this.testResponseFormatAsync();
+    let responseFormat: { ok: boolean; reason?: string };
+    if (cachedCapabilities?.responseFormatOk === true) {
+      responseFormat = {
+        ok: true,
+        reason: cachedCapabilities.responseFormatReason,
+      };
+      logger.info("Model response format loaded from cache", {
+        provider: providerKey,
+        model: defaultModelId,
+        source: "capability_cache",
+      });
+    } else {
+      if (cachedCapabilities?.responseFormatOk === false) {
+        logger.info("Response format cache indicates issue; re-probing to avoid stale false negatives", {
+          provider: providerKey,
+          model: defaultModelId,
+          source: "capability_cache",
+        });
+      }
+
+      responseFormat = await this.testResponseFormatAsync();
+      await this._writeCapabilityCacheEntryAsync(capabilityCacheKey, {
+        responseFormatOk: responseFormat.ok,
+        responseFormatReason: responseFormat.reason,
+      });
+    }
     logger.info(`Model ${defaultModelId} response format: ${responseFormat.ok ? "OK" : `ISSUE - ${responseFormat.reason}`}`);
 
     // Autodetect reasoning_format support (llama.cpp specific)
     if (this._isOpenAiCompatible(providerKey)) {
-      this._supportsReasoningFormat = await this._testReasoningFormatSupportAsync();
+      if (cachedCapabilities?.supportsReasoningFormat === true) {
+        this._supportsReasoningFormat = true;
+        logger.info("Endpoint reasoning_format support loaded from cache", {
+          provider: providerKey,
+          model: defaultModelId,
+          supportsReasoningFormat: true,
+          source: "capability_cache",
+        });
+      } else {
+        if (cachedCapabilities?.supportsReasoningFormat === false) {
+          logger.info("reasoning_format cache indicates unsupported; re-probing to avoid stale false negatives", {
+            provider: providerKey,
+            model: defaultModelId,
+            source: "capability_cache",
+          });
+        }
+
+        this._supportsReasoningFormat = await this._testReasoningFormatSupportAsync();
+        await this._writeCapabilityCacheEntryAsync(capabilityCacheKey, {
+          supportsReasoningFormat: this._supportsReasoningFormat,
+        });
+      }
+
       if (this._supportsReasoningFormat) {
         logger.info("Will use reasoning_format: 'none' with AI SDK client-side think-tag extraction middleware");
       }
     }
 
     // Detect/request capabilities and resolve strict structured output mode.
-    await this._resolveStructuredOutputModeAsync(defaultModelId, logger);
+    await this._resolveStructuredOutputModeAsync(defaultModelId, logger, capabilityCacheKey);
 
     await this._resolveVisionSupportAsync(defaultModelId, logger);
 
     // Autodetect parallel tool call support (local openai-compatible endpoints)
     if (this._isLocalProvider(providerKey)) {
-      this._supportsParallelToolCalls = await this._testParallelToolCallSupportAsync();
+      if (cachedCapabilities?.supportsParallelToolCalls === true) {
+        this._supportsParallelToolCalls = true;
+        logger.info("Parallel tool call support loaded from cache", {
+          provider: providerKey,
+          model: defaultModelId,
+          supported: true,
+          source: "capability_cache",
+        });
+      } else {
+        if (cachedCapabilities?.supportsParallelToolCalls === false) {
+          logger.info("Parallel tool call cache indicates unsupported; re-probing to avoid stale false negatives", {
+            provider: providerKey,
+            model: defaultModelId,
+            source: "capability_cache",
+          });
+        }
+
+        this._supportsParallelToolCalls = await this._testParallelToolCallSupportAsync();
+        await this._writeCapabilityCacheEntryAsync(capabilityCacheKey, {
+          supportsParallelToolCalls: this._supportsParallelToolCalls,
+        });
+      }
+
       logger.info(
         `Autodetected parallel tool call support: ${this._supportsParallelToolCalls ? "SUPPORTED" : "NOT SUPPORTED"}`,
       );
@@ -1488,7 +1567,11 @@ export class AiProviderService {
     return response;
   }
 
-  private async _resolveStructuredOutputModeAsync(defaultModelId: string, logger: LoggerService): Promise<void> {
+  private async _resolveStructuredOutputModeAsync(
+    defaultModelId: string,
+    logger: LoggerService,
+    capabilityCacheKey: string,
+  ): Promise<void> {
     if (!this._aiConfig) {
       return;
     }
@@ -1524,6 +1607,29 @@ export class AiProviderService {
       return;
     }
 
+    const cachedEntry: ICapabilityCacheEntry | null = await this._readCapabilityCacheEntryAsync(capabilityCacheKey);
+    const cachedMode: ResolvedStructuredOutputMode | undefined = cachedEntry?.resolvedStructuredOutputMode;
+    const cachedSupportsStructured: boolean | undefined = cachedEntry?.supportsStructuredOutputs;
+    const cachedSupportsTools: boolean | undefined = cachedEntry?.supportsToolCalling;
+    const canUseCachedMode: boolean =
+      (cachedMode === "native_json_schema" && cachedSupportsStructured === true && cachedSupportsTools === true) ||
+      ((cachedMode === "tool_emulated" || cachedMode === "tool_auto") && cachedSupportsTools === true);
+
+    if (canUseCachedMode && cachedMode) {
+      this._resolvedStructuredOutputMode = cachedMode;
+      this._supportsStructuredOutputs = cachedSupportsStructured === true;
+      this._supportsToolCalling = cachedSupportsTools === true;
+      logger.info("Structured output mode loaded from cache", {
+        provider: providerKey,
+        model: defaultModelId,
+        mode: this._resolvedStructuredOutputMode,
+        supportsStructuredOutputs: this._supportsStructuredOutputs,
+        supportsToolCalling: this._supportsToolCalling,
+        source: "capability_cache",
+      });
+      return;
+    }
+
     // Auto mode: OpenRouter first tries model capability metadata.
     if (this._isOpenRouter(providerKey)) {
       const supportedParameters: Set<string> | null = await this._modelInfoService.fetchSupportedParametersAsync(defaultModelId);
@@ -1539,6 +1645,11 @@ export class AiProviderService {
 
         if (this._supportsStructuredOutputs) {
           this._resolvedStructuredOutputMode = "native_json_schema";
+          await this._writeCapabilityCacheEntryAsync(capabilityCacheKey, {
+            supportsStructuredOutputs: this._supportsStructuredOutputs,
+            supportsToolCalling: this._supportsToolCalling,
+            resolvedStructuredOutputMode: this._resolvedStructuredOutputMode,
+          });
           logger.info("Structured output mode auto-resolved from OpenRouter model metadata", {
             provider: providerKey,
             model: defaultModelId,
@@ -1552,6 +1663,11 @@ export class AiProviderService {
 
         if (hasTools && hasToolChoice) {
           this._resolvedStructuredOutputMode = "tool_emulated";
+          await this._writeCapabilityCacheEntryAsync(capabilityCacheKey, {
+            supportsStructuredOutputs: this._supportsStructuredOutputs,
+            supportsToolCalling: this._supportsToolCalling,
+            resolvedStructuredOutputMode: this._resolvedStructuredOutputMode,
+          });
           logger.info("Structured output mode auto-resolved from OpenRouter model metadata", {
             provider: providerKey,
             model: defaultModelId,
@@ -1565,6 +1681,11 @@ export class AiProviderService {
 
         if (hasTools) {
           this._resolvedStructuredOutputMode = "tool_auto";
+          await this._writeCapabilityCacheEntryAsync(capabilityCacheKey, {
+            supportsStructuredOutputs: this._supportsStructuredOutputs,
+            supportsToolCalling: this._supportsToolCalling,
+            resolvedStructuredOutputMode: this._resolvedStructuredOutputMode,
+          });
           logger.info("Structured output mode auto-resolved from OpenRouter model metadata", {
             provider: providerKey,
             model: defaultModelId,
@@ -1585,6 +1706,11 @@ export class AiProviderService {
     if (structuredOutputsProbe) {
       this._supportsToolCalling = true;
       this._resolvedStructuredOutputMode = "native_json_schema";
+      await this._writeCapabilityCacheEntryAsync(capabilityCacheKey, {
+        supportsStructuredOutputs: this._supportsStructuredOutputs,
+        supportsToolCalling: this._supportsToolCalling,
+        resolvedStructuredOutputMode: this._resolvedStructuredOutputMode,
+      });
       logger.info("Structured output mode resolved via probe", {
         provider: providerKey,
         model: defaultModelId,
@@ -1601,6 +1727,11 @@ export class AiProviderService {
 
     if (toolCallingProbe) {
       this._resolvedStructuredOutputMode = "tool_emulated";
+      await this._writeCapabilityCacheEntryAsync(capabilityCacheKey, {
+        supportsStructuredOutputs: this._supportsStructuredOutputs,
+        supportsToolCalling: this._supportsToolCalling,
+        resolvedStructuredOutputMode: this._resolvedStructuredOutputMode,
+      });
       logger.info("Structured output mode resolved via probe", {
         provider: providerKey,
         model: defaultModelId,
@@ -1617,6 +1748,11 @@ export class AiProviderService {
 
     if (softToolCallingProbe) {
       this._resolvedStructuredOutputMode = "tool_auto";
+      await this._writeCapabilityCacheEntryAsync(capabilityCacheKey, {
+        supportsStructuredOutputs: this._supportsStructuredOutputs,
+        supportsToolCalling: this._supportsToolCalling,
+        resolvedStructuredOutputMode: this._resolvedStructuredOutputMode,
+      });
       logger.info("Structured output mode resolved via probe", {
         provider: providerKey,
         model: defaultModelId,
@@ -1635,6 +1771,11 @@ export class AiProviderService {
       this._supportsStructuredOutputs = false;
       this._supportsToolCalling = true;
       this._resolvedStructuredOutputMode = "tool_auto";
+      await this._writeCapabilityCacheEntryAsync(capabilityCacheKey, {
+        supportsStructuredOutputs: this._supportsStructuredOutputs,
+        supportsToolCalling: this._supportsToolCalling,
+        resolvedStructuredOutputMode: this._resolvedStructuredOutputMode,
+      });
       logger.warn("Structured output probes failed, falling back to tool_auto due to reasoning_format support", {
         provider: providerKey,
         model: defaultModelId,
@@ -2727,8 +2868,7 @@ export class AiProviderService {
   }
 
   private async _readVisionSupportCacheEntryAsync(cacheKey: string): Promise<boolean | null> {
-    const cache: ICapabilityCache = await this._readVisionSupportCacheAsync();
-    const entry: ICapabilityCacheEntry | undefined = cache[cacheKey];
+    const entry: ICapabilityCacheEntry | null = await this._readCapabilityCacheEntryAsync(cacheKey);
     if (!entry || typeof entry.supportsVision !== "boolean") {
       return null;
     }
@@ -2741,22 +2881,46 @@ export class AiProviderService {
     supportsVision: boolean,
     method: "api" | "probe",
   ): Promise<void> {
-    const cachePath: string = this._getVisionSupportCachePath();
+    await this._writeCapabilityCacheEntryAsync(cacheKey, {
+      supportsVision,
+      method,
+    });
+  }
+
+  private async _readCapabilityCacheEntryAsync(cacheKey: string): Promise<ICapabilityCacheEntry | null> {
+    const cache: ICapabilityCache = await this._readCapabilityCacheAsync();
+    const entry: ICapabilityCacheEntry | undefined = cache[cacheKey];
+    if (!entry || typeof entry !== "object") {
+      return null;
+    }
+
+    return entry;
+  }
+
+  private async _writeCapabilityCacheEntryAsync(
+    cacheKey: string,
+    patch: Partial<ICapabilityCacheEntry>,
+  ): Promise<void> {
+    const cachePath: string = this._getCapabilityCachePath();
     const cacheDir: string = path.dirname(cachePath);
     await ensureDirectoryExistsAsync(cacheDir);
 
-    const cache: ICapabilityCache = await this._readVisionSupportCacheAsync();
-    cache[cacheKey] = {
-      supportsVision,
+    const cache: ICapabilityCache = await this._readCapabilityCacheAsync();
+    const existing: ICapabilityCacheEntry = cache[cacheKey] ?? {
       detectedAt: new Date().toISOString(),
-      method,
+    };
+
+    cache[cacheKey] = {
+      ...existing,
+      ...patch,
+      detectedAt: new Date().toISOString(),
     };
 
     await fs.writeFile(cachePath, JSON.stringify(cache, null, 2), "utf-8");
   }
 
-  private async _readVisionSupportCacheAsync(): Promise<ICapabilityCache> {
-    const cachePath: string = this._getVisionSupportCachePath();
+  private async _readCapabilityCacheAsync(): Promise<ICapabilityCache> {
+    const cachePath: string = this._getCapabilityCachePath();
 
     try {
       const content: string = await fs.readFile(cachePath, "utf-8");
@@ -2770,8 +2934,23 @@ export class AiProviderService {
     }
   }
 
-  private _getVisionSupportCachePath(): string {
+  private _getCapabilityCachePath(): string {
     return path.join(getCacheDir(), CAPABILITY_CACHE_FILE_NAME);
+  }
+
+  private _getCapabilityCacheKey(defaultModelId: string): string {
+    if (!this._aiConfig) {
+      return `unknown:${defaultModelId}`;
+    }
+
+    const providerKey: AiProvider = this._aiConfig.provider;
+    if (this._isOpenAiCompatible(providerKey) || this._isLmStudio(providerKey)) {
+      const config: IOpenAiCompatibleConfig | ILmStudioConfig = this._getActiveProviderConfig() as IOpenAiCompatibleConfig | ILmStudioConfig;
+      const baseUrl: string = normalizeBaseUrl(this._getLocalBaseUrl(config));
+      return `${providerKey}:${defaultModelId}:${baseUrl}`;
+    }
+
+    return `${providerKey}:${defaultModelId}`;
   }
 
   private _resolveBestProbeCandidate(message: { content?: string; reasoning_content?: string } | undefined): string {
