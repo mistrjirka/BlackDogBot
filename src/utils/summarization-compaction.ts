@@ -276,6 +276,20 @@ async function _compactLatestUserMessageAsync(
     ],
   };
 
+  const replacementTokens: number = countTokens([replacement]);
+  const originalTokens: number = countTokens([lastUserMessage]);
+  if (replacementTokens >= originalTokens) {
+    logger.info("Compaction stage skipped", {
+      stage: "latest_user_message",
+      reason: "replacement_not_shorter",
+      originalTokens,
+      replacementTokens,
+      lastUserIndex,
+    });
+
+    return messages;
+  }
+
   const result: ModelMessage[] = messages.map((msg: ModelMessage, idx: number): ModelMessage =>
     idx === lastUserIndex ? replacement : msg,
   );
@@ -448,7 +462,8 @@ async function _summarizeTextAsync(
         `Pay special attention to [Assistant reasoning] entries — these contain the rationale ` +
         `behind decisions and tool calls. Preserve the reasoning/rationale in your summary so ` +
         `that the assistant can recall WHY it made past decisions, not just WHAT it did. ` +
-        `Target length: about ${targetChars} characters.\n\n` +
+        `Target length: about ${targetChars} characters. ` +
+        `Do not exceed ${targetChars} characters. If needed, prefer concise bullet-like phrasing over prose.\n\n` +
         `Conversation excerpt:\n${sourceText}`,
       retryOptions: { callType: "summarization" },
     });

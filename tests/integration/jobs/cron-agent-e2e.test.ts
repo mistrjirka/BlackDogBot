@@ -30,7 +30,12 @@ const mockMessageSender: MessageSender = async (message: string): Promise<string
 };
 
 function createExecutionContext(): IExecutionContext {
-  return { toolCallHistory: [] };
+  return {
+    toolCallHistory: [],
+    taskName: "Test Task",
+    taskDescription: "A test scheduled task",
+    taskInstructions: "Execute the task",
+  };
 }
 
 

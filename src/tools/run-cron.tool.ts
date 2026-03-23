@@ -87,7 +87,12 @@ export const runCronTool = tool({
 
       const traceCollector = new SimpleTraceCollector();
       const sentMessages: ISentMessage[] = [];
-      const executionContext: IExecutionContext = { toolCallHistory: [] };
+      const executionContext: IExecutionContext = {
+        toolCallHistory: [],
+        taskName: task.name,
+        taskDescription: task.description,
+        taskInstructions: task.instructions,
+      };
 
       const taskIdProvider = (): string | null => task.taskId;
 

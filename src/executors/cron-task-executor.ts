@@ -44,7 +44,12 @@ export async function executeCronTaskAsync(
   task: IScheduledTask,
   deps: ICronTaskExecutorDeps,
 ): Promise<void> {
-  const executionContext = { toolCallHistory: [] } as IExecutionContext;
+  const executionContext = {
+    toolCallHistory: [],
+    taskName: task.name,
+    taskDescription: task.description,
+    taskInstructions: task.instructions,
+  } as IExecutionContext;
   const taskIdProvider = (): string | null => task.taskId;
 
   const toolMessageSender = async (message: string): Promise<string | null> => {

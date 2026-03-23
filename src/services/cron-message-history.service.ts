@@ -22,6 +22,10 @@ const MessageNoveltySchema = z.object({
   isNewInformation: z.boolean(),
 });
 
+const MessageDispatchPolicySchema = z.object({
+  shouldDispatch: z.boolean(),
+});
+
 //#endregion Constants
 
 //#region Interfaces
@@ -43,6 +47,10 @@ export interface ISimilarMessage {
 export interface ICheckMessageNoveltyResult {
   isNewInformation: boolean;
   similarCount: number;
+}
+
+export interface ICheckMessageDispatchResult {
+  shouldDispatch: boolean;
 }
 
 interface ISearchResultMetadata {
@@ -198,7 +206,13 @@ export class CronMessageHistoryService {
     return similarMessages;
   }
 
-  public async checkMessageNoveltyAsync(taskId: string, message: string): Promise<ICheckMessageNoveltyResult> {
+  public async checkMessageNoveltyAsync(
+    taskId: string,
+    message: string,
+    taskInstructions?: string,
+    taskName?: string,
+    taskDescription?: string,
+  ): Promise<ICheckMessageNoveltyResult> {
     try {
       const similarMessages: ISimilarMessage[] = await this.getSimilarMessagesAsync(message);
 
@@ -224,13 +238,30 @@ export class CronMessageHistoryService {
         })
         .join("\n\n");
 
+      const normalizedInstructions: string = (taskInstructions ?? "").trim();
+      const taskContextBlock: string = normalizedInstructions.length > 0
+        ? [
+            "Task context:",
+            `taskName: ${taskName ?? "unknown"}`,
+            `taskDescription: ${taskDescription ?? ""}`,
+            "taskInstructions:",
+            normalizedInstructions,
+          ].join("\n")
+        : "Task context:\n(task instructions unavailable)";
+
       const noveltyPrompt: string = `You are a strict deduplication checker for cron notifications.
 
 Decide whether the candidate message introduces materially new information compared to previous similar messages.
 
+Use the task context to determine whether the candidate is merely a routine progress/status update that should be silent, or a meaningful deliverable/update that should be sent.
+
+Default behavior: status/progress chatter is NOT new information unless task instructions explicitly require progress updates.
+
 Return isNewInformation=true only when the candidate contains at least one meaningful new fact, update, result, or actionable detail that is not already conveyed by the previous messages.
 
 Return isNewInformation=false when the candidate is a duplicate or near-duplicate of prior messages, including paraphrases, wording/style changes, reordered wording, or cosmetic formatting differences.
+
+${taskContextBlock}
 
 Candidate message:
 ${candidateMessage}
@@ -269,6 +300,73 @@ ${similarMessagesBlock}`;
       return {
         isNewInformation: true,
         similarCount: 0,
+      };
+    }
+  }
+
+  public async checkMessageDispatchPolicyAsync(
+    message: string,
+    taskInstructions?: string,
+    taskName?: string,
+    taskDescription?: string,
+  ): Promise<ICheckMessageDispatchResult> {
+    try {
+      const normalizedInstructions: string = (taskInstructions ?? "").trim();
+      if (normalizedInstructions.length === 0) {
+        return { shouldDispatch: true };
+      }
+
+      const model = AiProviderService.getInstance().getModel();
+      const candidateMessage: string = message.trim();
+
+      const prompt: string = `You are a strict cron notification policy checker.
+
+Decide whether the candidate message should be dispatched to the user based on task instructions.
+
+Rule: If task instructions indicate silent/background execution or say not to send status/progress updates, then status/progress messages must NOT be dispatched.
+
+Allow dispatch only when at least one is true:
+1) Task instructions explicitly require sending this kind of update, or
+2) Candidate message contains a critical error/warning requiring user action, or
+3) Candidate message is the requested final deliverable/output.
+
+If unsure, prefer shouldDispatch=false.
+
+Task context:
+taskName: ${taskName ?? "unknown"}
+taskDescription: ${taskDescription ?? ""}
+taskInstructions:
+${normalizedInstructions}
+
+Candidate message:
+${candidateMessage}`;
+
+      const decision = await generateObjectWithRetryAsync({
+        model,
+        schema: MessageDispatchPolicySchema,
+        prompt,
+        retryOptions: {
+          callType: "schema_extraction",
+        },
+      });
+
+      this._logger.info("Cron message dispatch policy decision computed", {
+        shouldDispatch: decision.object.shouldDispatch,
+        queryPreview: this._buildSearchPreview(message),
+      });
+
+      return {
+        shouldDispatch: decision.object.shouldDispatch,
+      };
+    } catch (error: unknown) {
+      const details: string = error instanceof Error ? error.message : String(error);
+
+      this._logger.warn("Cron message dispatch policy check failed, allowing send", {
+        error: details,
+      });
+
+      return {
+        shouldDispatch: true,
       };
     }
   }

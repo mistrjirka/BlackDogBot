@@ -113,6 +113,10 @@ export class CronAgent extends BaseAgentBase {
     executionContext: IExecutionContext,
     traceCollector?: ITraceCollector,
   ): Promise<IAgentResult> {
+    executionContext.taskName = task.name;
+    executionContext.taskDescription = task.description;
+    executionContext.taskInstructions = task.instructions;
+
     // Reset think operation tracker at the start of each task
     thinkTracker.reset();
 

@@ -47,8 +47,26 @@ export function createSendMessageToolWithHistory(
         const taskId: string | null = taskIdProvider();
         const historyService: CronMessageHistoryService = CronMessageHistoryService.getInstance();
 
+        const dispatchPolicy = await historyService.checkMessageDispatchPolicyAsync(
+          message,
+          context.taskInstructions,
+          context.taskName,
+          context.taskDescription,
+        );
+
+        if (!dispatchPolicy.shouldDispatch) {
+          context.toolCallHistory.push("send_message");
+          return { sent: true, messageId: null };
+        }
+
         if (taskId) {
-          const novelty = await historyService.checkMessageNoveltyAsync(taskId, message);
+          const novelty = await historyService.checkMessageNoveltyAsync(
+            taskId,
+            message,
+            context.taskInstructions,
+            context.taskName,
+            context.taskDescription,
+          );
 
           if (!novelty.isNewInformation) {
             context.toolCallHistory.push("send_message");

@@ -43,7 +43,12 @@ function createTask(overrides?: Partial<IScheduledTask>): IScheduledTask {
 }
 
 function createExecutionContext(): IExecutionContext {
-  return { toolCallHistory: [] };
+  return {
+    toolCallHistory: [],
+    taskName: "Test Task",
+    taskDescription: "A test scheduled task",
+    taskInstructions: "Do something",
+  };
 }
 
 describe("CronAgent tool resolution", () => {

@@ -402,7 +402,12 @@ async function mainAsync(): Promise<void> {
         );
       };
 
-      const executionContext: IExecutionContext = { toolCallHistory: [] };
+      const executionContext: IExecutionContext = {
+        toolCallHistory: [],
+        taskName: task.name,
+        taskDescription: task.description,
+        taskInstructions: task.instructions,
+      };
 
       await executeCronTaskAsync(task, {
         broadcastToNotificationChannelsAsync,

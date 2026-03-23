@@ -540,6 +540,21 @@ export abstract class BaseAgentBase {
             finalMessageCount: compactionResult.messages.length,
           });
 
+          const postCompactionEstimate: IRequestLikeByteTokenEstimate | null = estimateRequestLikeTokensByBytes(
+            compactionResult.messages,
+            instructions,
+            creationPrompt,
+            allTools,
+            activeToolNames,
+          );
+          const postCompactionTokenCount: number = postCompactionEstimate?.estimatedTokens ?? countTokens(compactionResult.messages);
+          self._totalInputTokens = postCompactionTokenCount;
+          statusService.setContextTokensWithThreshold(
+            postCompactionTokenCount,
+            compactionTokenThreshold,
+            self._contextWindow,
+          );
+
           return { messages: compactionResult.messages, activeTools: activeToolNames };
         }
 
