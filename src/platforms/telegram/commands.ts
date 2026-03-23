@@ -3,6 +3,7 @@ import { Context, Bot } from "grammy";
 import { LoggerService } from "../../services/logger.service.js";
 import { PromptService } from "../../services/prompt.service.js";
 import { MainAgent } from "../../agent/main-agent.js";
+import type { IRefreshSessionsResult } from "../../agent/main-agent.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
 import { McpRegistryService } from "../../services/mcp-registry.service.js";
 import { McpService } from "../../services/mcp.service.js";
@@ -134,9 +135,18 @@ export function setupTelegramCommands(bot: Bot): void {
   bot.command("update_prompts", async (ctx: Context): Promise<void> => {
     try {
       await promptService.resetAllPromptsAsync();
+      const refreshResult: IRefreshSessionsResult = await mainAgent.refreshAllSessionsAsync();
 
-      await ctx.reply("All prompts have been updated from source defaults.");
-      logger.info("Prompts updated from source defaults via /update_prompts command.");
+      const refreshSummary: string = refreshResult.failedCount > 0
+        ? `Main sessions refreshed: ${refreshResult.refreshedCount}, failed: ${refreshResult.failedCount}.`
+        : `Main sessions refreshed: ${refreshResult.refreshedCount}.`;
+
+      await ctx.reply(`All prompts have been updated from source defaults. ${refreshSummary}`);
+      logger.info("Prompts updated from source defaults via /update_prompts command.", {
+        refreshedCount: refreshResult.refreshedCount,
+        failedCount: refreshResult.failedCount,
+        failedChatIds: refreshResult.failedChatIds,
+      });
     } catch (error: unknown) {
       const errorMessage: string = extractErrorMessage(error);
       await ctx.reply(`Failed to update prompts: ${errorMessage}`);

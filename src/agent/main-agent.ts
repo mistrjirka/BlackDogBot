@@ -170,6 +170,12 @@ export interface IChatImageAttachment {
   mediaType: string;
 }
 
+export interface IRefreshSessionsResult {
+  refreshedCount: number;
+  failedCount: number;
+  failedChatIds: string[];
+}
+
 interface IBufferMarker {
   __type: "Buffer";
   __data: string;
@@ -593,6 +599,49 @@ export class MainAgent extends BaseAgentBase {
     });
 
     this._logger.info("MainAgent initialized for chat.", { chatId, permission });
+  }
+
+  public async refreshAllSessionsAsync(): Promise<IRefreshSessionsResult> {
+    const chatIds: string[] = Array.from(this._sessions.keys());
+    let refreshedCount: number = 0;
+    const failedChatIds: string[] = [];
+
+    for (const chatId of chatIds) {
+      const session: IChatSession | undefined = this._sessions.get(chatId);
+      if (!session) {
+        continue;
+      }
+
+      try {
+        await this.initializeForChatAsync(
+          chatId,
+          session.messageSender,
+          session.photoSender,
+          session.onStepAsync,
+          session.platform,
+        );
+        refreshedCount++;
+      } catch (error: unknown) {
+        failedChatIds.push(chatId);
+        this._logger.error("Failed to refresh chat session after prompt update", {
+          chatId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const result: IRefreshSessionsResult = {
+      refreshedCount,
+      failedCount: failedChatIds.length,
+      failedChatIds,
+    };
+
+    this._logger.info("MainAgent sessions refreshed", {
+      refreshedCount: result.refreshedCount,
+      failedCount: result.failedCount,
+      failedChatIds: result.failedChatIds,
+    });
+    return result;
   }
 
   public async processMessageForChatAsync(
