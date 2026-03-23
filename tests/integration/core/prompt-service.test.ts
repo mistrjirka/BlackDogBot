@@ -135,6 +135,53 @@ describe("PromptService", () => {
     expect(afterResetResolved).not.toContain("temporary override content");
   });
 
+  it("should recommend update when stored prompt fingerprint is stale", async () => {
+    const service: PromptService = PromptService.getInstance();
+
+    await service.initializeAsync();
+
+    expect(await service.isPromptUpdateRecommendedAsync()).toBe(false);
+
+    const promptSyncStatePath: string = path.join(
+      tempDir,
+      ".blackdogbot",
+      "cache",
+      "prompt-sync-state.json",
+    );
+
+    await fs.writeFile(
+      promptSyncStatePath,
+      JSON.stringify({
+        lastAppliedDefaultsFingerprint: "stale-fingerprint",
+        updatedAt: new Date(0).toISOString(),
+      }, null, 2),
+      "utf-8",
+    );
+
+    expect(await service.isPromptUpdateRecommendedAsync()).toBe(true);
+
+    await service.resetAllPromptsAsync();
+
+    expect(await service.isPromptUpdateRecommendedAsync()).toBe(false);
+  });
+
+  it("should not recommend update when prompt sync state file is invalid", async () => {
+    const service: PromptService = PromptService.getInstance();
+
+    await service.initializeAsync();
+
+    const promptSyncStatePath: string = path.join(
+      tempDir,
+      ".blackdogbot",
+      "cache",
+      "prompt-sync-state.json",
+    );
+
+    await fs.writeFile(promptSyncStatePath, "{ invalid json", "utf-8");
+
+    expect(await service.isPromptUpdateRecommendedAsync()).toBe(false);
+  });
+
   it("should resolve include directives", async () => {
     const service: PromptService = PromptService.getInstance();
 
