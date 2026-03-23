@@ -60,7 +60,66 @@ interface ISearchResultMetadata {
   taskId?: string;
 }
 
+interface IBuildNoveltyPromptInput {
+  taskContextBlock: string;
+  candidateMessage: string;
+  similarMessagesBlock: string;
+}
+
 //#endregion Interfaces
+
+//#region Prompt builders
+
+export function buildCronNoveltyPrompt(input: IBuildNoveltyPromptInput): string {
+  return `You are a strict deduplication checker for cron notifications.
+
+Your job: determine whether the CANDIDATE MESSAGE describes a genuinely NEW EVENT that users have not already been notified about.
+
+RULES:
+- If the candidate and any previous message describe the SAME CORE EVENT, classify as DUPLICATE (isNewInformation=false).
+- "Same core event" means same real-world incident/alert subject, even if the candidate adds new context, extra details, statistics, or stronger wording.
+- Added details about an already-known event are NOT new information.
+- Rephrasing, different tone, reordered wording, timestamp formatting, or style changes are NOT new information.
+- Status/progress chatter ("task done", "fetched X", "processing complete") is NOT new information unless task instructions explicitly require those updates.
+- Only classify as NEW when the core event itself is different (different incident/entity/location/outcome), not just richer description of the same incident.
+- When uncertain, choose isNewInformation=false.
+
+CORE EVENT TEST (must be applied first):
+1) Identify the core event in the candidate.
+2) Check whether that same core event appears in any previous message.
+3) If yes, isNewInformation MUST be false.
+4) Only if core event is absent from all previous messages may isNewInformation be true.
+
+EXAMPLE A (duplicate -> false):
+Candidate: "ENERGY ALERT: Trump threatens Iranian power plants; US weighs Kharg Island seizure"
+Previous:  "ENERGY ALERT: Trump's ultimatum threatens Iranian power infrastructure; US considers seizing Kharg Island"
+Reason: same core event, different wording.
+
+EXAMPLE B (duplicate -> false):
+Candidate: "ENERGY ALERT: Czech factory arson verified; IEA says crisis worse than 1970s"
+Previous:  "ENERGY ALERT: Czech thermal imaging factory arson attack confirmed"
+Reason: same core event (Czech factory arson). Added IEA context does not create a new event.
+
+EXAMPLE C (new -> true):
+Candidate: "ENERGY ALERT: Slovenia starts fuel rationing at 50L/day"
+Previous:  "ENERGY ALERT: Trump threatens Iranian power plants; Kharg Island risk"
+Reason: different core event.
+
+OUTPUT REQUIREMENTS:
+1) In \`reasoning\`, explicitly state the candidate core event and whether it already exists in previous messages (cite the matching rank numbers when applicable).
+2) If core event already exists, isNewInformation MUST be false.
+3) Only mark true if the candidate core event is genuinely different.
+
+${input.taskContextBlock}
+
+Candidate message:
+${input.candidateMessage}
+
+Top similar previous messages:
+${input.similarMessagesBlock}`;
+}
+
+//#endregion Prompt builders
 
 //#region CronMessageHistoryService
 
@@ -217,8 +276,11 @@ export class CronMessageHistoryService {
   ): Promise<ICheckMessageNoveltyResult> {
     try {
       const similarMessages: ISimilarMessage[] = await this.getSimilarMessagesAsync(message);
+      const sameTaskSimilarMessages: ISimilarMessage[] = similarMessages.filter(
+        (item: ISimilarMessage): boolean => item.taskId === taskId,
+      );
 
-      if (similarMessages.length === 0) {
+      if (sameTaskSimilarMessages.length === 0) {
         return {
           isNewInformation: true,
           similarCount: 0,
@@ -227,7 +289,7 @@ export class CronMessageHistoryService {
 
       const model = AiProviderService.getInstance().getModel();
       const candidateMessage: string = message.trim();
-      const similarMessagesBlock: string = similarMessages
+      const similarMessagesBlock: string = sameTaskSimilarMessages
         .map((item: ISimilarMessage, index: number): string => {
           const score: number = Number(item.score.toFixed(4));
           return [
@@ -251,41 +313,11 @@ export class CronMessageHistoryService {
           ].join("\n")
         : "Task context:\n(task instructions unavailable)";
 
-      const noveltyPrompt: string = `You are a strict deduplication checker for cron notifications.
-
-Your job: determine whether the CANDIDATE MESSAGE contains information that users do NOT already know from the SIMILAR PREVIOUS MESSAGES.
-
-RULES:
-- A message is a DUPLICATE when it conveys the same core facts, conclusions, outcomes, or alerts as any previous message, even if wording differs.
-- A message is NEW only when it introduces at least one concrete new fact, number, event, entity, error, or conclusion that does not appear in any previous message.
-- Rephrasing, different tone, reordered wording, timestamp formatting, or style changes are NOT new information.
-- Status/progress chatter ("task done", "fetched X", "processing complete") is NOT new information unless task instructions explicitly require those updates.
-- When uncertain, choose isNewInformation=false.
-
-DEFINITION:
-Semantic duplicate = same user-facing meaning and actionable conclusion, even if sentence text is different.
-
-EXAMPLE A (duplicate -> false):
-Candidate: "ENERGY ALERT: Trump threatens Iranian power plants; US weighs Kharg Island seizure"
-Previous:  "ENERGY ALERT: Trump's ultimatum threatens Iranian power infrastructure; US considers seizing Kharg Island"
-Reason: same core alert and conclusions, only wording differs.
-
-EXAMPLE B (new -> true):
-Candidate: "ENERGY ALERT: Slovenia starts fuel rationing at 50L/day"
-Previous:  "ENERGY ALERT: Trump threatens Iranian power plants; Kharg Island risk"
-Reason: candidate introduces a new country, new event, and new quantitative fact (50L/day).
-
-OUTPUT REQUIREMENTS:
-1) In \`reasoning\`, explicitly list the key facts in the candidate and state whether each fact already exists in previous messages.
-2) If no concrete new fact remains after comparison, isNewInformation MUST be false.
-
-${taskContextBlock}
-
-Candidate message:
-${candidateMessage}
-
-Top similar previous messages:
-${similarMessagesBlock}`;
+      const noveltyPrompt: string = buildCronNoveltyPrompt({
+        taskContextBlock,
+        candidateMessage,
+        similarMessagesBlock,
+      });
 
       const decision = await generateObjectWithRetryAsync({
         model,
@@ -300,13 +332,13 @@ ${similarMessagesBlock}`;
         taskId,
         isNewInformation: decision.object.isNewInformation,
         reasoning: decision.object.reasoning,
-        similarCount: similarMessages.length,
+        similarCount: sameTaskSimilarMessages.length,
         queryPreview: this._buildSearchPreview(message),
       });
 
       return {
         isNewInformation: decision.object.isNewInformation,
-        similarCount: similarMessages.length,
+        similarCount: sameTaskSimilarMessages.length,
       };
     } catch (error: unknown) {
       const details: string = error instanceof Error ? error.message : String(error);

@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { editCronInstructionsToolInputSchema, TOOL_PREREQUISITES } from "../shared/schemas/tool-schemas.js";
+import { editCronInstructionsToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -29,6 +29,7 @@ const TOOL_NAME: string = "edit-cron-instructions";
 const TOOL_DESCRIPTION: string =
   "Update ONLY the instructions text of an existing cron task. " +
   "You MUST provide the COMPLETE new instructions text in the 'instructions' field (full replacement), plus 'intention' explaining why the change is needed. " +
+  "Optionally provide 'tools' to replace the task tool list in the same call when instruction changes require different tools. " +
   "IMPORTANT: 'intention' is metadata only and does NOT change instructions by itself. " +
   "IMPORTANT: You MUST call 'get_cron' first to retrieve the current task configuration before using this tool.";
 
@@ -41,10 +42,12 @@ const executeEditCronInstructions = async (
     taskId,
     instructions,
     intention,
+    tools,
   }: {
     taskId: string;
     instructions: string;
     intention: string;
+    tools?: string[];
   },
   _context: ToolExecuteContext,
 ): Promise<IEditCronInstructionsResult> => {
@@ -73,6 +76,18 @@ const executeEditCronInstructions = async (
       };
     }
 
+    if (tools !== undefined) {
+      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
+      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
+      const invalidTools: string[] = tools.filter((t: string) => !validToolSet.has(t) && !isDynamicWriteTableTool(t));
+      if (invalidTools.length > 0) {
+        return {
+          success: false,
+          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}`,
+        };
+      }
+    }
+
     const instructionsActuallyChanged: boolean =
       normalizedInstructions !== existingTask.instructions.trim();
 
@@ -85,7 +100,23 @@ const executeEditCronInstructions = async (
 
     logger.debug(`[${TOOL_NAME}] Re-verifying cron instructions for task: ${taskId}`);
 
-    const toolContextBlock: string = await buildCronToolContextBlockAsync(existingTask.tools);
+    const toolsToVerify: string[] = tools ?? existingTask.tools;
+    const toolContextBlock: string = await buildCronToolContextBlockAsync(toolsToVerify);
+
+    const lowerInstructions: string = normalizedInstructions.toLowerCase();
+    const mentionsRunCmd: boolean = lowerInstructions.includes("run_cmd");
+    const mentionsSqlite: boolean = lowerInstructions.includes("sqlite") || lowerInstructions.includes("sqlite3");
+    if (mentionsRunCmd && mentionsSqlite) {
+      const recommendedWriter: string | undefined = toolsToVerify.find((toolName: string) => toolName.startsWith("write_table_"));
+      const guidance: string = recommendedWriter
+        ? `Use ${recommendedWriter} for inserts and database tools (read_from_database/update_database/delete_from_database) for mutations instead of run_cmd/sqlite3.`
+        : "Use write_table_<tableName> for inserts and database tools (read_from_database/update_database/delete_from_database) instead of run_cmd/sqlite3.";
+
+      return {
+        success: false,
+        error: `EDIT REJECTED. Instructions must not use run_cmd with sqlite/sqlite3 for internal database work. ${guidance}`,
+      };
+    }
 
     const verifierPrompt: string = `
 You are a task instruction verifier for an autonomous AI agent.
@@ -124,6 +155,14 @@ RULES:
    - Set notifyUser=false for background tasks where only explicit send_message tool calls should reach Telegram (e.g. cleanup, archival, internal data processing).
    - The send_message tool ALWAYS sends to Telegram regardless of notifyUser — notifyUser only gates the automatic forwarding of the agent's final text output.
 
+7. Database rules are strict:
+   - NEVER use run_cmd with sqlite/sqlite3 for internal database work.
+   - For inserts, prefer write_table_<tableName> tools when available.
+   - Use read_from_database/update_database/delete_from_database for database access and mutation.
+   - Use just database names without .db extension.
+
+8. If instructions mention tools not present in the tool list, they are invalid unless those tools are being added in this same update.
+
 === CURRENT CRON TASK ===
 Task ID: ${existingTask.taskId}
 Name: ${existingTask.name}
@@ -142,6 +181,9 @@ ${existingTask.instructions}
 """
 ${normalizedInstructions}
 """
+
+=== PROPOSED TOOLS ===
+${toolsToVerify.join(", ")}
 
 === CHANGE INTENTION ===
 ${normalizedIntention}
@@ -180,7 +222,14 @@ Output a JSON object with:
       return { success: false, error: errorMsg };
     }
 
-    const updatedTask: IScheduledTask | undefined = await scheduler.updateTaskAsync(taskId, { instructions: normalizedInstructions });
+    const updatePatch: { instructions: string; tools?: string[] } = {
+      instructions: normalizedInstructions,
+    };
+    if (tools !== undefined) {
+      updatePatch.tools = tools;
+    }
+
+    const updatedTask: IScheduledTask | undefined = await scheduler.updateTaskAsync(taskId, updatePatch);
 
     if (updatedTask) {
       logger.info("[edit-cron-instructions] Updated task instructions", {

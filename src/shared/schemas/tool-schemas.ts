@@ -739,6 +739,12 @@ export const editCronInstructionsToolInputSchema = z.object({
   intention: z.string()
     .min(1)
     .describe("Why this instruction update is needed. Metadata only; does not modify instructions by itself."),
+  tools: z.string()
+    .min(1)
+    .array()
+    .min(1)
+    .optional()
+    .describe("Optional replacement tool list to apply together with the instruction update."),
 });
 
 export const editCronInstructionsToolOutputSchema = getCronToolOutputSchema;

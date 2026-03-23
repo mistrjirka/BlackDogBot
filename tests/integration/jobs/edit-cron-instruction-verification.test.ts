@@ -75,6 +75,7 @@ async function execEditCronTool(args: {
   taskId: string;
   instructions?: string;
   intention?: string;
+  tools?: string[];
 }, messages: any[] = []): Promise<any> {
   return await (editCronInstructionsTool as any).execute(
     args,
@@ -224,5 +225,41 @@ describe("editCronInstructionsTool instruction verification", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("No instruction change detected");
+  });
+
+  it("should reject run_cmd+sqlite instructions with explicit guidance", async () => {
+    const task = await createTaskDirectly({
+      tools: ["fetch_rss", "read_from_database", "write_table_articles", "send_message"],
+    });
+    const messages = createGetCronMessages(task.taskId);
+
+    const result = await execEditCronTool({
+      taskId: task.taskId,
+      instructions: "Use run_cmd with sqlite3 insert into articles for every fetched item.",
+      intention: "Store rows quickly",
+    }, messages);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("must not use run_cmd with sqlite/sqlite3");
+    expect(result.error).toContain("write_table_articles");
+  });
+
+  it("should allow updating instructions and tools in one call", async () => {
+    const task = await createTaskDirectly({
+      tools: ["fetch_rss", "read_from_database", "write_table_articles", "send_message"],
+    });
+    const messages = createGetCronMessages(task.taskId);
+
+    const result = await execEditCronTool({
+      taskId: task.taskId,
+      instructions: "Use fetch_rss in unseen mode, store all items via write_table_articles, and verify key military claims with searxng.",
+      intention: "Need web verification before alerting",
+      tools: ["fetch_rss", "read_from_database", "write_table_articles", "searxng", "send_message"],
+    }, messages);
+
+    expect(result.success).toBe(true);
+    expect(result.task).toBeDefined();
+    expect(result.task.instructions).toContain("searxng");
+    expect(result.task.tools).toContain("searxng");
   });
 });
