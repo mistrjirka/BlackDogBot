@@ -1057,6 +1057,8 @@ export class MainAgent extends BaseAgentBase {
         return null;
       }
 
+      parsed.messages = _normalizeLoadedSessionMessages(parsed.messages, this._logger, chatId);
+
       return parsed;
     } catch (error: unknown) {
       if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -1151,10 +1153,94 @@ function _sessionParseReviver(_key: string, value: unknown): unknown {
     "__data" in value &&
     typeof (value as { __data?: unknown }).__data === "string"
   ) {
-    return (value as { __data: string }).__data;
+    try {
+      return Buffer.from((value as { __data: string }).__data, "base64");
+    } catch {
+      return value;
+    }
+  }
+
+  // Backward-compatible restore for Node's default Buffer JSON shape:
+  // { type: "Buffer", data: number[] }
+  if (
+    value &&
+    typeof value === "object" &&
+    "type" in value &&
+    (value as { type?: unknown }).type === "Buffer" &&
+    "data" in value &&
+    Array.isArray((value as { data?: unknown }).data)
+  ) {
+    try {
+      return Buffer.from((value as { data: number[] }).data);
+    } catch {
+      return value;
+    }
   }
 
   return value;
+}
+
+function _normalizeLoadedSessionMessages(
+  messages: ModelMessage[],
+  logger: LoggerService,
+  chatId: string,
+): ModelMessage[] {
+  const normalized: ModelMessage[] = [];
+
+  for (const message of messages) {
+    const clonedMessage: ModelMessage = { ...message };
+
+    if (Array.isArray(clonedMessage.content)) {
+      const normalizedParts: unknown[] = [];
+
+      for (const part of clonedMessage.content as unknown[]) {
+        if (
+          part &&
+          typeof part === "object" &&
+          "type" in part &&
+          (part as { type?: unknown }).type === "image" &&
+          "image" in part
+        ) {
+          const imagePart: Record<string, unknown> = { ...(part as Record<string, unknown>) };
+          const imageValue: unknown = imagePart.image;
+
+          if (Buffer.isBuffer(imageValue) || imageValue instanceof Uint8Array || typeof imageValue === "string") {
+            normalizedParts.push(imagePart);
+            continue;
+          }
+
+          if (
+            imageValue &&
+            typeof imageValue === "object" &&
+            "type" in imageValue &&
+            (imageValue as { type?: unknown }).type === "Buffer" &&
+            "data" in imageValue &&
+            Array.isArray((imageValue as { data?: unknown }).data)
+          ) {
+            try {
+              imagePart.image = Buffer.from((imageValue as { data: number[] }).data);
+              normalizedParts.push(imagePart);
+              continue;
+            } catch {
+              logger.warn("Dropping invalid legacy image payload from restored session", { chatId });
+              continue;
+            }
+          }
+
+          logger.warn("Dropping invalid image payload from restored session", { chatId });
+          continue;
+        }
+
+        normalizedParts.push(part);
+      }
+
+      clonedMessage.content = normalizedParts as any;
+    }
+
+    normalized.push(clonedMessage);
+  }
+
+  return normalized;
 }
 
 async function _compactSessionMessagesAsync(

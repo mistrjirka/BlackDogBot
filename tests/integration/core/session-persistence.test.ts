@@ -303,6 +303,96 @@ describe("Session persistence", () => {
         jobCreationMode: null,
       });
     });
+
+    it("should persist and restore image message buffers", async () => {
+      await initializeServicesAsync();
+
+      const agent: MainAgent = MainAgent.getInstance();
+      const priv: ReturnType<typeof getAgentPrivate> = getAgentPrivate(agent);
+
+      const sessionsDir: string = getSessionsDir();
+      await fs.mkdir(sessionsDir, { recursive: true });
+
+      const imageBuffer: Buffer = Buffer.from([255, 216, 255, 217]);
+      const messagesWithImage: object[] = [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "image context" },
+            { type: "image", image: imageBuffer, mediaType: "image/jpeg" },
+          ],
+        },
+      ];
+
+      const sessions: Map<string, unknown> = (
+        agent as unknown as { _sessions: Map<string, unknown> }
+      )._sessions;
+
+      sessions.set("image-roundtrip-chat", {
+        messages: messagesWithImage,
+        lastActivityAt: 1700000000000,
+        jobCreationMode: null,
+        paused: false,
+        resumeResolve: null,
+        abortController: null,
+        pendingToolRebuild: null,
+        toolRebuildCount: 0,
+        terminateCurrentRun: false,
+      });
+
+      await priv._saveSessionAsync("image-roundtrip-chat");
+
+      const loaded: unknown = await priv._loadSessionAsync("image-roundtrip-chat");
+      const loadedMessages: unknown[] = (loaded as { messages: unknown[] }).messages;
+      const loadedContent: unknown[] = (loadedMessages[0] as { content: unknown[] }).content;
+      const loadedImagePart: Record<string, unknown> = loadedContent[1] as Record<string, unknown>;
+
+      expect(Buffer.isBuffer(loadedImagePart.image)).toBe(true);
+      expect((loadedImagePart.image as Buffer).equals(imageBuffer)).toBe(true);
+    });
+
+    it("should restore legacy Node Buffer JSON shape from session files", async () => {
+      await initializeServicesAsync();
+
+      const sessionsDir: string = getSessionsDir();
+      await fs.mkdir(sessionsDir, { recursive: true });
+
+      await fs.writeFile(
+        getSessionFilePath("legacy-buffer-chat"),
+        JSON.stringify({
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "legacy image" },
+                {
+                  type: "image",
+                  image: {
+                    type: "Buffer",
+                    data: [255, 216, 255, 217],
+                  },
+                  mediaType: "image/jpeg",
+                },
+              ],
+            },
+          ],
+          lastActivityAt: 1700000000000,
+          jobCreationMode: null,
+        }, null, 2),
+        "utf-8",
+      );
+
+      const agent: MainAgent = MainAgent.getInstance();
+      const priv: ReturnType<typeof getAgentPrivate> = getAgentPrivate(agent);
+
+      const loaded: unknown = await priv._loadSessionAsync("legacy-buffer-chat");
+      const loadedMessages: unknown[] = (loaded as { messages: unknown[] }).messages;
+      const loadedContent: unknown[] = (loadedMessages[0] as { content: unknown[] }).content;
+      const loadedImagePart: Record<string, unknown> = loadedContent[1] as Record<string, unknown>;
+
+      expect(Buffer.isBuffer(loadedImagePart.image)).toBe(true);
+      expect((loadedImagePart.image as Buffer).equals(Buffer.from([255, 216, 255, 217]))).toBe(true);
+    });
   });
 
   describe("initializeForChatAsync session restore", () => {
