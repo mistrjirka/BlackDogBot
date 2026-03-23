@@ -22,6 +22,7 @@ import {
   type IAiErrorDetails,
 } from "../../utils/ai-error.js";
 import { extractErrorMessage } from "../../utils/error.js";
+import { PromptService } from "../../services/prompt.service.js";
 import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 import { isCancelCommand } from "../../utils/command-utils.js";
 import { getTelegramChatsFilePath } from "../../utils/paths.js";
@@ -69,6 +70,9 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
   think: "thought",
 };
 
+const PROMPT_UPDATE_NOTICE_TEXT: string =
+  "A new BlackDogBot update changed default prompts. Run /update_prompts to apply them.";
+
 interface IPendingTelegramMessage {
   text: string;
   messageId: number | null;
@@ -100,6 +104,7 @@ export class TelegramHandler {
   private _config: ITelegramConfig | null = null;
   private _bot: Bot | null;
   private _pendingImagesByChat: Map<string, IPendingTelegramImage>;
+  private _promptUpdateNoticeSentToChatIds: Set<string>;
 
   //#endregion Data Members
 
@@ -115,6 +120,7 @@ export class TelegramHandler {
     this._inFlightMessageIdByChat = new Map<string, number>();
     this._knownChatIds = new Set<string>();
     this._pendingImagesByChat = new Map<string, IPendingTelegramImage>();
+    this._promptUpdateNoticeSentToChatIds = new Set<string>();
     this._bot = null;
 
     this._chatIdsFilePath = getTelegramChatsFilePath();
@@ -161,6 +167,8 @@ export class TelegramHandler {
     }
 
     const chatId: string = String(message.chat.id);
+
+    await this._maybeNotifyPromptUpdateAsync(ctx, chatId);
 
     if (!(await this._isAuthorizedAsync(chatId))) {
       return;
@@ -494,6 +502,8 @@ export class TelegramHandler {
 
     const chatId: string = String(message.chat.id);
 
+    await this._maybeNotifyPromptUpdateAsync(ctx, chatId);
+
     try {
       if (!(await this._isAuthorizedAsync(chatId))) {
         return;
@@ -687,6 +697,27 @@ export class TelegramHandler {
     } catch (error) {
       this._logger.warn("Failed to save known Telegram chat IDs", {
         error: extractErrorMessage(error),
+      });
+    }
+  }
+
+  private async _maybeNotifyPromptUpdateAsync(ctx: Context, chatId: string): Promise<void> {
+    if (this._promptUpdateNoticeSentToChatIds.has(chatId)) {
+      return;
+    }
+
+    try {
+      const shouldNotify: boolean = await PromptService.getInstance().isPromptUpdateRecommendedAsync();
+      if (!shouldNotify) {
+        return;
+      }
+
+      this._promptUpdateNoticeSentToChatIds.add(chatId);
+      await ctx.reply(PROMPT_UPDATE_NOTICE_TEXT);
+    } catch (error: unknown) {
+      this._logger.warn("Failed to evaluate prompt update recommendation", {
+        chatId,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
   }

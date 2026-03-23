@@ -2,12 +2,14 @@ import fs from "node:fs/promises";
 import { Dirent } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 
 import { INCLUDE_DIRECTIVE_REGEX } from "../shared/constants.js";
 import {
   getPromptsDir,
   getPromptFragmentsDir,
   getPromptFilePath,
+  getCacheDir,
   ensureDirectoryExistsAsync,
 } from "../utils/paths.js";
 
@@ -19,11 +21,17 @@ export interface IPromptInfo {
   isModified: boolean;
 }
 
+interface IPromptSyncState {
+  lastAppliedDefaultsFingerprint: string;
+  updatedAt: string;
+}
+
 //#endregion Interfaces
 
 //#region Constants
 
 const MAX_INCLUDE_DEPTH: number = 5;
+const PROMPT_SYNC_STATE_FILE_NAME: string = "prompt-sync-state.json";
 
 //#endregion Constants
 
@@ -70,7 +78,9 @@ export class PromptService {
 
     await ensureDirectoryExistsAsync(this._promptsDir);
     await ensureDirectoryExistsAsync(getPromptFragmentsDir());
+    await ensureDirectoryExistsAsync(getCacheDir());
     await this._copyDefaultsIfNeededAsync();
+    await this._initializePromptSyncStateIfMissingAsync();
 
     this._initialized = true;
   }
@@ -178,6 +188,19 @@ export class PromptService {
     }
 
     this._promptCache.clear();
+    await this._markPromptsSyncedToCurrentDefaultsAsync();
+  }
+
+  public async isPromptUpdateRecommendedAsync(): Promise<boolean> {
+    this._ensureInitialized();
+
+    const state: IPromptSyncState | null = await this._readPromptSyncStateAsync();
+    if (state === null) {
+      return false;
+    }
+
+    const currentFingerprint: string = await this._computeDefaultsFingerprintAsync();
+    return state.lastAppliedDefaultsFingerprint !== currentFingerprint;
   }
 
   public async listPromptsAsync(): Promise<IPromptInfo[]> {
@@ -285,6 +308,86 @@ export class PromptService {
     result += content.slice(lastIndex);
 
     return result;
+  }
+
+  private async _initializePromptSyncStateIfMissingAsync(): Promise<void> {
+    const existingState: IPromptSyncState | null = await this._readPromptSyncStateAsync();
+    if (existingState !== null) {
+      return;
+    }
+
+    await this._markPromptsSyncedToCurrentDefaultsAsync();
+  }
+
+  private async _markPromptsSyncedToCurrentDefaultsAsync(): Promise<void> {
+    const fingerprint: string = await this._computeDefaultsFingerprintAsync();
+    const state: IPromptSyncState = {
+      lastAppliedDefaultsFingerprint: fingerprint,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const statePath: string = this._getPromptSyncStatePath();
+    const parentDir: string = path.dirname(statePath);
+    await ensureDirectoryExistsAsync(parentDir);
+    await fs.writeFile(statePath, JSON.stringify(state, null, 2), "utf-8");
+  }
+
+  private async _readPromptSyncStateAsync(): Promise<IPromptSyncState | null> {
+    const statePath: string = this._getPromptSyncStatePath();
+    if (!(await this._fileExistsAsync(statePath))) {
+      return null;
+    }
+
+    try {
+      const rawState: string = await fs.readFile(statePath, "utf-8");
+      const parsedState: unknown = JSON.parse(rawState);
+      if (typeof parsedState !== "object" || parsedState === null) {
+        return null;
+      }
+
+      const stateObject: Record<string, unknown> = parsedState as Record<string, unknown>;
+      const fingerprint: unknown = stateObject.lastAppliedDefaultsFingerprint;
+      const updatedAt: unknown = stateObject.updatedAt;
+
+      if (typeof fingerprint !== "string" || fingerprint.length === 0) {
+        return null;
+      }
+
+      if (typeof updatedAt !== "string" || updatedAt.length === 0) {
+        return null;
+      }
+
+      return {
+        lastAppliedDefaultsFingerprint: fingerprint,
+        updatedAt,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async _computeDefaultsFingerprintAsync(): Promise<string> {
+    const defaultFiles: string[] = await this._listFilesRecursiveAsync(this._defaultsDir);
+    const sortedFiles: string[] = defaultFiles
+      .filter((filePath: string): boolean => filePath.endsWith(".md"))
+      .sort((a: string, b: string): number => a.localeCompare(b));
+
+    const hash = crypto.createHash("sha256");
+
+    for (const filePath of sortedFiles) {
+      const relativePath: string = path.relative(this._defaultsDir, filePath);
+      const content: string = await fs.readFile(filePath, "utf-8");
+      hash.update(relativePath, "utf-8");
+      hash.update("\n", "utf-8");
+      hash.update(content, "utf-8");
+      hash.update("\n---\n", "utf-8");
+    }
+
+    return hash.digest("hex");
+  }
+
+  private _getPromptSyncStatePath(): string {
+    return path.join(getCacheDir(), PROMPT_SYNC_STATE_FILE_NAME);
   }
 
   private _getPromptPath(promptName: string): string {
