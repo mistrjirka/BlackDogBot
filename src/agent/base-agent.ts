@@ -519,7 +519,7 @@ export abstract class BaseAgentBase {
           // Use summary-only compaction (no truncation)
           const compactionTargetTokens: number = Math.max(
             1200,
-            self._compactionTokenThreshold - COMPACTION_HEADROOM_TOKENS,
+            Math.floor(self._contextWindow * 0.40),
           );
 
           const compactionResult = await compactMessagesSummaryOnlyAsync(
