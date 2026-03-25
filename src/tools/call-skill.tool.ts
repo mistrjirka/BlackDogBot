@@ -1,19 +1,16 @@
 import { tool } from "langchain";
-import { ToolLoopAgent, stepCountIs, LanguageModel, ToolSet, Tool } from "ai";
 
 import { callSkillToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
-import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
-import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
+import { ConfigService } from "../services/config.service.js";
+import { createChatModel } from "../services/langchain-model.service.js";
 import { thinkTool } from "./think.tool.js";
 import { runCmdTool } from "./run-cmd.tool.js";
 import { searchKnowledgeTool } from "./search-knowledge.tool.js";
 import { addKnowledgeTool } from "./add-knowledge.tool.js";
 import type { ISkill } from "../shared/types/index.js";
-
-//#region Interfaces
+import { createDeepAgent } from "deepagents";
 
 interface ICallSkillResult {
   success: boolean;
@@ -21,18 +18,6 @@ interface ICallSkillResult {
   error: string | null;
 }
 
-//#endregion Interfaces
-
-//#region Constants
-
-const MAX_SKILL_STEPS: number = 15;
-
-//#endregion Constants
-
-/**
- * Creates the call_skill tool with a dynamic description listing the currently
- * available skills. This prevents the model from hallucinating skill names.
- */
 export function createCallSkillTool(availableSkillNames: string[]) {
   const skillListStr: string = availableSkillNames.length > 0
     ? `Available skills: ${availableSkillNames.join(", ")}.`
@@ -59,32 +44,24 @@ export function createCallSkillTool(availableSkillNames: string[]) {
           return { success: false, output: "", error: `Skill not ready. Current state: ${skill.state.state}` };
         }
 
-        const model: LanguageModel = AiProviderService.getInstance().getModel();
+        const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
-        const tools: ToolSet = {
-          think: thinkTool as unknown as Tool,
-          run_cmd: runCmdTool as unknown as Tool,
-          search_knowledge: searchKnowledgeTool as unknown as Tool,
-          add_knowledge: addKnowledgeTool as unknown as Tool,
-        };
-
-        const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools, {
-          logger,
-        });
-
-        const agent: ToolLoopAgent = new ToolLoopAgent({
+        const subagent = createDeepAgent({
           model,
-          instructions: skill.instructions,
-          tools: wrappedTools,
-          stopWhen: [stepCountIs(MAX_SKILL_STEPS)],
-          experimental_repairToolCall: repairToolCallJsonAsync,
+          systemPrompt: skill.instructions,
+          tools: [thinkTool, runCmdTool, searchKnowledgeTool, addKnowledgeTool],
         });
 
-        const result = await agent.generate({ prompt: input });
+        const result = await subagent.invoke({
+          messages: [{ role: "user", content: input }],
+        });
 
         logger.debug(`Skill "${skillName}" completed successfully`);
 
-        return { success: true, output: result.text, error: null };
+        const lastMessage = result.messages[result.messages.length - 1];
+        const output: string = typeof lastMessage?.content === "string" ? lastMessage.content : "";
+
+        return { success: true, output, error: null };
       } catch (err: unknown) {
         const errorMessage: string = err instanceof Error ? err.message : String(err);
 

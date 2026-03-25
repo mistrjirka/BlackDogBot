@@ -4,7 +4,8 @@ import { z } from "zod";
 import { editCronInstructionsToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
+import { ConfigService } from "../services/config.service.js";
+import { createChatModel } from "../services/langchain-model.service.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
@@ -189,8 +190,7 @@ Output a JSON object with:
 - "missingContext": string (if invalid, describe exactly what information is missing and why it cannot be derived; if valid, use empty string)
 `;
 
-    const aiService: AiProviderService = AiProviderService.getInstance();
-    const model = aiService.getModel();
+    const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
     const verificationResult = await generateObjectWithRetryAsync({
       model,

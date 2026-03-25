@@ -1,25 +1,18 @@
-import { ToolLoopAgent, ToolSet, stepCountIs, LanguageModel, Tool } from "ai";
+import { createDeepAgent } from "deepagents";
 import { ISkill } from "../shared/types/index.js";
 import { PROMPT_SKILL_SETUP } from "../shared/constants.js";
 import { PromptService } from "../services/prompt.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
+import { ConfigService } from "../services/config.service.js";
+import { createChatModel } from "../services/langchain-model.service.js";
 import * as skillState from "../helpers/skill-state.js";
 import { LoggerService } from "../services/logger.service.js";
-import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
-import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { thinkTool, runCmdTool } from "../tools/index.js";
-
-//#region Interfaces
 
 export interface ISetupResult {
   success: boolean;
   summary: string;
   error: string | null;
 }
-
-//#endregion Interfaces
-
-//#region Public functions
 
 export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
   const logger: LoggerService = LoggerService.getInstance();
@@ -35,34 +28,24 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
       `Requirements: ${JSON.stringify(requirements)}`,
     ].join("\n");
 
-    const model: LanguageModel = AiProviderService.getInstance().getModel();
-
-    const tools: ToolSet = {
-      think: thinkTool as unknown as Tool,
-      run_cmd: runCmdTool as unknown as Tool,
-    };
-
-    const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools, {
-      logger,
+    const subagent = createDeepAgent({
+      model: createChatModel(ConfigService.getInstance().getAiConfig()),
+      systemPrompt: `${setupPrompt}\n\n${context}`,
+      tools: [thinkTool, runCmdTool],
     });
 
-    const agent: ToolLoopAgent = new ToolLoopAgent({
-      model,
-      instructions: `${setupPrompt}\n\n${context}`,
-      tools: wrappedTools,
-      stopWhen: [stepCountIs(10)],
-      experimental_repairToolCall: repairToolCallJsonAsync,
-    });
-
-    const result = await agent.generate({
-      prompt: "Set up this skill according to the instructions.",
+    const result = await subagent.invoke({
+      messages: [{ role: "user", content: "Set up this skill according to the instructions." }],
     });
 
     await skillState.markSkillSetupCompleteAsync(skill.name);
 
+    const lastMessage = result.messages[result.messages.length - 1];
+    const summary: string = typeof lastMessage?.content === "string" ? lastMessage.content : "";
+
     return {
       success: true,
-      summary: result.text,
+      summary,
       error: null,
     };
   } catch (err: unknown) {
@@ -79,5 +62,3 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
     };
   }
 }
-
-//#endregion Public functions

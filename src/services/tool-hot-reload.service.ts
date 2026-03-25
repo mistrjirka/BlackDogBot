@@ -1,4 +1,5 @@
 import { type ToolSet } from "ai";
+import { asVercelToolSet } from "../utils/langchain-tool-adapter.js";
 import { LoggerService } from "./logger.service.js";
 
 type RebuildCallback = (perTableTools: ToolSet) => void;
@@ -67,7 +68,7 @@ export class ToolHotReloadService {
 
     try {
       const { buildPerTableToolsAsync } = await import("../utils/per-table-tools.js");
-      const perTableTools: ToolSet = await buildPerTableToolsAsync();
+      const perTableTools = asVercelToolSet(await buildPerTableToolsAsync());
 
       this._logger.info("Triggering tool hot-reload", {
         chatId,

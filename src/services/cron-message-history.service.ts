@@ -1,7 +1,8 @@
 import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { LoggerService } from "./logger.service.js";
-import { AiProviderService } from "./ai-provider.service.js";
+import { ConfigService } from "./config.service.js";
+import { createChatModel } from "./langchain-model.service.js";
 import { EmbeddingService } from "./embedding.service.js";
 import { VectorStoreService } from "./vector-store.service.js";
 import { generateId } from "../utils/id.js";
@@ -287,7 +288,7 @@ export class CronMessageHistoryService {
         };
       }
 
-      const model = AiProviderService.getInstance().getModel();
+      const model = createChatModel(ConfigService.getInstance().getAiConfig());
       const candidateMessage: string = message.trim();
       const similarMessagesBlock: string = sameTaskSimilarMessages
         .map((item: ISimilarMessage, index: number): string => {
@@ -367,7 +368,7 @@ export class CronMessageHistoryService {
         return { shouldDispatch: true };
       }
 
-      const model = AiProviderService.getInstance().getModel();
+      const model = createChatModel(ConfigService.getInstance().getAiConfig());
       const candidateMessage: string = message.trim();
 
       const prompt: string = `You are a strict cron notification policy checker.
@@ -481,7 +482,7 @@ ${historyText}
 Output a single concise summary paragraph.`;
 
     try {
-      const model = AiProviderService.getInstance().getModel();
+      const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
       const result = await generateTextWithRetryAsync({
         model,

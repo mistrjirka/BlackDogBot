@@ -7,6 +7,7 @@
 import fs from "node:fs/promises";
 import { ToolSet, LanguageModel, type ModelMessage, type Tool } from "ai";
 
+import { asVercelToolSet } from "../utils/langchain-tool-adapter.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -289,7 +290,7 @@ export class MainAgent extends BaseAgentBase {
 
     // Merge per-table write tools (generated from database schemas)
     try {
-      const perTableTools: ToolSet = await buildPerTableToolsAsync();
+      const perTableTools = asVercelToolSet(await buildPerTableToolsAsync());
       for (const [toolName, toolDef] of Object.entries(perTableTools)) {
         tools[toolName] = toolDef;
       }
