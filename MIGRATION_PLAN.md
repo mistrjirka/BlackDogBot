@@ -11,6 +11,10 @@ Delete the BrainInterface WebSocket server.
 
 - **Use Context7 + searxng** for every new library or API. Do not guess types or signatures — look them up.
 - **Avoid `any`**. Use proper types. If unsure, use Context7 to research the correct type. When a type must be deferred, use `unknown` with explicit cast, not `any`.
+- **Commit every phase** at major milestones.
+- **Document discoveries** in MIGRATION_PLAN.md and `docs/migration/` tips/tricks folder immediately.
+- **Subagents MUST auto-label obsolete files** — When replacing a file, add `@deprecated PHASE X` comment to the old file.
+- **Collision risk**: LangChain and Vercel AI SDK both export `Tool` type. Always use explicit type imports.
 
 - **Jobs removed entirely** — node graph tools, job executor, job storage, BrainInterface WebSocket
 - **Crons preserved** — `SchedulerService`, `cron-task-executor`, all 7 cron tools

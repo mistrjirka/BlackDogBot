@@ -1,9 +1,5 @@
-/**
- * @deprecated PHASE 5 - This file will be deleted when Vercel AI SDK is removed.
- * Replaced by langchain-mcp.service.ts which uses LangChain's tool() function.
- * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
- */
-import { tool, type ToolSet } from "ai";
+import { tool } from "langchain";
+import type { DynamicStructuredTool } from "langchain";
 
 import { Client } from "@modelcontextprotocol/sdk/client";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -19,40 +15,39 @@ import { LoggerService } from "./logger.service.js";
 import { jsonSchemaToZod } from "../utils/json-schema-to-zod.js";
 import { extractErrorMessage } from "../utils/error.js";
 
-// @deprecated PHASE 5 - Use LangchainMcpService instead
 //#region Types
 
 /** Internal state for a connected MCP server */
 interface IMcpServerConnection {
   client: Client;
   transport: Transport;
-  tools: ToolSet;
+  tools: DynamicStructuredTool[];
   serverId: string;
 }
 
 //#endregion Types
 
-//#region McpService
+//#region LangchainMcpService
 
 /**
- * Manages MCP client connections and exposes MCP tools as AI SDK ToolSet.
+ * Manages MCP client connections and exposes MCP tools as LangChain DynamicStructuredTool[].
  *
- * McpService connects to configured MCP servers, discovers their tools,
- * converts them to AI SDK tool format (with proper inputSchema/execute/toModelOutput),
+ * LangchainMcpService connects to configured MCP servers, discovers their tools,
+ * converts them to LangChain tool format (with proper schema/execute),
  * and namespaces them as mcp.<serverId>.<toolName>.
  *
  * Used by MainAgent to merge MCP tools into its tool set.
  */
-export class McpService {
+export class LangchainMcpService {
   //#region Singleton
 
-  private static _instance: McpService | null = null;
+  private static _instance: LangchainMcpService | null = null;
 
-  public static getInstance(): McpService {
-    if (!McpService._instance) {
-      McpService._instance = new McpService();
+  public static getInstance(): LangchainMcpService {
+    if (!LangchainMcpService._instance) {
+      LangchainMcpService._instance = new LangchainMcpService();
     }
-    return McpService._instance;
+    return LangchainMcpService._instance;
   }
 
   //#endregion Singleton
@@ -62,7 +57,7 @@ export class McpService {
   private _logger: LoggerService;
   private _registry: McpRegistryService;
   private _connections: Map<string, IMcpServerConnection>;
-  private _combinedTools: ToolSet;
+  private _combinedTools: DynamicStructuredTool[];
   private _serverResults: Map<string, IMcpServerToolsResult>;
   private _refreshing: boolean;
 
@@ -74,7 +69,7 @@ export class McpService {
     this._logger = LoggerService.getInstance();
     this._registry = McpRegistryService.getInstance();
     this._connections = new Map();
-    this._combinedTools = {};
+    this._combinedTools = [];
     this._serverResults = new Map();
     this._refreshing = false;
   }
@@ -148,7 +143,7 @@ export class McpService {
       this._logger.info("MCP service refreshed", {
         totalEnabled: enabledIds.size,
         connectedServers: this._connections.size,
-        totalTools: Object.keys(this._combinedTools).length,
+        totalTools: this._combinedTools.length,
       });
     } finally {
       this._refreshing = false;
@@ -156,11 +151,11 @@ export class McpService {
   }
 
   /**
-   * Get the combined ToolSet from all connected MCP servers.
+   * Get the combined DynamicStructuredTool[] from all connected MCP servers.
    * Tool names are namespaced as mcp.<serverId>.<toolName>.
    */
-  public getTools(): ToolSet {
-    return { ...this._combinedTools };
+  public getTools(): DynamicStructuredTool[] {
+    return [...this._combinedTools];
   }
 
   /**
@@ -191,7 +186,7 @@ export class McpService {
       await this._closeConnectionAsync(id);
     }
 
-    this._combinedTools = {};
+    this._combinedTools = [];
     this._serverResults = new Map();
   }
 
@@ -217,7 +212,7 @@ export class McpService {
       await client.connect(transport);
 
       const { tools: mcpTools } = await client.listTools();
-      const tools: ToolSet = {};
+      const tools: DynamicStructuredTool[] = [];
 
       for (const mcpTool of mcpTools) {
         if (entry.strictOutputSchema && !mcpTool.outputSchema) {
@@ -234,8 +229,8 @@ export class McpService {
         }
 
         const namespacedName = `mcp.${entry.id}.${mcpTool.name}`;
-        const aiSdkTool = _convertMcpToolToAiSdk(client, mcpTool, entry.id);
-        tools[namespacedName] = aiSdkTool;
+        const langchainTool = _convertMcpToolToLangchain(client, mcpTool, entry.id);
+        tools.push(langchainTool);
         result.loadedToolNames.push(namespacedName);
       }
 
@@ -321,42 +316,38 @@ export class McpService {
       return [];
     }
 
-    return Object.keys(connection.tools);
+    return connection.tools.map((t) => t.name);
   }
 
   private _rebuildCombinedTools(): void {
-    this._combinedTools = {};
+    this._combinedTools = [];
 
     for (const [, connection] of this._connections) {
-      Object.assign(this._combinedTools, connection.tools);
+      this._combinedTools.push(...connection.tools);
     }
   }
 
   //#endregion Private Methods - Connection
 }
 
-//#endregion McpService
+//#endregion LangchainMcpService
 
 //#region Private Functions
 
 /**
- * Convert an MCP tool to an AI SDK tool with image output handling.
- * Uses `as any` because tool() overloads don't accept dynamic ZodType schemas.
+ * Convert an MCP tool to a LangChain DynamicStructuredTool.
  */
-function _convertMcpToolToAiSdk(
+function _convertMcpToolToLangchain(
   client: Client,
   mcpTool: { name: string; description?: string; inputSchema: Record<string, unknown>; outputSchema?: Record<string, unknown> },
   serverId: string,
-) {
+): DynamicStructuredTool {
   const description = mcpTool.description ?? `MCP tool: ${mcpTool.name} (server: ${serverId})`;
-  const inputSchema = jsonSchemaToZod(mcpTool.inputSchema);
-  const outputSchema = mcpTool.outputSchema;
+  const schema = jsonSchemaToZod(mcpTool.inputSchema);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return tool({
-    description,
-    inputSchema: inputSchema as any,
-    execute: async (input: unknown) => {
+  return tool(
+    async (input: Record<string, unknown>) => {
       try {
         const result = await client.callTool({
           name: mcpTool.name,
@@ -370,98 +361,12 @@ function _convertMcpToolToAiSdk(
         };
       }
     },
-    toModelOutput: ({ output }: { output: unknown }) => {
-      return _convertMcpResultToModelOutput(output, outputSchema);
+    {
+      name: `mcp.${serverId}.${mcpTool.name}`,
+      description,
+      schema,
     },
-  } as any);
-}
-
-/**
- * Convert MCP callTool result to AI SDK model output format.
- *
- * Handles multimodal content:
- * - text → { type: "text", text }
- * - image → { type: "media", data, mediaType }
- * - audio → { type: "media", data, mediaType }
- */
-function _convertMcpResultToModelOutput(
-  output: unknown,
-  outputSchema?: Record<string, unknown>,
-) {
-  if (!output || typeof output !== "object") {
-    return {
-      type: "content" as const,
-      value: [{ type: "text" as const, text: JSON.stringify(output ?? null) }],
-    };
-  }
-
-  const result = output as Record<string, unknown>;
-  const content = result.content as Array<Record<string, unknown>> | undefined;
-
-  if (!Array.isArray(content)) {
-    if (result.structuredContent && outputSchema) {
-      return {
-        type: "content" as const,
-        value: [{ type: "text" as const, text: JSON.stringify(result.structuredContent) }],
-      };
-    }
-
-    return {
-      type: "content" as const,
-      value: [{ type: "text" as const, text: JSON.stringify(output) }],
-    };
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const modelParts: any[] = [];
-
-  for (const item of content) {
-    if (!item || typeof item !== "object" || !("type" in item)) {
-      continue;
-    }
-
-    switch (item.type) {
-      case "text":
-        modelParts.push({ type: "text", text: String(item.text ?? "") });
-        break;
-
-      case "image":
-        modelParts.push({
-          type: "media",
-          data: String(item.data ?? ""),
-          mediaType: String(item.mimeType ?? "image/png"),
-        });
-        break;
-
-      case "audio":
-        modelParts.push({
-          type: "media",
-          data: String(item.data ?? ""),
-          mediaType: String(item.mimeType ?? "audio/mpeg"),
-        });
-        break;
-
-      default:
-        modelParts.push({
-          type: "text",
-          text: JSON.stringify(item),
-        });
-        break;
-    }
-  }
-
-  if (result.structuredContent && typeof result.structuredContent === "object") {
-    modelParts.push({
-      type: "text",
-      text: `\n\nStructured output:\n${JSON.stringify(result.structuredContent, null, 2)}`,
-    });
-  }
-
-  if (modelParts.length === 0) {
-    modelParts.push({ type: "text", text: "No content returned." });
-  }
-
-  return { type: "content" as const, value: modelParts };
+  ) as unknown as DynamicStructuredTool;
 }
 
 //#endregion Private Functions
