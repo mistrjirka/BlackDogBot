@@ -1,5 +1,6 @@
 import type { DynamicStructuredTool } from "langchain";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
+import { AIMessage } from "@langchain/core/messages";
 import path from "node:path";
 import os from "node:os";
 
@@ -139,8 +140,11 @@ export class LangchainCronExecutor {
 
     let stepsCount: number = 0;
     for (const msg of result.messages) {
-      if (msg._getType() === "ai" && (msg as any).tool_calls?.length > 0) {
-        stepsCount++;
+      if (msg._getType() === "ai") {
+        const aiMsg = msg as AIMessage;
+        if (aiMsg.tool_calls && aiMsg.tool_calls.length > 0) {
+          stepsCount++;
+        }
       }
     }
 

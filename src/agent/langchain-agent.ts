@@ -1,8 +1,8 @@
-import { createDeepAgent, type SubAgent } from "deepagents";
+import { createDeepAgent, type SubAgent, type DeepAgent } from "deepagents";
 import type { DynamicStructuredTool } from "langchain";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import type { ChatOpenAI } from "@langchain/openai";
-import { HumanMessage } from "@langchain/core/messages";
+import { HumanMessage, AIMessage } from "@langchain/core/messages";
 
 import { LoggerService } from "../services/logger.service.js";
 import { createChatModel } from "../services/langchain-model.service.js";
@@ -28,7 +28,7 @@ export interface ILangchainAgentResult {
 
 //#region Public Functions
 
-export function createLangchainAgent(config: ILangchainAgentConfig): any {
+export function createLangchainAgent(config: ILangchainAgentConfig): DeepAgent {
   const model: ChatOpenAI = createChatModel(config.aiConfig);
   const logger: LoggerService = LoggerService.getInstance();
 
@@ -54,7 +54,7 @@ export function buildHumanMessage(
     return new HumanMessage({ content: text });
   }
 
-  const contentParts: any[] = [
+  const contentParts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [
     { type: "text", text },
   ];
 
@@ -92,8 +92,11 @@ export async function invokeAgentAsync(
 
   let stepsCount: number = 0;
   for (const msg of result.messages) {
-    if (msg._getType() === "ai" && (msg as any).tool_calls?.length > 0) {
-      stepsCount++;
+    if (msg._getType() === "ai") {
+      const aiMsg = msg as AIMessage;
+      if (aiMsg.tool_calls && aiMsg.tool_calls.length > 0) {
+        stepsCount++;
+      }
     }
   }
 
