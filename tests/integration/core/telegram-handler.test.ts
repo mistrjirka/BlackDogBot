@@ -13,8 +13,6 @@ import { PromptService } from "../../../src/services/prompt.service.js";
 import { EmbeddingService } from "../../../src/services/embedding.service.js";
 import { VectorStoreService } from "../../../src/services/vector-store.service.js";
 import * as knowledge from "../../../src/helpers/knowledge.js";
-import { JobStorageService } from "../../../src/services/job-storage.service.js";
-import { JobExecutorService } from "../../../src/services/job-executor.service.js";
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
 import * as litesql from "../../../src/helpers/litesql.js";
 import { MessagingService, type IPlatformAdapter } from "../../../src/services/messaging.service.js";

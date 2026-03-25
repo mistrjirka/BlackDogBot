@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { outputSchemaBlueprintSchema } from "./output-schema-blueprint.schema.js";
 
 //#region Think Tool
 
@@ -417,7 +416,7 @@ export const editNodeToolInputSchema = z.object({
     .optional(),
   inputSchema: z.record(z.string(), z.unknown())
     .optional(),
-  outputSchema: outputSchemaBlueprintSchema
+  outputSchema: z.record(z.string(), z.unknown())
     .optional(),
   config: z.record(z.string(), z.unknown())
     .optional(),
@@ -982,7 +981,7 @@ const _commonNodeCreationFields = {
   description: z.string()
     .default("")
     .describe("Node description"),
-  outputSchema: outputSchemaBlueprintSchema
+  outputSchema: z.record(z.string(), z.unknown())
     .describe(
       "Strict output blueprint. Use { type: 'object'|'array', fields: [{ name, type }] } where type is one of: string, number, boolean, stringArray, numberArray.",
     ),
@@ -1248,14 +1247,11 @@ export const finishJobCreationToolOutputSchema = z.object({
 export const EDITABLE_PROMPT_NAMES: readonly string[] = [
   "main-agent",
   "cron-agent",
-  "job-agent",
   "agent-node-guide",
-  "job-creation-guide",
   "tool-preambles",
   "context-gathering",
   "persistence",
   "skill-setup",
-  "graph-audit",
   "prompt-fragments/output-format",
   "prompt-fragments/xml-tag-guide",
   "prompt-fragments/safety-rules",

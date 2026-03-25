@@ -7,7 +7,7 @@ import { LoggerService } from "../services/logger.service.js";
 import { buildMainAgentPromptAsync } from "./system-prompt.js";
 import { BaseAgentBase, AGENT_EMPTY_RESPONSE_RETRIES, CONTEXT_EXCEEDED_RETRIES, type IAgentResult, type OnStepCallback } from "./base-agent.js";
 import { McpService } from "../services/mcp.service.js";
-import { DEFAULT_AGENT_MAX_STEPS, PROMPT_JOB_CREATION_GUIDE } from "../shared/constants.js";
+import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import {
   thinkTool,
   runCmdTool,
@@ -23,22 +23,6 @@ import {
   editKnowledgeTool,
   createSendMessageTool,
   type MessageSender,
-  addJobTool,
-  editJobTool,
-  createRemoveJobTool,
-  getJobsTool,
-  createRunJobTool,
-  finishJobTool,
-  type NodeProgressEmitter,
-  createEditNodeTool,
-  removeNodeTool,
-  connectNodesTool,
-  disconnectNodesTool,
-  setEntrypointTool,
-  addNodeTestTool,
-  runNodeTestTool,
-  getNodesTool,
-  clearJobGraphTool,
   createCallSkillTool,
   getSkillFileTool,
   addCronTool,
@@ -48,8 +32,6 @@ import {
   editCronTool,
   editCronInstructionsTool,
   runCronTool,
-  createRenderGraphTool,
-  type PhotoSender,
   createReadFileTool,
   createReadImageTool,
   createWriteFileTool,
@@ -66,30 +48,10 @@ import {
   updateDatabaseTool,
   deleteFromDatabaseTool,
   FileReadTracker,
-  JobActivityTracker,
-  type IJobCreationModeTracker,
-  type IJobCreationMode,
-  createStartJobCreationTool,
-  createFinishJobCreationTool,
-  createCreateOutputSchemaTool,
-  createAddCurlFetcherNodeTool,
-  createAddRssFetcherNodeTool,
-  createAddCrawl4aiNodeTool,
-  createAddSearxngNodeTool,
-  createAddPythonCodeNodeTool,
-  createAddOutputToAiNodeTool,
-  createAddAgentNodeTool,
-  createAddLitesqlNodeTool,
-  createAddLitesqlReaderNodeTool,
   searxngTool,
   crawl4aiTool,
-  setJobScheduleTool,
-  removeJobScheduleTool,
 } from "../tools/index.js";
-import { BrainInterfaceService } from "../brain-interface/service.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
-import { PromptService } from "../services/prompt.service.js";
-import { ConfigService } from "../services/config.service.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
 import {
   getConnectionRetryDelayMs,
@@ -103,35 +65,12 @@ import { extractAiErrorDetails } from "../utils/ai-error.js";
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
 import { countTokens } from "../utils/token-tracker.js";
-import { JobStorageService } from "../services/job-storage.service.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
 import * as toolRegistry from "../helpers/tool-registry.js";
-import type { IJob, INode } from "../shared/types/index.js";
 import type { IToolCallSummary } from "./base-agent.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
 
 //#region Constants
-
-/** Tools that mutate the job graph — after these complete, a graph_updated event is emitted. */
-const _GraphMutatingTools: Set<string> = new Set([
-  "edit_node",
-  "remove_node",
-  "connect_nodes",
-  "disconnect_nodes",
-  "set_entrypoint",
-  "clear_job_graph",
-  "start_job_creation",
-  "add_curl_fetcher_node",
-  "add_rss_fetcher_node",
-  "add_crawl4ai_node",
-  "add_searxng_node",
-  "add_python_code_node",
-  "add_output_to_ai_node",
-  "add_agent_node",
-  "add_litesql_node",
-  "add_litesql_reader_node",
-  "finish_job_creation",
-]);
 
 /** Max times generate() can be restarted due to tool rebuild (create_table). */
 const MAX_TOOL_REBUILD_RESTARTS: number = 2;
@@ -141,12 +80,18 @@ const SESSION_COMPACTION_HEADROOM_TOKENS: number = 4000;
 
 //#endregion Constants
 
+//#region Types
+
+/** Function to send a photo to a chat. Originally used for job graph rendering, now kept for compatibility. */
+export type PhotoSender = (imageBuffer: Buffer, caption: string | null) => Promise<string | null>;
+
+//#endregion Types
+
 //#region Interfaces
 
 interface IChatSession {
   messages: ModelMessage[];
   lastActivityAt: number;
-  jobCreationMode: IJobCreationMode | null;
   messageSender: MessageSender;
   photoSender: PhotoSender;
   onStepAsync?: OnStepCallback;
@@ -162,7 +107,6 @@ interface IChatSession {
 interface IPersistedSession {
   messages: ModelMessage[];
   lastActivityAt: number;
-  jobCreationMode: IJobCreationMode | null;
 }
 
 export interface IChatImageAttachment {
@@ -247,7 +191,6 @@ export class MainAgent extends BaseAgentBase {
       this._sessions.set(chatId, {
         messages: saved?.messages ?? [],
         lastActivityAt: saved?.lastActivityAt ?? Date.now(),
-        jobCreationMode: saved?.jobCreationMode ?? null,
         messageSender,
         photoSender,
         onStepAsync,
@@ -273,42 +216,12 @@ export class MainAgent extends BaseAgentBase {
     const instructions: string = await buildMainAgentPromptAsync();
 
     const readTracker: FileReadTracker = new FileReadTracker();
-    const jobTracker: JobActivityTracker = new JobActivityTracker();
-    const brainInterface: BrainInterfaceService = BrainInterfaceService.getInstance();
-    const promptService: PromptService = PromptService.getInstance();
-    const configService: ConfigService = ConfigService.getInstance();
-    const config = configService.getConfig();
-    const jobCreationGuide: string = await promptService.getPromptAsync(PROMPT_JOB_CREATION_GUIDE);
 
     const session: IChatSession = this._sessions.get(chatId)!;
     session.messageSender = messageSender;
     session.photoSender = photoSender;
     session.onStepAsync = onStepAsync;
     session.platform = platform;
-
-    // Per-chat job creation mode tracker — closes over this chat's session object
-    const creationModeTracker: IJobCreationModeTracker = {
-      setMode: (jobId: string, startNodeId: string): void => {
-        session.jobCreationMode = { jobId, startNodeId, auditAttempted: false };
-      },
-      clearMode: (): void => {
-        session.jobCreationMode = null;
-      },
-      getMode: (): IJobCreationMode | null => session.jobCreationMode,
-      markAuditAttempted: (): void => {
-        if (session.jobCreationMode) {
-          session.jobCreationMode.auditAttempted = true;
-        }
-      },
-    };
-
-    const nodeProgressEmitter: NodeProgressEmitter = async (
-      jobId: string,
-      activeNodeId: string | undefined,
-      nodeStatuses: Record<string, string>,
-    ): Promise<void> => {
-      await _emitGraphUpdateAsync(chatId, jobId, brainInterface, activeNodeId, nodeStatuses);
-    };
 
     const tools: ToolSet = {
       think: thinkTool,
@@ -353,17 +266,6 @@ export class MainAgent extends BaseAgentBase {
       tools.read_image = createReadImageTool(readTracker);
     }
 
-    // Only include job tools if job creation is enabled
-    if (config.jobCreation.enabled) {
-      tools.edit_job = editJobTool;
-      tools.remove_job = createRemoveJobTool(creationModeTracker);
-      tools.get_jobs = getJobsTool;
-      tools.run_job = createRunJobTool(jobTracker, nodeProgressEmitter, messageSender);
-      tools.render_graph = createRenderGraphTool(photoSender);
-      tools.set_job_schedule = setJobScheduleTool;
-      tools.remove_job_schedule = removeJobScheduleTool;
-    }
-
     // Only include skill tools if skills are actually loaded
     const availableSkills = SkillLoaderService.getInstance().getAvailableSkills();
     if (availableSkills.length > 0) {
@@ -371,41 +273,6 @@ export class MainAgent extends BaseAgentBase {
       tools.call_skill = createCallSkillTool(skillNames);
       tools.get_skill_file = getSkillFileTool;
     }
-
-    if (config.jobCreation.enabled) {
-      // start_job_creation is the entry point for mode
-      tools.start_job_creation = createStartJobCreationTool(jobTracker, creationModeTracker);
-    }
-
-    // Node-creation tools are mode-gated: registered with the agent but only exposed
-    // via activeTools when the chat session is in job creation mode.
-    // Only register them if job creation is enabled.
-    const nodeCreationTools: ToolSet | undefined = config.jobCreation.enabled
-      ? {
-          add_job: addJobTool,
-          finish_job: finishJobTool,
-          edit_node: createEditNodeTool(jobTracker),
-          remove_node: removeNodeTool,
-          connect_nodes: connectNodesTool,
-          disconnect_nodes: disconnectNodesTool,
-          set_entrypoint: setEntrypointTool,
-          add_node_test: addNodeTestTool,
-          run_node_test: runNodeTestTool,
-          get_nodes: getNodesTool,
-          clear_job_graph: clearJobGraphTool,
-          add_curl_fetcher_node: createAddCurlFetcherNodeTool(jobTracker),
-          add_rss_fetcher_node: createAddRssFetcherNodeTool(jobTracker),
-          add_crawl4ai_node: createAddCrawl4aiNodeTool(jobTracker),
-          add_searxng_node: createAddSearxngNodeTool(jobTracker),
-          add_python_code_node: createAddPythonCodeNodeTool(jobTracker),
-          add_output_to_ai_node: createAddOutputToAiNodeTool(jobTracker),
-          add_agent_node: createAddAgentNodeTool(jobTracker),
-          add_litesql_node: createAddLitesqlNodeTool(jobTracker),
-          add_litesql_reader_node: createAddLitesqlReaderNodeTool(jobTracker),
-          finish_job_creation: createFinishJobCreationTool(creationModeTracker),
-          create_output_schema: createCreateOutputSchemaTool(),
-        }
-      : undefined;
 
     // Merge MCP tools from connected servers
     const mcpService: McpService = McpService.getInstance();
@@ -433,7 +300,7 @@ export class MainAgent extends BaseAgentBase {
 
     const filteredTools: ToolSet = {};
     for (const [toolName, tool] of Object.entries(tools)) {
-      if (toolRegistry.isToolAllowed(toolName, permission, { jobCreationEnabled: config.jobCreation.enabled, skillNames })) {
+      if (toolRegistry.isToolAllowed(toolName, permission, { skillNames })) {
         filteredTools[toolName] = tool;
       }
     }
@@ -444,7 +311,6 @@ export class MainAgent extends BaseAgentBase {
       toolCount: Object.keys(filteredTools).length,
       toolNames: Object.keys(filteredTools),
       permission,
-      jobCreationEnabled: config.jobCreation.enabled,
     });
 
     const combinedOnStepAsync = async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
@@ -455,53 +321,10 @@ export class MainAgent extends BaseAgentBase {
         toolNames: toolCalls.map((tc: IToolCallSummary): string => tc.name),
       });
 
-      await brainInterface.emitStepStartedAsync(chatId, stepNumber);
-
       // Update status to show tool execution progress
       const statusService: StatusService = StatusService.getInstance();
       const toolNames: string = toolCalls.map((tc: IToolCallSummary): string => tc.name).join(", ");
       statusService.setStatus("tool_execution", `Step ${stepNumber}: ${toolNames}`, { chatId, stepNumber, tools: toolNames });
-
-      for (const toolCall of toolCalls) {
-        await brainInterface.emitToolCalledAsync(
-          chatId,
-          stepNumber,
-          toolCall.name,
-          toolCall.input,
-        );
-
-        if (toolCall.result !== undefined || toolCall.isError !== undefined) {
-          const isError = toolCall.isError ?? false;
-          let errorMsg: string | undefined;
-
-          if (isError) {
-            errorMsg = typeof toolCall.result === "string" ? toolCall.result : JSON.stringify(toolCall.result);
-          } else if (
-             toolCall.result && 
-             typeof toolCall.result === "object" && 
-             "success" in toolCall.result && 
-             (toolCall.result as Record<string, unknown>).success === false
-          ) {
-             errorMsg = ((toolCall.result as Record<string, unknown>).error as string) ?? "Unknown error";
-          }
-
-          await brainInterface.emitToolResultAsync(
-            chatId,
-            stepNumber,
-            toolCall.name,
-            toolCall.result,
-            errorMsg,
-          );
-        }
-
-        if (_GraphMutatingTools.has(toolCall.name)) {
-          const jobId: string | undefined = toolCall.input.jobId as string | undefined;
-
-          if (jobId) {
-            await _emitGraphUpdateAsync(chatId, jobId, brainInterface);
-          }
-        }
-      }
 
       if (onStepAsync) {
         this._logger.debug("Forwarding onStep callback to platform handler", {
@@ -518,16 +341,13 @@ export class MainAgent extends BaseAgentBase {
       }
     };
 
-      this._buildAgent(
-        model,
-        instructions,
-        filteredTools,
-        combinedOnStepAsync,
-        // getExtraTools: returns node-creation tools when current chat is in creation mode
-        nodeCreationTools
-        ? (): ToolSet | null => session.jobCreationMode !== null ? nodeCreationTools : null
-        : undefined,
-      nodeCreationTools,
+    this._buildAgent(
+      model,
+      instructions,
+      filteredTools,
+      combinedOnStepAsync,
+      undefined, // was getExtraTools
+      undefined, // reserved for extra tools
       // getPausePromise: returns a promise that resolves when the chat is resumed
       (): Promise<void> | null => {
         if (session.paused) {
@@ -537,9 +357,7 @@ export class MainAgent extends BaseAgentBase {
         }
         return null;
       },
-      // getCreationModePrompt: injects the job creation guide into the system prompt
-      // dynamically when the agent is in job creation mode
-      (): string | null => session.jobCreationMode !== null ? jobCreationGuide : null,
+      undefined, // was getCreationModePrompt
       // getAbortSignal: provides the current abort signal so prepareStep can check it early
       (): AbortSignal | null => session.abortController?.signal ?? null,
       // shouldTerminateRun: hard-stop the current generate run after successful create_table
@@ -559,7 +377,7 @@ export class MainAgent extends BaseAgentBase {
       // Re-filter based on permission
       const reFilteredTools: ToolSet = {};
       for (const [toolName, toolDef] of Object.entries(mergedTools)) {
-        if (toolRegistry.isToolAllowed(toolName, permission, { jobCreationEnabled: config.jobCreation.enabled, skillNames })) {
+        if (toolRegistry.isToolAllowed(toolName, permission, { skillNames })) {
           reFilteredTools[toolName] = toolDef;
         }
       }
@@ -569,10 +387,8 @@ export class MainAgent extends BaseAgentBase {
         instructions,
         reFilteredTools,
         combinedOnStepAsync,
-        nodeCreationTools
-          ? (): ToolSet | null => session.jobCreationMode !== null ? nodeCreationTools : null
-          : undefined,
-        nodeCreationTools,
+        undefined, // was getExtraTools
+        undefined, // was extraTools
         (): Promise<void> | null => {
           if (session.paused) {
             return new Promise<void>((resolve: () => void): void => {
@@ -581,7 +397,7 @@ export class MainAgent extends BaseAgentBase {
           }
           return null;
         },
-        (): string | null => session.jobCreationMode !== null ? jobCreationGuide : null,
+        undefined, // was getCreationModePrompt
         (): AbortSignal | null => session.abortController?.signal ?? null,
         (): boolean => session.terminateCurrentRun,
       );
@@ -754,16 +570,6 @@ export class MainAgent extends BaseAgentBase {
             } else {
               this._totalInputTokens = 0;
               this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
-            }
-
-            const brainInterfaceForOutput: BrainInterfaceService = BrainInterfaceService.getInstance();
-
-            if (generateResult.text) {
-              try {
-                await brainInterfaceForOutput.emitModelOutputAsync(chatId, stepsCount, generateResult.text);
-              } catch {
-                // Never let emit failures affect agent execution
-              }
             }
 
             this._logger.debug("Agent response generated", { chatId, stepsCount, historyLength: session.messages.length });
@@ -1147,7 +953,6 @@ export class MainAgent extends BaseAgentBase {
     const persistable: IPersistedSession = {
       messages: session.messages,
       lastActivityAt: session.lastActivityAt,
-      jobCreationMode: session.jobCreationMode,
     };
 
     try {
@@ -1194,37 +999,6 @@ export class MainAgent extends BaseAgentBase {
 export type { IAgentResult };
 
 //#region Private functions
-
-async function _emitGraphUpdateAsync(
-  chatId: string,
-  jobId: string,
-  brainInterface: BrainInterfaceService,
-  activeNodeId?: string,
-  nodeStatuses?: Record<string, string>,
-): Promise<void> {
-  try {
-    const storage: JobStorageService = JobStorageService.getInstance();
-    const job: IJob | null = await storage.getJobAsync(jobId);
-
-    if (!job) {
-      return;
-    }
-
-    const nodes: INode[] = await storage.listNodesAsync(jobId);
-
-    await brainInterface.emitGraphUpdatedAsync(chatId, {
-      chatId,
-      jobId: job.jobId,
-      jobName: job.name,
-      nodes,
-      entrypointNodeId: job.entrypointNodeId,
-      activeNodeId,
-      nodeStatuses,
-    });
-  } catch {
-    // Never let graph emit failures affect agent execution
-  }
-}
 
 function _appendResponseToSession(
   sessionMessages: ModelMessage[],

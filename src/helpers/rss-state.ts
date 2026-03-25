@@ -26,14 +26,14 @@ export async function loadRssStateAsync(feedUrl: string): Promise<IRssState | nu
   }
 }
 
-export async function saveRssStateAsync(feedUrl: string, seenIds: string[]): Promise<void> {
+export async function saveRssStateAsync(feedUrl: string, seenGuids: string[]): Promise<void> {
   await ensureDirectoryExistsAsync(getRssStateDir());
 
   const filePath: string = getRssStateFilePath(feedUrl);
   const state: IRssState = {
     feedUrl,
-    seenIds,
-    lastFetchedAt: new Date().toISOString(),
+    seenGuids,
+    lastPublishedDate: new Date().toISOString(),
   };
 
   await fs.writeFile(filePath, JSON.stringify(state, null, 2), "utf-8");
@@ -43,11 +43,11 @@ export function filterUnseenRssItems(
   items: Record<string, unknown>[],
   state: IRssState | null,
 ): Record<string, unknown>[] {
-  if (!state || state.seenIds.length === 0) {
+  if (!state || state.seenGuids.length === 0) {
     return items;
   }
 
-  const seenSet: Set<string> = new Set<string>(state.seenIds);
+  const seenSet: Set<string> = new Set<string>(state.seenGuids);
 
   return items.filter((item: Record<string, unknown>): boolean => {
     const itemId: string | null = extractRssItemId(item);

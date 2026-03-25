@@ -1,19 +1,12 @@
 import "./env.js";
-import { createServer } from "node:http";
-import fs from "node:fs/promises";
-import crypto from "node:crypto";
-import path from "node:path";
-import { Server as SocketIOServer } from "socket.io";
 import { ConfigService } from "./services/config.service.js";
 import { LoggerService } from "./services/logger.service.js";
 import { AiProviderService } from "./services/ai-provider.service.js";
-import { PromptService } from "./services/prompt.service.js";
 import { EmbeddingService } from "./services/embedding.service.js";
 import { VectorStoreService } from "./services/vector-store.service.js";
 import { SkillLoaderService } from "./services/skill-loader.service.js";
 import { SchedulerService } from "./services/scheduler.service.js";
 import { MessagingService } from "./services/messaging.service.js";
-import { JobStorageService } from "./services/job-storage.service.js";
 import { ChannelRegistryService } from "./services/channel-registry.service.js";
 import { McpRegistryService } from "./services/mcp-registry.service.js";
 import { McpService } from "./services/mcp.service.js";
@@ -22,26 +15,16 @@ import * as skillInstaller from "./helpers/skill-installer.js";
 import * as skillState from "./helpers/skill-state.js";
 import { CronAgent } from "./agent/cron-agent.js";
 import { MainAgent } from "./agent/main-agent.js";
-import { BrainInterfaceService } from "./brain-interface/service.js";
-import { StatusService } from "./services/status.service.js";
 import { telegramPlatform } from "./platforms/telegram/index.js";
 import { discordPlatform } from "./platforms/discord/index.js";
 import type { IPlatformDeps } from "./platforms/types.js";
-import type { IConfig, IScheduledTask, IExecutionContext } from "./shared/types/index.js";
-import { getJobLogsDir, getBrainInterfaceTokenFilePath, ensureAllDirectoriesAsync, ensureDirectoryExistsAsync } from "./utils/paths.js";
+import type { IConfig, IScheduledTask } from "./shared/types/index.js";
+import { ensureAllDirectoriesAsync } from "./utils/paths.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
 import { extractErrorMessage } from "./utils/error.js";
 import { TelegramHandler } from "./platforms/telegram/handler.js";
 import type { SkillInstallKind } from "./helpers/skill-installer.js";
-import { generateJwtToken, type IJwtPayload } from "./utils/jwt.js";
 import { notifySchedulerChannelsWithDedupAsync } from "./utils/scheduler-notifications.js";
-
-const BRAIN_INTERFACE_PORT: number = parseInt(process.env.BRAIN_INTERFACE_PORT ?? "3001", 10);
-
-function createBrainInterfaceJwtSecret(): string {
-  return crypto.randomBytes(48).toString("base64url");
-}
-
 //#region Main
 
 async function mainAsync(): Promise<void> {
@@ -51,23 +34,6 @@ async function mainAsync(): Promise<void> {
   await configService.initializeAsync();
 
   let config: IConfig = configService.getConfig();
-
-  let brainJwtSecret: string = config.brainInterface.jwtSecret;
-  const brainJwtIssuer: string = config.brainInterface.jwtIssuer;
-  const brainJwtAudience: string = config.brainInterface.jwtAudience;
-
-  if (brainJwtSecret === "replace-with-generated-secret") {
-    brainJwtSecret = createBrainInterfaceJwtSecret();
-    await configService.updateConfigAsync({
-      brainInterface: {
-        jwtSecret: brainJwtSecret,
-        jwtIssuer: brainJwtIssuer,
-        jwtAudience: brainJwtAudience,
-      },
-    });
-    config = configService.getConfig();
-  }
-
   // 2. Initialize logger
   const logger: LoggerService = LoggerService.getInstance();
 
@@ -75,66 +41,10 @@ async function mainAsync(): Promise<void> {
 
   // Ensure runtime directories exist (including sessions/) before agents start.
   await ensureAllDirectoriesAsync();
-
-  const tokenFilePath: string = getBrainInterfaceTokenFilePath();
-  const tokenDirPath: string = path.dirname(tokenFilePath);
-  const nowEpochSeconds: number = Math.floor(Date.now() / 1000);
-  const adminPayload: IJwtPayload = {
-    iss: config.brainInterface.jwtIssuer,
-    aud: config.brainInterface.jwtAudience,
-    sub: "brain-interface-ui",
-    iat: nowEpochSeconds,
-    exp: nowEpochSeconds + (60 * 60 * 24 * 365),
-  };
-  const adminToken: string = generateJwtToken(adminPayload, brainJwtSecret);
-
-  await ensureDirectoryExistsAsync(tokenDirPath);
-  await fs.writeFile(tokenFilePath, `${adminToken}\n`, {
-    encoding: "utf-8",
-    mode: 0o600,
-  });
-
-  // Enable CLI status output (spinner/status line)
-  const statusService: StatusService = StatusService.getInstance();
-  statusService.enableCliOutput(true);
-
-  logger.info("BlackDogBot daemon starting...");
-  logger.info("BrainInterface JWT token is ready for UI login", {
-    tokenFilePath,
-    hint: "Paste this token into the Brain Interface auth field. It is persisted in browser localStorage.",
-  });
-
-  // 2.5. Catch unhandled promise rejections
-  process.on("unhandledRejection", (reason: unknown): void => {
-    logger.error("Unhandled promise rejection", {
-      reason: reason instanceof Error ? reason.message : String(reason),
-    });
-  });
-
-  // 2.6. Clean up orphaned jobs in "creating" status (from interrupted job creation)
-  const jobStorageService: JobStorageService = JobStorageService.getInstance();
-  const orphanedCount: number = await jobStorageService.cleanupOrphanedCreatingJobsAsync();
-
-  if (orphanedCount > 0) {
-    logger.info("Cleaned up orphaned jobs in 'creating' status", { count: orphanedCount });
-  }
-
-  // 3. Initialize prompt service
-  const promptService: PromptService = PromptService.getInstance();
-
-  await promptService.initializeAsync();
-
-  logger.info("Prompt service initialized.");
-
-  // 4. Initialize AI provider
+  // Initialize AI provider
   const aiProviderService: AiProviderService = AiProviderService.getInstance();
 
   await aiProviderService.initializeAsync(config.ai);
-
-  logger.info("AI provider initialized.", { 
-    provider: config.ai.provider,
-    contextWindow: aiProviderService.getContextWindow(),
-  });
 
   // 5. Initialize embeddings and vector store (only if embeddingProvider is explicitly configured)
   const embeddingProvider = config.knowledge.embeddingProvider;
@@ -377,7 +287,7 @@ async function mainAsync(): Promise<void> {
   const schedulerService: SchedulerService = SchedulerService.getInstance();
 
   if (config.scheduler.enabled) {
-    const cronAgent: CronAgent = CronAgent.getInstance();
+    const cronAgent = CronAgent.getInstance();
 
     schedulerService.setTaskExecutor(async (task: IScheduledTask): Promise<void> => {
       // Helper: broadcast to all channels with receiveNotifications=true
@@ -402,24 +312,9 @@ async function mainAsync(): Promise<void> {
         );
       };
 
-      const executionContext: IExecutionContext = {
-        toolCallHistory: [],
-        taskName: task.name,
-        taskDescription: task.description,
-        taskInstructions: task.instructions,
-      };
-
       await executeCronTaskAsync(task, {
         broadcastToNotificationChannelsAsync,
-        broadcastCronMessage: (name: string, msg: string) =>
-          BrainInterfaceService.getInstance().broadcastCronMessage(name, msg),
-        logInfo: (msg: string, meta?: Record<string, unknown>) => logger.info(msg, meta),
-        executeTaskAsync: (t, sender, taskIdProvider) =>
-          cronAgent.executeTaskAsync(t, sender, taskIdProvider, executionContext),
-        openJobLogAsync: (key, path) => logger.openJobLogAsync(key, path),
-        closeJobLog: (key) => logger.closeJobLog(key),
-        getJobLogPath: (name, ts) =>
-          `${getJobLogsDir()}/${name.replace(/[^a-zA-Z0-9_-]/g, "_")}-${ts}.log`,
+        executeTaskAsync: cronAgent.executeTaskAsync.bind(cronAgent),
       });
     });
 
@@ -465,34 +360,6 @@ async function mainAsync(): Promise<void> {
   } else {
     logger.info("Scheduler disabled in config.");
   }
-
-  // 10. Initialize BrainInterface (WebSocket server for debug UI)
-  const httpServer = createServer();
-  const io: SocketIOServer = new SocketIOServer(httpServer, {
-    cors: {
-      origin: "*",
-      methods: ["GET", "POST"],
-    },
-  });
-
-  const brainInterface: BrainInterfaceService = BrainInterfaceService.getInstance();
-  brainInterface.initialize(
-    io,
-    brainJwtSecret,
-    config.brainInterface.jwtIssuer,
-    config.brainInterface.jwtAudience,
-  );
-
-  await new Promise<void>((resolve): void => {
-    httpServer.listen(BRAIN_INTERFACE_PORT, (): void => {
-      resolve();
-    });
-  });
-
-  logger.info("BrainInterface WebSocket server started.", { port: BRAIN_INTERFACE_PORT });
-
-  logger.info("BlackDogBot daemon is running.");
-
   // 11. Graceful shutdown
   const shutdownAsync = async (): Promise<void> => {
     logger.info("Shutdown signal received. Stopping BlackDogBot...");
@@ -505,14 +372,6 @@ async function mainAsync(): Promise<void> {
       await schedulerService.stopAsync();
     }
 
-    await new Promise<void>((resolve): void => {
-      io.close((): void => {
-        resolve();
-      });
-    });
-
-    logger.info("BlackDogBot stopped. Goodbye.");
-    process.exit(0);
   };
 
   process.on("SIGTERM", (): void => {

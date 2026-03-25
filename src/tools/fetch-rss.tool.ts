@@ -117,7 +117,7 @@ export const fetchRssTool = tool({
       unseenCount = unseenItems.length;
       returnedItems = unseenItems.slice(0, maxItems);
 
-      const updatedSeenIds: string[] = rssState.mergeRssSeenIds(state?.seenIds ?? [], allItems);
+      const updatedSeenIds: string[] = rssState.mergeRssSeenIds(state?.seenGuids ?? [], allItems);
       await rssState.saveRssStateAsync(url, updatedSeenIds);
     } else {
       returnedItems = transformedAllItems.slice(0, maxItems);
