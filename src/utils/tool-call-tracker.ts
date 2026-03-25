@@ -3,7 +3,7 @@
  * Tool call tracking is handled by LangChain callbacks.
  * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
  */
-import type { ModelMessage } from "ai";
+type ModelMessage = unknown;
 
 export interface ITrackedToolCallSummary {
   name: string;

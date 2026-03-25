@@ -1,5 +1,3 @@
-import { APICallError } from "ai";
-
 const DEFAULT_429_BACKOFF_MS: number = 10_000;
 const MAX_RETRY_AFTER_MS: number = 120_000;
 const EXPLICIT_429_SAFETY_MULTIPLIER: number = 1.1;
@@ -39,6 +37,19 @@ interface IRateLimitResetExtraction {
     | "none";
 }
 
+interface IAPICallErrorLike extends Error {
+  statusCode?: number | null;
+  responseHeaders?: Record<string, string> | null;
+  responseBody?: string | null;
+}
+
+function _isAPICallError(error: unknown): error is IAPICallErrorLike {
+  if (error instanceof Error && "statusCode" in error) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Extracts the Retry-After delay in milliseconds from an APICallError with status 429.
  *
@@ -54,11 +65,11 @@ export function extractRetryAfterMs(error: unknown): number | null {
 }
 
 function extractRetryAfterDecision(error: unknown): IRetryAfterExtraction {
-  if (!APICallError.isInstance(error) || error.statusCode !== 429) {
+  if (!_isAPICallError(error) || error.statusCode !== 429) {
     return { waitMs: null, source: "none" };
   }
 
-  const headers: Record<string, string> | undefined = error.responseHeaders;
+  const headers: Record<string, string> | undefined = error.responseHeaders ?? undefined;
 
   // 1. retry-after-ms header (most precise)
   if (headers) {
@@ -126,11 +137,11 @@ export function extractRateLimitResetMs(error: unknown): number | null {
 }
 
 function extractRateLimitResetDecision(error: unknown): IRateLimitResetExtraction {
-  if (!APICallError.isInstance(error) || error.statusCode !== 429) {
+  if (!_isAPICallError(error) || error.statusCode !== 429) {
     return { waitMs: null, source: "none" };
   }
 
-  const headers: Record<string, string> | undefined = error.responseHeaders;
+  const headers: Record<string, string> | undefined = error.responseHeaders ?? undefined;
   const headerRateLimitReset: string | undefined = headers
     ? (headers["x-ratelimit-reset"] ?? headers["X-RateLimit-Reset"])
     : undefined;

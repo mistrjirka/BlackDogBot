@@ -3,7 +3,7 @@
  * PrepareStep logic is handled internally by DeepAgents.
  * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
  */
-import type { ModelMessage } from "ai";
+type ModelMessage = unknown;
 
 import { FORCE_THINK_INTERVAL } from "../shared/constants.js";
 

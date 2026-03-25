@@ -3,7 +3,9 @@
  * Tool reasoning is handled internally by DeepAgents middleware.
  * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
  */
-import { type Tool, type ToolCallOptions, type ToolSet } from "ai";
+type Tool = unknown;
+type ToolCallOptions = unknown;
+type ToolSet = Record<string, unknown>;
 import { z } from "zod";
 
 import { isReasoningRequired } from "./prepare-step.js";

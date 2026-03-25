@@ -3,7 +3,8 @@
  * Message compaction is handled internally by DeepAgents SummarizationMiddleware.
  * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
  */
-import type { LanguageModel, ModelMessage } from "ai";
+type LanguageModel = unknown;
+type ModelMessage = unknown;
 
 import { LoggerService } from "../services/logger.service.js";
 import { generateTextWithRetryAsync } from "./llm-retry.js";

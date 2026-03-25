@@ -1,5 +1,5 @@
 import Bottleneck from "bottleneck";
-import { LanguageModel, wrapLanguageModel, extractReasoningMiddleware } from "ai";
+import { type LanguageModel } from "ai";
 import { LanguageModelV3, SharedV3ProviderOptions } from "@ai-sdk/provider";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -39,6 +39,33 @@ import { runToolCallingProbeAsync } from "../utils/llm-probe-helpers.js";
 import { createHash } from "node:crypto";
 import { ensureDirectoryExistsAsync, getCacheDir } from "../utils/paths.js";
 import { ConfigService } from "./config.service.js";
+
+interface IGenerateOptions {
+  mode?: { type: "regular" } | { type: "streaming" };
+  model?: string;
+  messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>;
+  temperature?: number;
+  maxTokens?: number;
+  tools?: Array<{ type: "function"; function: { name: string; description?: string; parameters: Record<string, unknown> } }>;
+  toolChoice?: { type: "auto" | "none" } | { type: "function"; function: { name: string } };
+  parallelToolCalls?: boolean;
+  responseFormat?: { type: "json_schema"; json_schema: { name: string; strict: boolean; schema: Record<string, unknown> } };
+  reasoning_format?: { type: "enabled" | "disabled" | "none" };
+  extraHeaders?: Record<string, string>;
+  signal?: AbortSignal;
+}
+
+interface IGenerateResult {
+  text: string;
+  finishReason: "stop" | "length" | "content-filter" | "tool-calls" | "error";
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+  reasoningContent?: string;
+  toolCalls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
+}
+
+interface IStreamOptions extends IGenerateOptions {
+  onChunk?: (chunk: { text: string; reasoningContent?: string }) => void;
+}
 
 interface IOpenRouterModelListEntry {
   id: string;
@@ -2437,7 +2464,7 @@ export class AiProviderService {
         apiKey: config.apiKey,
         fetch: this._createTokenGatedFetch("openrouter"),
       }).chat(modelId);
-      return this._wrapModelWithRateLimiter(rawModel, provider);
+      return this._wrapModelWithRateLimiter(rawModel as unknown as LanguageModel, provider);
     }
 
     if (provider === "openai-compatible") {
@@ -2548,14 +2575,10 @@ export class AiProviderService {
         },
       }).chatModel(modelId);
 
-      const modelWithReasoningExtraction: LanguageModel = this._supportsReasoningFormat
-        ? wrapLanguageModel({
-          model: rawModel,
-          middleware: extractReasoningMiddleware({ tagName: "think" }),
-        })
-        : rawModel;
-
-      return this._wrapModelWithRateLimiter(modelWithReasoningExtraction, provider);
+      // Note: The client-side think-tag extraction is handled by _fixReasoningContentResponse
+      // which processes the HTTP response after it's received. The ai-sdk middleware
+      // (extractReasoningMiddleware) is no longer used here.
+      return this._wrapModelWithRateLimiter(rawModel as unknown as LanguageModel, provider);
     }
 
     if (provider === "lm-studio") {
@@ -2615,7 +2638,7 @@ export class AiProviderService {
           return this._fixReasoningContentResponse(response);
         },
       }).chatModel(modelId);
-      return this._wrapModelWithRateLimiter(rawModel, provider);
+      return this._wrapModelWithRateLimiter(rawModel as unknown as LanguageModel, provider);
     }
 
     throw new Error(`Unsupported provider: ${provider as string}`);

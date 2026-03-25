@@ -6,7 +6,6 @@
 import type { ToolSet, LanguageModel } from "ai";
 import type { Tool } from "ai";
 
-import { asVercelToolSet } from "../utils/langchain-tool-adapter.js";
 import { BaseAgentBase } from "./base-agent.js";
 import type { IAgentResult, IToolCallSummary } from "./base-agent.js";
 import type { IScheduledTask, IExecutionContext } from "../shared/types/index.js";

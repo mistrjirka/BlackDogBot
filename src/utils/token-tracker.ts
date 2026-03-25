@@ -1,4 +1,6 @@
-import { type ModelMessage, type Tool, type ToolSet } from "ai";
+type ModelMessage = unknown;
+type Tool = unknown;
+type ToolSet = Record<string, unknown>;
 import { encodingForModel } from "js-tiktoken";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";

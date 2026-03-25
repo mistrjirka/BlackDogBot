@@ -7,7 +7,6 @@
 import fs from "node:fs/promises";
 import { ToolSet, LanguageModel, type ModelMessage, type Tool } from "ai";
 
-import { asVercelToolSet } from "../utils/langchain-tool-adapter.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { LoggerService } from "../services/logger.service.js";

@@ -1,4 +1,4 @@
-import type { ModelMessage } from "ai";
+type ModelMessage = unknown;
 
 /**
  * Checks if a prerequisite tool was called in the conversation history

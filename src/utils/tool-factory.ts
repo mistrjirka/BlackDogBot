@@ -1,4 +1,4 @@
-import type { ModelMessage } from "ai";
+type ModelMessage = unknown;
 import { hasPrerequisiteBeenMet } from "./tool-prerequisite.js";
 
 /**
