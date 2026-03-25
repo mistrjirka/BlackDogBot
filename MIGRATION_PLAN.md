@@ -464,6 +464,10 @@ pnpm test:core
 **Goal**: Convert all 42 remaining tools to LangChain `tool()` format.
 **Files modified**: All tool files in `src/tools/`
 
+### Files becoming obsolete (reference Phase 5 for deletion)
+
+- `src/tools/langchain-poc-tools.ts` — absorbed into original tool files once they are converted
+
 ### Conversion pattern (mechanical)
 
 For each tool file:
@@ -558,6 +562,11 @@ pnpm test:core
 **Goal**: Replace custom session management with LangGraph checkpointer.
 **Remove**: JSON file sessions, custom serialization, in-memory session Map.
 
+### Files becoming obsolete (reference Phase 5 for deletion)
+
+- `src/agent/main-agent.ts` — session logic replaced by checkpointer
+- `src/utils/prepare-step.ts` — prepareStep logic handled by DeepAgents internally
+
 ### Step 3.1: Write session migration script
 
 **New file**: `scripts/migrate-sessions.ts`
@@ -631,6 +640,10 @@ pnpm test:core
 **Goal**: Replace custom MCP service with `@langchain/mcp-adapters`.
 **Remove**: `src/services/mcp.service.ts` (custom MCP client with Vercel AI tool conversion).
 
+### Files becoming obsolete (reference Phase 5 for deletion)
+
+- `src/services/mcp.service.ts` — replaced by `langchain-mcp.service.ts`
+
 ### Step 4.1: Replace `mcp.service.ts`
 
 **New file**: `src/services/langchain-mcp.service.ts`
@@ -682,6 +695,10 @@ pnpm test:integration  # MCP tests
 ## Phase 5: Remove Old Agent Code + Dependencies
 
 **Goal**: Delete all Vercel AI SDK agent code, old utilities, old dependencies.
+
+### Files becoming obsolete — DELETED IN THIS PHASE
+
+All files listed in Steps 5.1-5.3 are deleted in this phase.
 
 ### Step 5.1: Delete old agent files
 
@@ -749,6 +766,10 @@ pnpm test
 ## Phase 6: DeepAgents Features
 
 **Goal**: Leverage subagents, planning, filesystem backends, skills.
+
+### Files becoming obsolete (reference Phase 7 for final cleanup)
+
+- `src/agent/cron-agent.ts` — replaced by DeepAgents subagent
 
 ### Step 6.1: Define cron subagent
 
@@ -832,7 +853,30 @@ pnpm test
 
 ## Phase 7: Final Hardening
 
-### Step 7.1: Full test suite
+### Step 7.1: Scan for accidental old code
+
+Before merging, search the codebase for any references to deleted modules or dead imports:
+
+```bash
+# Check for references to deleted files/modules
+rg "from.*ai'" src/ --include '*.ts'           # Vercel AI SDK imports
+rg "from.*@ai-sdk" src/ --include '*.ts'        # AI SDK packages
+rg "from.*@openrouter" src/ --include '*.ts'    # OpenRouter AI SDK
+rg "from.*@lmstudio" src/ --include '*.ts'      # LM Studio SDK
+rg "from.*js-tiktoken" src/ --include '*.ts'    # Tiktoken
+rg "JobStorageService" src/ --include '*.ts'    # Deleted service
+rg "JobExecutorService" src/ --include '*.ts'   # Deleted service
+rg "BrainInterface" src/ --include '*.ts'       # Deleted WebSocket
+rg "base-agent" src/ --include '*.ts'           # Deleted agent base
+rg "cron-agent" src/ --include '*.ts'           # Deleted cron agent
+rg "jobCreation" src/ --include '*.ts'          # Deleted config
+rg "nodeCreation" src/ --include '*.ts'         # Deleted tools
+
+# Fix any found references
+# Remove dead imports, update to LangChain equivalents
+```
+
+### Step 7.2: Full test suite
 
 ```bash
 pnpm typecheck
