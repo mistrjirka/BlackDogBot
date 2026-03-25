@@ -2164,6 +2164,7 @@ export class AiProviderService {
           provider: providerName,
           total: tokenBreakdown.total,
           messages: tokenBreakdown.messages,
+          image: tokenBreakdown.image,
           tools: tokenBreakdown.tools,
           system: tokenBreakdown.system,
           overhead: tokenBreakdown.overhead,
@@ -2698,6 +2699,7 @@ export class AiProviderService {
   private _getLargestComponent(breakdown: IRequestTokenBreakdown): string {
     const components = [
       { name: 'messages', value: breakdown.messages },
+      { name: 'image', value: breakdown.image },
       { name: 'tools', value: breakdown.tools },
       { name: 'system', value: breakdown.system },
       { name: 'overhead', value: breakdown.overhead },

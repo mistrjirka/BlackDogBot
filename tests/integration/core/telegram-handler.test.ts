@@ -298,6 +298,42 @@ describe("TelegramHandler", () => {
     expect(secondInvocationArgs[1]).toBe("second\nthird");
   }, 600000);
 
+  it("should recover merged queued processing on context overflow by compacting and retrying", async () => {
+    const handler: TelegramHandler = TelegramHandler.getInstance();
+    const mainAgent: MainAgent = MainAgent.getInstance();
+
+    (handler as unknown as { _bot: unknown })._bot = null;
+
+    vi.spyOn(mainAgent, "initializeForChatAsync").mockResolvedValue(undefined);
+
+    const compactSpy = vi
+      .spyOn(mainAgent, "compactSessionMessagesForChatAsync")
+      .mockResolvedValue(true);
+
+    let processCallCount: number = 0;
+    vi.spyOn(mainAgent, "processMessageForChatAsync").mockImplementation(async () => {
+      processCallCount++;
+      if (processCallCount === 1) {
+        throw new Error("Context size exceeded: context_length_exceeded");
+      }
+
+      return { text: "Recovered response", stepsCount: 1 };
+    });
+
+    await (handler as unknown as {
+      _processMergedQueuedMessageAsync: (chatId: string, queuedMessages: Array<{ text: string; messageId: number | null; imageAttachments: unknown[] }>) => Promise<void>
+    })._processMergedQueuedMessageAsync("100", [
+      {
+        text: "queued message that overflows",
+        messageId: null,
+        imageAttachments: [],
+      },
+    ]);
+
+    expect(processCallCount).toBe(2);
+    expect(compactSpy).toHaveBeenCalledTimes(1);
+  }, 600000);
+
   it("should send an error reply when the agent throws", async () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
 

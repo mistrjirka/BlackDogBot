@@ -116,7 +116,7 @@ describe("summarization DAG compaction", () => {
       false,
     );
 
-    expect(result.dagPath).toEqual(["L1", "L2", "L4"]);
+    expect(result.dagPath?.slice(0, 3)).toEqual(["L1", "L2", "L4"]);
     expect(result.dagPath?.includes("L3")).toBe(false);
   });
 
@@ -230,5 +230,32 @@ describe("summarization DAG compaction", () => {
 
     expect((result.dagPath ?? []).length).toBeGreaterThan(0);
     expect(result.dagPath?.[0]).toBe("L1");
+  });
+
+  it("engages fallback ladder L5 when DAG cannot reach tiny target", async () => {
+    const messages: ModelMessage[] = [
+      { role: "system", content: "System anchor" } as ModelMessage,
+      { role: "assistant", content: "A".repeat(5000) } as ModelMessage,
+      { role: "assistant", content: "B".repeat(5000) } as ModelMessage,
+      { role: "assistant", content: "C".repeat(5000) } as ModelMessage,
+      { role: "assistant", content: "D".repeat(5000) } as ModelMessage,
+      { role: "assistant", content: "E".repeat(5000) } as ModelMessage,
+    ];
+
+    vi.mocked(llmRetry.generateTextWithRetryAsync).mockResolvedValue({
+      text: "LONG_" + "Z".repeat(3200),
+      usage: { inputTokens: 200, outputTokens: 180 },
+    } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>);
+
+    const result = await compactMessagesSummaryOnlyAsync(
+      messages,
+      {} as unknown as LanguageModel,
+      makeLogger(),
+      1,
+      countApprox,
+      false,
+    );
+
+    expect(result.dagPath?.includes("L5")).toBe(true);
   });
 });

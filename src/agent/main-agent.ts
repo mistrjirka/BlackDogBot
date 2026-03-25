@@ -735,6 +735,7 @@ export class MainAgent extends BaseAgentBase {
         for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
           // Reset token count so prepareStep doesn't use stale values from a failed attempt
           this._totalInputTokens = 0;
+          this._lastPrepareStepEstimatedTokens = null;
 
           // Create messagesForCall inside the loop so retries use updated session messages
           const messagesForCall: ModelMessage[] = [...session.messages, userModelMessage];
@@ -859,11 +860,23 @@ export class MainAgent extends BaseAgentBase {
               contextRetries < CONTEXT_EXCEEDED_RETRIES
             ) {
               contextRetries++;
+              const beforeSessionCompactionTokens: number = countTokens(session.messages);
+              session.messages = await _compactSessionMessagesAsync(
+                session.messages,
+                compactionModel,
+                this._logger,
+                this._compactionTokenThreshold,
+              );
+              const afterSessionCompactionTokens: number = countTokens(session.messages);
+
               this._logger.warn("Context size exceeded, forcing compaction on next step", {
                 chatId,
                 contextRetry: contextRetries,
                 maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
                 statusCode: aiErrorDetails.statusCode,
+                sessionCompactionBeforeTokens: beforeSessionCompactionTokens,
+                sessionCompactionAfterTokens: afterSessionCompactionTokens,
+                sessionCompactionReducedBy: beforeSessionCompactionTokens - afterSessionCompactionTokens,
               });
               this._forceCompactionOnNextStep = true;
               attempt--; // Don't count this against the empty-response retry limit

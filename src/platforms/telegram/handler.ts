@@ -341,35 +341,15 @@ export class TelegramHandler {
       await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
 
       try {
-        let result: IAgentResult;
-        try {
-          result = await this._mainAgent.processMessageForChatAsync(
+        const result: IAgentResult = await this._processWithContextRecoveryAsync(
+          chatId,
+          async (): Promise<IAgentResult> => await this._mainAgent.processMessageForChatAsync(
             chatId,
             incoming.text,
             pendingImageAttachments.length > 0 ? pendingImageAttachments : undefined,
-          );
-        } catch (processingError: unknown) {
-          const isContextExceeded: boolean = this._isContextExceededError(processingError);
-          if (!isContextExceeded) {
-            throw processingError;
-          }
-
-          this._logger.warn("Telegram message hit context limit, attempting recovery compaction", {
-            chatId,
-            error: processingError instanceof Error ? processingError.message : String(processingError),
-          });
-
-          const compacted: boolean = await this._mainAgent.compactSessionMessagesForChatAsync(chatId);
-          if (!compacted) {
-            throw processingError;
-          }
-
-          result = await this._mainAgent.processMessageForChatAsync(
-            chatId,
-            incoming.text,
-            pendingImageAttachments.length > 0 ? pendingImageAttachments : undefined,
-          );
-        }
+          ),
+          "telegram_message",
+        );
 
         // Update progress message to done
         if (progressMsgId !== null) {
@@ -758,6 +738,39 @@ export class TelegramHandler {
       (combined.includes("context") && combined.includes("token") && combined.includes("limit"));
   }
 
+  private async _processWithContextRecoveryAsync(
+    chatId: string,
+    runAsync: () => Promise<IAgentResult>,
+    source: "telegram_message" | "merged_queue_text" | "merged_queue_image",
+  ): Promise<IAgentResult> {
+    try {
+      return await runAsync();
+    } catch (processingError: unknown) {
+      const isContextExceeded: boolean = this._isContextExceededError(processingError);
+      if (!isContextExceeded) {
+        throw processingError;
+      }
+
+      this._logger.warn("Telegram processing hit context limit, attempting recovery compaction", {
+        chatId,
+        source,
+        error: processingError instanceof Error ? processingError.message : String(processingError),
+      });
+
+      const compacted: boolean = await this._mainAgent.compactSessionMessagesForChatAsync(chatId);
+      if (!compacted) {
+        throw processingError;
+      }
+
+      this._logger.info("Retrying Telegram processing after session compaction", {
+        chatId,
+        source,
+      });
+
+      return await runAsync();
+    }
+  }
+
   private async _processMergedQueuedMessageAsync(
     chatId: string,
     queuedMessages: IPendingTelegramMessage[],
@@ -835,7 +848,11 @@ export class TelegramHandler {
       await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
 
       if (!hasAnyImageAttachment) {
-        const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(chatId, mergedText);
+        const result: IAgentResult = await this._processWithContextRecoveryAsync(
+          chatId,
+          async (): Promise<IAgentResult> => await this._mainAgent.processMessageForChatAsync(chatId, mergedText),
+          "merged_queue_text",
+        );
 
         if (result.text) {
           await sender(result.text);
@@ -866,10 +883,14 @@ export class TelegramHandler {
       let processedCount: number = 0;
       let totalStepsCount: number = 0;
       for (const queuedMessage of queuedMessages) {
-        const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(
+        const result: IAgentResult = await this._processWithContextRecoveryAsync(
           chatId,
-          queuedMessage.text,
-          queuedMessage.imageAttachments.length > 0 ? queuedMessage.imageAttachments : undefined,
+          async (): Promise<IAgentResult> => await this._mainAgent.processMessageForChatAsync(
+            chatId,
+            queuedMessage.text,
+            queuedMessage.imageAttachments.length > 0 ? queuedMessage.imageAttachments : undefined,
+          ),
+          "merged_queue_image",
         );
 
         if (result.text) {

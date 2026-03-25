@@ -26,7 +26,7 @@ export interface ISummarizationResult {
   maxLevelReached?: string;
 }
 
-type TCompactionNode = "L1" | "L2" | "L3" | "L4";
+type TCompactionNode = "L1" | "L2" | "L3" | "L4" | "L5" | "L6" | "L7";
 
 interface ICompactionDagResult {
   messages: ModelMessage[];
@@ -75,28 +75,38 @@ export async function compactMessagesSummaryOnlyAsync(
     forced,
   );
 
-  const compactedTokens: number = countTokens(dagResult.messages);
+  let finalDagResult: ICompactionDagResult = dagResult;
+  if (!dagResult.converged) {
+    finalDagResult = _applyMultimodalFallbackLadder(
+      dagResult,
+      logger,
+      targetTokenCount,
+      countTokens,
+    );
+  }
+
+  const compactedTokens: number = countTokens(finalDagResult.messages);
 
   logger.info("Summary-only compaction complete", {
     originalTokens,
     compactedTokens,
-    passes: dagResult.passes,
-    converged: dagResult.converged,
-    dagPath: dagResult.dagPath,
-    dagTerminationReason: dagResult.dagTerminationReason,
-    maxLevelReached: dagResult.maxLevelReached,
+    passes: finalDagResult.passes,
+    converged: finalDagResult.converged,
+    dagPath: finalDagResult.dagPath,
+    dagTerminationReason: finalDagResult.dagTerminationReason,
+    maxLevelReached: finalDagResult.maxLevelReached,
   });
 
   return {
-    messages: dagResult.messages,
-    passes: dagResult.passes,
+    messages: finalDagResult.messages,
+    passes: finalDagResult.passes,
     originalTokens,
     compactedTokens,
-    converged: dagResult.converged,
-    dagPath: dagResult.dagPath,
-    dagNodeVisitCounts: dagResult.dagNodeVisitCounts,
-    dagTerminationReason: dagResult.dagTerminationReason,
-    maxLevelReached: dagResult.maxLevelReached,
+    converged: finalDagResult.converged,
+    dagPath: finalDagResult.dagPath,
+    dagNodeVisitCounts: finalDagResult.dagNodeVisitCounts,
+    dagTerminationReason: finalDagResult.dagTerminationReason,
+    maxLevelReached: finalDagResult.maxLevelReached,
   };
 }
 
@@ -170,6 +180,9 @@ async function _compactViaDagAsync(
     L2: 0,
     L3: 0,
     L4: 0,
+    L5: 0,
+    L6: 0,
+    L7: 0,
   };
   let maxLevelReached: TCompactionNode = node;
 
@@ -724,9 +737,247 @@ function _maxLevel(current: TCompactionNode, next: TCompactionNode): TCompaction
     L2: 2,
     L3: 3,
     L4: 4,
+    L5: 5,
+    L6: 6,
+    L7: 7,
   };
 
   return level[next] > level[current] ? next : current;
+}
+
+function _applyMultimodalFallbackLadder(
+  dagResult: ICompactionDagResult,
+  logger: LoggerService,
+  targetTokenCount: number,
+  countTokens: (msgs: ModelMessage[]) => number,
+): ICompactionDagResult {
+  let messages: ModelMessage[] = dagResult.messages;
+  const dagPath: TCompactionNode[] = [...dagResult.dagPath];
+  const dagNodeVisitCounts: Record<TCompactionNode, number> = {
+    ...dagResult.dagNodeVisitCounts,
+  };
+  let maxLevelReached: TCompactionNode = dagResult.maxLevelReached;
+
+  dagPath.push("L5");
+  dagNodeVisitCounts.L5++;
+  maxLevelReached = _maxLevel(maxLevelReached, "L5");
+
+  const beforeL5: number = countTokens(messages);
+  messages = _dropOldestNonSystemMessages(messages, targetTokenCount, countTokens);
+  const afterL5: number = countTokens(messages);
+  if (afterL5 < beforeL5) {
+    logger.warn("Multimodal fallback L5 applied (drop oldest non-system messages)", {
+      before: beforeL5,
+      after: afterL5,
+      reducedBy: beforeL5 - afterL5,
+      targetTokenCount,
+    });
+  }
+  if (afterL5 <= targetTokenCount) {
+    return {
+      ...dagResult,
+      messages,
+      converged: true,
+      dagPath,
+      dagNodeVisitCounts,
+      dagTerminationReason: "reached_target_after_l5",
+      maxLevelReached,
+    };
+  }
+
+  dagPath.push("L6");
+  dagNodeVisitCounts.L6++;
+  maxLevelReached = _maxLevel(maxLevelReached, "L6");
+
+  const beforeL6: number = countTokens(messages);
+  messages = _pruneIntermediateToolResults(messages, targetTokenCount, countTokens);
+  const afterL6: number = countTokens(messages);
+  if (afterL6 < beforeL6) {
+    logger.warn("Multimodal fallback L6 applied (prune intermediate tool results)", {
+      before: beforeL6,
+      after: afterL6,
+      reducedBy: beforeL6 - afterL6,
+      targetTokenCount,
+    });
+  }
+  if (afterL6 <= targetTokenCount) {
+    return {
+      ...dagResult,
+      messages,
+      converged: true,
+      dagPath,
+      dagNodeVisitCounts,
+      dagTerminationReason: "reached_target_after_l6",
+      maxLevelReached,
+    };
+  }
+
+  if (_messagesContainImages(messages)) {
+    dagPath.push("L7");
+    dagNodeVisitCounts.L7++;
+    maxLevelReached = _maxLevel(maxLevelReached, "L7");
+
+    const beforeL7: number = countTokens(messages);
+    messages = _dropImagesFromNonLatestUser(messages);
+    const afterL7: number = countTokens(messages);
+
+    if (afterL7 < beforeL7 || JSON.stringify(messages) !== JSON.stringify(dagResult.messages)) {
+      logger.warn("Multimodal fallback L7 applied (drop non-latest user images)", {
+        before: beforeL7,
+        after: afterL7,
+        reducedBy: beforeL7 - afterL7,
+        targetTokenCount,
+      });
+    }
+
+    if (afterL7 <= targetTokenCount) {
+      return {
+        ...dagResult,
+        messages,
+        converged: true,
+        dagPath,
+        dagNodeVisitCounts,
+        dagTerminationReason: "reached_target_after_l7",
+        maxLevelReached,
+      };
+    }
+  }
+
+  return {
+    ...dagResult,
+    messages,
+    converged: false,
+    dagPath,
+    dagNodeVisitCounts,
+    dagTerminationReason: "fallback_ladder_exhausted",
+    maxLevelReached,
+  };
+}
+
+function _dropOldestNonSystemMessages(
+  messages: ModelMessage[],
+  targetTokenCount: number,
+  countTokens: (msgs: ModelMessage[]) => number,
+): ModelMessage[] {
+  let result: ModelMessage[] = [...messages];
+
+  while (result.length > 4 && countTokens(result) > targetTokenCount) {
+    const latestUserIndex: number = _findLastUserIndex(result);
+    let removeIndex: number = -1;
+    for (let i: number = 1; i < result.length - 2; i++) {
+      if (i === latestUserIndex) {
+        continue;
+      }
+
+      removeIndex = i;
+      break;
+    }
+
+    if (removeIndex < 0) {
+      break;
+    }
+
+    result = [...result.slice(0, removeIndex), ...result.slice(removeIndex + 1)];
+  }
+
+  return result;
+}
+
+function _pruneIntermediateToolResults(
+  messages: ModelMessage[],
+  targetTokenCount: number,
+  countTokens: (msgs: ModelMessage[]) => number,
+): ModelMessage[] {
+  const toolIndexes: number[] = [];
+  for (let i: number = 0; i < messages.length; i++) {
+    if (messages[i].role === "tool") {
+      toolIndexes.push(i);
+    }
+  }
+
+  if (toolIndexes.length <= 2) {
+    return messages;
+  }
+
+  const keepIndexes: Set<number> = new Set(toolIndexes.slice(-2));
+  let result: ModelMessage[] = [...messages];
+
+  for (let i: number = 0; i < messages.length; i++) {
+    if (countTokens(result) <= targetTokenCount) {
+      break;
+    }
+
+    if (messages[i].role !== "tool" || keepIndexes.has(i)) {
+      continue;
+    }
+
+    const currentIndexInResult: number = result.indexOf(messages[i]);
+    if (currentIndexInResult < 0) {
+      continue;
+    }
+
+    result = [...result.slice(0, currentIndexInResult), ...result.slice(currentIndexInResult + 1)];
+  }
+
+  return result;
+}
+
+function _messagesContainImages(messages: ModelMessage[]): boolean {
+  return messages.some((message: ModelMessage): boolean => {
+    if (!Array.isArray(message.content)) {
+      return false;
+    }
+
+    return message.content.some((part: unknown): boolean => {
+      if (typeof part !== "object" || part === null || !("type" in part)) {
+        return false;
+      }
+
+      return (part as { type?: string }).type === "image";
+    });
+  });
+}
+
+function _dropImagesFromNonLatestUser(messages: ModelMessage[]): ModelMessage[] {
+  const latestUserIndex: number = _findLastUserIndex(messages);
+
+  return messages.map((message: ModelMessage, index: number): ModelMessage => {
+    if (message.role !== "user" || !Array.isArray(message.content) || index === latestUserIndex) {
+      return message;
+    }
+
+    const nonImageParts: unknown[] = message.content.filter((part: unknown): boolean => {
+      if (typeof part !== "object" || part === null || !("type" in part)) {
+        return true;
+      }
+
+      return (part as { type?: string }).type !== "image";
+    });
+
+    if (nonImageParts.length > 0) {
+      const remainingTextParts: string[] = nonImageParts
+        .map((part: unknown): string => {
+          if (typeof part === "object" && part !== null && "text" in part && typeof (part as { text?: unknown }).text === "string") {
+            return (part as { text: string }).text;
+          }
+
+          return "";
+        })
+        .filter((text: string): boolean => text.trim().length > 0);
+
+      if (remainingTextParts.length > 0) {
+        return {
+          ...message,
+          content: remainingTextParts.join(" "),
+        } as ModelMessage;
+      }
+    }
+
+    return {
+      ...message,
+      content: "[IMAGE REMOVED FOR CONTEXT BUDGET]",
+    } as ModelMessage;
+  });
 }
 
 function _replaceToolMessageContentWithSummary(

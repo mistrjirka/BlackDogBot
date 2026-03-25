@@ -195,6 +195,54 @@ describe("countRequestBodyTokens", () => {
     expect(breakdown.total).toBeGreaterThan(0);
     // Array content is stringified, so messages count includes JSON structure
   });
+
+  it("should estimate image tokens from image_url content without counting full base64 text", () => {
+    const imageDataUrl: string = `data:image/png;base64,${"A".repeat(24000)}`;
+    const requestBody: string = JSON.stringify({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Describe this image" },
+            { type: "image_url", image_url: { url: imageDataUrl } },
+          ],
+        },
+      ],
+    });
+
+    const breakdown: IRequestTokenBreakdown = countRequestBodyTokens(requestBody);
+
+    expect(breakdown.messageCount).toBe(1);
+    expect(breakdown.image).toBeGreaterThan(0);
+    expect(breakdown.messages).toBeGreaterThan(0);
+    expect(breakdown.total).toBeLessThan(20000);
+  });
+
+  it("should estimate image tokens from direct image content", () => {
+    const requestBody: string = JSON.stringify({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Analyze this" },
+            { type: "image", image: "data:image/jpeg;base64," + "B".repeat(20000) },
+          ],
+        },
+      ],
+    });
+
+    const breakdown: IRequestTokenBreakdown = countRequestBodyTokens(requestBody);
+
+    expect(breakdown.image).toBeGreaterThan(0);
+    expect(breakdown.total).toBeGreaterThan(breakdown.messages);
+    const sum: number =
+      breakdown.messages +
+      breakdown.image +
+      breakdown.tools +
+      breakdown.system +
+      breakdown.overhead;
+    expect(breakdown.total).toBe(sum);
+  });
 });
 
 //#endregion Tests

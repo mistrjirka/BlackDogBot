@@ -4,6 +4,7 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 import { countMessagesTokens, countRequestBodyTokens } from "./request-token-counter.js";
+import { estimateImageTokensFromPart } from "./image-token-estimator.js";
 
 // Cached tokenizer to avoid recreating it on every call.
 let _cachedEncoder: ReturnType<typeof encodingForModel> | null = null;
@@ -19,6 +20,7 @@ export interface IRequestLikeTokenEstimate {
   breakdown: {
     total: number;
     messages: number;
+    image: number;
     tools: number;
     system: number;
     overhead: number;
@@ -146,6 +148,7 @@ function toRequestMessageForTokenCounting(message: ModelMessage): Record<string,
 
   const textParts: string[] = [];
   const toolCalls: Array<Record<string, unknown>> = [];
+  let imageTokenEstimateTotal: number = 0;
 
   for (const part of message.content) {
     if (typeof part !== "object" || part === null) {
@@ -176,6 +179,11 @@ function toRequestMessageForTokenCounting(message: ModelMessage): Record<string,
       continue;
     }
 
+    if ("type" in part && part.type === "image") {
+      imageTokenEstimateTotal += _estimateImagePartTokens(part as unknown as Record<string, unknown>);
+      continue;
+    }
+
     if ("result" in part || "output" in part) {
       const toolResultValue: unknown = extractToolResultValue(part);
       const serialized: string = typeof toolResultValue === "string"
@@ -200,6 +208,10 @@ function toRequestMessageForTokenCounting(message: ModelMessage): Record<string,
     result.tool_calls = toolCalls;
   }
 
+  if (imageTokenEstimateTotal > 0) {
+    result._imageTokenEstimateTotal = imageTokenEstimateTotal;
+  }
+
   return result;
 }
 
@@ -220,6 +232,10 @@ function extractToolResultValue(part: unknown): unknown {
   }
 
   return null;
+}
+
+function _estimateImagePartTokens(part: Record<string, unknown>): number {
+  return estimateImageTokensFromPart(part);
 }
 
 function _buildRequestLikeBody(
