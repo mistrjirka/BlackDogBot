@@ -1028,3 +1028,121 @@ git push
 | MCP integration (custom) | ~460 |
 | Old dependencies | N/A |
 | **Total** | **~9,000+ lines** |
+
+---
+
+## Gaps: Unplanned Work Discovered During Migration
+
+This section documents gaps found during implementation that were not originally planned.
+
+### Gap 1: Test files not in plan
+
+**Discovered**: Phase 2 implementation
+**Impact**: Low
+**Files**:
+- `tests/unit/tools/send-message.validation.test.ts`
+- `tests/unit/tools/list-crons.tool.test.ts`
+- `tests/unit/tools/get-previous-message.tool.test.ts`
+- `tests/integration/core/per-table-tools.test.ts`
+- `tests/integration/core/run-cmd-control-tools.test.ts`
+- `tests/integration/core/run-cmd-deterministic.test.ts`
+
+**Issue**: Tests used `.execute()` (Vercel AI SDK) pattern. Needed update to `.invoke()` (LangChain pattern).
+**Resolution**: Fixed by changing `tool.execute(args, TOOL_OPTIONS)` to `tool.invoke(args)`.
+
+### Gap 2: Agent types not extracted early
+
+**Discovered**: Phase 3 implementation
+**Impact**: Medium
+**Issue**: Platform handlers (`telegram/handler.ts`, `discord/handler.ts`) import `IAgentResult`, `IToolCallSummary`, `IChatImageAttachment` from deprecated agent files. When those files are deleted, handlers break.
+**Resolution**: Created `src/agent/types.ts` to extract these types. Platform handlers now import from `types.ts`.
+
+### Gap 3: Error handling utilities still depend on Vercel AI
+
+**Discovered**: Phase 5 implementation
+**Impact**: High - blocks Phase 5 completion
+**Files**:
+- `src/utils/ai-error.ts` — uses `APICallError.isInstance()`
+- `src/utils/context-error.ts` — uses `APICallError`, `InvalidToolInputError`, `JSONParseError`
+- `src/utils/retry-after.ts` — uses `APICallError.isInstance()`
+
+**Issue**: These files use Vercel AI SDK error types for type guards. They're imported by non-deprecated code.
+**Resolution**: Need to create LangChain-compatible error handling utilities or keep `ai` package for error types only.
+
+### Gap 4: `per-table-tools.ts` uses `dynamicTool()` from Vercel AI
+
+**Discovered**: Phase 5 implementation
+**Impact**: High - blocks Phase 5 completion
+**Issue**: `src/utils/per-table-tools.ts` uses `dynamicTool()` from `ai` package for dynamic tool creation. It's used by both main agent and cron agent.
+**Resolution**: Convert to use LangChain's `tool()` with dynamic schemas.
+
+### Gap 5: `call-skill.tool.ts` and `setup-runner.ts` use `ToolLoopAgent`
+
+**Discovered**: Phase 5 implementation
+**Impact**: High - blocks Phase 5 completion
+**Issue**: These files use Vercel AI SDK's `ToolLoopAgent` and `stepCountIs` for subagent functionality. They're not deprecated yet.
+**Resolution**: Need to either:
+1. Rewrite to use DeepAgents subagent pattern
+2. Or keep as temporary code until Phase 6
+
+### Gap 6: LangChain tool type requires cast to work with Vercel AI agents
+
+**Discovered**: Phase 2 implementation
+**Impact**: Medium
+**Issue**: LangChain's `DynamicStructuredTool` (returned by `tool()`) has `schema` property. Vercel AI's `Tool` has `inputSchema` property. Types are incompatible.
+**Resolution**: Use `as unknown as Tool` cast temporarily. Documented in `docs/migration/PHASE2_NOTES.md`.
+
+### Gap 7: Config simplification deferred
+
+**Discovered**: Phase 1 implementation
+**Impact**: Low
+**Issue**: Plan mentions "Unify AI provider config to single `baseURL` + `model` + `apiKey` structure" but this requires updating all config loading, environment variables, and platform initialization.
+**Resolution**: Defer to Phase 5 or Phase 7 after all dependencies are removed.
+
+### Gap 8: `llm-retry.ts` used by active cron tools
+
+**Discovered**: Phase 5 implementation
+**Impact**: High - blocks Phase 5 completion
+**Files**:
+- `src/tools/add-cron.tool.ts` — uses `generateObjectWithRetryAsync`
+- `src/tools/edit-cron-instructions.tool.ts` — uses `generateObjectWithRetryAsync`
+- `src/services/cron-message-history.service.ts` — uses both retry functions
+
+**Issue**: `llm-retry.ts` is marked deprecated but is actively used by non-deprecated cron tools.
+**Resolution**: Either keep `llm-retry.ts` or convert cron tools to use LangChain's built-in retry.
+
+### Gap 9: `tool-call-repair.ts` and `tool-reasoning-wrapper.ts` still used
+
+**Discovered**: Phase 5 implementation
+**Impact**: Medium
+**Issue**: These utility files are imported by `call-skill.tool.ts` and `setup-runner.ts`.
+**Resolution**: These can be deleted when `call-skill.tool.ts` and `setup-runner.ts` are rewritten.
+
+### Gap 10: Phase ordering dependency
+
+**Discovered**: Phase 5 implementation
+**Impact**: High
+**Issue**: The original plan has Phase 5 (remove old code) before Phase 6 (DeepAgents features). But Phase 5 depends on Phase 6 completing certain rewrites:
+- `call-skill.tool.ts` (Phase 6)
+- `setup-runner.ts` (Phase 6)
+- Cron subagent replacement (Phase 6)
+
+**Resolution**: Either reorder phases (Phase 6 → Phase 5) or accept that Phase 5 can only partially complete until Phase 6 finishes.
+
+---
+
+## Phase Order Revision
+
+Based on implementation experience, the recommended phase order is:
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| 0: Jobs Removal | ✅ Done | Independent of LangChain |
+| 1: LangChain Foundation | ✅ Done | Core setup |
+| 2: Tool Migration | ✅ Done | All tools converted |
+| 3: Session + Persistence | ✅ Done | Message converter, new handlers |
+| 4: MCP Integration | ✅ Done | New MCP service |
+| **5a: Extract Types** | ✅ Done | Handler types in types.ts |
+| 6: DeepAgents Features | ⏳ Next | Rewrite call-skill, setup-runner, cron |
+| 5b: Remove Old Code | ⏳ After Phase 6 | Delete all deprecated files |
+| 7: Final Hardening | ⏳ Last | Deduplication, tests, merge |
