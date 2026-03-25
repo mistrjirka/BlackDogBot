@@ -1,3 +1,8 @@
+/**
+ * @deprecated PHASE 5 - This file will be deleted when Vercel AI SDK is removed.
+ * Tool call tracking is handled by LangChain callbacks.
+ * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
+ */
 import type { ModelMessage } from "ai";
 
 export interface ITrackedToolCallSummary {

@@ -1,3 +1,8 @@
+/**
+ * @deprecated PHASE 5 - This file will be deleted when Vercel AI SDK is removed.
+ * Tool reasoning is handled internally by DeepAgents middleware.
+ * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
+ */
 import { type Tool, type ToolCallOptions, type ToolSet } from "ai";
 import { z } from "zod";
 

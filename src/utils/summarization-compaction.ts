@@ -1,3 +1,8 @@
+/**
+ * @deprecated PHASE 5 - This file will be deleted when Vercel AI SDK is removed.
+ * Message compaction is handled internally by DeepAgents SummarizationMiddleware.
+ * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
+ */
 import type { LanguageModel, ModelMessage } from "ai";
 
 import { LoggerService } from "../services/logger.service.js";

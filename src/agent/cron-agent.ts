@@ -1,3 +1,8 @@
+/**
+ * @deprecated PHASE 5 - This file will be deleted when Vercel AI SDK is removed.
+ * Cron execution is replaced by DeepAgents subagent in langchain-agent.ts.
+ * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
+ */
 import type { ToolSet, LanguageModel } from "ai";
 import type { Tool } from "ai";
 

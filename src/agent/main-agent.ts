@@ -1,3 +1,9 @@
+/**
+ * @deprecated PHASE 5 - This file will be deleted when Vercel AI SDK is removed.
+ * Session management is replaced by LangGraph SqliteSaver checkpointer.
+ * Agent logic is replaced by DeepAgents in langchain-agent.ts.
+ * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
+ */
 import fs from "node:fs/promises";
 import { ToolSet, LanguageModel, type ModelMessage, type Tool } from "ai";
 

@@ -1,3 +1,8 @@
+/**
+ * @deprecated PHASE 5 - This file will be deleted when Vercel AI SDK is removed.
+ * Tool call repair is handled internally by LangChain validation.
+ * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
+ */
 import type { LanguageModelV3ToolCall } from "@ai-sdk/provider";
 import { LoggerService } from "../services/logger.service.js";
 

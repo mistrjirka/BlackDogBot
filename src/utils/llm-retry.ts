@@ -1,3 +1,8 @@
+/**
+ * @deprecated PHASE 5 - This file will be deleted when Vercel AI SDK is removed.
+ * LLM retries are handled by LangChain's built-in retry mechanism.
+ * See MIGRATION_PLAN.md Phase 5 for deletion timeline.
+ */
 import { generateText, Output, dynamicTool, type LanguageModel } from "ai";
 import type { SharedV3ProviderOptions } from "@ai-sdk/provider";
 import type { z } from "zod";
