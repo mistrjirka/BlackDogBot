@@ -6,7 +6,7 @@ import os from "node:os";
 import { LoggerService } from "../services/logger.service.js";
 import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
+import { AiCapabilityService } from "../services/ai-capability.service.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { LangchainMcpService } from "../services/langchain-mcp.service.js";
@@ -160,7 +160,7 @@ export class LangchainMainAgent {
     readTracker: FileReadTracker,
   ): Promise<DynamicStructuredTool[]> {
     const allTools: Record<string, DynamicStructuredTool> = {};
-    const supportsVision = AiProviderService.getInstance().getSupportsVision();
+    const supportsVision = AiCapabilityService.getInstance().getSupportsVision();
     const executionContext = { toolCallHistory: [] as string[] };
 
     allTools.think = thinkTool;

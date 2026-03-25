@@ -6,7 +6,7 @@ import os from "node:os";
 import { LoggerService } from "../services/logger.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { PromptService } from "../services/prompt.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
+import { AiCapabilityService } from "../services/ai-capability.service.js";
 import { createLangchainAgent } from "./langchain-agent.js";
 import type { IAgentResult } from "./types.js";
 import type { IScheduledTask, IExecutionContext } from "../shared/types/cron.types.js";
@@ -164,7 +164,7 @@ export class LangchainCronExecutor {
     executionContext: IExecutionContext,
     readTracker: FileReadTracker,
   ): Promise<DynamicStructuredTool[]> {
-    const supportsVision: boolean = AiProviderService.getInstance().getSupportsVision();
+    const supportsVision: boolean = AiCapabilityService.getInstance().getSupportsVision();
 
     const availableTools: Record<string, DynamicStructuredTool> = {
       think: thinkTool,

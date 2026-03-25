@@ -1,7 +1,7 @@
 import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
+import { AiCapabilityService } from "../services/ai-capability.service.js";
 import { PROMPT_MAIN_AGENT } from "../shared/constants.js";
 import { getCurrentDateTime } from "../utils/time.js";
 
@@ -62,7 +62,7 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
     );
   }
 
-  const supportsVision: boolean = AiProviderService.getInstance().getSupportsVision();
+  const supportsVision: boolean = AiCapabilityService.getInstance().getSupportsVision();
   if (supportsVision) {
     contextParts.push(
       "Vision capability: enabled. User-attached images are provided directly in the message content, so analyze them directly. Use read_image only for local files the user explicitly asked to inspect by path.",

@@ -5,7 +5,7 @@ import { dirname } from "path";
 
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
-import { AiProviderService } from "../../services/ai-provider.service.js";
+import { AiCapabilityService } from "../../services/ai-capability.service.js";
 import type { IChatAgent } from "../../agent/agent-interface.js";
 import { LangchainMainAgent } from "../../agent/langchain-main-agent.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
@@ -522,7 +522,7 @@ export class TelegramHandler {
         this._logger.info("Auto-registered Telegram channel", { chatId });
       }
 
-      if (!AiProviderService.getInstance().getSupportsVision()) {
+      if (!AiCapabilityService.getInstance().getSupportsVision()) {
         await ctx.reply(
           "Image analysis is currently unavailable because the active model does not support vision. " +
           "Switch to a vision-capable model/provider and try again.",
