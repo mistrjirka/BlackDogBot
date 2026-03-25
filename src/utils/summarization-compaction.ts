@@ -5,7 +5,10 @@ import { generateTextWithRetryAsync } from "./llm-retry.js";
 
 //#region Constants
 
-const MAX_SUMMARIZATION_PASSES: number = 2;
+const MAX_DAG_ITERATIONS: number = 12;
+const TRUNCATED_TOOL_MAX_CHARS: number = 1800;
+const CROPPED_MESSAGE_HEAD_CHARS: number = 700;
+const CROPPED_MESSAGE_TAIL_CHARS: number = 260;
 
 //#endregion Constants
 
@@ -17,6 +20,22 @@ export interface ISummarizationResult {
   originalTokens: number;
   compactedTokens: number;
   converged: boolean;
+  dagPath?: string[];
+  dagNodeVisitCounts?: Record<string, number>;
+  dagTerminationReason?: string;
+  maxLevelReached?: string;
+}
+
+type TCompactionNode = "L1" | "L2" | "L3" | "L4";
+
+interface ICompactionDagResult {
+  messages: ModelMessage[];
+  converged: boolean;
+  passes: number;
+  dagPath: TCompactionNode[];
+  dagNodeVisitCounts: Record<TCompactionNode, number>;
+  dagTerminationReason: string;
+  maxLevelReached: TCompactionNode;
 }
 
 //#endregion Interfaces
@@ -33,82 +52,51 @@ export async function compactMessagesSummaryOnlyAsync(
 ): Promise<ISummarizationResult> {
   const originalTokens: number = countTokens(messages);
 
-  if (messages.length <= 2 || (!forced && originalTokens <= targetTokenCount)) {
+  if (!forced && originalTokens <= targetTokenCount) {
     return {
       messages,
       passes: 0,
       originalTokens,
       compactedTokens: originalTokens,
       converged: true,
+      dagPath: [],
+      dagNodeVisitCounts: {},
+      dagTerminationReason: "already_within_target",
+      maxLevelReached: "L1",
     };
   }
 
-  let currentMessages: ModelMessage[] = messages;
-  let previousTokens: number = originalTokens;
-  let passes: number = 0;
-  let converged: boolean = false;
+  const dagResult: ICompactionDagResult = await _compactViaDagAsync(
+    messages,
+    model,
+    logger,
+    targetTokenCount,
+    countTokens,
+    forced,
+  );
 
-  for (let passIndex: number = 0; passIndex < MAX_SUMMARIZATION_PASSES; passIndex++) {
-    const tokensBefore: number = countTokens(currentMessages);
-    const mustRunForcedPass: boolean = forced && passIndex === 0;
-    if (!mustRunForcedPass && tokensBefore <= targetTokenCount) {
-      converged = true;
-      break;
-    }
-
-    const compacted = await _compactSinglePassAsync(
-      currentMessages,
-      model,
-      logger,
-      targetTokenCount,
-      countTokens,
-    );
-
-    const tokensAfter: number = countTokens(compacted);
-    passes = passIndex + 1;
-
-    logger.info("Summary-only compaction pass finished", {
-      pass: passes,
-      before: tokensBefore,
-      after: tokensAfter,
-      reducedBy: tokensBefore - tokensAfter,
-    });
-
-    if (tokensAfter <= targetTokenCount) {
-      currentMessages = compacted;
-      converged = true;
-      break;
-    }
-
-    if (tokensAfter >= previousTokens) {
-      logger.warn("Summary compaction stalled (no further reduction)", {
-        pass: passes,
-        previousTokens,
-        currentTokens: tokensAfter,
-      });
-      currentMessages = compacted;
-      break;
-    }
-
-    previousTokens = tokensAfter;
-    currentMessages = compacted;
-  }
-
-  const compactedTokens: number = countTokens(currentMessages);
+  const compactedTokens: number = countTokens(dagResult.messages);
 
   logger.info("Summary-only compaction complete", {
     originalTokens,
     compactedTokens,
-    passes,
-    converged,
+    passes: dagResult.passes,
+    converged: dagResult.converged,
+    dagPath: dagResult.dagPath,
+    dagTerminationReason: dagResult.dagTerminationReason,
+    maxLevelReached: dagResult.maxLevelReached,
   });
 
   return {
-    messages: currentMessages,
-    passes,
+    messages: dagResult.messages,
+    passes: dagResult.passes,
     originalTokens,
     compactedTokens,
-    converged,
+    converged: dagResult.converged,
+    dagPath: dagResult.dagPath,
+    dagNodeVisitCounts: dagResult.dagNodeVisitCounts,
+    dagTerminationReason: dagResult.dagTerminationReason,
+    maxLevelReached: dagResult.maxLevelReached,
   };
 }
 
@@ -160,6 +148,163 @@ async function _compactSinglePassAsync(
   );
 
   return stageCResult;
+}
+
+async function _compactViaDagAsync(
+  messages: ModelMessage[],
+  model: LanguageModel,
+  logger: LoggerService,
+  targetTokenCount: number,
+  countTokens: (msgs: ModelMessage[]) => number,
+  forced: boolean,
+): Promise<ICompactionDagResult> {
+  let currentMessages: ModelMessage[] = messages;
+  let node: TCompactionNode = messages.length <= 2 ? "L2" : "L1";
+  let phase: "initial" | "after_l2" | "after_l3" = "initial";
+  let iterations: number = 0;
+  let l1Passes: number = 0;
+
+  const dagPath: TCompactionNode[] = [];
+  const dagNodeVisitCounts: Record<TCompactionNode, number> = {
+    L1: 0,
+    L2: 0,
+    L3: 0,
+    L4: 0,
+  };
+  let maxLevelReached: TCompactionNode = node;
+
+  while (iterations < MAX_DAG_ITERATIONS) {
+    iterations++;
+
+    const beforeTokens: number = countTokens(currentMessages);
+    const mustRunForcedCompaction: boolean = forced && iterations === 1;
+    if (!mustRunForcedCompaction && beforeTokens <= targetTokenCount) {
+      return {
+        messages: currentMessages,
+        converged: true,
+        passes: l1Passes,
+        dagPath,
+        dagNodeVisitCounts,
+        dagTerminationReason: "reached_target_before_node",
+        maxLevelReached,
+      };
+    }
+
+    dagPath.push(node);
+    dagNodeVisitCounts[node]++;
+
+    if (node === "L1") {
+      l1Passes++;
+    }
+
+    const beforeMessages: ModelMessage[] = currentMessages;
+    let nextMessages: ModelMessage[] = currentMessages;
+
+    if (node === "L1") {
+      nextMessages = await _compactSinglePassAsync(
+        currentMessages,
+        model,
+        logger,
+        targetTokenCount,
+        countTokens,
+      );
+    } else if (node === "L2") {
+      nextMessages = await _compactToolResultsIndividuallyAsync(
+        currentMessages,
+        model,
+        logger,
+        targetTokenCount,
+        countTokens,
+      );
+    } else if (node === "L3") {
+      nextMessages = _truncateToolResultsAsync(currentMessages, targetTokenCount, countTokens);
+    } else {
+      nextMessages = _cropMessagesFallbackAsync(currentMessages, targetTokenCount, countTokens);
+    }
+
+    currentMessages = nextMessages;
+    const afterTokens: number = countTokens(currentMessages);
+    const improved: boolean = afterTokens < beforeTokens || JSON.stringify(beforeMessages) !== JSON.stringify(currentMessages);
+
+    logger.info("Compaction DAG node completed", {
+      node,
+      phase,
+      beforeTokens,
+      afterTokens,
+      reducedBy: beforeTokens - afterTokens,
+      improved,
+      iteration: iterations,
+      targetTokenCount,
+    });
+
+    if (afterTokens <= targetTokenCount) {
+      return {
+        messages: currentMessages,
+        converged: true,
+        passes: l1Passes,
+        dagPath,
+        dagNodeVisitCounts,
+        dagTerminationReason: "reached_target_after_node",
+        maxLevelReached,
+      };
+    }
+
+    if (node === "L4") {
+      return {
+        messages: currentMessages,
+        converged: false,
+        passes: l1Passes,
+        dagPath,
+        dagNodeVisitCounts,
+        dagTerminationReason: "reached_terminal_l4_without_target",
+        maxLevelReached,
+      };
+    }
+
+    if (node === "L1") {
+      if (phase === "initial") {
+        node = "L2";
+      } else if (phase === "after_l2") {
+        node = "L3";
+      } else {
+        node = "L4";
+      }
+      maxLevelReached = _maxLevel(maxLevelReached, node);
+      continue;
+    }
+
+    if (node === "L2") {
+      if (improved) {
+        phase = "after_l2";
+        node = "L1";
+      } else {
+        node = "L4";
+      }
+      maxLevelReached = _maxLevel(maxLevelReached, node);
+      continue;
+    }
+
+    if (node === "L3") {
+      if (improved) {
+        phase = "after_l3";
+        node = "L1";
+      } else {
+        node = "L4";
+      }
+      maxLevelReached = _maxLevel(maxLevelReached, node);
+      continue;
+    }
+  }
+
+  return {
+    messages: currentMessages,
+    converged: false,
+    passes: l1Passes,
+    dagPath,
+    dagNodeVisitCounts,
+    dagTerminationReason: "max_dag_iterations_reached",
+    maxLevelReached,
+  };
 }
 
 function _findLastUserIndex(messages: ModelMessage[]): number {
@@ -405,6 +550,183 @@ async function _compactToolResultsAfterLatestUserAsync(
   });
 
   return resultMessages;
+}
+
+async function _compactToolResultsIndividuallyAsync(
+  messages: ModelMessage[],
+  model: LanguageModel,
+  logger: LoggerService,
+  targetTokenCount: number,
+  countTokens: (msgs: ModelMessage[]) => number,
+): Promise<ModelMessage[]> {
+  const lastUserIndex: number = _findLastUserIndex(messages);
+  const indexedToolMessages: Array<{ index: number; tokens: number; compactionCount: number }> = [];
+
+  for (let i: number = 0; i < messages.length; i++) {
+    if (messages[i].role !== "tool") {
+      continue;
+    }
+
+    if (lastUserIndex >= 0 && i <= lastUserIndex && messages.length > 2) {
+      continue;
+    }
+
+    const text: string = _extractTextContent(messages[i]);
+    indexedToolMessages.push({
+      index: i,
+      tokens: _estimateTokens(text),
+      compactionCount: _getToolResultCompactionCount(messages[i]),
+    });
+  }
+
+  if (indexedToolMessages.length === 0) {
+    return messages;
+  }
+
+  indexedToolMessages.sort((a, b) => {
+    if (a.compactionCount !== b.compactionCount) {
+      return a.compactionCount - b.compactionCount;
+    }
+
+    return b.tokens - a.tokens;
+  });
+
+  const resultMessages: ModelMessage[] = [...messages];
+
+  for (const item of indexedToolMessages) {
+    if (countTokens(resultMessages) <= targetTokenCount) {
+      break;
+    }
+
+    const originalMessage: ModelMessage = resultMessages[item.index];
+    const originalText: string = _extractTextContent(originalMessage).trim();
+    if (originalText.length < 300) {
+      continue;
+    }
+
+    const summaryBudget: number = Math.max(220, Math.min(900, Math.floor(item.tokens * 0.35)));
+    const summarized: string = await _summarizeTextAsync(
+      model,
+      logger,
+      `Per-tool DAG compaction output. Preserve IDs, URLs, paths, errors, and final outcome.\n\n` +
+        `Tool output:\n${originalText}`,
+      summaryBudget,
+      `dag-per-tool-${item.index}`,
+    );
+
+    resultMessages[item.index] = _replaceToolMessageContentWithSummary(originalMessage, summarized);
+  }
+
+  logger.info("Compaction stage finished", {
+    stage: "dag_tool_results_individual",
+    before: countTokens(messages),
+    after: countTokens(resultMessages),
+    reducedBy: countTokens(messages) - countTokens(resultMessages),
+    toolMessagesConsidered: indexedToolMessages.length,
+  });
+
+  return resultMessages;
+}
+
+function _truncateToolResultsAsync(
+  messages: ModelMessage[],
+  targetTokenCount: number,
+  countTokens: (msgs: ModelMessage[]) => number,
+): ModelMessage[] {
+  const indexedTools: Array<{ index: number; chars: number }> = [];
+
+  for (let i: number = 0; i < messages.length; i++) {
+    if (messages[i].role !== "tool") {
+      continue;
+    }
+
+    const text: string = _extractTextContent(messages[i]);
+    indexedTools.push({ index: i, chars: text.length });
+  }
+
+  indexedTools.sort((a, b) => b.chars - a.chars);
+  const resultMessages: ModelMessage[] = [...messages];
+
+  for (const item of indexedTools) {
+    if (countTokens(resultMessages) <= targetTokenCount) {
+      break;
+    }
+
+    const originalMessage: ModelMessage = resultMessages[item.index];
+    const originalText: string = _extractTextContent(originalMessage);
+    if (originalText.length <= TRUNCATED_TOOL_MAX_CHARS) {
+      continue;
+    }
+
+    const truncatedText: string =
+      `[TRUNCATED TOOL RESULT]\n` +
+      `[ORIGINAL LENGTH: ${originalText.length}]\n` +
+      `${originalText.slice(0, TRUNCATED_TOOL_MAX_CHARS)}`;
+
+    resultMessages[item.index] = _replaceToolMessageContentWithSummary(originalMessage, truncatedText);
+  }
+
+  return resultMessages;
+}
+
+function _cropMessagesFallbackAsync(
+  messages: ModelMessage[],
+  targetTokenCount: number,
+  countTokens: (msgs: ModelMessage[]) => number,
+): ModelMessage[] {
+  if (messages.length === 0) {
+    return messages;
+  }
+
+  let resultMessages: ModelMessage[] = messages;
+
+  if (messages.length > 4) {
+    const first: ModelMessage = messages[0];
+    const tail: ModelMessage[] = messages.slice(-3);
+    resultMessages = [first, ...tail];
+  }
+
+  if (countTokens(resultMessages) <= targetTokenCount) {
+    return resultMessages;
+  }
+
+  const cropped: ModelMessage[] = resultMessages.map((message: ModelMessage, index: number): ModelMessage => {
+    if (index === 0) {
+      return message;
+    }
+
+    const fullText: string = _extractTextContent(message);
+    if (fullText.length <= CROPPED_MESSAGE_HEAD_CHARS + CROPPED_MESSAGE_TAIL_CHARS + 30) {
+      return message;
+    }
+
+    const croppedText: string =
+      `${fullText.slice(0, CROPPED_MESSAGE_HEAD_CHARS)}\n` +
+      `[... CROPPED FOR CONTEXT BUDGET ...]\n` +
+      `${fullText.slice(-CROPPED_MESSAGE_TAIL_CHARS)}`;
+
+    if (message.role === "tool") {
+      return _replaceToolMessageContentWithSummary(message, croppedText);
+    }
+
+    return {
+      ...message,
+      content: croppedText,
+    } as ModelMessage;
+  });
+
+  return cropped;
+}
+
+function _maxLevel(current: TCompactionNode, next: TCompactionNode): TCompactionNode {
+  const level: Record<TCompactionNode, number> = {
+    L1: 1,
+    L2: 2,
+    L3: 3,
+    L4: 4,
+  };
+
+  return level[next] > level[current] ? next : current;
 }
 
 function _replaceToolMessageContentWithSummary(

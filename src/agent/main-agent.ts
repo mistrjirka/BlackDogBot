@@ -997,6 +997,39 @@ export class MainAgent extends BaseAgentBase {
     return finalResult;
   }
 
+  public async compactSessionMessagesForChatAsync(chatId: string): Promise<boolean> {
+    const session: IChatSession | undefined = this._sessions.get(chatId);
+    if (!session) {
+      return false;
+    }
+
+    const aiProviderService: AiProviderService = AiProviderService.getInstance();
+    const compactionModel: LanguageModel = aiProviderService.getModel();
+    const previousLength: number = session.messages.length;
+    const previousTokens: number = countTokens(session.messages);
+
+    session.messages = await _compactSessionMessagesAsync(
+      session.messages,
+      compactionModel,
+      this._logger,
+      this._compactionTokenThreshold,
+    );
+
+    const nextTokens: number = countTokens(session.messages);
+
+    this._logger.info("Manual session compaction executed for chat", {
+      chatId,
+      previousMessageCount: previousLength,
+      nextMessageCount: session.messages.length,
+      previousTokens,
+      nextTokens,
+      reducedBy: previousTokens - nextTokens,
+    });
+
+    await this._saveSessionAsync(chatId);
+    return true;
+  }
+
   private async _activateFallbackAndReinitializeAsync(
     chatId: string,
     session: IChatSession,
@@ -1319,10 +1352,6 @@ async function _compactSessionMessagesAsync(
   logger: LoggerService,
   compactionThreshold: number,
 ): Promise<ModelMessage[]> {
-  if (messages.length <= 2) {
-    return messages;
-  }
-
   const targetTokens: number = Math.max(
     1200,
     compactionThreshold - SESSION_COMPACTION_HEADROOM_TOKENS,

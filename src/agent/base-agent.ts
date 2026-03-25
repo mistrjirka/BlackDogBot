@@ -24,7 +24,9 @@ import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
 import { extractAiErrorDetails } from "../utils/ai-error.js";
 import {
   countTokens,
+  estimateRequestLikeTokens,
   estimateRequestLikeTokensByBytes,
+  type IRequestLikeTokenEstimate,
   type IRequestLikeByteTokenEstimate,
 } from "../utils/token-tracker.js";
 import { extractLastAssistantToolCalls } from "../utils/tool-call-tracker.js";
@@ -77,6 +79,22 @@ const MAX_GENERIC_RETRIES: number = 3;
  */
 const COMPACTION_HEADROOM_TOKENS: number = 4000;
 
+/**
+ * Initial safety factor applied to local token estimates.
+ * This intentionally overestimates slightly to reduce hard-gate misses.
+ */
+const INITIAL_TOKEN_ESTIMATE_CORRECTION_FACTOR: number = 1.08;
+
+/**
+ * Maximum correction factor when calibrating estimates against provider usage.
+ */
+const MAX_TOKEN_ESTIMATE_CORRECTION_FACTOR: number = 1.80;
+
+/**
+ * Exponential moving average weight for token-estimate calibration updates.
+ */
+const TOKEN_ESTIMATE_CORRECTION_WEIGHT: number = 0.30;
+
 //#endregion Constants
 
 //#region Interfaces
@@ -116,6 +134,8 @@ export abstract class BaseAgentBase {
   protected _compactionTokenThreshold: number;
   protected _totalInputTokens: number = 0;
   protected _forceCompactionOnNextStep: boolean = false;
+  protected _tokenEstimateCorrectionFactor: number;
+  protected _lastPrepareStepEstimatedTokens: number | null;
   protected _shouldTerminateRunCallback: (() => boolean) | null;
 
   //#endregion Data members
@@ -129,6 +149,8 @@ export abstract class BaseAgentBase {
     this._maxSteps = options?.maxSteps ?? DEFAULT_AGENT_MAX_STEPS;
     this._contextWindow = options?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
     this._compactionTokenThreshold = Math.floor(this._contextWindow * COMPACTION_THRESHOLD_PERCENTAGE);
+    this._tokenEstimateCorrectionFactor = INITIAL_TOKEN_ESTIMATE_CORRECTION_FACTOR;
+    this._lastPrepareStepEstimatedTokens = null;
     this._shouldTerminateRunCallback = null;
   }
 
@@ -163,10 +185,13 @@ export abstract class BaseAgentBase {
 
       let _429Retries: number = 0;
       let _genericRetries: number = 0;
+      let contextRetries: number = 0;
+      let aggressiveContextRecoveryUsed: boolean = false;
 
       for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
         // Reset token count so prepareStep doesn't use stale values from a failed attempt
         this._totalInputTokens = 0;
+        this._lastPrepareStepEstimatedTokens = null;
 
         let result;
 
@@ -184,8 +209,9 @@ export abstract class BaseAgentBase {
           // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
           if (
             isContextExceededApiError(error) &&
-            attempt <= CONTEXT_EXCEEDED_RETRIES
+            contextRetries < CONTEXT_EXCEEDED_RETRIES
           ) {
+            contextRetries++;
             const responseBody: string = aiErrorDetails.responseBody ?? "";
             const errorMessage: string = aiErrorDetails.providerMessage ?? aiErrorDetails.message;
 
@@ -193,6 +219,7 @@ export abstract class BaseAgentBase {
               attempt,
               agentAttempt: currentAgentAttempt,
               agentAttemptTotal: totalAgentAttempts,
+              contextRetry: contextRetries,
               maxRetries: CONTEXT_EXCEEDED_RETRIES,
               statusCode: aiErrorDetails.statusCode,
               responseBody: responseBody,
@@ -203,6 +230,24 @@ export abstract class BaseAgentBase {
             });
 
             this._forceCompactionOnNextStep = true;
+            attempt--; // Do not burn empty-response retry budget for context recovery
+            continue;
+          }
+
+          if (isContextExceededApiError(error) && !aggressiveContextRecoveryUsed) {
+            aggressiveContextRecoveryUsed = true;
+            this._logger.warn("Context size exceeded after reactive retries, forcing aggressive compaction", {
+              attempt,
+              agentAttempt: currentAgentAttempt,
+              agentAttemptTotal: totalAgentAttempts,
+              contextRetries,
+              maxRetries: CONTEXT_EXCEEDED_RETRIES,
+              statusCode: aiErrorDetails.statusCode,
+              correctionFactor: this._tokenEstimateCorrectionFactor,
+            });
+
+            this._forceCompactionOnNextStep = true;
+            attempt--; // Give compaction one final chance before terminal failure
             continue;
           }
 
@@ -422,7 +467,7 @@ export abstract class BaseAgentBase {
         },
       ],
       experimental_repairToolCall: repairToolCallJsonAsync,
-      prepareStep: async ({ stepNumber, messages }) => {
+      prepareStep: async ({ stepNumber, messages, steps }) => {
         // Early abort check: if the abort signal is already fired, throw immediately.
         // This prevents wasted work during compaction, pause-waiting, or tool execution
         // when /cancel has been called.
@@ -501,9 +546,49 @@ export abstract class BaseAgentBase {
         // Token-based history compaction:
         // Recalculate request-size estimate on every step so long multi-step runs
         // do not keep stale token counts between steps.
+        const lastStepActualInputTokens: number | undefined = stepNumber > 0
+          ? steps.at(-1)?.usage?.inputTokens
+          : undefined;
+        if (
+          typeof lastStepActualInputTokens === "number" &&
+          lastStepActualInputTokens > 0 &&
+          self._lastPrepareStepEstimatedTokens !== null &&
+          self._lastPrepareStepEstimatedTokens > 0
+        ) {
+          const observedRatio: number = lastStepActualInputTokens / self._lastPrepareStepEstimatedTokens;
+          const boundedRatio: number = Math.min(
+            MAX_TOKEN_ESTIMATE_CORRECTION_FACTOR,
+            Math.max(1.0, observedRatio),
+          );
+          const previousFactor: number = self._tokenEstimateCorrectionFactor;
+          self._tokenEstimateCorrectionFactor = Math.min(
+            MAX_TOKEN_ESTIMATE_CORRECTION_FACTOR,
+            Math.max(
+              1.0,
+              previousFactor * (1 - TOKEN_ESTIMATE_CORRECTION_WEIGHT) + boundedRatio * TOKEN_ESTIMATE_CORRECTION_WEIGHT,
+            ),
+          );
+
+          logger.info("Token estimate correction updated from provider usage", {
+            stepNumber,
+            previousEstimatedTokens: self._lastPrepareStepEstimatedTokens,
+            previousActualTokens: lastStepActualInputTokens,
+            observedRatio,
+            previousFactor,
+            updatedFactor: self._tokenEstimateCorrectionFactor,
+          });
+        }
+
         const creationPrompt: string | null = (useExtraTools && getCreationModePrompt)
           ? getCreationModePrompt()
           : null;
+        const preciseRequestEstimate: IRequestLikeTokenEstimate | null = estimateRequestLikeTokens(
+          messages,
+          instructions,
+          creationPrompt,
+          allTools,
+          activeToolNames,
+        );
         const requestEstimate: IRequestLikeByteTokenEstimate | null = estimateRequestLikeTokensByBytes(
           messages,
           instructions,
@@ -511,8 +596,19 @@ export abstract class BaseAgentBase {
           allTools,
           activeToolNames,
         );
-        const tokenCount: number = requestEstimate?.estimatedTokens ?? countTokens(messages);
-        const estimationSource: "bytes_fallback" | "tiktoken_fallback" = requestEstimate ? "bytes_fallback" : "tiktoken_fallback";
+        const rawTokenEstimate: number =
+          preciseRequestEstimate?.breakdown.total ??
+          requestEstimate?.estimatedTokens ??
+          countTokens(messages);
+        self._lastPrepareStepEstimatedTokens = rawTokenEstimate;
+
+        const tokenCount: number = Math.ceil(rawTokenEstimate * self._tokenEstimateCorrectionFactor);
+        const estimationSource: "tiktoken_request_body" | "bytes_fallback" | "tiktoken_messages_only" =
+          preciseRequestEstimate
+            ? "tiktoken_request_body"
+            : requestEstimate
+              ? "bytes_fallback"
+              : "tiktoken_messages_only";
 
         // Keep a consistent internal token estimate for fallback/error diagnostics.
         self._totalInputTokens = tokenCount;
@@ -523,27 +619,34 @@ export abstract class BaseAgentBase {
 
         // Check if compaction is needed (predictive trigger with headroom)
         // Triggers earlier to leave room for the next turn/tool result
+        const hardLimit: number = Math.floor(self._contextWindow * HARD_GATE_THRESHOLD_PERCENTAGE);
+        const exceedsHardLimitEstimate: boolean = tokenCount > hardLimit;
         const shouldCompact: boolean =
+          exceedsHardLimitEstimate ||
           tokenCount + COMPACTION_HEADROOM_TOKENS > compactionTokenThreshold ||
           self._forceCompactionOnNextStep;
 
         if (shouldCompact) {
           const forcedCompaction: boolean = self._forceCompactionOnNextStep;
           self._forceCompactionOnNextStep = false;
+          const aggressiveCompaction: boolean = exceedsHardLimitEstimate;
 
           logger.info("Compacting agent history", {
             tokenCount,
             threshold: compactionTokenThreshold,
+            hardLimit,
+            exceedsHardLimitEstimate,
             messageCount: messages.length,
             forced: forcedCompaction,
+            aggressiveCompaction,
+            correctionFactor: self._tokenEstimateCorrectionFactor,
             estimationSource,
           });
 
           // Use summary-only compaction (no truncation)
-          const compactionTargetTokens: number = Math.max(
-            1200,
-            Math.floor(self._contextWindow * 0.40),
-          );
+          const compactionTargetTokens: number = aggressiveCompaction
+            ? Math.max(1200, Math.floor(self._contextWindow * 0.30))
+            : Math.max(1200, Math.floor(self._contextWindow * 0.40));
 
           const compactionResult = await compactMessagesSummaryOnlyAsync(
             messages,
@@ -551,7 +654,7 @@ export abstract class BaseAgentBase {
             logger,
             compactionTargetTokens,
             (msgs: ModelMessage[]): number => countTokens(msgs),
-            forcedCompaction,
+            forcedCompaction || aggressiveCompaction,
           );
 
           logger.info("Summary-only compaction completed", {
@@ -570,7 +673,22 @@ export abstract class BaseAgentBase {
             allTools,
             activeToolNames,
           );
-          const postCompactionTokenCount: number = postCompactionEstimate?.estimatedTokens ?? countTokens(compactionResult.messages);
+          const postCompactionPreciseEstimate: IRequestLikeTokenEstimate | null = estimateRequestLikeTokens(
+            compactionResult.messages,
+            instructions,
+            creationPrompt,
+            allTools,
+            activeToolNames,
+          );
+          const postCompactionRawTokenCount: number =
+            postCompactionPreciseEstimate?.breakdown.total ??
+            postCompactionEstimate?.estimatedTokens ??
+            countTokens(compactionResult.messages);
+          self._lastPrepareStepEstimatedTokens = postCompactionRawTokenCount;
+
+          const postCompactionTokenCount: number = Math.ceil(
+            postCompactionRawTokenCount * self._tokenEstimateCorrectionFactor,
+          );
           self._totalInputTokens = postCompactionTokenCount;
           statusService.setContextTokensWithThreshold(
             postCompactionTokenCount,

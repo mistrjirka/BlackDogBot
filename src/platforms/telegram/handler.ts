@@ -341,11 +341,35 @@ export class TelegramHandler {
       await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
 
       try {
-        const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(
-          chatId,
-          incoming.text,
-          pendingImageAttachments.length > 0 ? pendingImageAttachments : undefined,
-        );
+        let result: IAgentResult;
+        try {
+          result = await this._mainAgent.processMessageForChatAsync(
+            chatId,
+            incoming.text,
+            pendingImageAttachments.length > 0 ? pendingImageAttachments : undefined,
+          );
+        } catch (processingError: unknown) {
+          const isContextExceeded: boolean = this._isContextExceededError(processingError);
+          if (!isContextExceeded) {
+            throw processingError;
+          }
+
+          this._logger.warn("Telegram message hit context limit, attempting recovery compaction", {
+            chatId,
+            error: processingError instanceof Error ? processingError.message : String(processingError),
+          });
+
+          const compacted: boolean = await this._mainAgent.compactSessionMessagesForChatAsync(chatId);
+          if (!compacted) {
+            throw processingError;
+          }
+
+          result = await this._mainAgent.processMessageForChatAsync(
+            chatId,
+            incoming.text,
+            pendingImageAttachments.length > 0 ? pendingImageAttachments : undefined,
+          );
+        }
 
         // Update progress message to done
         if (progressMsgId !== null) {
@@ -720,6 +744,18 @@ export class TelegramHandler {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private _isContextExceededError(error: unknown): boolean {
+    const details: IAiErrorDetails = extractAiErrorDetails(error);
+    const combined: string = `${details.message ?? ""} ${details.providerMessage ?? ""} ${details.responseBody ?? ""}`.toLowerCase();
+
+    if (details.statusCode === 400 && combined.includes("context") && combined.includes("exceeded")) {
+      return true;
+    }
+
+    return combined.includes("context_length_exceeded") ||
+      (combined.includes("context") && combined.includes("token") && combined.includes("limit"));
   }
 
   private async _processMergedQueuedMessageAsync(
