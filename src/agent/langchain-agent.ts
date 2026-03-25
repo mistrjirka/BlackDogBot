@@ -1,5 +1,5 @@
 import { createDeepAgent, type SubAgent } from "deepagents";
-import type { Tool } from "langchain";
+import type { DynamicStructuredTool } from "langchain";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import type { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage } from "@langchain/core/messages";
@@ -14,7 +14,7 @@ import type { IChatImageAttachment } from "./main-agent.js";
 export interface ILangchainAgentConfig {
   aiConfig: IAiConfig;
   systemPrompt: string;
-  tools: Tool[];
+  tools: DynamicStructuredTool[];
   subagents?: SubAgent[];
   checkpointer: SqliteSaver;
 }

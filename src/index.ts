@@ -18,12 +18,13 @@ import { MainAgent } from "./agent/main-agent.js";
 import { createLangchainAgent } from "./agent/langchain-agent.js";
 import { createCheckpointer } from "./services/checkpointer.service.js";
 import {
-  thinkTool as lcThinkTool,
-  readFileTool as lcReadFileTool,
-  writeFileTool as lcWriteFileTool,
-  runCmdTool as lcRunCmdTool,
-  searchKnowledgeTool as lcSearchKnowledgeTool,
-} from "./tools/langchain-poc-tools.js";
+  thinkTool,
+  createReadFileTool,
+  createWriteFileTool,
+  runCmdTool,
+  searchKnowledgeTool,
+} from "./tools/index.js";
+import type { DynamicStructuredTool } from "langchain";
 import { telegramPlatform } from "./platforms/telegram/index.js";
 import { discordPlatform } from "./platforms/discord/index.js";
 import type { IPlatformDeps } from "./platforms/types.js";
@@ -378,7 +379,14 @@ async function mainAsync(): Promise<void> {
     const db = new Database(dbPath);
     const checkpointer = createCheckpointer(db);
 
-    const pocTools: any[] = [lcThinkTool, lcReadFileTool, lcWriteFileTool, lcRunCmdTool, lcSearchKnowledgeTool];
+    const fileReadTracker = { markRead: () => {}, wasRecentlyRead: () => false } as any;
+    const pocTools: DynamicStructuredTool[] = [
+      thinkTool,
+      createReadFileTool(fileReadTracker),
+      createWriteFileTool(fileReadTracker),
+      runCmdTool,
+      searchKnowledgeTool,
+    ];
     const pocPrompt = "You are a helpful assistant running on the LangChain DeepAgents architecture (PoC).";
 
     // @ts-ignore — PoC agent created to verify factory works; wired in Phase 2
