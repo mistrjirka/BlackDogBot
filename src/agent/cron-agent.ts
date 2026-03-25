@@ -282,39 +282,39 @@ export class CronAgent extends BaseAgentBase {
     const supportsVision: boolean = AiProviderService.getInstance().getSupportsVision();
 
     const availableTools: Record<string, Tool> = {
-      think: thinkTool,
-      run_cmd: runCmdTool,
-      run_cmd_input: runCmdInputTool,
-      get_cmd_status: getCmdStatusTool,
-      get_cmd_output: getCmdOutputTool,
-      wait_for_cmd: waitForCmdTool,
-      stop_cmd: stopCmdTool,
-      search_knowledge: searchKnowledgeTool,
-      add_knowledge: addKnowledgeTool,
-      edit_knowledge: editKnowledgeTool,
-      send_message: createSendMessageToolWithHistory(messageSender, taskIdProvider, executionContext),
-      get_previous_message: createGetPreviousMessageTool(executionContext),
-      read_file: createReadFileTool(readTracker),
-      write_file: createWriteFileTool(readTracker),
-      append_file: appendFileTool,
-      edit_file: editFileTool,
-      list_crons: listCronsTool,
-      fetch_rss: fetchRssTool,
-      searxng: searxngTool,
-      crawl4ai: crawl4aiTool,
-      list_databases: listDatabasesTool,
-      list_tables: listTablesTool,
-      get_table_schema: getTableSchemaTool,
-      create_database: createDatabaseTool,
-      create_table: _wrapCronCreateTableTool(createTableTool, onCreateTableRebuild),
-      drop_table: dropTableTool,
-      read_from_database: readFromDatabaseTool,
-      update_database: updateDatabaseTool,
-      delete_from_database: deleteFromDatabaseTool,
+      think: thinkTool as unknown as Tool,
+      run_cmd: runCmdTool as unknown as Tool,
+      run_cmd_input: runCmdInputTool as unknown as Tool,
+      get_cmd_status: getCmdStatusTool as unknown as Tool,
+      get_cmd_output: getCmdOutputTool as unknown as Tool,
+      wait_for_cmd: waitForCmdTool as unknown as Tool,
+      stop_cmd: stopCmdTool as unknown as Tool,
+      search_knowledge: searchKnowledgeTool as unknown as Tool,
+      add_knowledge: addKnowledgeTool as unknown as Tool,
+      edit_knowledge: editKnowledgeTool as unknown as Tool,
+      send_message: createSendMessageToolWithHistory(messageSender, taskIdProvider, executionContext) as unknown as Tool,
+      get_previous_message: createGetPreviousMessageTool(executionContext) as unknown as Tool,
+      read_file: createReadFileTool(readTracker) as unknown as Tool,
+      write_file: createWriteFileTool(readTracker) as unknown as Tool,
+      append_file: appendFileTool as unknown as Tool,
+      edit_file: editFileTool as unknown as Tool,
+      list_crons: listCronsTool as unknown as Tool,
+      fetch_rss: fetchRssTool as unknown as Tool,
+      searxng: searxngTool as unknown as Tool,
+      crawl4ai: crawl4aiTool as unknown as Tool,
+      list_databases: listDatabasesTool as unknown as Tool,
+      list_tables: listTablesTool as unknown as Tool,
+      get_table_schema: getTableSchemaTool as unknown as Tool,
+      create_database: createDatabaseTool as unknown as Tool,
+      create_table: _wrapCronCreateTableTool(createTableTool as unknown as Tool, onCreateTableRebuild),
+      drop_table: dropTableTool as unknown as Tool,
+      read_from_database: readFromDatabaseTool as unknown as Tool,
+      update_database: updateDatabaseTool as unknown as Tool,
+      delete_from_database: deleteFromDatabaseTool as unknown as Tool,
     };
 
     if (supportsVision) {
-      availableTools.read_image = createReadImageTool(readTracker);
+      availableTools.read_image = createReadImageTool(readTracker) as unknown as Tool;
     }
 
     // Merge per-table write tools
@@ -333,8 +333,8 @@ export class CronAgent extends BaseAgentBase {
     const availableSkills = SkillLoaderService.getInstance().getAvailableSkills();
     if (availableSkills.length > 0) {
       const skillNames = availableSkills.map((s) => s.name);
-      availableTools.call_skill = createCallSkillTool(skillNames);
-      availableTools.get_skill_file = getSkillFileTool;
+      availableTools.call_skill = createCallSkillTool(skillNames) as unknown as Tool;
+      availableTools.get_skill_file = getSkillFileTool as unknown as Tool;
     }
 
     const resolvedTools: ToolSet = {};
@@ -378,18 +378,18 @@ function _wrapCronCreateTableTool(
   originalTool: Tool,
   onCreateTableRebuild?: (info: ICronRebuildInfo) => void,
 ): Tool {
-  const originalExecute = originalTool.execute;
+  const originalExecute = (originalTool as Record<string, unknown>).execute;
 
-  if (!originalExecute) {
+  if (typeof originalExecute !== "function") {
     return originalTool;
   }
 
   return {
     ...originalTool,
-    execute: async (input: unknown, options: any): Promise<unknown> => {
-      const result: any = await originalExecute(input, options);
+    execute: async (input: unknown, options: unknown): Promise<unknown> => {
+      const result: unknown = await (originalExecute as (input: unknown, options: unknown) => Promise<unknown>)(input, options);
 
-      if (result?.success === true && onCreateTableRebuild) {
+      if (typeof result === "object" && result !== null && (result as Record<string, unknown>).success === true && onCreateTableRebuild) {
         const tableName: string = typeof input === "object" && input !== null
           ? String((input as Record<string, unknown>).tableName ?? (input as Record<string, unknown>).name ?? "unknown")
           : "unknown";
@@ -402,5 +402,5 @@ function _wrapCronCreateTableTool(
 
       return result;
     },
-  };
+  } as Tool;
 }

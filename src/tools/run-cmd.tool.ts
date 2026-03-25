@@ -2,7 +2,7 @@ import os from "node:os";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { runCmdToolInputSchema, runCmdToolOutputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -29,10 +29,8 @@ const INTERACTIVE_PROMPT_PATTERNS: RegExp[] = [
 
 const IDLE_PROMPT_DETECTION_MS: number = 3000;
 
-export const runCmdTool = tool({
-  description: "Execute a shell command and return stdout, stderr, and exit code.",
-  inputSchema: runCmdToolInputSchema,
-  execute: async ({ command, cwd, timeout, mode, deterministicInputDetection }: IRunCmdInput): Promise<IRunCmdOutput> => {
+export const runCmdTool = tool(
+  async ({ command, cwd, timeout, mode, deterministicInputDetection }: IRunCmdInput): Promise<IRunCmdOutput> => {
     const logger: LoggerService = LoggerService.getInstance();
     const processService: CommandProcessService = CommandProcessService.getInstance();
     const detector: CommandDetectorLinuxService = CommandDetectorLinuxService.getInstance();
@@ -273,7 +271,12 @@ export const runCmdTool = tool({
       error: null,
     };
   },
-});
+  {
+    name: "run_cmd",
+    description: "Execute a shell command and return stdout, stderr, and exit code.",
+    schema: runCmdToolInputSchema,
+  },
+);
 
 function _looksLikeInteractivePrompt(command: string, stderrOutput: string): boolean {
   if (!command.toLowerCase().includes("sudo")) {

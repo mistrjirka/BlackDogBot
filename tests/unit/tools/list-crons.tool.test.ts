@@ -62,7 +62,7 @@ describe("list_crons tool", () => {
       }),
     ]);
 
-    const result = await (listCronsTool as any).execute({ enabledOnly: false });
+    const result = await (listCronsTool as any).invoke({ enabledOnly: false });
 
     expect(result.tasks).toHaveLength(1);
     expect(result.tasks[0].taskId).toBe("cron-1");
@@ -79,7 +79,7 @@ describe("list_crons tool", () => {
       }),
     ]);
 
-    const result = await (listCronsTool as any).execute({ enabledOnly: true });
+    const result = await (listCronsTool as any).invoke({ enabledOnly: true });
 
     expect(result.tasks).toHaveLength(1);
     expect(result.tasks[0].taskId).toBe("cron-enabled");

@@ -1,4 +1,4 @@
-import { ToolLoopAgent, ToolSet, stepCountIs, LanguageModel } from "ai";
+import { ToolLoopAgent, ToolSet, stepCountIs, LanguageModel, Tool } from "ai";
 import { ISkill } from "../shared/types/index.js";
 import { PROMPT_SKILL_SETUP } from "../shared/constants.js";
 import { PromptService } from "../services/prompt.service.js";
@@ -38,8 +38,8 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
     const model: LanguageModel = AiProviderService.getInstance().getModel();
 
     const tools: ToolSet = {
-      think: thinkTool,
-      run_cmd: runCmdTool,
+      think: thinkTool as unknown as Tool,
+      run_cmd: runCmdTool as unknown as Tool,
     };
 
     const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools, {

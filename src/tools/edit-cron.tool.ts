@@ -1,6 +1,5 @@
-import { tool } from "ai";
-import { editCronToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
-import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
+import { tool } from "langchain";
+import { editCronToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
@@ -32,8 +31,7 @@ const TOOL_DESCRIPTION: string =
 
 //#region Tool
 
-const executeEditCron = async (
-  {
+const executeEditCron = async ({
     taskId,
     ...patch
   }: {
@@ -47,9 +45,7 @@ const executeEditCron = async (
     scheduleCron?: string;
     notifyUser?: boolean;
     enabled?: boolean;
-  },
-  _context: ToolExecuteContext,
-): Promise<IEditCronResult> => {
+  }): Promise<IEditCronResult> => {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
 
@@ -156,14 +152,13 @@ const executeEditCron = async (
   }
 };
 
-export const editCronTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: editCronToolInputSchema,
-  execute: createToolWithPrerequisites(
-    "edit_cron",
-    TOOL_PREREQUISITES["edit_cron"] || [],
-    executeEditCron,
-  ) as any,
-});
+export const editCronTool = tool(
+  executeEditCron,
+  {
+    name: "edit_cron",
+    description: TOOL_DESCRIPTION,
+    schema: editCronToolInputSchema,
+  },
+);
 
 //#endregion Tool

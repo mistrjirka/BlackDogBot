@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
@@ -89,10 +89,8 @@ interface IQueryDatabaseResult {
   error?: string;
 }
 
-export const queryDatabaseTool = tool({
-  description: "Unified database query tool with action-based interface for listing databases, tables, querying table data, inserting, updating, deleting rows, and showing table schemas",
-  inputSchema,
-  execute: async (input: QueryDatabaseInput): Promise<IQueryDatabaseResult> => {
+export const queryDatabaseTool = tool(
+  async (input: QueryDatabaseInput): Promise<IQueryDatabaseResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
@@ -155,7 +153,12 @@ export const queryDatabaseTool = tool({
       };
     }
   },
-});
+  {
+    name: "query_database",
+    description: "Unified database query tool with action-based interface for listing databases, tables, querying table data, inserting, updating, deleting rows, and showing table schemas",
+    schema: inputSchema,
+  },
+);
 
 async function _handleListDatabasesAsync(): Promise<IQueryDatabaseResult> {
   const databases = await litesql.listDatabasesAsync();
@@ -479,4 +482,3 @@ async function _handleDeleteAsync(
     deletedCount: result.deletedCount,
   };
 }
-

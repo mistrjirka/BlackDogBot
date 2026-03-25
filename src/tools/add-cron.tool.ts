@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 import { addCronToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
@@ -76,10 +76,8 @@ function _buildSchedule(input: {
 
 //#region Tool
 
-export const addCronTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: addCronToolInputSchema,
-  execute: async ({
+export const addCronTool = tool(
+  async ({
     name,
     description,
     instructions,
@@ -225,6 +223,11 @@ Output a JSON object with:
       return { taskId: "", success: false, error: errorMessage };
     }
   },
-});
+  {
+    name: "add_cron",
+    description: TOOL_DESCRIPTION,
+    schema: addCronToolInputSchema,
+  },
+);
 
 //#endregion Tool

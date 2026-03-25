@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { ToolSet, LanguageModel, type ModelMessage } from "ai";
+import { ToolSet, LanguageModel, type ModelMessage, type Tool } from "ai";
 
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
@@ -223,43 +223,43 @@ export class MainAgent extends BaseAgentBase {
     session.onStepAsync = onStepAsync;
     session.platform = platform;
 
-    const tools: ToolSet = {
-      think: thinkTool,
-      run_cmd: runCmdTool,
-      run_cmd_input: runCmdInputTool,
-      get_cmd_status: getCmdStatusTool,
-      get_cmd_output: getCmdOutputTool,
-      wait_for_cmd: waitForCmdTool,
-      stop_cmd: stopCmdTool,
-      modify_prompt: modifyPromptTool,
-      list_prompts: listPromptsTool,
-      search_knowledge: searchKnowledgeTool,
-      add_knowledge: addKnowledgeTool,
-      edit_knowledge: editKnowledgeTool,
-      send_message: createSendMessageTool(messageSender),
-      read_file: createReadFileTool(readTracker),
-      write_file: createWriteFileTool(readTracker),
-      append_file: appendFileTool,
-      edit_file: editFileTool,
-      add_cron: addCronTool,
-      remove_cron: removeCronTool,
-      list_crons: listCronsTool,
-      get_cron: getCronTool,
-      edit_cron: editCronTool,
-      edit_cron_instructions: editCronInstructionsTool,
-      run_cron: runCronTool,
-      fetch_rss: fetchRssTool,
-      list_databases: listDatabasesTool,
-      list_tables: listTablesTool,
-      get_table_schema: getTableSchemaTool,
-      create_database: createDatabaseTool,
-      create_table: _wrapCreateTableWithHotReload(createTableTool, chatId, session),
-      drop_table: dropTableTool,
-      read_from_database: readFromDatabaseTool,
-      update_database: updateDatabaseTool,
-      delete_from_database: deleteFromDatabaseTool,
-      searxng: searxngTool,
-      crawl4ai: crawl4aiTool,
+    const tools: Record<string, unknown> = {
+      think: thinkTool as unknown as Tool,
+      run_cmd: runCmdTool as unknown as Tool,
+      run_cmd_input: runCmdInputTool as unknown as Tool,
+      get_cmd_status: getCmdStatusTool as unknown as Tool,
+      get_cmd_output: getCmdOutputTool as unknown as Tool,
+      wait_for_cmd: waitForCmdTool as unknown as Tool,
+      stop_cmd: stopCmdTool as unknown as Tool,
+      modify_prompt: modifyPromptTool as unknown as Tool,
+      list_prompts: listPromptsTool as unknown as Tool,
+      search_knowledge: searchKnowledgeTool as unknown as Tool,
+      add_knowledge: addKnowledgeTool as unknown as Tool,
+      edit_knowledge: editKnowledgeTool as unknown as Tool,
+      send_message: createSendMessageTool(messageSender) as unknown as Tool,
+      read_file: createReadFileTool(readTracker) as unknown as Tool,
+      write_file: createWriteFileTool(readTracker) as unknown as Tool,
+      append_file: appendFileTool as unknown as Tool,
+      edit_file: editFileTool as unknown as Tool,
+      add_cron: addCronTool as unknown as Tool,
+      remove_cron: removeCronTool as unknown as Tool,
+      list_crons: listCronsTool as unknown as Tool,
+      get_cron: getCronTool as unknown as Tool,
+      edit_cron: editCronTool as unknown as Tool,
+      edit_cron_instructions: editCronInstructionsTool as unknown as Tool,
+      run_cron: runCronTool as unknown as Tool,
+      fetch_rss: fetchRssTool as unknown as Tool,
+      list_databases: listDatabasesTool as unknown as Tool,
+      list_tables: listTablesTool as unknown as Tool,
+      get_table_schema: getTableSchemaTool as unknown as Tool,
+      create_database: createDatabaseTool as unknown as Tool,
+      create_table: _wrapCreateTableWithHotReload(createTableTool as unknown as Tool, chatId, session),
+      drop_table: dropTableTool as unknown as Tool,
+      read_from_database: readFromDatabaseTool as unknown as Tool,
+      update_database: updateDatabaseTool as unknown as Tool,
+      delete_from_database: deleteFromDatabaseTool as unknown as Tool,
+      searxng: searxngTool as unknown as Tool,
+      crawl4ai: crawl4aiTool as unknown as Tool,
     };
 
     if (aiProviderService.getSupportsVision()) {
@@ -301,7 +301,7 @@ export class MainAgent extends BaseAgentBase {
     const filteredTools: ToolSet = {};
     for (const [toolName, tool] of Object.entries(tools)) {
       if (toolRegistry.isToolAllowed(toolName, permission, { skillNames })) {
-        filteredTools[toolName] = tool;
+        filteredTools[toolName] = tool as unknown as Tool;
       }
     }
 
@@ -1161,11 +1161,11 @@ async function _compactSessionMessagesAsync(
 }
 
 function _wrapCreateTableWithHotReload(
-  originalTool: ToolSet[string],
+  originalTool: Tool,
   chatId: string,
   session: IChatSession,
-): ToolSet[string] {
-  const originalExecute = originalTool.execute;
+): Tool {
+  const originalExecute = (originalTool as Record<string, unknown>).execute as ((input: unknown, options: unknown) => Promise<unknown>) | undefined;
 
   if (!originalExecute) {
     return originalTool;
@@ -1173,10 +1173,10 @@ function _wrapCreateTableWithHotReload(
 
   return {
     ...originalTool,
-    execute: async (input: unknown, options: any): Promise<unknown> => {
-      const result: any = await originalExecute(input, options);
+    execute: async (input: unknown, options: unknown): Promise<unknown> => {
+      const result: unknown = await originalExecute(input, options);
 
-      if (result?.success === true) {
+      if (typeof result === "object" && result !== null && (result as Record<string, unknown>).success === true) {
         // Extract table name from input
         const tableName: string = typeof input === "object" && input !== null
           ? String((input as Record<string, unknown>).tableName ?? (input as Record<string, unknown>).name ?? "unknown")
@@ -1216,7 +1216,7 @@ function _wrapCreateTableWithHotReload(
 
       return result;
     },
-  } as ToolSet[string];
+  } as Tool;
 }
 
 //#endregion Private functions

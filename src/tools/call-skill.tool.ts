@@ -1,4 +1,5 @@
-import { tool, ToolLoopAgent, stepCountIs, LanguageModel, ToolSet } from "ai";
+import { tool } from "langchain";
+import { ToolLoopAgent, stepCountIs, LanguageModel, ToolSet, Tool } from "ai";
 
 import { callSkillToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
@@ -37,14 +38,8 @@ export function createCallSkillTool(availableSkillNames: string[]) {
     ? `Available skills: ${availableSkillNames.join(", ")}.`
     : "No skills are currently loaded.";
 
-  return tool({
-    description:
-      `Invoke a skill by name. The skill agent will execute with the given input and return its output. ` +
-      `${skillListStr} ` +
-      `Do NOT call this tool with any skill name not listed above. ` +
-      `Web search is NOT a skill — use the searxng tool for search and crawl4ai for page fetching.`,
-    inputSchema: callSkillToolInputSchema,
-    execute: async ({ skillName, input }: { skillName: string; input: string }): Promise<ICallSkillResult> => {
+  return tool(
+    async ({ skillName, input }: { skillName: string; input: string }): Promise<ICallSkillResult> => {
       const logger: LoggerService = LoggerService.getInstance();
 
       try {
@@ -67,10 +62,10 @@ export function createCallSkillTool(availableSkillNames: string[]) {
         const model: LanguageModel = AiProviderService.getInstance().getModel();
 
         const tools: ToolSet = {
-          think: thinkTool,
-          run_cmd: runCmdTool,
-          search_knowledge: searchKnowledgeTool,
-          add_knowledge: addKnowledgeTool,
+          think: thinkTool as unknown as Tool,
+          run_cmd: runCmdTool as unknown as Tool,
+          search_knowledge: searchKnowledgeTool as unknown as Tool,
+          add_knowledge: addKnowledgeTool as unknown as Tool,
         };
 
         const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools, {
@@ -98,5 +93,14 @@ export function createCallSkillTool(availableSkillNames: string[]) {
         return { success: false, output: "", error: errorMessage };
       }
     },
-  });
+    {
+      name: "call_skill",
+      description:
+        `Invoke a skill by name. The skill agent will execute with the given input and return its output. ` +
+        `${skillListStr} ` +
+        `Do NOT call this tool with any skill name not listed above. ` +
+        `Web search is NOT a skill — use the searxng tool for search and crawl4ai for page fetching.`,
+      schema: callSkillToolInputSchema,
+    },
+  );
 }

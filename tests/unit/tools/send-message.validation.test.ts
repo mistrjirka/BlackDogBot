@@ -18,10 +18,7 @@ async function execTool(
   tool: ReturnType<typeof createSendMessageToolWithHistory>,
   message: string,
 ): Promise<ISendMessageResult> {
-  return (tool as any).execute(
-    { message },
-    { toolCallId: "test", messages: [], abortSignal: new AbortController().signal },
-  ) as Promise<ISendMessageResult>;
+  return (tool as any).invoke({ message }) as Promise<ISendMessageResult>;
 }
 
 describe("send_message tool with validation", () => {

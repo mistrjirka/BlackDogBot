@@ -125,7 +125,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "logs");
       const { toolInstance } = buildSingleTableTool("testdb", "logs", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ message: "Hello", level: "info" }],
       });
 
@@ -149,7 +149,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "events");
       const { toolInstance } = buildSingleTableTool("testdb", "events", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ title: "Test Event" }],
       });
 
@@ -173,7 +173,7 @@ describe("Per-Table Write Tools", () => {
         { name: "created_at", type: "TEXT", notNull: true },
       ]);
 
-      const result = await (writeToDatabaseTool as any).execute({
+      const result = await (writeToDatabaseTool as any).invoke({
         databaseName: "testdb",
         tableName: "articles",
         data: [{
@@ -199,7 +199,7 @@ describe("Per-Table Write Tools", () => {
         { name: "name", type: "TEXT", notNull: true },
       ]);
 
-      const result = await (writeToDatabaseTool as any).execute({
+      const result = await (writeToDatabaseTool as any).invoke({
         databaseName: "testdb",
         tableName: "items",
         data: [{ name: "Widget", nonexistent_column: "value" }],
@@ -218,7 +218,7 @@ describe("Per-Table Write Tools", () => {
         { name: "required_field", type: "TEXT", notNull: true },
       ]);
 
-      const result = await (writeToDatabaseTool as any).execute({
+      const result = await (writeToDatabaseTool as any).invoke({
         databaseName: "testdb",
         tableName: "records",
         data: [{ id: 1 }], // missing required_field
@@ -230,7 +230,7 @@ describe("Per-Table Write Tools", () => {
     });
 
     it("should return structured error for non-existent database", async () => {
-      const result = await (writeToDatabaseTool as any).execute({
+      const result = await (writeToDatabaseTool as any).invoke({
         databaseName: "nonexistent_db",
         tableName: "items",
         data: [{ name: "test" }],
@@ -243,7 +243,7 @@ describe("Per-Table Write Tools", () => {
     it("should return structured error for non-existent table", async () => {
       await litesql.createDatabaseAsync("testdb");
 
-      const result = await (writeToDatabaseTool as any).execute({
+      const result = await (writeToDatabaseTool as any).invoke({
         databaseName: "testdb",
         tableName: "nonexistent_table",
         data: [{ name: "test" }],
@@ -279,7 +279,7 @@ describe("Per-Table Write Tools", () => {
       const { toolInstance } = buildSingleTableTool("testdb", "texts", schema.columns);
 
       // Should accept string value
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ content: "hello world" }],
       });
       expect(result.success).toBe(true);
@@ -295,7 +295,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "counts");
       const { toolInstance } = buildSingleTableTool("testdb", "counts", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ amount: 42 }],
       });
       expect(result.success).toBe(true);
@@ -312,7 +312,7 @@ describe("Per-Table Write Tools", () => {
       const { toolInstance } = buildSingleTableTool("testdb", "auto", schema.columns);
 
       // Should NOT require "id" column
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ value: "test" }],
       });
       expect(result.success).toBe(true);
@@ -330,7 +330,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "varchar_table");
       const { toolInstance } = buildSingleTableTool("testdb", "varchar_table", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ label: "hello" }],
       });
       expect(result.success).toBe(true);
@@ -346,7 +346,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "int_table");
       const { toolInstance } = buildSingleTableTool("testdb", "int_table", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ count: 42 }],
       });
       expect(result.success).toBe(true);
@@ -362,7 +362,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "float_table");
       const { toolInstance } = buildSingleTableTool("testdb", "float_table", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ score: 3.14 }],
       });
       expect(result.success).toBe(true);
@@ -378,7 +378,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "numeric_table");
       const { toolInstance } = buildSingleTableTool("testdb", "numeric_table", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ amount: 99.99 }],
       });
       expect(result.success).toBe(true);
@@ -394,7 +394,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "date_table");
       const { toolInstance } = buildSingleTableTool("testdb", "date_table", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ event_date: "2026-03-20" }],
       });
       expect(result.success).toBe(true);
@@ -510,7 +510,7 @@ describe("Per-Table Write Tools", () => {
         { name: "must_have", type: "TEXT", notNull: true },
       ]);
 
-      const result = await (writeToDatabaseTool as any).execute({
+      const result = await (writeToDatabaseTool as any).invoke({
         databaseName: "testdb",
         tableName: "required_test",
         data: [{ id: 1 }], // missing must_have
@@ -853,7 +853,7 @@ describe("Per-Table Write Tools", () => {
       const { toolInstance } = buildSingleTableTool("news_monitor", "news_items", schema.columns);
 
       // Model calls tool with required fields + created_at auto-filled
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{
           title: "Missile strike on Kharkiv",
           source: "https://example.com/article",

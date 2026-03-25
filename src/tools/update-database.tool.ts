@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
@@ -20,23 +20,8 @@ interface IUpdateDatabaseResult {
 
 //#region Tool
 
-export const updateDatabaseTool = tool({
-  description:
-    "Update rows in a database table. Requires a WHERE clause to prevent accidental full-table updates.",
-  inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Database name (without .db extension)"),
-    tableName: z.string()
-      .min(1)
-      .describe("Table to update"),
-    set: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
-      .describe("Column-value pairs to set (e.g. {isInteresting: 1, score: 10}). Values must be flat primitives — no nested objects."),
-    where: z.string()
-      .min(1)
-      .describe("SQL WHERE clause (required for safety, e.g. \"id = 5\")"),
-  }),
-  execute: async ({
+export const updateDatabaseTool = tool(
+  async ({
     databaseName,
     tableName,
     set,
@@ -100,6 +85,24 @@ export const updateDatabaseTool = tool({
       };
     }
   },
-});
+  {
+    name: "update_database",
+    description:
+      "Update rows in a database table. Requires a WHERE clause to prevent accidental full-table updates.",
+    schema: z.object({
+      databaseName: z.string()
+        .min(1)
+        .describe("Database name (without .db extension)"),
+      tableName: z.string()
+        .min(1)
+        .describe("Table to update"),
+      set: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+        .describe("Column-value pairs to set (e.g. {isInteresting: 1, score: 10}). Values must be flat primitives — no nested objects."),
+      where: z.string()
+        .min(1)
+        .describe("SQL WHERE clause (required for safety, e.g. \"id = 5\")"),
+    }),
+  },
+);
 
 //#endregion Tool

@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { listCronsToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import type { IScheduledTask } from "../shared/types/index.js";
@@ -68,10 +68,8 @@ function _mapTaskToSummary(task: IScheduledTask): IListCronsTaskSummary {
 
 //#region Tool
 
-export const listCronsTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: listCronsToolInputSchema,
-  execute: async ({ enabledOnly }: { enabledOnly: boolean }): Promise<IListCronsResult> => {
+export const listCronsTool = tool(
+  async ({ enabledOnly }: { enabledOnly: boolean }): Promise<IListCronsResult> => {
     const scheduler: SchedulerService = SchedulerService.getInstance();
 
     const tasks: IScheduledTask[] = enabledOnly
@@ -82,6 +80,11 @@ export const listCronsTool = tool({
 
     return { tasks: mappedTasks };
   },
-});
+  {
+    name: "list_crons",
+    description: TOOL_DESCRIPTION,
+    schema: listCronsToolInputSchema,
+  },
+);
 
 //#endregion Tool

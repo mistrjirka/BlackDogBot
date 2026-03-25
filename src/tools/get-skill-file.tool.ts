@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { getSkillFileToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { getSkillDir } from "../utils/paths.js";
@@ -16,10 +16,8 @@ interface IGetSkillFileResult {
 
 //#endregion Interfaces
 
-export const getSkillFileTool = tool({
-  description: "Read a file from a skill's directory. Returns the file content if it exists.",
-  inputSchema: getSkillFileToolInputSchema,
-  execute: async ({ skillName, filePath }: { skillName: string; filePath: string }): Promise<IGetSkillFileResult> => {
+export const getSkillFileTool = tool(
+  async ({ skillName, filePath }: { skillName: string; filePath: string }): Promise<IGetSkillFileResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
@@ -37,4 +35,9 @@ export const getSkillFileTool = tool({
       return { content: "", exists: false };
     }
   },
-});
+  {
+    name: "get_skill_file",
+    description: "Read a file from a skill's directory. Returns the file content if it exists.",
+    schema: getSkillFileToolInputSchema,
+  },
+);

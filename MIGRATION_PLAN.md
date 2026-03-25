@@ -9,6 +9,9 @@ Delete the BrainInterface WebSocket server.
 
 ## Key Decisions
 
+- **Use Context7 + searxng** for every new library or API. Do not guess types or signatures — look them up.
+- **Avoid `any`**. Use proper types. If unsure, use Context7 to research the correct type. When a type must be deferred, use `unknown` with explicit cast, not `any`.
+
 - **Jobs removed entirely** — node graph tools, job executor, job storage, BrainInterface WebSocket
 - **Crons preserved** — `SchedulerService`, `cron-task-executor`, all 7 cron tools
 - **DeepAgents harness** — replaces custom agent loop, compaction, session management
@@ -554,6 +557,31 @@ pnpm typecheck
 pnpm test:unit
 pnpm test:core
 ```
+
+### Phase 2 Discoveries: Type Incompatibility
+
+**CRITICAL FINDING**: LangChain's `DynamicStructuredTool` and Vercel AI SDK's `Tool` are **incompatible types**.
+
+**Root cause:**
+- Vercel AI SDK `Tool` has `inputSchema: FlexibleSchema` property
+- LangChain `DynamicStructuredTool` has `schema: ZodType` property (from `@langchain/core/tools`)
+- These are fundamentally different interfaces - not just different property names, but different internal representations
+
+**Impact:**
+- Passing LangChain tools to Vercel AI agents causes TypeScript errors
+- `as unknown as Tool` casts are **required temporarily** to bridge the gap
+- This is documented in `docs/migration/PHASE2_NOTES.md`
+
+**Affected files requiring casts (temporary until Phase 5):**
+- `src/agent/main-agent.ts` — tool assignments to `ToolSet`
+- `src/agent/cron-agent.ts` — tool assignments to `availableTools`
+- `src/skills/setup-runner.ts` — `ToolLoopAgent` tools
+- `src/tools/call-skill.tool.ts` — `ToolLoopAgent` tools
+
+**WARNING: Package collision risk**
+- Both `ai` (Vercel) and `langchain` define a `Tool` type
+- TypeScript may pick the wrong one if imports overlap
+- Always use explicit type imports: `import type { Tool } from "ai"` vs `import type { DynamicStructuredTool } from "@langchain/core/tools"`
 
 ---
 

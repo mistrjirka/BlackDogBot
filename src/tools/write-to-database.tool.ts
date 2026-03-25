@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
@@ -12,21 +12,8 @@ const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
   "updated",
 ]);
 
-export const writeToDatabaseTool = tool({
-  description: "Write a row of data into a table in a database. Prefer per-table tools (write_table_<tableName>) when available — they enforce exact column schemas.",
-  inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Name of the database to write to"),
-    tableName: z.string()
-      .min(1)
-      .describe("Name of the table to write to"),
-    data: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
-      .array()
-      .min(1)
-      .describe("Array of row objects to insert (e.g. [{title: 'Hello', score: 5}]). Values must be flat primitives — no nested objects."),
-  }),
-  execute: async ({
+export const writeToDatabaseTool = tool(
+  async ({
     databaseName,
     tableName,
     data,
@@ -142,4 +129,20 @@ export const writeToDatabaseTool = tool({
       message: `Inserted ${result.insertedCount} row(s) into "${tableName}" (columns: ${columns}). Last Row ID: ${result.lastRowId}`,
     };
   },
-});
+  {
+    name: "write_to_database",
+    description: "Write a row of data into a table in a database. Prefer per-table tools (write_table_<tableName>) when available — they enforce exact column schemas.",
+    schema: z.object({
+      databaseName: z.string()
+        .min(1)
+        .describe("Name of the database to write to"),
+      tableName: z.string()
+        .min(1)
+        .describe("Name of the table to write to"),
+      data: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+        .array()
+        .min(1)
+        .describe("Array of row objects to insert (e.g. [{title: 'Hello', score: 5}]). Values must be flat primitives — no nested objects."),
+    }),
+  },
+);

@@ -1,11 +1,10 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import {
   getCronToolInputSchema,
 } from "../shared/schemas/index.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { IScheduledTask } from "../shared/types/index.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
-import type { ToolExecuteContext } from "../utils/tool-factory.js";
 
 //#region Interfaces
 
@@ -20,13 +19,8 @@ interface IGetCronResult {
 
 //#region Tool
 
-export const getCronTool = tool({
-  description: "Get the full configuration of a scheduled (cron) task by its ID.",
-  inputSchema: getCronToolInputSchema,
-  execute: async (
-    { taskId }: { taskId: string },
-    _context: ToolExecuteContext,
-  ): Promise<IGetCronResult> => {
+export const getCronTool = tool(
+  async ({ taskId }: { taskId: string }): Promise<IGetCronResult> => {
     const scheduler: SchedulerService = SchedulerService.getInstance();
     const task: IScheduledTask | undefined =
       await scheduler.getTaskAsync(taskId);
@@ -44,6 +38,11 @@ export const getCronTool = tool({
       display: formatScheduledTask(task),
     };
   },
-} as any);
+  {
+    name: "get_cron",
+    description: "Get the full configuration of a scheduled (cron) task by its ID.",
+    schema: getCronToolInputSchema,
+  },
+);
 
 //#endregion Tool

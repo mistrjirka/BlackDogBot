@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { getCmdOutputToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { CommandProcessService } from "../services/command-process.service.js";
@@ -6,10 +6,8 @@ import type { z } from "zod";
 
 type IInput = z.infer<typeof getCmdOutputToolInputSchema>;
 
-export const getCmdOutputTool = tool({
-  description: "Get the output (stdout/stderr) of a running command. Use the handleId returned by a previous run_cmd call.",
-  inputSchema: getCmdOutputToolInputSchema,
-  execute: async ({ handleId, channel, maxBytes }: IInput): Promise<Record<string, unknown>> => {
+export const getCmdOutputTool = tool(
+  async ({ handleId, channel, maxBytes }: IInput): Promise<Record<string, unknown>> => {
     const processService: CommandProcessService = CommandProcessService.getInstance();
     const status = processService.getStatus(handleId);
 
@@ -34,4 +32,9 @@ export const getCmdOutputTool = tool({
       totalStderrBytes: status.stderrBytes,
     };
   },
-});
+  {
+    name: "get_cmd_output",
+    description: "Get the output (stdout/stderr) of a running command. Use the handleId returned by a previous run_cmd call.",
+    schema: getCmdOutputToolInputSchema,
+  },
+);

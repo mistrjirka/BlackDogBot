@@ -1,8 +1,7 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
-import { editCronInstructionsToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
-import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
+import { editCronInstructionsToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
@@ -37,8 +36,7 @@ const TOOL_DESCRIPTION: string =
 
 //#region Tool
 
-const executeEditCronInstructions = async (
-  {
+const executeEditCronInstructions = async ({
     taskId,
     instructions,
     intention,
@@ -48,9 +46,7 @@ const executeEditCronInstructions = async (
     instructions: string;
     intention: string;
     tools?: string[];
-  },
-  _context: ToolExecuteContext,
-): Promise<IEditCronInstructionsResult> => {
+  }): Promise<IEditCronInstructionsResult> => {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
 
@@ -177,7 +173,7 @@ Current Instructions:
 ${existingTask.instructions}
 """
 
-=== PROPOSED NEW INSTRUCTIONS ===
+=== PROPOSED NEW INSTRUCTIONS
 """
 ${normalizedInstructions}
 """
@@ -255,14 +251,13 @@ Output a JSON object with:
   }
 };
 
-export const editCronInstructionsTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: editCronInstructionsToolInputSchema,
-  execute: createToolWithPrerequisites(
-    "edit_cron_instructions",
-    TOOL_PREREQUISITES["edit_cron_instructions"] || [],
-    executeEditCronInstructions,
-  ) as any,
-});
+export const editCronInstructionsTool = tool(
+  executeEditCronInstructions,
+  {
+    name: "edit_cron_instructions",
+    description: TOOL_DESCRIPTION,
+    schema: editCronInstructionsToolInputSchema,
+  },
+);
 
 //#endregion Tool

@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { CronAgent, type IToolCallTrace, type ITraceCollector } from "../agent/cron-agent.js";
@@ -45,33 +45,8 @@ class SimpleTraceCollector implements ITraceCollector {
 
 //#region Tool
 
-export const runCronTool = tool({
-  description:
-    "Execute a scheduled task immediately. " +
-    "**Call ONCE per task** - it runs to completion. " +
-    "Returns tool call trace and messages. " +
-    "Default: sendToUser=false (dry-run, messages shown in output only). " +
-    "Set sendToUser=true to actually send messages to notification channels.",
-  inputSchema: z.object({
-    taskId: z
-      .string()
-      .min(1)
-      .describe("ID of the scheduled task to run immediately"),
-    sendToUser: z
-      .preprocess(
-        (val) => {
-          if (typeof val === "string") {
-            return val.toLowerCase() === "true";
-          }
-          return val;
-        },
-        z.boolean()
-      )
-      .optional()
-      .default(false)
-      .describe("If true, send messages to notification channels. If false (default), only show in output (dry-run)"),
-  }),
-  execute: async (input: IRunCronInput): Promise<IRunCronResult> => {
+export const runCronTool = tool(
+  async (input: IRunCronInput): Promise<IRunCronResult> => {
     const logger = LoggerService.getInstance();
     const scheduler = SchedulerService.getInstance();
     const cronAgent = CronAgent.getInstance();
@@ -165,7 +140,35 @@ export const runCronTool = tool({
       };
     }
   },
-});
+  {
+    name: "run_cron",
+    description:
+      "Execute a scheduled task immediately. " +
+      "**Call ONCE per task** - it runs to completion. " +
+      "Returns tool call trace and messages. " +
+      "Default: sendToUser=false (dry-run, messages shown in output only). " +
+      "Set sendToUser=true to actually send messages to notification channels.",
+    schema: z.object({
+      taskId: z
+        .string()
+        .min(1)
+        .describe("ID of the scheduled task to run immediately"),
+      sendToUser: z
+        .preprocess(
+          (val) => {
+            if (typeof val === "string") {
+              return val.toLowerCase() === "true";
+            }
+            return val;
+          },
+          z.boolean()
+        )
+        .optional()
+        .default(false)
+        .describe("If true, send messages to notification channels. If false (default), only show in output (dry-run)"),
+    }),
+  },
+);
 
 //#endregion Tool
 

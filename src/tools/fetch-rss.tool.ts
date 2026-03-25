@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import TurndownService from "turndown";
 
 import { fetchRssToolInputSchema } from "../shared/schemas/tool-schemas.js";
@@ -82,11 +82,8 @@ function transformItem(item: Record<string, unknown>): Record<string, unknown> {
 
 //#region Tool
 
-export const fetchRssTool = tool({
-  description:
-    "Fetch and parse an RSS or Atom feed. Returns feed metadata and items. Use mode='unseen' to only get new items since the last fetch (state is persisted per URL).",
-  inputSchema: fetchRssToolInputSchema,
-  execute: async ({ url, maxItems, mode }): Promise<IFetchRssResult> => {
+export const fetchRssTool = tool(
+  async ({ url, maxItems, mode }): Promise<IFetchRssResult> => {
     const response: Response = await fetch(url, {
       method: "GET",
       headers: {
@@ -139,6 +136,12 @@ export const fetchRssTool = tool({
 
     return output;
   },
-});
+  {
+    name: "fetch_rss",
+    description:
+      "Fetch and parse an RSS or Atom feed. Returns feed metadata and items. Use mode='unseen' to only get new items since the last fetch (state is persisted per URL).",
+    schema: fetchRssToolInputSchema,
+  },
+);
 
 //#endregion Tool

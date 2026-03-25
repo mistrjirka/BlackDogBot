@@ -17,10 +17,7 @@ async function execTool(
   tool: ReturnType<typeof createGetPreviousMessageTool>,
   input: Record<string, unknown>,
 ): Promise<IGetPreviousMessageResult> {
-  return (tool as any).execute(
-    input,
-    { toolCallId: "test", messages: [], abortSignal: new AbortController().signal },
-  ) as Promise<IGetPreviousMessageResult>;
+  return (tool as any).invoke(input) as Promise<IGetPreviousMessageResult>;
 }
 
 describe("get_previous_message tool", () => {
