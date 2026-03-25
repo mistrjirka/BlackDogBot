@@ -3,7 +3,7 @@ import { Bot, Context } from "grammy";
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
 import { invokeAgentAsync } from "../../agent/langchain-agent.js";
-import type { IChatImageAttachment } from "../../agent/main-agent.js";
+import type { IChatImageAttachment } from "../../agent/types.js";
 import { splitTelegramMessage } from "../../utils/telegram-message.js";
 import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 import { extractErrorMessage } from "../../utils/error.js";

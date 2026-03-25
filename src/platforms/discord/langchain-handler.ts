@@ -2,7 +2,7 @@ import { type Message } from "discord.js";
 
 import { LoggerService } from "../../services/logger.service.js";
 import { invokeAgentAsync } from "../../agent/langchain-agent.js";
-import type { IChatImageAttachment } from "../../agent/main-agent.js";
+import type { IChatImageAttachment } from "../../agent/types.js";
 
 export type LangchainAgent = ReturnType<typeof import("../../agent/langchain-agent.js").createLangchainAgent>;
 

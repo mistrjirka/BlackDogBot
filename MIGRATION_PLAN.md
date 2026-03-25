@@ -665,6 +665,12 @@ pnpm test:core
 # Manual: Run migration script on existing sessions
 ```
 
+### Phase 3 Discoveries
+
+- Extracted `IAgentResult`, `IToolCallSummary`, `OnStepCallback`, `IChatImageAttachment`, `PhotoSender` types from deprecated agent files into `src/agent/types.ts`
+- Platform handlers updated to import from `types.ts` instead of `base-agent.ts`/`main-agent.ts`
+- LangChain Telegram/Discord handlers created as new files (not replacing existing handlers)
+
 ---
 
 ## Phase 4: MCP Integration Migration
@@ -727,6 +733,34 @@ pnpm test:integration  # MCP tests
 ## Phase 5: Remove Old Agent Code + Dependencies
 
 **Goal**: Delete all Vercel AI SDK agent code, old utilities, old dependencies.
+
+### Phase 5 Discoveries - BLOCKING ISSUES
+
+The `ai` (Vercel AI SDK) package **cannot be fully removed yet** because:
+
+1. **Active code still uses it:**
+   - `ai-provider.service.ts` — uses `LanguageModel`, `wrapLanguageModel`, `extractReasoningMiddleware`
+   - `ai-error.ts`, `context-error.ts`, `retry-after.ts` — use `APICallError.isInstance()`
+   - `per-table-tools.ts` — uses `dynamicTool()`
+   - `llm-retry.ts` — uses `generateText`, `dynamicTool` (used by `cron-message-history.service.ts`)
+   - `tool-call-repair.ts` — used by `call-skill.tool.ts`, `setup-runner.ts`
+   - `tool-reasoning-wrapper.ts` — used by `call-skill.tool.ts`, `setup-runner.ts`
+
+2. **Deprecated files cannot be deleted because they're still imported:**
+   - `base-agent.ts` — types used by platform handlers → Extracted to `src/agent/types.ts`
+   - `main-agent.ts` — types used by platform handlers → Extracted to `src/agent/types.ts`
+   - `cron-agent.ts` — used by `run-cron.tool.ts`
+   - `mcp.service.ts` — used by main app and platforms
+
+3. **Type dependencies between deprecated files prevent partial deletion:**
+   - `prepare-step.ts`, `summarization-compaction.ts`, `tool-call-tracker.ts` import from each other
+   - Creating stubs causes cascading type errors
+
+**Phase 5 completion requires:**
+- Phase 6: Replace `call-skill.tool.ts` and `setup-runner.ts` (which use `ToolLoopAgent`)
+- Move `ai-error.ts`, `context-error.ts`, `retry-after.ts` to use LangChain error types
+- Replace `per-table-tools.ts` `dynamicTool()` with LangChain `tool()`
+- Replace `llm-retry.ts` with LangChain retry mechanism
 
 ### Files becoming obsolete — DELETED IN THIS PHASE
 
@@ -903,9 +937,40 @@ rg "base-agent" src/ --include '*.ts'           # Deleted agent base
 rg "cron-agent" src/ --include '*.ts'           # Deleted cron agent
 rg "jobCreation" src/ --include '*.ts'          # Deleted config
 rg "nodeCreation" src/ --include '*.ts'         # Deleted tools
+rg "ToolExecuteContext" src/ --include '*.ts'   # Deleted tool factory
+rg "createToolWithPrerequisites" src/ --include '*.ts'  # Deleted tool factory
+rg "as unknown as Tool" src/ --include '*.ts'   # Temp casts (should be gone after Phase 5)
 
 # Fix any found references
 # Remove dead imports, update to LangChain equivalents
+```
+
+### Step 7.2: Deduplicate and clean
+
+```bash
+# Find duplicate function implementations
+rg "^function|^export function|^const.*=.*function" src/ --include '*.ts' | sort | uniq -d
+
+# Find duplicate type/interface definitions
+rg "^type |^interface " src/ --include '*.ts' | sort | uniq -d
+
+# Find duplicate imports across files
+rg "^import " src/ --include '*.ts' | sort | uniq -d
+
+# Find unused exports
+rg "^export " src/tools/index.ts | while read line; do
+  export_name=$(echo "$line" | grep -oP '(?<=export )\w+')
+  if ! rg -q "$export_name" src/agent/ src/services/; then
+    echo "Unused export: $export_name"
+  fi
+done
+
+# Find unused utils
+rg "^import " src/ --include '*.ts' -c | awk -F: '{if($2==1) print $1}' | while read file; do
+  if grep -q "import.*from" "$file"; then
+    echo "File only imported once: $file"
+  fi
+done
 ```
 
 ### Step 7.2: Full test suite

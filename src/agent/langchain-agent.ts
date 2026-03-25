@@ -7,7 +7,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import { LoggerService } from "../services/logger.service.js";
 import { createChatModel } from "../services/langchain-model.service.js";
 import type { IAiConfig } from "../shared/types/config.types.js";
-import type { IChatImageAttachment } from "./main-agent.js";
+import type { IChatImageAttachment } from "./types.js";
 
 //#region Interfaces
 

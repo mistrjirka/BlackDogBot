@@ -4,7 +4,7 @@ import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
 import { MainAgent } from "../../agent/main-agent.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
-import type { IAgentResult } from "../../agent/base-agent.js";
+import type { IAgentResult } from "../../agent/types.js";
 import type { IIncomingMessage } from "../../shared/types/messaging.types.js";
 import type { IPlatformDeps } from "../types.js";
 import type { IDiscordConfig } from "../../shared/types/discord.types.js";
