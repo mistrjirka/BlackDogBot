@@ -6,6 +6,7 @@ import { dirname } from "path";
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
 import { AiProviderService } from "../../services/ai-provider.service.js";
+import type { IChatAgent } from "../../agent/agent-interface.js";
 import { MainAgent } from "../../agent/main-agent.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
 import type { IAgentResult, OnStepCallback, IToolCallSummary } from "../../agent/types.js";
@@ -94,7 +95,7 @@ export class TelegramHandler {
   private static _instance: TelegramHandler | null;
   private _logger: LoggerService;
   private _messagingService: MessagingService;
-  private _mainAgent: MainAgent;
+  private _agent: IChatAgent;
   private _channelRegistry: ChannelRegistryService;
   private _processing: Set<string>;
   private _pendingMessages: Map<string, IPendingTelegramMessage[]>;
@@ -113,7 +114,7 @@ export class TelegramHandler {
   private constructor() {
     this._logger = LoggerService.getInstance();
     this._messagingService = MessagingService.getInstance();
-    this._mainAgent = MainAgent.getInstance();
+    this._agent = MainAgent.getInstance() as IChatAgent;
     this._channelRegistry = ChannelRegistryService.getInstance();
     this._processing = new Set<string>();
     this._pendingMessages = new Map<string, IPendingTelegramMessage[]>();
@@ -327,7 +328,7 @@ export class TelegramHandler {
             }
           : undefined;
 
-      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
+      await this._agent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
 
       // Start typing indicator
       const typingInterval: ReturnType<typeof setInterval> = setInterval(async () => {
@@ -343,7 +344,7 @@ export class TelegramHandler {
       try {
         const result: IAgentResult = await this._processWithContextRecoveryAsync(
           chatId,
-          async (): Promise<IAgentResult> => await this._mainAgent.processMessageForChatAsync(
+          async (): Promise<IAgentResult> => await this._agent.processMessageForChatAsync(
             chatId,
             incoming.text,
             pendingImageAttachments.length > 0 ? pendingImageAttachments : undefined,
@@ -633,7 +634,7 @@ export class TelegramHandler {
       this._pendingImagesByChat.delete(chatId);
     }
 
-    const stopped: boolean = this._mainAgent.stopChat(chatId);
+    const stopped: boolean = this._agent.stopChat?.(chatId) ?? false;
     let deletedInFlightMessage: boolean = false;
     let droppedQueuedMessages: number = 0;
 
@@ -757,7 +758,7 @@ export class TelegramHandler {
         error: processingError instanceof Error ? processingError.message : String(processingError),
       });
 
-      const compacted: boolean = await this._mainAgent.compactSessionMessagesForChatAsync(chatId);
+      const compacted: boolean = await this._agent.compactSessionMessagesForChatAsync?.(chatId) ?? false;
       if (!compacted) {
         throw processingError;
       }
@@ -843,14 +844,14 @@ export class TelegramHandler {
             }
           : undefined;
 
-      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
+      await this._agent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
 
       await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
 
       if (!hasAnyImageAttachment) {
         const result: IAgentResult = await this._processWithContextRecoveryAsync(
           chatId,
-          async (): Promise<IAgentResult> => await this._mainAgent.processMessageForChatAsync(chatId, mergedText),
+          async (): Promise<IAgentResult> => await this._agent.processMessageForChatAsync(chatId, mergedText),
           "merged_queue_text",
         );
 
@@ -885,7 +886,7 @@ export class TelegramHandler {
       for (const queuedMessage of queuedMessages) {
         const result: IAgentResult = await this._processWithContextRecoveryAsync(
           chatId,
-          async (): Promise<IAgentResult> => await this._mainAgent.processMessageForChatAsync(
+          async (): Promise<IAgentResult> => await this._agent.processMessageForChatAsync(
             chatId,
             queuedMessage.text,
             queuedMessage.imageAttachments.length > 0 ? queuedMessage.imageAttachments : undefined,

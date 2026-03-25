@@ -3,7 +3,7 @@ import type { ChannelRegistryService } from "../services/channel-registry.servic
 import type { MessagingService } from "../services/messaging.service.js";
 import type { LoggerService } from "../services/logger.service.js";
 import type * as ToolRegistry from "../helpers/tool-registry.js";
-import type { MainAgent } from "../agent/main-agent.js";
+import type { IChatAgent } from "../agent/agent-interface.js";
 
 //#region Platform Types
 
@@ -12,8 +12,8 @@ import type { MainAgent } from "../agent/main-agent.js";
  * These services are available to all platforms.
  */
 export interface IPlatformDeps {
-  /** Main agent instance for message processing */
-  mainAgent: MainAgent;
+  /** Agent instance for message processing */
+  agent: IChatAgent;
 
   /** Channel registry for managing channels and permissions */
   channelRegistry: ChannelRegistryService;

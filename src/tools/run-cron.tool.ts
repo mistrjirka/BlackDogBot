@@ -1,7 +1,7 @@
 import { tool } from "langchain";
 import { z } from "zod";
 import { SchedulerService } from "../services/scheduler.service.js";
-import { CronAgent, type IToolCallTrace, type ITraceCollector } from "../agent/cron-agent.js";
+import { LangchainCronExecutor, type IToolCallTrace, type ITraceCollector } from "../agent/langchain-cron-executor.js";
 import { LoggerService } from "../services/logger.service.js";
 import type { IExecutionContext } from "../shared/types/index.js";
 import { summarizeJson } from "../utils/json-summarize.js";
@@ -49,7 +49,7 @@ export const runCronTool = tool(
   async (input: IRunCronInput): Promise<IRunCronResult> => {
     const logger = LoggerService.getInstance();
     const scheduler = SchedulerService.getInstance();
-    const cronAgent = CronAgent.getInstance();
+    const cronExecutor = LangchainCronExecutor.getInstance();
 
     try {
       const task = await scheduler.getTaskAsync(input.taskId);
@@ -107,7 +107,7 @@ export const runCronTool = tool(
         };
       }
 
-      const result = await cronAgent.executeTaskAsync(
+      const result = await cronExecutor.executeTaskAsync(
         task,
         messageSender,
         taskIdProvider,

@@ -75,6 +75,7 @@ import { ChannelRegistryService } from "../services/channel-registry.service.js"
 import * as toolRegistry from "../helpers/tool-registry.js";
 import type { IToolCallSummary } from "./base-agent.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
+import type { IChatAgent } from "./agent-interface.js";
 
 //#region Constants
 
@@ -137,7 +138,7 @@ const _BufferMarkerType: IBufferMarker["__type"] = "Buffer";
 
 //#region MainAgent
 
-export class MainAgent extends BaseAgentBase {
+export class MainAgent extends BaseAgentBase implements IChatAgent {
   //#region Data members
 
   private static _instance: MainAgent | null;

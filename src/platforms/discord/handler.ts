@@ -3,6 +3,7 @@ import { ApplicationCommandType, type ChatInputCommandInteraction, type Client, 
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
 import { MainAgent } from "../../agent/main-agent.js";
+import type { IChatAgent } from "../../agent/agent-interface.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
 import type { IAgentResult } from "../../agent/types.js";
 import type { IIncomingMessage } from "../../shared/types/messaging.types.js";
@@ -34,7 +35,7 @@ export class DiscordHandler {
   private static _instance: DiscordHandler | null;
   private _logger: LoggerService;
   private _messagingService: MessagingService;
-  private _mainAgent: MainAgent;
+  private _agent: IChatAgent;
   private _channelRegistry: ChannelRegistryService;
   private _processing: Set<string>;
   private _inFlightMessageIdByChannel: Map<string, string>;
@@ -46,7 +47,7 @@ export class DiscordHandler {
   private constructor() {
     this._logger = LoggerService.getInstance();
     this._messagingService = MessagingService.getInstance();
-    this._mainAgent = MainAgent.getInstance();
+    this._agent = MainAgent.getInstance();
     this._channelRegistry = ChannelRegistryService.getInstance();
     this._processing = new Set<string>();
     this._inFlightMessageIdByChannel = new Map<string, string>();
@@ -167,7 +168,7 @@ export class DiscordHandler {
       const photoSender = this._messagingService.createPhotoSenderForChat("discord", channelId);
 
       // Initialize agent for this chat
-      await this._mainAgent.initializeForChatAsync(channelId, sender, photoSender, undefined, "discord");
+      await this._agent.initializeForChatAsync(channelId, sender, photoSender, undefined, "discord");
 
       // Start typing indicator loop
       const typingInterval: ReturnType<typeof setInterval> = setInterval(async () => {
@@ -179,7 +180,7 @@ export class DiscordHandler {
       }, 5000);
 
       try {
-        const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(
+        const result: IAgentResult = await this._agent.processMessageForChatAsync(
           channelId,
           incoming.text
         );
@@ -256,7 +257,7 @@ export class DiscordHandler {
   }
 
   private async _cancelChannelWorkAsync(channelId: string, channel: TextBasedChannel | null): Promise<string> {
-    const stopped: boolean = this._mainAgent.stopChat(channelId);
+    const stopped: boolean = this._agent.stopChat?.(channelId) ?? false;
     let deletedInFlightPrompt: boolean = false;
 
     const inFlightMessageId: string | undefined = this._inFlightMessageIdByChannel.get(channelId);

@@ -1,7 +1,6 @@
 import "./env.js";
 import { ConfigService } from "./services/config.service.js";
 import { LoggerService } from "./services/logger.service.js";
-import { AiProviderService } from "./services/ai-provider.service.js";
 import { EmbeddingService } from "./services/embedding.service.js";
 import { VectorStoreService } from "./services/vector-store.service.js";
 import { SkillLoaderService } from "./services/skill-loader.service.js";
@@ -9,13 +8,13 @@ import { SchedulerService } from "./services/scheduler.service.js";
 import { MessagingService } from "./services/messaging.service.js";
 import { ChannelRegistryService } from "./services/channel-registry.service.js";
 import { McpRegistryService } from "./services/mcp-registry.service.js";
-import { McpService } from "./services/mcp.service.js";
+import { LangchainMcpService } from "./services/langchain-mcp.service.js";
 import * as toolRegistry from "./helpers/tool-registry.js";
 import * as skillInstaller from "./helpers/skill-installer.js";
 import * as skillState from "./helpers/skill-state.js";
-import { CronAgent } from "./agent/cron-agent.js";
+import type { IChatAgent } from "./agent/agent-interface.js";
 import { MainAgent } from "./agent/main-agent.js";
-import { createLangchainAgent } from "./agent/langchain-agent.js";
+import { LangchainCronExecutor } from "./agent/langchain-cron-executor.js";
 import { createCheckpointer } from "./services/checkpointer.service.js";
 import {
   thinkTool,
@@ -52,10 +51,6 @@ async function mainAsync(): Promise<void> {
 
   // Ensure runtime directories exist (including sessions/) before agents start.
   await ensureAllDirectoriesAsync();
-  // Initialize AI provider
-  const aiProviderService: AiProviderService = AiProviderService.getInstance();
-
-  await aiProviderService.initializeAsync(config.ai);
 
   // 5. Initialize embeddings and vector store (only if embeddingProvider is explicitly configured)
   const embeddingProvider = config.knowledge.embeddingProvider;
@@ -118,7 +113,7 @@ async function mainAsync(): Promise<void> {
   const mcpRegistry = McpRegistryService.getInstance();
   await mcpRegistry.initializeAsync();
 
-  const mcpService = McpService.getInstance();
+  const mcpService = LangchainMcpService.getInstance();
   await mcpService.refreshAsync();
 
   const mcpResults = mcpService.getServerResults();
@@ -270,8 +265,9 @@ async function mainAsync(): Promise<void> {
   }
 
   // 8. Initialize platform dependencies
+  const chatAgent: IChatAgent = MainAgent.getInstance() as IChatAgent;
   const platformDeps: IPlatformDeps = {
-    mainAgent: MainAgent.getInstance(),
+    agent: chatAgent,
     channelRegistry,
     messagingService,
     toolRegistry,
@@ -298,7 +294,7 @@ async function mainAsync(): Promise<void> {
   const schedulerService: SchedulerService = SchedulerService.getInstance();
 
   if (config.scheduler.enabled) {
-    const cronAgent = CronAgent.getInstance();
+    const cronExecutor = LangchainCronExecutor.getInstance();
 
     schedulerService.setTaskExecutor(async (task: IScheduledTask): Promise<void> => {
       // Helper: broadcast to all channels with receiveNotifications=true
@@ -325,7 +321,7 @@ async function mainAsync(): Promise<void> {
 
       await executeCronTaskAsync(task, {
         broadcastToNotificationChannelsAsync,
-        executeTaskAsync: cronAgent.executeTaskAsync.bind(cronAgent),
+        executeTaskAsync: cronExecutor.executeTaskAsync.bind(cronExecutor),
       });
     });
 
@@ -411,7 +407,7 @@ async function mainAsync(): Promise<void> {
   const shutdownAsync = async (): Promise<void> => {
     logger.info("Shutdown signal received. Stopping BlackDogBot...");
 
-    await McpService.getInstance().closeAsync().catch(() => {});
+    await LangchainMcpService.getInstance().closeAsync().catch(() => {});
     await telegramPlatform.stop();
     await discordPlatform.stop();
 
