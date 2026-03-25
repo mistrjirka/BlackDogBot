@@ -14,7 +14,7 @@ import { MessagingService } from "../../src/services/messaging.service.js";
 import { SkillLoaderService } from "../../src/services/skill-loader.service.js";
 import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
 import { PromptService } from "../../src/services/prompt.service.js";
-import { MainAgent } from "../../src/agent/main-agent.js";
+import { LangchainMainAgent } from "../../src/agent/langchain-main-agent.js";
 import { McpRegistryService } from "../../src/services/mcp-registry.service.js";
 import { McpService } from "../../src/services/mcp.service.js";
 import type { LogLevel } from "../../src/shared/types/index.js";
@@ -31,7 +31,7 @@ export type SingletonClass =
   | typeof SkillLoaderService
   | typeof RateLimiterService
   | typeof PromptService
-  | typeof MainAgent
+  | typeof LangchainMainAgent
   | typeof McpRegistryService
   | typeof McpService;
 
@@ -48,7 +48,7 @@ export function resetSingletons(services: SingletonClass[] = []): void {
     SkillLoaderService,
     RateLimiterService,
     PromptService,
-    MainAgent,
+    LangchainMainAgent,
     McpRegistryService,
     McpService,
   ];

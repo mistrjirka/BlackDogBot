@@ -29,3 +29,9 @@ export interface IChatImageAttachment {
   imageBuffer: Buffer;
   mediaType: string;
 }
+
+export interface IRefreshSessionsResult {
+  refreshedCount: number;
+  failedCount: number;
+  failedChatIds: string[];
+}

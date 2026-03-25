@@ -2,7 +2,7 @@ import { ApplicationCommandType, type ChatInputCommandInteraction, type Client, 
 
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
-import { MainAgent } from "../../agent/main-agent.js";
+import { LangchainMainAgent } from "../../agent/langchain-main-agent.js";
 import type { IChatAgent } from "../../agent/agent-interface.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
 import type { IAgentResult } from "../../agent/types.js";
@@ -47,7 +47,7 @@ export class DiscordHandler {
   private constructor() {
     this._logger = LoggerService.getInstance();
     this._messagingService = MessagingService.getInstance();
-    this._agent = MainAgent.getInstance();
+    this._agent = LangchainMainAgent.getInstance() as IChatAgent;
     this._channelRegistry = ChannelRegistryService.getInstance();
     this._processing = new Set<string>();
     this._inFlightMessageIdByChannel = new Map<string, string>();

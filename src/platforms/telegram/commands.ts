@@ -2,8 +2,8 @@ import { Context, Bot } from "grammy";
 
 import { LoggerService } from "../../services/logger.service.js";
 import { PromptService } from "../../services/prompt.service.js";
-import { MainAgent } from "../../agent/main-agent.js";
-import type { IRefreshSessionsResult } from "../../agent/main-agent.js";
+import { LangchainMainAgent } from "../../agent/langchain-main-agent.js";
+import type { IRefreshSessionsResult } from "../../agent/types.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
 import { McpRegistryService } from "../../services/mcp-registry.service.js";
 import { McpService } from "../../services/mcp.service.js";
@@ -33,7 +33,7 @@ export function setupTelegramCommands(bot: Bot): void {
   const logger = LoggerService.getInstance();
   const channelRegistry = ChannelRegistryService.getInstance();
   const promptService = PromptService.getInstance();
-  const mainAgent = MainAgent.getInstance();
+  const mainAgent = LangchainMainAgent.getInstance();
   const telegramHandler = TelegramHandler.getInstance();
 
   // /start command

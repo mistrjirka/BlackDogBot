@@ -13,7 +13,7 @@ import * as toolRegistry from "./helpers/tool-registry.js";
 import * as skillInstaller from "./helpers/skill-installer.js";
 import * as skillState from "./helpers/skill-state.js";
 import type { IChatAgent } from "./agent/agent-interface.js";
-import { MainAgent } from "./agent/main-agent.js";
+import { LangchainMainAgent } from "./agent/langchain-main-agent.js";
 import { LangchainCronExecutor } from "./agent/langchain-cron-executor.js";
 import { createCheckpointer } from "./services/checkpointer.service.js";
 import {
@@ -264,8 +264,12 @@ async function mainAsync(): Promise<void> {
     }
   }
 
+  // 8.5. Initialize LangchainMainAgent
+  const langchainMainAgent = LangchainMainAgent.getInstance();
+  await langchainMainAgent.initializeAsync();
+
   // 8. Initialize platform dependencies
-  const chatAgent: IChatAgent = MainAgent.getInstance() as IChatAgent;
+  const chatAgent: IChatAgent = langchainMainAgent as IChatAgent;
   const platformDeps: IPlatformDeps = {
     agent: chatAgent,
     channelRegistry,

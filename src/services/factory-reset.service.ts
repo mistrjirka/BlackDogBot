@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import { LoggerService } from "./logger.service.js";
 import { SchedulerService } from "./scheduler.service.js";
 import { PromptService } from "./prompt.service.js";
-import { MainAgent } from "../agent/main-agent.js";
+import { LangchainMainAgent } from "../agent/langchain-main-agent.js";
 import { McpService } from "./mcp.service.js";
 import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, getSessionsDir, getMcpServersFilePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
 import { extractErrorMessage } from "../utils/error.js";
@@ -67,7 +67,7 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
 
   // 6. Clear all chat history
   await _safeStepAsync("Clear chat history", errors, async (): Promise<void> => {
-    const mainAgent: MainAgent = MainAgent.getInstance();
+    const mainAgent = LangchainMainAgent.getInstance();
     mainAgent.clearAllChatHistory();
   });
 

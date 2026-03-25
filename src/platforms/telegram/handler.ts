@@ -7,7 +7,7 @@ import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
 import { AiProviderService } from "../../services/ai-provider.service.js";
 import type { IChatAgent } from "../../agent/agent-interface.js";
-import { MainAgent } from "../../agent/main-agent.js";
+import { LangchainMainAgent } from "../../agent/langchain-main-agent.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
 import type { IAgentResult, OnStepCallback, IToolCallSummary } from "../../agent/types.js";
 import type { IChatImageAttachment } from "../../agent/types.js";
@@ -114,7 +114,7 @@ export class TelegramHandler {
   private constructor() {
     this._logger = LoggerService.getInstance();
     this._messagingService = MessagingService.getInstance();
-    this._agent = MainAgent.getInstance() as IChatAgent;
+    this._agent = LangchainMainAgent.getInstance() as IChatAgent;
     this._channelRegistry = ChannelRegistryService.getInstance();
     this._processing = new Set<string>();
     this._pendingMessages = new Map<string, IPendingTelegramMessage[]>();

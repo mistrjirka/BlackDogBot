@@ -6,11 +6,63 @@ import os from "node:os";
 import { LoggerService } from "../services/logger.service.js";
 import { PromptService } from "../services/prompt.service.js";
 import { ConfigService } from "../services/config.service.js";
+import { AiProviderService } from "../services/ai-provider.service.js";
+import { ChannelRegistryService } from "../services/channel-registry.service.js";
+import { SkillLoaderService } from "../services/skill-loader.service.js";
+import { LangchainMcpService } from "../services/langchain-mcp.service.js";
+import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
 import { createLangchainAgent, invokeAgentAsync } from "./langchain-agent.js";
 import type { IAiConfig } from "../shared/types/config.types.js";
 import type { IChatImageAttachment, IAgentResult, IToolCallSummary } from "./types.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
-import type { IRefreshSessionsResult } from "./main-agent.js";
+import type { ChannelPermission } from "../shared/types/channel.types.js";
+import type { IRefreshSessionsResult } from "./types.js";
+import * as toolRegistry from "../helpers/tool-registry.js";
+import {
+  thinkTool,
+  thinkTracker,
+  runCmdTool,
+  runCmdInputTool,
+  getCmdStatusTool,
+  getCmdOutputTool,
+  waitForCmdTool,
+  stopCmdTool,
+  modifyPromptTool,
+  listPromptsTool,
+  searchKnowledgeTool,
+  addKnowledgeTool,
+  editKnowledgeTool,
+  createSendMessageTool,
+  createGetPreviousMessageTool,
+  createCallSkillTool,
+  getSkillFileTool,
+  addCronTool,
+  removeCronTool,
+  listCronsTool,
+  getCronTool,
+  editCronTool,
+  editCronInstructionsTool,
+  runCronTool,
+  createReadFileTool,
+  createReadImageTool,
+  createWriteFileTool,
+  appendFileTool,
+  editFileTool,
+  fetchRssTool,
+  listDatabasesTool,
+  listTablesTool,
+  getTableSchemaTool,
+  createDatabaseTool,
+  createTableTool,
+  dropTableTool,
+  readFromDatabaseTool,
+  updateDatabaseTool,
+  deleteFromDatabaseTool,
+  searxngTool,
+  crawl4aiTool,
+  FileReadTracker,
+} from "../tools/index.js";
+import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 
 type MessageSender = (message: string) => Promise<string | null>;
 type PhotoSender = (imageBuffer: Buffer, caption: string | null) => Promise<string | null>;
@@ -22,11 +74,8 @@ interface IChatSession {
   messageSender: MessageSender;
   photoSender: PhotoSender;
   onStepAsync?: OnStepCallback;
-}
-
-export interface IClearSessionsResult {
-  clearedCount: number;
-  failedChatIds: string[];
+  tools: DynamicStructuredTool[];
+  readTracker: FileReadTracker;
 }
 
 export class LangchainMainAgent {
@@ -36,8 +85,7 @@ export class LangchainMainAgent {
   private _checkpointer: SqliteSaver | null = null;
   private _sessions: Map<string, IChatSession> = new Map();
   private _abortControllers: Map<string, AbortController> = new Map();
-  private _tools: DynamicStructuredTool[] = [];
-  private _systemPrompt: string = "";
+  private _baseSystemPrompt: string = "";
   private _aiConfig: IAiConfig | null = null;
 
   public static getInstance(): LangchainMainAgent {
@@ -49,12 +97,11 @@ export class LangchainMainAgent {
 
   private constructor() {}
 
-  public async initializeAsync(tools: DynamicStructuredTool[]): Promise<void> {
-    this._tools = tools;
-    this._systemPrompt = await PromptService.getInstance().getPromptAsync("main-agent");
+  public async initializeAsync(): Promise<void> {
+    this._baseSystemPrompt = await PromptService.getInstance().getPromptAsync("main-agent");
     this._aiConfig = ConfigService.getInstance().getConfig().ai;
     this._checkpointer = await this._createCheckpointer();
-    this._logger.info("LangchainMainAgent initialized", { toolCount: tools.length });
+    this._logger.info("LangchainMainAgent initialized");
   }
 
   private async _createCheckpointer(): Promise<SqliteSaver> {
@@ -79,15 +126,131 @@ export class LangchainMainAgent {
     onStepAsync?: OnStepCallback,
     platform?: MessagePlatform,
   ): Promise<void> {
-    const existingSession = this._sessions.get(chatId);
+    const effectivePlatform = platform ?? "telegram";
+    const readTracker = new FileReadTracker();
+    const permission = this._getPermissionForChat(effectivePlatform, chatId);
+    const tools = await this._buildToolsForChatAsync(permission, messageSender, readTracker);
+
     this._sessions.set(chatId, {
       chatId,
-      platform: platform ?? existingSession?.platform ?? "telegram",
+      platform: effectivePlatform,
       messageSender,
       photoSender,
       onStepAsync,
+      tools,
+      readTracker,
     });
-    this._logger.info("Session initialized", { chatId, platform });
+
+   ToolHotReloadService.getInstance().registerRebuildCallback(chatId, (perTableTools) => {
+      this._rebuildToolsForChat(chatId, perTableTools);
+    });
+
+    this._logger.info("Session initialized", { chatId, platform: effectivePlatform, toolCount: tools.length });
+  }
+
+  private _getPermissionForChat(platform: MessagePlatform, chatId: string): ChannelPermission {
+    const channelRegistry = ChannelRegistryService.getInstance();
+    const channel = channelRegistry.getChannel(platform, chatId);
+    return channel?.permission ?? "full";
+  }
+
+  private async _buildToolsForChatAsync(
+    permission: ChannelPermission,
+    messageSender: MessageSender,
+    readTracker: FileReadTracker,
+  ): Promise<DynamicStructuredTool[]> {
+    const allTools: Record<string, DynamicStructuredTool> = {};
+    const supportsVision = AiProviderService.getInstance().getSupportsVision();
+    const executionContext = { toolCallHistory: [] as string[] };
+
+    allTools.think = thinkTool;
+    allTools.run_cmd = runCmdTool;
+    allTools.run_cmd_input = runCmdInputTool;
+    allTools.get_cmd_status = getCmdStatusTool;
+    allTools.get_cmd_output = getCmdOutputTool;
+    allTools.wait_for_cmd = waitForCmdTool;
+    allTools.stop_cmd = stopCmdTool;
+    allTools.modify_prompt = modifyPromptTool;
+    allTools.list_prompts = listPromptsTool;
+    allTools.search_knowledge = searchKnowledgeTool;
+    allTools.add_knowledge = addKnowledgeTool;
+    allTools.edit_knowledge = editKnowledgeTool;
+    allTools.send_message = createSendMessageTool(messageSender);
+    allTools.get_previous_message = createGetPreviousMessageTool(executionContext);
+    allTools.fetch_rss = fetchRssTool;
+    allTools.searxng = searxngTool;
+    allTools.crawl4ai = crawl4aiTool;
+    allTools.list_databases = listDatabasesTool;
+    allTools.list_tables = listTablesTool;
+    allTools.get_table_schema = getTableSchemaTool;
+    allTools.create_database = createDatabaseTool;
+    allTools.create_table = createTableTool;
+    allTools.drop_table = dropTableTool;
+    allTools.read_from_database = readFromDatabaseTool;
+    allTools.update_database = updateDatabaseTool;
+    allTools.delete_from_database = deleteFromDatabaseTool;
+    allTools.read_file = createReadFileTool(readTracker);
+    allTools.write_file = createWriteFileTool(readTracker);
+    allTools.append_file = appendFileTool;
+    allTools.edit_file = editFileTool;
+    allTools.add_cron = addCronTool;
+    allTools.remove_cron = removeCronTool;
+    allTools.list_crons = listCronsTool;
+    allTools.get_cron = getCronTool;
+    allTools.edit_cron = editCronTool;
+    allTools.edit_cron_instructions = editCronInstructionsTool;
+    allTools.run_cron = runCronTool;
+
+    if (supportsVision) {
+      allTools.read_image = createReadImageTool(readTracker);
+    }
+
+    const availableSkills = SkillLoaderService.getInstance().getAvailableSkills();
+    if (availableSkills.length > 0) {
+      const skillNames = availableSkills.map((s) => s.name);
+      allTools.call_skill = createCallSkillTool(skillNames);
+      allTools.get_skill_file = getSkillFileTool;
+    }
+
+    const mcpTools = LangchainMcpService.getInstance().getTools();
+    for (const tool of mcpTools) {
+      allTools[tool.name] = tool;
+    }
+
+    const perTableTools = await buildPerTableToolsAsync();
+    for (const [name, tool] of Object.entries(perTableTools)) {
+      allTools[name] = tool as DynamicStructuredTool;
+    }
+
+    const skillNames = availableSkills.map((s) => s.name);
+    const filteredTools: DynamicStructuredTool[] = [];
+    for (const [toolName, tool] of Object.entries(allTools)) {
+      if (toolRegistry.isToolAllowed(toolName, permission, { skillNames })) {
+        filteredTools.push(tool);
+      }
+    }
+
+    return filteredTools;
+  }
+
+  private _rebuildToolsForChat(chatId: string, perTableTools: Record<string, DynamicStructuredTool>): void {
+    const session = this._sessions.get(chatId);
+    if (!session) {
+      return;
+    }
+
+    const newTools: DynamicStructuredTool[] = [...session.tools];
+    for (const [name, tool] of Object.entries(perTableTools)) {
+      const existingIndex = newTools.findIndex((t) => t.name === name);
+      if (existingIndex >= 0) {
+        newTools[existingIndex] = tool;
+      } else {
+        newTools.push(tool);
+      }
+    }
+    session.tools = newTools;
+
+    this._logger.info("Tools hot-reloaded", { chatId, newToolCount: newTools.length });
   }
 
   public async processMessageForChatAsync(
@@ -104,14 +267,16 @@ export class LangchainMainAgent {
       throw new Error("Agent not initialized. Call initializeAsync first.");
     }
 
+    thinkTracker.reset();
+
     const abortController = new AbortController();
     this._abortControllers.set(chatId, abortController);
 
     try {
       const agent = createLangchainAgent({
         aiConfig: this._aiConfig,
-        systemPrompt: this._systemPrompt,
-        tools: this._tools,
+        systemPrompt: this._baseSystemPrompt,
+        tools: session.tools,
         checkpointer: this._checkpointer,
       });
 
@@ -147,30 +312,41 @@ export class LangchainMainAgent {
     if (!session) {
       return false;
     }
-
-    this._logger.info("Compaction requested for chat", { chatId });
-    this._logger.info("Note: LangGraph handles context automatically - manual compaction not implemented");
+    this._logger.info("Compaction requested for chat (LangGraph handles context automatically)", { chatId });
     return true;
   }
 
   public clearChatHistory(chatId: string): void {
     this._sessions.delete(chatId);
     this._abortControllers.delete(chatId);
+    ToolHotReloadService.getInstance().unregisterRebuildCallback(chatId);
     this._logger.info("Chat history cleared", { chatId });
   }
 
   public clearAllChatHistory(): void {
     const count = this._sessions.size;
+    for (const chatId of this._sessions.keys()) {
+      ToolHotReloadService.getInstance().unregisterRebuildCallback(chatId);
+    }
     this._sessions.clear();
     this._abortControllers.clear();
     this._logger.info("All chat history cleared", { count });
   }
 
   public async refreshAllSessionsAsync(): Promise<IRefreshSessionsResult> {
-    this._systemPrompt = await PromptService.getInstance().getPromptAsync("main-agent");
+    this._baseSystemPrompt = await PromptService.getInstance().getPromptAsync("main-agent");
 
     const refreshedCount = this._sessions.size;
     const failedChatIds: string[] = [];
+
+    for (const [chatId, session] of this._sessions) {
+      const permission = this._getPermissionForChat(session.platform, chatId);
+      session.tools = await this._buildToolsForChatAsync(
+        permission,
+        session.messageSender,
+        session.readTracker,
+      );
+    }
 
     this._logger.info("All sessions refreshed", { refreshedCount });
 

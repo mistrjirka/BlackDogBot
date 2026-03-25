@@ -1,7 +1,7 @@
-type ToolSet = Record<string, unknown>;
+import type { DynamicStructuredTool } from "langchain";
 import { LoggerService } from "./logger.service.js";
 
-type RebuildCallback = (perTableTools: ToolSet) => void;
+type RebuildCallback = (perTableTools: Record<string, DynamicStructuredTool>) => void;
 
 /**
  * Singleton service that allows tools to trigger a hot-reload of the
@@ -67,7 +67,7 @@ export class ToolHotReloadService {
 
     try {
       const { buildPerTableToolsAsync } = await import("../utils/per-table-tools.js");
-      const perTableTools = await buildPerTableToolsAsync() as Record<string, unknown>;
+      const perTableTools = await buildPerTableToolsAsync();
 
       this._logger.info("Triggering tool hot-reload", {
         chatId,
