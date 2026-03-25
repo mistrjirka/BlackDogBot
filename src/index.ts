@@ -15,16 +15,26 @@ import * as skillInstaller from "./helpers/skill-installer.js";
 import * as skillState from "./helpers/skill-state.js";
 import { CronAgent } from "./agent/cron-agent.js";
 import { MainAgent } from "./agent/main-agent.js";
+import { createLangchainAgent } from "./agent/langchain-agent.js";
+import { createCheckpointer } from "./services/checkpointer.service.js";
+import {
+  thinkTool as lcThinkTool,
+  readFileTool as lcReadFileTool,
+  writeFileTool as lcWriteFileTool,
+  runCmdTool as lcRunCmdTool,
+  searchKnowledgeTool as lcSearchKnowledgeTool,
+} from "./tools/langchain-poc-tools.js";
 import { telegramPlatform } from "./platforms/telegram/index.js";
 import { discordPlatform } from "./platforms/discord/index.js";
 import type { IPlatformDeps } from "./platforms/types.js";
 import type { IConfig, IScheduledTask } from "./shared/types/index.js";
-import { ensureAllDirectoriesAsync } from "./utils/paths.js";
+import { ensureAllDirectoriesAsync, ensureDirectoryExistsAsync, getDatabasePath } from "./utils/paths.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
 import { extractErrorMessage } from "./utils/error.js";
 import { TelegramHandler } from "./platforms/telegram/handler.js";
 import type { SkillInstallKind } from "./helpers/skill-installer.js";
 import { notifySchedulerChannelsWithDedupAsync } from "./utils/scheduler-notifications.js";
+import Database from "better-sqlite3";
 //#region Main
 
 async function mainAsync(): Promise<void> {
@@ -360,6 +370,35 @@ async function mainAsync(): Promise<void> {
   } else {
     logger.info("Scheduler disabled in config.");
   }
+
+  // 10. Initialize LangChain DeepAgents PoC agent
+  try {
+    const dbPath: string = getDatabasePath("langchain-checkpoints");
+    await ensureDirectoryExistsAsync(dbPath.substring(0, dbPath.lastIndexOf("/")));
+    const db = new Database(dbPath);
+    const checkpointer = createCheckpointer(db);
+
+    const pocTools: any[] = [lcThinkTool, lcReadFileTool, lcWriteFileTool, lcRunCmdTool, lcSearchKnowledgeTool];
+    const pocPrompt = "You are a helpful assistant running on the LangChain DeepAgents architecture (PoC).";
+
+    // @ts-ignore — PoC agent created to verify factory works; wired in Phase 2
+    const langchainAgent = createLangchainAgent({
+      aiConfig: config.ai,
+      systemPrompt: pocPrompt,
+      tools: pocTools,
+      checkpointer,
+    });
+
+    logger.info("LangChain DeepAgents PoC agent initialized", {
+      toolCount: pocTools.length,
+      dbPath,
+    });
+  } catch (lcError: unknown) {
+    logger.warn("LangChain DeepAgents PoC agent initialization failed (non-blocking)", {
+      error: lcError instanceof Error ? lcError.message : String(lcError),
+    });
+  }
+
   // 11. Graceful shutdown
   const shutdownAsync = async (): Promise<void> => {
     logger.info("Shutdown signal received. Stopping BlackDogBot...");
