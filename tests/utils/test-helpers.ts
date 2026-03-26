@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { vi } from "vitest";
+import { stringify as stringifyYaml } from "yaml";
 
 import { ConfigService } from "../../src/services/config.service.js";
 import { LoggerService } from "../../src/services/logger.service.js";
@@ -15,6 +16,7 @@ import { PromptService } from "../../src/services/prompt.service.js";
 import { LangchainMainAgent } from "../../src/agent/langchain-main-agent.js";
 import { McpRegistryService } from "../../src/services/mcp-registry.service.js";
 import type { LogLevel } from "../../src/shared/types/index.js";
+import type { IConfig } from "../../src/shared/types/config.types.js";
 
 export type SingletonClass =
   | typeof ConfigService
@@ -117,4 +119,78 @@ export function silenceLogger(logger: LoggerService): void {
   vi.spyOn(logger, "info").mockReturnValue(undefined);
   vi.spyOn(logger, "warn").mockReturnValue(undefined);
   vi.spyOn(logger, "error").mockReturnValue(undefined);
+}
+
+export interface ITestConfigOptions {
+  ai?: IConfig["ai"];
+  scheduler?: IConfig["scheduler"];
+  knowledge?: IConfig["knowledge"];
+  skills?: IConfig["skills"];
+  logging?: IConfig["logging"];
+  services?: IConfig["services"];
+}
+
+export async function loadTestConfigAsync(
+  tempDir: string,
+  options: ITestConfigOptions = {},
+): Promise<void> {
+  const configDir = path.join(tempDir, ".blackdogbot");
+  await fs.mkdir(configDir, { recursive: true });
+
+  const realConfigDir = path.join(os.homedir(), ".blackdogbot");
+  const realConfigPath = path.join(realConfigDir, "config.yaml");
+
+  let realAiConfig: IConfig["ai"] | undefined;
+
+  try {
+    const realConfigContent = await fs.readFile(realConfigPath, "utf-8");
+    const realConfig = JSON.parse(
+      JSON.stringify(
+        await import("yaml").then((yaml) => yaml.parse(realConfigContent))
+      )
+    ) as IConfig;
+    realAiConfig = realConfig.ai;
+  } catch {
+    // Real config not available, use env vars or test defaults
+  }
+
+  const config: IConfig = {
+    ai: options.ai ?? realAiConfig ?? {
+      provider: "openai-compatible",
+      openaiCompatible: {
+        baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+        apiKey: process.env.OPENAI_API_KEY || "test-key",
+        model: "gpt-4o-mini",
+      },
+    },
+    scheduler: options.scheduler ?? {
+      enabled: true,
+      maxParallelCrons: 1,
+      cronQueueSize: 3,
+    },
+    knowledge: options.knowledge ?? {
+      embeddingProvider: "local",
+      embeddingModelPath: path.join(configDir, "models", "embedding-model"),
+      embeddingDtype: "fp32",
+      embeddingDevice: "cpu",
+      embeddingOpenRouterModel: "",
+      lancedbPath: path.join(configDir, "knowledge", "lancedb"),
+    },
+    skills: options.skills ?? {
+      directories: [path.join(configDir, "skills")],
+    },
+    logging: options.logging ?? {
+      level: "error",
+    },
+    services: options.services ?? {
+      searxngUrl: "http://localhost:8080",
+      crawl4aiUrl: "http://localhost:8081",
+    },
+  };
+
+  await fs.writeFile(
+    path.join(configDir, "config.yaml"),
+    stringifyYaml(config),
+    "utf-8"
+  );
 }
