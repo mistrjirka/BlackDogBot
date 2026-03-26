@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { vi } from "vitest";
-import { stringify as stringifyYaml } from "yaml";
+import { stringify as stringifyYaml, parse as parseYaml } from "yaml";
 
 import { ConfigService } from "../../src/services/config.service.js";
 import { LoggerService } from "../../src/services/logger.service.js";
@@ -137,18 +137,14 @@ export async function loadTestConfigAsync(
   const configDir = path.join(tempDir, ".blackdogbot");
   await fs.mkdir(configDir, { recursive: true });
 
-  const realConfigDir = path.join(os.homedir(), ".blackdogbot");
-  const realConfigPath = path.join(realConfigDir, "config.yaml");
+  // Read real config from the actual home directory (not process.env.HOME which is overridden)
+  const realConfigPath = path.join(os.homedir(), ".blackdogbot", "config.yaml");
 
   let realAiConfig: IConfig["ai"] | undefined;
 
   try {
     const realConfigContent = await fs.readFile(realConfigPath, "utf-8");
-    const realConfig = JSON.parse(
-      JSON.stringify(
-        await import("yaml").then((yaml) => yaml.parse(realConfigContent))
-      )
-    ) as IConfig;
+    const realConfig = parseYaml(realConfigContent) as IConfig;
     realAiConfig = realConfig.ai;
   } catch {
     // Real config not available, use env vars or test defaults

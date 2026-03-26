@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
   createTestEnvironment,
   resetSingletons,
-  loadTestConfigAsync,
 } from "../../utils/test-helpers.js";
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
 import { ConfigService } from "../../../src/services/config.service.js";
@@ -14,8 +15,20 @@ import { PromptService } from "../../../src/services/prompt.service.js";
 import { markSkillSetupCompleteAsync } from "../../../src/helpers/skill-state.js";
 import { createCallSkillTool } from "../../../src/tools/call-skill.tool.js";
 import type { ISkill } from "../../../src/shared/types/index.js";
+import type { IConfig } from "../../../src/shared/types/config.types.js";
 
 const env = createTestEnvironment("skill-e2e");
+
+// Read real config BEFORE env.setupAsync changes HOME
+const realConfigPath = path.join(os.homedir(), ".blackdogbot", "config.yaml");
+let realAiConfig: IConfig["ai"] | undefined;
+try {
+  const realConfigContent = await fs.readFile(realConfigPath, "utf-8");
+  const realConfig = parseYaml(realConfigContent) as IConfig;
+  realAiConfig = realConfig.ai;
+} catch {
+  // Real config not available
+}
 
 const SKILL_INSTRUCTIONS = `# Hello World Skill
 
@@ -32,7 +45,35 @@ describe("Skill E2E", () => {
     const configDir = path.join(env.tempDir, ".blackdogbot");
     await fs.mkdir(configDir, { recursive: true });
 
-    await loadTestConfigAsync(env.tempDir);
+    // Write config with real AI config (read before HOME was changed)
+    const config: IConfig = {
+      ai: realAiConfig ?? {
+        provider: "openai-compatible",
+        openaiCompatible: {
+          baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+          apiKey: process.env.OPENAI_API_KEY || "test-key",
+          model: "gpt-4o-mini",
+        },
+      },
+      scheduler: { enabled: true, maxParallelCrons: 1, cronQueueSize: 3 },
+      knowledge: {
+        embeddingProvider: "local",
+        embeddingModelPath: path.join(configDir, "models", "embedding-model"),
+        embeddingDtype: "fp32",
+        embeddingDevice: "cpu",
+        embeddingOpenRouterModel: "",
+        lancedbPath: path.join(configDir, "knowledge", "lancedb"),
+      },
+      skills: { directories: [path.join(configDir, "skills")] },
+      logging: { level: "error" },
+      services: { searxngUrl: "http://localhost:8080", crawl4aiUrl: "http://localhost:8081" },
+    };
+
+    await fs.writeFile(
+      path.join(configDir, "config.yaml"),
+      stringifyYaml(config),
+      "utf-8"
+    );
 
     const loggerService = LoggerService.getInstance();
     await loggerService.initializeAsync("error", path.join(env.tempDir, "logs"));

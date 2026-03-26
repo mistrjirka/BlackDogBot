@@ -1,23 +1,57 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import { stringify as stringifyYaml } from "yaml";
 
-import { createTestEnvironment, resetSingletons, loadTestConfigAsync } from "../../utils/test-helpers.js";
+import { createTestEnvironment, resetSingletons } from "../../utils/test-helpers.js";
 import { McpRegistryService } from "../../../src/services/mcp-registry.service.js";
 import { LangchainMcpService } from "../../../src/services/langchain-mcp.service.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { isToolAllowed } from "../../../src/helpers/tool-registry.js";
 import type { IMcpServerConfig } from "../../../src/shared/types/mcp.types.js";
+import type { IConfig } from "../../../src/shared/types/config.types.js";
 
 const env = createTestEnvironment("mcp-e2e");
+const tsxPath = path.join(process.cwd(), "node_modules", ".bin", "tsx");
 
 describe("MCP Tools E2E", () => {
   beforeAll(async () => {
     await env.setupAsync({ logLevel: "error" });
 
-    await loadTestConfigAsync(env.tempDir);
+    const configDir = path.join(env.tempDir, ".blackdogbot");
+    await fs.mkdir(configDir, { recursive: true });
+
+    // Write minimal test config
+    const config: IConfig = {
+      ai: {
+        provider: "openai-compatible",
+        openaiCompatible: {
+          baseUrl: "https://api.openai.com/v1",
+          apiKey: "test-key",
+          model: "gpt-4o-mini",
+        },
+      },
+      scheduler: { enabled: true, maxParallelCrons: 1, cronQueueSize: 3 },
+      knowledge: {
+        embeddingProvider: "local",
+        embeddingModelPath: path.join(configDir, "models", "embedding-model"),
+        embeddingDtype: "fp32",
+        embeddingDevice: "cpu",
+        embeddingOpenRouterModel: "",
+        lancedbPath: path.join(configDir, "knowledge", "lancedb"),
+      },
+      skills: { directories: [] },
+      logging: { level: "error" },
+      services: { searxngUrl: "http://localhost:8080", crawl4aiUrl: "http://localhost:8081" },
+    };
+
+    await fs.writeFile(
+      path.join(configDir, "config.yaml"),
+      stringifyYaml(config),
+      "utf-8"
+    );
 
     const loggerService = LoggerService.getInstance();
     await loggerService.initializeAsync("error", path.join(env.tempDir, "logs"));
@@ -39,7 +73,7 @@ describe("MCP Tools E2E", () => {
       await registry.initializeAsync();
 
       const serverConfig: IMcpServerConfig = {
-        command: "tsx",
+        command: tsxPath,
         args: ["tests/mocks/mcp-test-server.ts"],
       };
 
@@ -157,7 +191,7 @@ describe("MCP Tools E2E", () => {
 
       // Add server with strictOutputSchema: true (default)
       await registry.addServerAsync("strict-server", {
-        command: "tsx",
+        command: tsxPath,
         args: ["tests/mocks/mcp-test-server.ts"],
       });
 
