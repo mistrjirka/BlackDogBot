@@ -12,12 +12,14 @@ export type LangchainAgent = ReturnType<typeof import("../../agent/langchain-age
 
 export class LangchainTelegramHandler {
   private _bot: Bot;
+  private _token: string;
   private _agent: LangchainAgent;
   private _messagingService: MessagingService;
   private _logger: LoggerService;
 
-  constructor(bot: Bot, agent: LangchainAgent, messagingService: MessagingService, logger: LoggerService) {
+  constructor(bot: Bot, token: string, agent: LangchainAgent, messagingService: MessagingService, logger: LoggerService) {
     this._bot = bot;
+    this._token = token;
     this._agent = agent;
     this._messagingService = messagingService;
     this._logger = logger;
@@ -154,8 +156,7 @@ export class LangchainTelegramHandler {
   }
 
   private async _downloadFileAsync(filePath: string): Promise<Buffer> {
-    const config = this._bot as unknown as { token: string };
-    const url: string = `https://api.telegram.org/file/bot${config.token}/${filePath}`;
+    const url: string = `https://api.telegram.org/file/bot${this._token}/${filePath}`;
     const response: Response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Failed to download Telegram file (${response.status} ${response.statusText}).`);

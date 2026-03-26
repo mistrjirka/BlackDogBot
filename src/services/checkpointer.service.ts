@@ -7,8 +7,7 @@ import { LoggerService } from "./logger.service.js";
 export function createCheckpointer(db: Database): SqliteSaver {
   const logger: LoggerService = LoggerService.getInstance();
 
-  const saver = new SqliteSaver(db);
-  (saver as unknown as { setup(): void }).setup();
+  const saver = SqliteSaver.fromConnString(db.name);
 
   logger.info("LangGraph SqliteSaver checkpointer initialized");
 
