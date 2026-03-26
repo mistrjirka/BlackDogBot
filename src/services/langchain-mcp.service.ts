@@ -270,8 +270,11 @@ export class LangchainMcpService {
 
   private _createTransport(entry: IMcpServerEntry): Transport {
     if (entry.transport === "stdio") {
+      if (!entry.config.command) {
+        throw new Error(`MCP server "${entry.id}": stdio transport requires 'command' in config`);
+      }
       return new StdioClientTransport({
-        command: entry.config.command!,
+        command: entry.config.command,
         args: entry.config.args ?? [],
         env: { ...process.env as Record<string, string>, ...entry.config.env },
         stderr: "pipe",
@@ -279,7 +282,10 @@ export class LangchainMcpService {
     }
 
     // HTTP transport using StreamableHTTP (not deprecated SSE)
-    const url = new URL(entry.config.url!);
+    if (!entry.config.url) {
+      throw new Error(`MCP server "${entry.id}": http transport requires 'url' in config`);
+    }
+    const url = new URL(entry.config.url);
     const headers = entry.config.headers ?? {};
 
     return new StreamableHTTPClientTransport(url, {

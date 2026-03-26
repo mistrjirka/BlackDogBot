@@ -12,11 +12,16 @@ const turndownService = new TurndownService({
   codeBlockStyle: "fenced",
 });
 
+interface IDomElement {
+  getAttribute(name: string): string | null;
+}
+
 // Add custom rule for Telegram links (e.g., ?q=%23Breaking -> #Breaking)
 turndownService.addRule("telegramLinks", {
   filter: "a",
-  replacement: function (content, node: any) {
-    const href = node.getAttribute("href");
+  replacement: function (content, node) {
+    const element = node as unknown as IDomElement;
+    const href = element.getAttribute("href");
     if (href && href.startsWith("?q=")) {
       // Decode URL-encoded hashtags/mentions (e.g., ?q=%23Breaking -> #Breaking)
       const decoded = decodeURIComponent(href.substring(3));
