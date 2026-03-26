@@ -17,6 +17,7 @@ import * as skillState from "./helpers/skill-state.js";
 import type { IChatAgent } from "./agent/agent-interface.js";
 import { LangchainMainAgent } from "./agent/langchain-main-agent.js";
 import { LangchainCronExecutor } from "./agent/langchain-cron-executor.js";
+import { createLangchainAgent } from "./agent/langchain-agent.js";
 import { createCheckpointer } from "./services/checkpointer.service.js";
 import {
   thinkTool,
