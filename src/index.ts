@@ -9,6 +9,8 @@ import { MessagingService } from "./services/messaging.service.js";
 import { ChannelRegistryService } from "./services/channel-registry.service.js";
 import { McpRegistryService } from "./services/mcp-registry.service.js";
 import { LangchainMcpService } from "./services/langchain-mcp.service.js";
+import { PromptService } from "./services/prompt.service.js";
+import { AiCapabilityService } from "./services/ai-capability.service.js";
 import * as toolRegistry from "./helpers/tool-registry.js";
 import * as skillInstaller from "./helpers/skill-installer.js";
 import * as skillState from "./helpers/skill-state.js";
@@ -45,6 +47,10 @@ async function mainAsync(): Promise<void> {
   await configService.initializeAsync();
 
   let config: IConfig = configService.getConfig();
+
+  // Initialize AiCapabilityService with AI config
+  AiCapabilityService.getInstance().initialize(config.ai);
+
   // 2. Initialize logger
   const logger: LoggerService = LoggerService.getInstance();
 
@@ -264,6 +270,10 @@ async function mainAsync(): Promise<void> {
       }
     }
   }
+
+  // 8.4. Initialize PromptService (required by LangchainMainAgent)
+  const promptService = PromptService.getInstance();
+  await promptService.initializeAsync();
 
   // 8.5. Initialize LangchainMainAgent
   const langchainMainAgent = LangchainMainAgent.getInstance();
