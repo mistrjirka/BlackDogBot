@@ -154,8 +154,8 @@ export class LangchainTelegramHandler {
   }
 
   private async _downloadFileAsync(filePath: string): Promise<Buffer> {
-    const config = (this._bot as any).token;
-    const url: string = `https://api.telegram.org/file/bot${config}/${filePath}`;
+    const config = this._bot as unknown as { token: string };
+    const url: string = `https://api.telegram.org/file/bot${config.token}/${filePath}`;
     const response: Response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Failed to download Telegram file (${response.status} ${response.statusText}).`);

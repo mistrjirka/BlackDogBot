@@ -339,7 +339,7 @@ export class TelegramHandler {
         }
       }, 5000);
 
-      await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
+      await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch((): void => { /* Typing indicator is best-effort */ });
 
       try {
         const result: IAgentResult = await this._processWithContextRecoveryAsync(

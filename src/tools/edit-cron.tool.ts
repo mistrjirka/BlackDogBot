@@ -118,7 +118,7 @@ const executeEditCron = async ({
       };
     }
 
-    const updatedTask = await scheduler.updateTaskAsync(taskId, updatePayload as any);
+    const updatedTask = await scheduler.updateTaskAsync(taskId, updatePayload as Partial<IScheduledTask>);
 
     if (updatedTask) {
       logger.info("[edit-cron] Updated task details", {

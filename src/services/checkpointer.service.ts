@@ -8,7 +8,7 @@ export function createCheckpointer(db: Database): SqliteSaver {
   const logger: LoggerService = LoggerService.getInstance();
 
   const saver = new SqliteSaver(db);
-  (saver as any).setup();
+  (saver as unknown as { setup(): void }).setup();
 
   logger.info("LangGraph SqliteSaver checkpointer initialized");
 
