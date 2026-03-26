@@ -247,8 +247,8 @@ describe("Database CRUD E2E", () => {
 
       const result = await toolInstance.invoke({
         data: [
-          { product_name: "Laptop", price: 999.99, category: "Electronics" },
-          { product_name: "Book", price: 19.99, category: "Education" },
+          { product_name: "Laptop", price: 999.99, category: "Electronics", created_at: new Date().toISOString() },
+          { product_name: "Book", price: 19.99, category: "Education", created_at: new Date().toISOString() },
         ],
       });
 
@@ -274,7 +274,7 @@ describe("Database CRUD E2E", () => {
       // Zod should strip unknown fields
       const result = await toolInstance.invoke({
         data: [
-          { product_name: "Tablet", price: 299.99, invalid_column: "bad" },
+          { product_name: "Tablet", price: 299.99, invalid_column: "bad", created_at: new Date().toISOString() },
         ],
       });
 
