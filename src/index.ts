@@ -18,48 +18,10 @@ import { LangchainCronExecutor } from "./agent/langchain-cron-executor.js";
 import { createCheckpointer } from "./services/checkpointer.service.js";
 import {
   thinkTool,
-  thinkTracker,
   createReadFileTool,
   createWriteFileTool,
   runCmdTool,
   searchKnowledgeTool,
-  addKnowledgeTool,
-  editKnowledgeTool,
-  addCronTool,
-  removeCronTool,
-  listCronsTool,
-  getCronTool,
-  editCronTool,
-  editCronInstructionsTool,
-  runCronTool,
-  listDatabasesTool,
-  listTablesTool,
-  getTableSchemaTool,
-  readFromDatabaseTool,
-  updateDatabaseTool,
-  deleteFromDatabaseTool,
-  createDatabaseTool,
-  createTableTool,
-  dropTableTool,
-  searxngTool,
-  crawl4aiTool,
-  modifyPromptTool,
-  listPromptsTool,
-  fetchRssTool,
-  appendFileTool,
-  editFileTool,
-  getCmdStatusTool,
-  getCmdOutputTool,
-  stopCmdTool,
-  runCmdInputTool,
-  waitForCmdTool,
-  getSkillFileTool,
-  createSendMessageTool,
-  createSendMessageToolWithHistory,
-  createGetPreviousMessageTool,
-  createCallSkillTool,
-  createReadImageTool,
-  FileReadTracker,
   type IFileReadTracker,
 } from "./tools/index.js";
 import type { DynamicStructuredTool } from "langchain";
@@ -418,7 +380,7 @@ async function mainAsync(): Promise<void> {
     const db = new Database(dbPath);
     const checkpointer = createCheckpointer(db);
 
-    const fileReadTracker: IFileReadTracker = { markRead: () => {}, wasRecentlyRead: () => false };
+    const fileReadTracker: IFileReadTracker = { markRead: () => {}, hasBeenRead: () => false };
     const pocTools: DynamicStructuredTool[] = [
       thinkTool,
       createReadFileTool(fileReadTracker),

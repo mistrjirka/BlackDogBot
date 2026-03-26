@@ -1,4 +1,4 @@
-import { Bot, Context } from "grammy";
+import { Context } from "grammy";
 
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
@@ -11,14 +11,12 @@ import { extractErrorMessage } from "../../utils/error.js";
 export type LangchainAgent = ReturnType<typeof import("../../agent/langchain-agent.js").createLangchainAgent>;
 
 export class LangchainTelegramHandler {
-  private _bot: Bot;
   private _token: string;
   private _agent: LangchainAgent;
   private _messagingService: MessagingService;
   private _logger: LoggerService;
 
-  constructor(bot: Bot, token: string, agent: LangchainAgent, messagingService: MessagingService, logger: LoggerService) {
-    this._bot = bot;
+  constructor(token: string, agent: LangchainAgent, messagingService: MessagingService, logger: LoggerService) {
     this._token = token;
     this._agent = agent;
     this._messagingService = messagingService;
