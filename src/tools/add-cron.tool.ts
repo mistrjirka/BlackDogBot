@@ -6,7 +6,6 @@ import { LoggerService } from "../services/logger.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { createChatModel } from "../services/langchain-model.service.js";
 import { generateId } from "../utils/id.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
@@ -173,18 +172,13 @@ Output a JSON object with:
 
       const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
-      const verificationResult = await generateObjectWithRetryAsync({
-        model,
-        schema: z.object({
-          isClear: z.boolean(),
-          missingContext: z.string(),
-        }),
-        prompt: verifierPrompt,
-        retryOptions: { callType: "schema_extraction" },
-      });
+      const verificationResult = await model.withStructuredOutput(z.object({
+        isClear: z.boolean(),
+        missingContext: z.string(),
+      })).invoke(verifierPrompt);
 
-      if (!verificationResult.object.isClear) {
-        const errorMsg = `CRON REJECTED. The instructions are ambiguous or missing context: ${verificationResult.object.missingContext}. Please provide complete, self-contained instructions.`;
+      if (!verificationResult.isClear) {
+        const errorMsg = `CRON REJECTED. The instructions are ambiguous or missing context: ${verificationResult.missingContext}. Please provide complete, self-contained instructions.`;
         logger.warn(`[${TOOL_NAME}] Cron rejected: ${errorMsg}`);
         return { taskId: "", success: false, error: errorMsg };
       }

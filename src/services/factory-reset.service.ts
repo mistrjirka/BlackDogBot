@@ -4,7 +4,7 @@ import { LoggerService } from "./logger.service.js";
 import { SchedulerService } from "./scheduler.service.js";
 import { PromptService } from "./prompt.service.js";
 import { LangchainMainAgent } from "../agent/langchain-main-agent.js";
-import { McpService } from "./mcp.service.js";
+import { LangchainMcpService } from "./langchain-mcp.service.js";
 import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, getSessionsDir, getMcpServersFilePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
 import { extractErrorMessage } from "../utils/error.js";
 
@@ -73,7 +73,7 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
 
   // 6b. Close MCP connections and wipe config
   await _safeStepAsync("Close MCP connections", errors, async (): Promise<void> => {
-    const mcpService: McpService = McpService.getInstance();
+    const mcpService = LangchainMcpService.getInstance();
     await mcpService.closeAsync();
   });
 

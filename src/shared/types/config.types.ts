@@ -9,33 +9,21 @@ export type EmbeddingProvider = "local" | "openrouter";
 // ROCm install provides a CUDA-compatible onnxruntime build.
 export type EmbeddingDevice = "auto" | "cpu" | "cuda";
 
-export interface IRateLimitConfig {
-  rpm: number;
-  tpm: number;
-  maxConcurrent?: number;
-}
-
 export interface IOpenRouterConfig {
   apiKey: string;
   model: string;
-  rateLimits: IRateLimitConfig;
   contextWindow?: number; // Optional, defaults to 128000 if not specified
-  structuredOutputMode?: StructuredOutputMode;
+  supportsVision?: boolean; // Whether the model supports image inputs
   activeProfile?: string;
   profilesDir?: string;
 }
-
-export type StructuredOutputMode = "auto" | "native_json_schema" | "tool_emulated" | "tool_auto";
-export type ResolvedStructuredOutputMode = "native_json_schema" | "tool_emulated" | "tool_auto";
 
 export interface IOpenAiCompatibleConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
-  rateLimits: IRateLimitConfig;
-  contextWindow?: number; // Optional, defaults to 128000 if not specified
-  supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
-  structuredOutputMode?: StructuredOutputMode;
+  contextWindow?: number; // Optional, defaults to 32768 if not specified
+  supportsVision?: boolean; // Whether the model supports image inputs
   requestTimeout?: number; // Per-request timeout in ms, default 500000. Retries once at 2x on timeout.
   activeProfile?: string;
   profilesDir?: string;
@@ -45,10 +33,8 @@ export interface ILmStudioConfig {
   baseUrl: string;
   apiKey?: string; // Optional for LM Studio
   model: string;
-  rateLimits: IRateLimitConfig;
   contextWindow?: number;
-  supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
-  structuredOutputMode?: StructuredOutputMode;
+  supportsVision?: boolean; // Whether the model supports image inputs
   requestTimeout?: number; // Per-request timeout in ms, default 500000. Retries once at 2x on timeout.
   activeProfile?: string;
   profilesDir?: string;
@@ -56,33 +42,8 @@ export interface ILmStudioConfig {
 
 export type AiProvider = "openrouter" | "openai-compatible" | "lm-studio";
 
-export interface IAiFallbackEntry {
-  provider: AiProvider;
-  model?: string;
-}
-
-export interface IProviderModelListEntry {
-  id: string;
-  name: string;
-  contextWindow: number | null;
-  supportsTools: boolean | null;
-  promptPrice: string | null;
-  completionPrice: string | null;
-}
-
-export interface IProviderCapabilitySummary {
-  provider: AiProvider;
-  model: string;
-  supportsStructuredOutputs: boolean;
-  supportsToolCalling: boolean;
-  supportsVision: boolean;
-  contextWindow: number;
-  structuredOutputMode: ResolvedStructuredOutputMode;
-}
-
 export interface IAiConfig {
   provider: AiProvider;
-  fallbacks?: IAiFallbackEntry[];
   openrouter?: IOpenRouterConfig;
   openaiCompatible?: IOpenAiCompatibleConfig;
   lmStudio?: ILmStudioConfig;

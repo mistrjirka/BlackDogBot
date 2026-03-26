@@ -1,12 +1,15 @@
 /**
  * Minimal capability detection service for LangChain-based agents.
- * Provides vision support, context window, and model ID info without
- * depending on Vercel AI SDK directly.
+ * Reads configuration directly from ConfigService - no API probing.
  * 
- * This is a facade over AiProviderService for the new LangChain architecture.
+ * For vision support, set `supportsVision: true` in your provider config:
+ * - openrouter.supportsVision
+ * - openaiCompatible.supportsVision
+ * - lmStudio.supportsVision
  */
 
-import { AiProviderService } from "./ai-provider.service.js";
+import { ConfigService } from "./config.service.js";
+import type { IAiConfig, IOpenRouterConfig, IOpenAiCompatibleConfig, ILmStudioConfig, AiProvider } from "../shared/types/config.types.js";
 
 //#region Types
 
@@ -14,7 +17,7 @@ export interface IAiCapabilityInfo {
   supportsVision: boolean;
   contextWindow: number;
   activeModelId: string;
-  activeProvider: string;
+  activeProvider: AiProvider;
 }
 
 //#endregion Types
@@ -23,7 +26,7 @@ export interface IAiCapabilityInfo {
 
 export class AiCapabilityService {
   private static _instance: AiCapabilityService | null = null;
-  private _aiProvider: AiProviderService;
+  private _config: IAiConfig | null = null;
 
   public static getInstance(): AiCapabilityService {
     if (!AiCapabilityService._instance) {
@@ -32,40 +35,66 @@ export class AiCapabilityService {
     return AiCapabilityService._instance;
   }
 
-  private constructor() {
-    this._aiProvider = AiProviderService.getInstance();
-  }
+  private constructor() {}
 
   /**
-   * Returns true if the current model supports vision/image inputs.
+   * Initialize with current AI config.
+   * Called once at startup.
    */
-  public getSupportsVision(): boolean {
-    return this._aiProvider.getSupportsVision();
+  public initialize(config: IAiConfig): void {
+    this._config = config;
   }
 
   /**
-   * Returns the context window size for the current model.
+   * Get the active provider name.
    */
-  public getContextWindow(): number {
-    return this._aiProvider.getContextWindow();
+  public getActiveProvider(): AiProvider {
+    return this._config?.provider ?? "openrouter";
   }
 
   /**
-   * Returns the active model ID.
+   * Get the active model ID.
    */
   public getActiveModelId(): string {
-    return this._aiProvider.getActiveModelId();
+    const providerConfig = this._getProviderConfig();
+    if (!providerConfig) {
+      return "unknown";
+    }
+    return providerConfig.model;
   }
 
   /**
-   * Returns the active provider name.
+   * Get the context window size for the current model.
+   * Returns safe defaults if not configured.
    */
-  public getActiveProvider(): string {
-    return this._aiProvider.getActiveProvider();
+  public getContextWindow(): number {
+    const providerConfig = this._getProviderConfig();
+    if (providerConfig?.contextWindow) {
+      return providerConfig.contextWindow;
+    }
+    // Safe defaults based on provider
+    const provider = this.getActiveProvider();
+    return provider === "openrouter" ? 128000 : 32768;
   }
 
   /**
-   * Returns all capability info in a single call.
+   * Check if the current model supports vision/image inputs.
+   * Returns true only if explicitly configured.
+   */
+  public getSupportsVision(): boolean {
+    const providerConfig = this._getProviderConfig();
+    if (!providerConfig) {
+      return false;
+    }
+    // Check for supportsVision property on any provider config
+    if ("supportsVision" in providerConfig && typeof providerConfig.supportsVision === "boolean") {
+      return providerConfig.supportsVision;
+    }
+    return false;
+  }
+
+  /**
+   * Get all capability info in a single call.
    */
   public getCapabilityInfo(): IAiCapabilityInfo {
     return {
@@ -74,6 +103,32 @@ export class AiCapabilityService {
       activeModelId: this.getActiveModelId(),
       activeProvider: this.getActiveProvider(),
     };
+  }
+
+  /**
+   * Get provider-specific configuration.
+   */
+  private _getProviderConfig(): IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig | null {
+    if (!this._config) {
+      // Try to get config from ConfigService if not initialized
+      this._config = ConfigService.getInstance().getConfig().ai;
+    }
+    
+    if (!this._config) {
+      return null;
+    }
+
+    const provider = this._config.provider;
+    
+    if (provider === "openrouter") {
+      return this._config.openrouter ?? null;
+    }
+    
+    if (provider === "openai-compatible") {
+      return this._config.openaiCompatible ?? null;
+    }
+    
+    return this._config.lmStudio ?? null;
   }
 }
 

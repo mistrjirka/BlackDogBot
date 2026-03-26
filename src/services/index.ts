@@ -1,7 +1,5 @@
 export { LoggerService } from "./logger.service.js";
 export { ConfigService } from "./config.service.js";
-export { RateLimiterService } from "./rate-limiter.service.js";
-export { AiProviderService } from "./ai-provider.service.js";
 export { PromptService, type IPromptInfo } from "./prompt.service.js";
 export { EmbeddingService } from "./embedding.service.js";
 export {

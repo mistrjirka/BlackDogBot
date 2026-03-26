@@ -6,7 +6,6 @@ import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { createChatModel } from "../services/langchain-model.service.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
@@ -192,27 +191,22 @@ Output a JSON object with:
 
     const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
-    const verificationResult = await generateObjectWithRetryAsync({
-      model,
-      schema: z.object({
-        isClear: z.boolean(),
-        missingContext: z.string(),
-      }),
-      prompt: verifierPrompt,
-      retryOptions: { callType: "schema_extraction" },
-    });
+    const verificationResult = await model.withStructuredOutput(z.object({
+      isClear: z.boolean(),
+      missingContext: z.string(),
+    })).invoke(verifierPrompt);
 
-    if (!verificationResult.object.isClear) {
+    if (!verificationResult.isClear) {
       const errorMsg =
         `EDIT REJECTED. The updated instructions were not approved by the verifier.\n\n` +
-        `Verifier reason: ${verificationResult.object.missingContext}\n\n` +
+        `Verifier reason: ${verificationResult.missingContext}\n\n` +
         `Current instructions:\n${existingTask.instructions}\n\n` +
         `Proposed instructions:\n${normalizedInstructions}\n\n` +
         `Intention: ${normalizedIntention}`;
 
       logger.warn(`[${TOOL_NAME}] Edit rejected`, {
         taskId,
-        reason: verificationResult.object.missingContext,
+        reason: verificationResult.missingContext,
       });
 
       return { success: false, error: errorMsg };

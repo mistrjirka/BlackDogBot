@@ -1,5 +1,3 @@
-import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { LoggerService } from "./logger.service.js";
 import { ConfigService } from "./config.service.js";
 import { createChatModel } from "./langchain-model.service.js";
@@ -320,25 +318,18 @@ export class CronMessageHistoryService {
         similarMessagesBlock,
       });
 
-      const decision = await generateObjectWithRetryAsync({
-        model,
-        schema: MessageNoveltySchema,
-        prompt: noveltyPrompt,
-        retryOptions: {
-          callType: "schema_extraction",
-        },
-      });
+      const decision = await model.withStructuredOutput(MessageNoveltySchema).invoke(noveltyPrompt);
 
       this._logger.info("Cron message novelty decision computed", {
         taskId,
-        isNewInformation: decision.object.isNewInformation,
-        reasoning: decision.object.reasoning,
+        isNewInformation: decision.isNewInformation,
+        reasoning: decision.reasoning,
         similarCount: sameTaskSimilarMessages.length,
         queryPreview: this._buildSearchPreview(message),
       });
 
       return {
-        isNewInformation: decision.object.isNewInformation,
+        isNewInformation: decision.isNewInformation,
         similarCount: sameTaskSimilarMessages.length,
       };
     } catch (error: unknown) {
@@ -409,23 +400,16 @@ ${normalizedInstructions}
 Candidate message:
 ${candidateMessage}`;
 
-      const decision = await generateObjectWithRetryAsync({
-        model,
-        schema: MessageDispatchPolicySchema,
-        prompt,
-        retryOptions: {
-          callType: "schema_extraction",
-        },
-      });
+      const decision = await model.withStructuredOutput(MessageDispatchPolicySchema).invoke(prompt);
 
       this._logger.info("Cron message dispatch policy decision computed", {
-        shouldDispatch: decision.object.shouldDispatch,
-        reasoning: decision.object.reasoning,
+        shouldDispatch: decision.shouldDispatch,
+        reasoning: decision.reasoning,
         queryPreview: this._buildSearchPreview(message),
       });
 
       return {
-        shouldDispatch: decision.object.shouldDispatch,
+        shouldDispatch: decision.shouldDispatch,
       };
     } catch (error: unknown) {
       const details: string = error instanceof Error ? error.message : String(error);
@@ -484,13 +468,9 @@ Output a single concise summary paragraph.`;
     try {
       const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
-      const result = await generateTextWithRetryAsync({
-        model,
-        prompt,
-        retryOptions: { callType: "cron_history" },
-      });
+      const result = await model.invoke(prompt);
 
-      const newSummary: string = result.text ?? "";
+      const newSummary: string = typeof result.content === "string" ? result.content : "";
 
       CronMessageHistoryService._sharedHistory = recentMessages;
 

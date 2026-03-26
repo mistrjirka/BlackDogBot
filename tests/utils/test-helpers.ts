@@ -7,16 +7,13 @@ import { ConfigService } from "../../src/services/config.service.js";
 import { LoggerService } from "../../src/services/logger.service.js";
 import { EmbeddingService } from "../../src/services/embedding.service.js";
 import { VectorStoreService } from "../../src/services/vector-store.service.js";
-import { AiProviderService } from "../../src/services/ai-provider.service.js";
 import { SchedulerService } from "../../src/services/scheduler.service.js";
 import { ChannelRegistryService } from "../../src/services/channel-registry.service.js";
 import { MessagingService } from "../../src/services/messaging.service.js";
 import { SkillLoaderService } from "../../src/services/skill-loader.service.js";
-import { RateLimiterService } from "../../src/services/rate-limiter.service.js";
 import { PromptService } from "../../src/services/prompt.service.js";
 import { LangchainMainAgent } from "../../src/agent/langchain-main-agent.js";
 import { McpRegistryService } from "../../src/services/mcp-registry.service.js";
-import { McpService } from "../../src/services/mcp.service.js";
 import type { LogLevel } from "../../src/shared/types/index.js";
 
 export type SingletonClass =
@@ -24,16 +21,13 @@ export type SingletonClass =
   | typeof LoggerService
   | typeof EmbeddingService
   | typeof VectorStoreService
-  | typeof AiProviderService
   | typeof SchedulerService
   | typeof ChannelRegistryService
   | typeof MessagingService
   | typeof SkillLoaderService
-  | typeof RateLimiterService
   | typeof PromptService
   | typeof LangchainMainAgent
-  | typeof McpRegistryService
-  | typeof McpService;
+  | typeof McpRegistryService;
 
 export function resetSingletons(services: SingletonClass[] = []): void {
   const defaultServices: SingletonClass[] = [
@@ -41,16 +35,13 @@ export function resetSingletons(services: SingletonClass[] = []): void {
     LoggerService,
     EmbeddingService,
     VectorStoreService,
-    AiProviderService,
     SchedulerService,
     ChannelRegistryService,
     MessagingService,
     SkillLoaderService,
-    RateLimiterService,
     PromptService,
     LangchainMainAgent,
     McpRegistryService,
-    McpService,
   ];
 
   const toReset = services.length > 0 ? services : defaultServices;
