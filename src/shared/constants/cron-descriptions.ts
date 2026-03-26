@@ -76,14 +76,6 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Find-and-replace text inside a file. Does not require reading first. " +
     "Args: filePath (string, default ''); oldString (string, required); newString (string, required); replaceAll (boolean, default false).",
 
-  run_job:
-    "Execute a preconfigured job by its ID with optional input data. The job must be in 'ready' status. " +
-    "Args: jobId (string, required); input (object, default {}).",
-
-  get_jobs:
-    "List all jobs, optionally filtered by status (creating | ready | running | completed | failed). " +
-    "Args: status (enum, optional).",
-
   list_crons:
     "List all scheduled cron tasks managed by the scheduler. " +
     "Args: enabledOnly (boolean, default false).",
