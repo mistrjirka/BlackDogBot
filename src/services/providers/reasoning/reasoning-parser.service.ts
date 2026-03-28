@@ -1,6 +1,65 @@
 import type { IAnswerExtractionResult, IThinkParseResult } from "./reasoning.types.js";
 
+export interface IParsedTextToolCall {
+  name: string;
+  arguments: string;
+}
+
 export class ReasoningParserService {
+  public static normalizeToolArguments(argumentsUnknown: unknown): string {
+    if (typeof argumentsUnknown === "string") {
+      return argumentsUnknown;
+    }
+
+    if (typeof argumentsUnknown === "object" && argumentsUnknown !== null) {
+      return JSON.stringify(argumentsUnknown);
+    }
+
+    return "{}";
+  }
+
+  public static parseToolCallsFromText(content: string): IParsedTextToolCall[] {
+    if (content.trim().length === 0) {
+      return [];
+    }
+
+    const parsedToolCalls: IParsedTextToolCall[] = [];
+    const toolCallRegex: RegExp = /<(tool_call|toolcall)>([\s\S]*?)<\/\1>/gi;
+    const blocks: RegExpMatchArray[] = Array.from(content.matchAll(toolCallRegex));
+
+    for (const block of blocks) {
+      const blockContent: string = (block[2] ?? "").trim();
+      if (blockContent.length === 0) {
+        continue;
+      }
+
+      const parsedFromJsonEnvelope: IParsedTextToolCall | null = this._parseJsonToolCallEnvelope(blockContent);
+      if (parsedFromJsonEnvelope !== null) {
+        parsedToolCalls.push(parsedFromJsonEnvelope);
+        continue;
+      }
+
+      const parsedFromFunctionEnvelope: IParsedTextToolCall | null = this._parseFunctionEnvelope(blockContent);
+      if (parsedFromFunctionEnvelope !== null) {
+        parsedToolCalls.push(parsedFromFunctionEnvelope);
+      }
+    }
+
+    const deduped: IParsedTextToolCall[] = [];
+    const seenKeys: Set<string> = new Set<string>();
+
+    for (const parsedToolCall of parsedToolCalls) {
+      const dedupeKey: string = `${parsedToolCall.name}::${parsedToolCall.arguments}`;
+      if (seenKeys.has(dedupeKey)) {
+        continue;
+      }
+      seenKeys.add(dedupeKey);
+      deduped.push(parsedToolCall);
+    }
+
+    return deduped;
+  }
+
   public static parseThinkTags(content: string): IThinkParseResult {
     const thinkTagRegex: RegExp = /<think>([\s\S]*?)<\/think>/gi;
     const matches: RegExpMatchArray[] = Array.from(content.matchAll(thinkTagRegex));
@@ -135,5 +194,74 @@ export class ReasoningParserService {
     }
 
     return parts.join("\n\n").trim();
+  }
+
+  private static _parseJsonToolCallEnvelope(blockContent: string): IParsedTextToolCall | null {
+    try {
+      const parsedUnknown: unknown = JSON.parse(blockContent);
+      if (typeof parsedUnknown !== "object" || parsedUnknown === null) {
+        return null;
+      }
+
+      const parsedRecord: Record<string, unknown> = parsedUnknown as Record<string, unknown>;
+      const nameUnknown: unknown = parsedRecord.name;
+
+      if (typeof nameUnknown !== "string" || nameUnknown.trim().length === 0) {
+        return null;
+      }
+
+      return {
+        name: nameUnknown,
+        arguments: this.normalizeToolArguments(parsedRecord.arguments),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private static _parseFunctionEnvelope(blockContent: string): IParsedTextToolCall | null {
+    const functionRegex: RegExp = /^<function=([^>]+)>([\s\S]*?)<\/function>$/i;
+    const functionMatch: RegExpMatchArray | null = blockContent.match(functionRegex);
+
+    if (!functionMatch) {
+      return null;
+    }
+
+    const name: string = (functionMatch[1] ?? "").trim();
+    const functionBody: string = (functionMatch[2] ?? "").trim();
+
+    if (name.length === 0) {
+      return null;
+    }
+
+    const parameterRegex: RegExp = /<(parameter|param)=([^>]+)>([\s\S]*?)<\/\1>/gi;
+    const parameterMatches: RegExpMatchArray[] = Array.from(functionBody.matchAll(parameterRegex));
+
+    if (parameterMatches.length > 0) {
+      const parsedParameters: Record<string, unknown> = {};
+      for (const parameterMatch of parameterMatches) {
+        const parameterName: string = (parameterMatch[2] ?? "").trim();
+        const parameterValue: string = (parameterMatch[3] ?? "").trim();
+
+        if (parameterName.length > 0) {
+          parsedParameters[parameterName] = parameterValue;
+        }
+      }
+
+      return {
+        name,
+        arguments: this.normalizeToolArguments(parsedParameters),
+      };
+    }
+
+    try {
+      const parsedBodyUnknown: unknown = JSON.parse(functionBody);
+      return {
+        name,
+        arguments: this.normalizeToolArguments(parsedBodyUnknown),
+      };
+    } catch {
+      return null;
+    }
   }
 }

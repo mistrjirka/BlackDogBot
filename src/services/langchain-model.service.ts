@@ -1,19 +1,25 @@
 import { ChatOpenAI } from "@langchain/openai";
+import fs from "node:fs";
+import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import type { IAiConfig } from "../shared/types/config.types.js";
 import { LoggerService } from "./logger.service.js";
 import { ChatOpenAICompletionsReasoning } from "./providers/chat-openai-completions-reasoning.js";
+import { getModelProfilesDir } from "../utils/paths.js";
 
 //#region Public Functions
 
 export function createChatModel(config: IAiConfig): ChatOpenAI {
   const logger: LoggerService = LoggerService.getInstance();
   const { baseURL, apiKey, model, timeout } = _resolveProviderConfig(config);
+  const modelKwargs: Record<string, unknown> = _resolveModelKwargs(config);
   const modelFields = {
     model,
     configuration: {
       baseURL,
       apiKey,
     },
+    modelKwargs,
     temperature: 0.7,
     maxRetries: 3,
     timeout,
@@ -39,6 +45,16 @@ interface IResolvedProviderConfig {
   apiKey: string;
   model: string;
   timeout: number;
+}
+
+interface IModelProfileDefaults {
+  reasoningFormat?: string;
+  parallelToolCalls?: boolean;
+  chatTemplateKwargs?: Record<string, unknown>;
+}
+
+interface IModelProfileYaml {
+  defaults?: IModelProfileDefaults;
 }
 
 function _resolveProviderConfig(config: IAiConfig): IResolvedProviderConfig {
@@ -72,6 +88,102 @@ function _resolveProviderConfig(config: IAiConfig): IResolvedProviderConfig {
   }
 
   throw new Error(`No provider configuration found for: ${config.provider}`);
+}
+
+function _resolveModelKwargs(config: IAiConfig): Record<string, unknown> {
+  const profileContext = _resolveProfileContext(config);
+  if (profileContext === null) {
+    return {};
+  }
+
+  const profileData = _loadProfileYaml(profileContext.profileName, profileContext.profilesDir);
+  if (profileData === null || typeof profileData.defaults !== "object" || profileData.defaults === null) {
+    return {};
+  }
+
+  const defaults: IModelProfileDefaults = profileData.defaults;
+  const modelKwargs: Record<string, unknown> = {};
+
+  if (typeof defaults.reasoningFormat === "string" && defaults.reasoningFormat.length > 0) {
+    modelKwargs.reasoning_format = defaults.reasoningFormat;
+  }
+
+  if (typeof defaults.parallelToolCalls === "boolean") {
+    modelKwargs.parallel_tool_calls = defaults.parallelToolCalls;
+  }
+
+  if (typeof defaults.chatTemplateKwargs === "object" && defaults.chatTemplateKwargs !== null) {
+    modelKwargs.chat_template_kwargs = defaults.chatTemplateKwargs;
+  }
+
+  return modelKwargs;
+}
+
+function _resolveProfileContext(config: IAiConfig): { profileName: string; profilesDir: string } | null {
+  const provider = config.provider;
+
+  if (provider === "openai-compatible") {
+    const providerConfig = config.openaiCompatible;
+    if (!providerConfig?.activeProfile) {
+      return null;
+    }
+
+    return {
+      profileName: providerConfig.activeProfile,
+      profilesDir: providerConfig.profilesDir ?? getModelProfilesDir(),
+    };
+  }
+
+  if (provider === "lm-studio") {
+    const providerConfig = config.lmStudio;
+    if (!providerConfig?.activeProfile) {
+      return null;
+    }
+
+    return {
+      profileName: providerConfig.activeProfile,
+      profilesDir: providerConfig.profilesDir ?? getModelProfilesDir(),
+    };
+  }
+
+  if (provider === "openrouter") {
+    const providerConfig = config.openrouter;
+    if (!providerConfig?.activeProfile) {
+      return null;
+    }
+
+    return {
+      profileName: providerConfig.activeProfile,
+      profilesDir: providerConfig.profilesDir ?? getModelProfilesDir(),
+    };
+  }
+
+  return null;
+}
+
+function _loadProfileYaml(profileName: string, profilesDir: string): IModelProfileYaml | null {
+  const userProfilePath: string = path.join(profilesDir, `${profileName}.yaml`);
+  const builtInProfilePath: string = path.resolve(process.cwd(), "src", "defaults", "model-profiles", `${profileName}.yaml`);
+
+  const pathsToTry: string[] = [userProfilePath, builtInProfilePath];
+
+  for (const profilePath of pathsToTry) {
+    if (!fs.existsSync(profilePath)) {
+      continue;
+    }
+
+    try {
+      const rawContent: string = fs.readFileSync(profilePath, "utf-8");
+      const parsed: unknown = parseYaml(rawContent);
+      if (typeof parsed === "object" && parsed !== null) {
+        return parsed as IModelProfileYaml;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 }
 
 //#endregion Private Functions

@@ -31,4 +31,48 @@ describe("ReasoningParserService", () => {
     expect(reasoning).toContain("Detail A");
     expect(reasoning).toContain("Detail B");
   });
+
+  it("parses JSON tool call envelope from <tool_call>", () => {
+    const parsed = ReasoningParserService.parseToolCallsFromText(
+      '<tool_call>{"name":"get_cron","arguments":{"taskId":"abc"}}</tool_call>',
+    );
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].name).toBe("get_cron");
+    expect(parsed[0].arguments).toBe('{"taskId":"abc"}');
+  });
+
+  it("parses alias envelope from <toolcall>", () => {
+    const parsed = ReasoningParserService.parseToolCallsFromText(
+      '<toolcall>{"name":"remove_cron","arguments":{"taskId":"abc"}}</toolcall>',
+    );
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].name).toBe("remove_cron");
+    expect(parsed[0].arguments).toBe('{"taskId":"abc"}');
+  });
+
+  it("parses qwen function envelope from <tool_call>", () => {
+    const parsed = ReasoningParserService.parseToolCallsFromText(
+      '<tool_call><function=get_cron>{"taskId":"abc"}</function></tool_call>',
+    );
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].name).toBe("get_cron");
+    expect(parsed[0].arguments).toBe('{"taskId":"abc"}');
+  });
+
+  it("normalizes object arguments to JSON string", () => {
+    const normalized = ReasoningParserService.normalizeToolArguments({ taskId: "abc" });
+
+    expect(normalized).toBe('{"taskId":"abc"}');
+  });
+
+  it("returns empty list for malformed tool-call envelopes", () => {
+    const parsed = ReasoningParserService.parseToolCallsFromText(
+      '<tool_call><function=get_cron>{bad json}</function></tool_call>',
+    );
+
+    expect(parsed).toHaveLength(0);
+  });
 });
