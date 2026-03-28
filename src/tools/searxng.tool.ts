@@ -1,15 +1,7 @@
 import { tool } from "langchain";
 import { searxngToolInputSchema } from "../shared/schemas/tool-schemas.js";
-import { searchSearxngAsync } from "../utils/searxng-client.js";
+import { searchSearxngAsync, type ISearxngResult } from "../utils/searxng-client.js";
 import { extractErrorMessage } from "../utils/error.js";
-
-interface ISearxngResult {
-  title?: string;
-  url?: string;
-  content?: string;
-  img_src?: string;
-  thumbnail?: string;
-}
 
 function formatResultsAsMarkdown(
   query: string,

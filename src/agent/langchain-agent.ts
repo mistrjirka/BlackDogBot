@@ -18,7 +18,6 @@ import type { IAiConfig } from "../shared/types/config.types.js";
 import type { IChatImageAttachment, IToolCallSummary } from "./types.js";
 import { ReasoningParserService } from "../services/providers/reasoning/reasoning-parser.service.js";
 import { ReasoningNormalizerService } from "../services/providers/reasoning/reasoning-normalizer.service.js";
-import type { IResolvedToolCall } from "../services/providers/reasoning/reasoning.types.js";
 
 //#region Interfaces
 
@@ -156,12 +155,76 @@ export async function invokeAgentAsync(
   const logger: LoggerService = LoggerService.getInstance();
   const userMessage: HumanMessage = buildHumanMessage(text, images);
 
-  const result = await agent.invoke(
-    { messages: [userMessage] },
-    { configurable: { thread_id: threadId } },
-  );
+  let stepsCount: number = 0;
+  let progressStepCount: number = 0;
+  let sendMessageUsed: boolean = false;
 
-  const messages = result.messages;
+  let stream: AsyncIterable<unknown>;
+  try {
+    stream = await agent.stream(
+      { messages: [userMessage] },
+      { configurable: { thread_id: threadId }, streamMode: ["tools", "updates"] },
+    );
+  } catch (error: unknown) {
+    logger.error("Failed to initialize agent stream", {
+      threadId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+
+  for await (const chunk of stream) {
+    if (!chunk || !Array.isArray(chunk)) {
+      continue;
+    }
+
+    const [mode, payload] = chunk as [string, Record<string, unknown>];
+
+    if (mode === "tools") {
+      const event = payload as { event: string; name: string; input?: unknown; toolCallId?: string; output?: unknown; error?: unknown };
+
+      if (event.event === "on_tool_start") {
+        stepsCount++;
+        progressStepCount++;
+
+        const parsedInput: Record<string, unknown> = _parseToolInput(event.input);
+
+        const toolCall: IToolCallSummary = {
+          name: event.name,
+          input: parsedInput,
+          toolCallId: event.toolCallId,
+        };
+
+        if (event.name === "send_message") {
+          sendMessageUsed = true;
+        }
+
+        logger.logStep(stepsCount, event.name, parsedInput, "(running...)");
+
+        if (onStepAsync) {
+          await onStepAsync(progressStepCount, [toolCall]);
+        }
+      } else if (event.event === "on_tool_end" || event.event === "on_tool_error") {
+        logger.debug(`Tool ${event.event} for ${event.name}`, {
+          toolCallId: event.toolCallId,
+          hasOutput: event.output !== undefined,
+          hasError: event.error !== undefined,
+        });
+      }
+    }
+  }
+
+  let messages: BaseMessage[] = [];
+  try {
+    const state = await agent.getState({ configurable: { thread_id: threadId } }) as { values?: { messages?: unknown } };
+    messages = _coerceMessages(state.values?.messages);
+  } catch (error: unknown) {
+    logger.error("Failed to read final agent state", {
+      threadId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 
   logger.debug("Agent result messages", {
     messageCount: messages.length,
@@ -171,151 +234,8 @@ export async function invokeAgentAsync(
     })),
   });
 
-  // Find the last AI message with normalized text content
-  let responseText: string = "";
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg._getType() === "ai") {
-      const aiMsg = msg as AIMessage;
-      const content = aiMsg.content;
+  const responseText: string = _extractResponseTextFromMessages(messages);
 
-      logger.debug("Checking AI message for text", {
-        index: i,
-        contentType: typeof content,
-        isArray: Array.isArray(content),
-        contentPreview: JSON.stringify(content).slice(0, 300),
-        toolCallsCount: aiMsg.tool_calls?.length ?? 0,
-        additionalKwargs: Object.keys(aiMsg.additional_kwargs ?? {}),
-      });
-
-      // Handle both string content and structured content
-      if (typeof content === "string") {
-        responseText = content;
-      } else if (Array.isArray(content)) {
-        // Extract text from content blocks
-        const textBlocks = content.filter(
-          (block): block is { type: "text"; text: string } =>
-            typeof block === "object" && block !== null && block.type === "text"
-        );
-        responseText = textBlocks.map((b) => b.text).join("");
-      }
-
-      const additionalKwargs: Record<string, unknown> =
-        (aiMsg.additional_kwargs ?? {}) as Record<string, unknown>;
-      const reasoningContent: string = ReasoningParserService.extractReasoningFromAdditionalKwargs(additionalKwargs);
-      const normalized = ReasoningNormalizerService.normalize({
-        content: responseText,
-        reasoningContent,
-      });
-
-      logger.debug("Reasoning normalization", {
-        index: i,
-        method: normalized.method,
-        reasoningLength: normalized.reasoning.length,
-        answerLength: normalized.answer.length,
-        textLength: normalized.text.length,
-      });
-
-      responseText = normalized.text;
-
-      if (responseText.length > 0) {
-        break;
-      }
-    }
-  }
-
-  let stepsCount: number = 0;
-  let progressStepCount: number = 0;
-  const toolCalls: Array<{ name: string; args: Record<string, unknown>; id?: string }> = [];
-  let sendMessageUsed: boolean = false;
-
-  // Log each tool step with colored formatting
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    if (msg._getType() === "ai") {
-      const aiMsg = msg as AIMessage;
-      const aiContent: string = _extractTextContent(aiMsg.content);
-      const additionalKwargs: Record<string, unknown> =
-        (aiMsg.additional_kwargs ?? {}) as Record<string, unknown>;
-      const resolvedToolCalls: IResolvedToolCall[] = ReasoningNormalizerService.resolveToolCalls(
-        aiMsg.tool_calls,
-        aiContent,
-        additionalKwargs,
-      );
-
-      if (resolvedToolCalls.length > 0) {
-        progressStepCount++;
-        const stepToolCalls: IToolCallSummary[] = [];
-
-        for (const tc of resolvedToolCalls) {
-          toolCalls.push({
-            name: tc.name,
-            args: tc.args,
-            id: tc.id,
-          });
-
-          stepToolCalls.push({
-            name: tc.name,
-            input: tc.args,
-            toolCallId: tc.id,
-          });
-
-          if (tc.name === "send_message") {
-            sendMessageUsed = true;
-          }
-
-          stepsCount++;
-
-          // Find the corresponding tool result message (prefer tool_call_id for correctness).
-          const toolResultMsg = messages.find((m: {
-            _getType(): string;
-            name?: string;
-            tool_call_id?: string;
-          }): boolean => {
-            if (m._getType() !== "tool") {
-              return false;
-            }
-
-            if (tc.id && m.tool_call_id) {
-              return m.tool_call_id === tc.id;
-            }
-
-            return m.name === tc.name;
-          });
-
-          let resultPreview = "";
-          if (toolResultMsg) {
-            const toolContent = (toolResultMsg as { content?: unknown }).content;
-            if (typeof toolContent === "string") {
-              resultPreview = toolContent.slice(0, 500);
-            } else if (Array.isArray(toolContent)) {
-              resultPreview = toolContent
-                .map((c) => (typeof c === "string" ? c : JSON.stringify(c)))
-                .join("")
-                .slice(0, 500);
-            } else {
-              resultPreview = JSON.stringify(toolContent).slice(0, 500);
-            }
-          }
-
-          // Log step with colored formatting
-          logger.logStep(
-            stepsCount,
-            tc.name,
-            tc.args,
-            resultPreview,
-          );
-        }
-
-        // Invoke the onStepAsync callback for live progress updates
-        if (onStepAsync && stepToolCalls.length > 0) {
-          await onStepAsync(progressStepCount, stepToolCalls);
-        }
-      }
-    }
-  }
-
-  // Always log the final response (including empty), so termination is visible.
   logger.logFinalResponse(responseText, {
     threadId,
     stepsCount,
@@ -339,34 +259,75 @@ export async function invokeAgentAsync(
   };
 }
 
-function _extractTextContent(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
+function _parseToolInput(input: unknown): Record<string, unknown> {
+  if (typeof input === "object" && input !== null) {
+    return input as Record<string, unknown>;
   }
-
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  const textParts: string[] = [];
-
-  for (const contentPart of content) {
-    if (typeof contentPart === "string") {
-      textParts.push(contentPart);
-      continue;
-    }
-
-    if (typeof contentPart !== "object" || contentPart === null) {
-      continue;
-    }
-
-    const contentRecord: Record<string, unknown> = contentPart as Record<string, unknown>;
-    if (contentRecord.type === "text" && typeof contentRecord.text === "string") {
-      textParts.push(contentRecord.text);
+  if (typeof input === "string") {
+    try {
+      return JSON.parse(input) as Record<string, unknown>;
+    } catch {
+      return {};
     }
   }
+  return {};
+}
 
-  return textParts.join("\n");
+function _coerceMessages(rawMessages: unknown): BaseMessage[] {
+  if (!Array.isArray(rawMessages)) {
+    return [];
+  }
+
+  const messages: BaseMessage[] = [];
+  for (const message of rawMessages) {
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      typeof (message as { _getType?: unknown })._getType === "function"
+    ) {
+      messages.push(message as BaseMessage);
+    }
+  }
+
+  return messages;
+}
+
+function _extractResponseTextFromMessages(messages: BaseMessage[]): string {
+  let responseText: string = "";
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg._getType() === "ai") {
+      const aiMsg = msg as AIMessage;
+      const content = aiMsg.content;
+
+      if (typeof content === "string") {
+        responseText = content;
+      } else if (Array.isArray(content)) {
+        const textBlocks = content.filter(
+          (block): block is { type: "text"; text: string } =>
+            typeof block === "object" && block !== null && block.type === "text"
+        );
+        responseText = textBlocks.map((b) => b.text).join("");
+      }
+
+      const additionalKwargs: Record<string, unknown> =
+        (aiMsg.additional_kwargs ?? {}) as Record<string, unknown>;
+      const reasoningContent: string = ReasoningParserService.extractReasoningFromAdditionalKwargs(additionalKwargs);
+      const normalized = ReasoningNormalizerService.normalize({
+        content: responseText,
+        reasoningContent,
+      });
+
+      responseText = normalized.text;
+
+      if (responseText.length > 0) {
+        break;
+      }
+    }
+  }
+
+  return responseText;
 }
 
 //#endregion Public Functions

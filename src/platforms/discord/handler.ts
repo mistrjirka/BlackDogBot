@@ -17,6 +17,7 @@ import {
 } from "../../utils/ai-error.js";
 import { formatMarkdownForDiscord } from "../../utils/discord-format.js";
 import { splitMessageByLength } from "../../utils/message-split.js";
+import { TYPING_INDICATOR_INTERVAL_MS, DISCORD_MESSAGE_CHUNK_LENGTH } from "../../shared/constants.js";
 import { isCancelCommand } from "../../utils/command-utils.js";
 
 //#region DiscordHandler
@@ -177,7 +178,7 @@ export class DiscordHandler {
         } catch {
           // Silently ignore
         }
-      }, 5000);
+      }, TYPING_INDICATOR_INTERVAL_MS);
 
       try {
         const result: IAgentResult = await this._agent.processMessageForChatAsync(
@@ -188,7 +189,7 @@ export class DiscordHandler {
         // Send response
         if (result.text) {
           const markdownText: string = formatMarkdownForDiscord(result.text);
-          const chunks: string[] = splitMessageByLength(markdownText, 2000);
+          const chunks: string[] = splitMessageByLength(markdownText, DISCORD_MESSAGE_CHUNK_LENGTH);
           for (const chunk of chunks) {
             await message.reply(chunk);
           }
