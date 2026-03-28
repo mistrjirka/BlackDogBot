@@ -34,6 +34,7 @@ export interface IChatAgent {
 
 export class LangchainChatAgent implements IChatAgent {
   private _agent: ReturnType<typeof createLangchainAgent>;
+  private _onStepAsync?: OnStepCallback;
 
   constructor(aiConfig: IAiConfig, tools: DynamicStructuredTool[], checkpointer: SqliteSaver) {
     this._agent = createLangchainAgent({ aiConfig, systemPrompt: "...", tools, checkpointer });
@@ -44,17 +45,27 @@ export class LangchainChatAgent implements IChatAgent {
     message: string,
     images?: IChatImageAttachment[],
   ): Promise<IAgentResult> {
-    const result = await invokeAgentAsync(this._agent, message, chatId, images);
-    return { text: result.text, stepsCount: result.stepsCount };
+    const result = await invokeAgentAsync(
+      this._agent,
+      message,
+      chatId,
+      images,
+      this._onStepAsync,
+    );
+    return {
+      text: result.text,
+      stepsCount: result.stepsCount,
+      sendMessageUsed: result.sendMessageUsed,
+    };
   }
 
   async initializeForChatAsync(
     _chatId: string,
     _messageSender: MessageSender,
     _photoSender: PhotoSender,
-    _onStepAsync?: OnStepCallback,
+    onStepAsync?: OnStepCallback,
     _platform?: MessagePlatform,
   ): Promise<void> {
-    // No-op for LangChain (checkpointer handles state)
+    this._onStepAsync = onStepAsync;
   }
 }

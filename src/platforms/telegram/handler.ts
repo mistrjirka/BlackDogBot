@@ -430,11 +430,18 @@ export class TelegramHandler {
           }
         }
 
-        this._logger.info("Telegram message processed", {
+        const logData: Record<string, unknown> = {
           chatId,
           stepsCount: result.stepsCount,
-          responseLength: result.text.length,
-        });
+          responseLength: result.text?.length ?? 0,
+          sendMessageUsed: result.sendMessageUsed ?? false,
+        };
+
+        if (result.sendMessageUsed) {
+          logData.note = "Final response suppressed - send_message tool was used";
+        }
+
+        this._logger.info("Telegram message processed", logData);
       } finally {
         clearInterval(typingInterval);
       }

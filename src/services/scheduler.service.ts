@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import Bottleneck from "bottleneck";
+
 import { CronScheduler } from "./cron-scheduler.js";
 
 import { IScheduledTask } from "../shared/types/index.js";
@@ -59,6 +61,9 @@ export class SchedulerService {
   private _runningTaskCount: number;
   private _taskQueue: IQueuedTask[];
 
+  // Rate limiting for task-skipped notifications
+  private _taskSkippedLimiter: Bottleneck;
+
   //#endregion Data members
 
   //#region Constructors
@@ -78,6 +83,12 @@ export class SchedulerService {
     this._cronQueueSize = DEFAULT_CRON_QUEUE_SIZE;
     this._runningTaskCount = 0;
     this._taskQueue = [];
+
+    // Rate limit task-skipped notifications to max 1 per 10 seconds
+    this._taskSkippedLimiter = new Bottleneck({
+      minTime: 600,
+      maxConcurrent: 1,
+    });
   }
 
   //#endregion Constructors
@@ -163,6 +174,7 @@ export class SchedulerService {
 
     // Clear the queue on stop — queued tasks are abandoned
     this._taskQueue = [];
+    this._runningTaskCount = 0;
 
     this._logger.info("Scheduler stopped");
   }
@@ -472,7 +484,9 @@ export class SchedulerService {
     });
 
     if (this._onTaskSkipped) {
-      this._onTaskSkipped(task, reason).catch((error: unknown) => {
+      this._taskSkippedLimiter.schedule(() =>
+        this._onTaskSkipped!(task, reason),
+      ).catch((error: unknown) => {
         this._logger.error("Failed to send task-skipped notification", {
           taskId: task.taskId,
           error: extractErrorMessage(error),

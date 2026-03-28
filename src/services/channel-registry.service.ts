@@ -204,13 +204,9 @@ export class ChannelRegistryService {
    * Used by CronTaskExecutor to broadcast messages.
    */
   public getNotificationChannels(): IRegisteredChannel[] {
-    const channels = this._config.channels.filter((c) => c.receiveNotifications);
-
-    for (const channel of channels) {
-      this._validateChannelId(channel.platform, channel.channelId);
-    }
-
-    return channels;
+    return this._config.channels
+      .filter((c) => c.receiveNotifications)
+      .filter((c) => this._validateChannelId(c.platform, c.channelId));
   }
 
   /**

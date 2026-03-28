@@ -17,12 +17,16 @@ migrateLegacyBaseDirSync();
 
 //#region Public functions
 
+export function getHomeDir(): string {
+  return process.env.HOME ?? os.homedir();
+}
+
 export function getBaseDir(): string {
-  return path.join(os.homedir(), _BaseDirName);
+  return path.join(getHomeDir(), _BaseDirName);
 }
 
 export function getLegacyBaseDir(): string {
-  return path.join(os.homedir(), _LegacyBaseDirName);
+  return path.join(getHomeDir(), _LegacyBaseDirName);
 }
 
 export function getConfigPath(): string {

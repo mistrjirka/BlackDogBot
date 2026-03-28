@@ -8,6 +8,8 @@ export interface IAgentResult {
   text: string;
   stepsCount: number;
   paused?: boolean;
+  /** True if send_message tool was called during execution */
+  sendMessageUsed?: boolean;
 }
 
 export interface IToolCallSummary {

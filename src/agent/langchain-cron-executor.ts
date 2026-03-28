@@ -1,8 +1,8 @@
 import type { DynamicStructuredTool } from "langchain";
-import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
-import { AIMessage } from "@langchain/core/messages";
+import { AIMessage, type BaseMessage } from "@langchain/core/messages";
 import path from "node:path";
 import os from "node:os";
+import fs from "node:fs/promises";
 
 import { LoggerService } from "../services/logger.service.js";
 import { ConfigService } from "../services/config.service.js";
@@ -13,6 +13,7 @@ import type { IAgentResult } from "./types.js";
 import type { IScheduledTask, IExecutionContext } from "../shared/types/cron.types.js";
 import { PROMPT_CRON_AGENT } from "../shared/constants.js";
 import { getCurrentDateTime } from "../utils/time.js";
+import { isContextExceededApiError } from "../utils/context-error.js";
 
 import {
   thinkTool,
@@ -55,22 +56,10 @@ import {
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
+import { ReasoningParserService } from "../services/providers/reasoning/reasoning-parser.service.js";
+import { ReasoningNormalizerService } from "../services/providers/reasoning/reasoning-normalizer.service.js";
 
-//#region Interfaces
-
-export interface IToolCallTrace {
-  step: number;
-  name: string;
-  input: Record<string, unknown>;
-  output: unknown;
-  isError: boolean;
-}
-
-export interface ITraceCollector {
-  addTrace(trace: IToolCallTrace): void;
-}
-
-//#endregion Interfaces
+//#endregion Imports
 
 //#region LangchainCronExecutor
 
@@ -90,7 +79,6 @@ export class LangchainCronExecutor {
     messageSender: MessageSender,
     taskIdProvider: TaskIdProvider,
     executionContext: IExecutionContext,
-    _traceCollector?: ITraceCollector,
   ): Promise<IAgentResult> {
     executionContext.taskName = task.name;
     executionContext.taskDescription = task.description;
@@ -101,6 +89,8 @@ export class LangchainCronExecutor {
     const basePrompt: string = await PromptService.getInstance().getPromptAsync(
       PROMPT_CRON_AGENT,
     );
+
+    await this._saveSystemPromptDebugFileAsync("cron-agent", basePrompt);
 
     const config = ConfigService.getInstance().getConfig();
     const currentDateTime = getCurrentDateTime(config.scheduler?.timezone);
@@ -119,46 +109,172 @@ export class LangchainCronExecutor {
     );
 
     const aiConfig = config.ai;
-    const checkpointer = await this._getCheckpointer();
     const agent = createLangchainAgent({
       aiConfig,
       systemPrompt: instructions,
       tools,
-      checkpointer,
     });
 
-    const threadId = `cron-${task.taskId}`;
-    const result = await agent.invoke(
-      { messages: [{ role: "user", content: "Execute the scheduled task according to your instructions." }] },
-      { configurable: { thread_id: threadId } },
-    );
+    const maxRetries: number = 2;
+    let lastError: Error | null = null;
 
-    const lastMessage = result.messages[result.messages.length - 1];
-    const responseText: string = typeof lastMessage?.content === "string"
-      ? lastMessage.content
-      : "";
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const result = await agent.invoke(
+          { messages: [{ role: "user", content: "Execute the scheduled task according to your instructions." }] },
+          { configurable: { thread_id: `cron-${task.taskId}` } },
+        );
 
-    let stepsCount: number = 0;
-    for (const msg of result.messages) {
-      if (msg._getType() === "ai") {
-        const aiMsg = msg as AIMessage;
-        if (aiMsg.tool_calls && aiMsg.tool_calls.length > 0) {
-          stepsCount++;
+        const lastMessage = result.messages[result.messages.length - 1];
+
+        // Extract response text from the last AI message with normalization.
+        let responseText: string = "";
+        for (let i = result.messages.length - 1; i >= 0; i--) {
+          const msg = result.messages[i];
+          if (msg._getType() !== "ai") {
+            continue;
+          }
+
+          const aiMsg = msg as AIMessage;
+          const content = aiMsg.content;
+          let contentText: string = "";
+
+          if (typeof content === "string") {
+            contentText = content;
+          } else if (Array.isArray(content)) {
+            const textBlocks = content.filter(
+              (block): block is { type: "text"; text: string } =>
+                typeof block === "object" && block !== null && block.type === "text"
+            );
+            contentText = textBlocks.map((b) => b.text).join("");
+          }
+
+          const additionalKwargs: Record<string, unknown> =
+            (aiMsg.additional_kwargs ?? {}) as Record<string, unknown>;
+          const reasoningContent: string = ReasoningParserService.extractReasoningFromAdditionalKwargs(additionalKwargs);
+          const normalized = ReasoningNormalizerService.normalize({
+            content: contentText,
+            reasoningContent,
+          });
+
+          this._logger.debug("Cron reasoning normalization", {
+            taskId: task.taskId,
+            messageIndex: i,
+            method: normalized.method,
+            reasoningLength: normalized.reasoning.length,
+            answerLength: normalized.answer.length,
+            textLength: normalized.text.length,
+          });
+
+          responseText = normalized.text;
+          if (responseText.length > 0) {
+            break;
+          }
         }
+
+        let stepsCount: number = 0;
+
+        // Log all AI messages for debugging
+        for (let i = 0; i < result.messages.length; i++) {
+          const msg = result.messages[i];
+          if (msg._getType() === "ai") {
+            const aiMsg = msg as AIMessage;
+            this._logger.debug("Cron AI message", {
+              taskId: task.taskId,
+              messageIndex: i,
+              hasToolCalls: aiMsg.tool_calls && aiMsg.tool_calls.length > 0,
+              toolCallsCount: aiMsg.tool_calls?.length ?? 0,
+              toolNames: aiMsg.tool_calls?.map((tc) => tc.name) ?? [],
+              contentPreview: typeof aiMsg.content === "string"
+                ? aiMsg.content.slice(0, 200)
+                : JSON.stringify(aiMsg.content).slice(0, 200),
+            });
+          }
+        }
+
+        // Log each tool step with colored formatting
+        for (const msg of result.messages) {
+          if (msg._getType() === "ai") {
+            const aiMsg = msg as AIMessage;
+            if (aiMsg.tool_calls && aiMsg.tool_calls.length > 0) {
+              for (const tc of aiMsg.tool_calls) {
+                stepsCount++;
+
+                const toolResultMsg = result.messages.find((m: BaseMessage): boolean => {
+                  if (m._getType() !== "tool") {
+                    return false;
+                  }
+
+                  const toolMessage = m as unknown as { name?: string; tool_call_id?: string };
+
+                  if (tc.id && toolMessage.tool_call_id) {
+                    return toolMessage.tool_call_id === tc.id;
+                  }
+
+                  return toolMessage.name === tc.name;
+                });
+
+                let outputPreview = "";
+                if (toolResultMsg) {
+                  const toolContent = (toolResultMsg as unknown as { content?: unknown }).content;
+                  if (typeof toolContent === "string") {
+                    outputPreview = toolContent.slice(0, 500);
+                  } else if (Array.isArray(toolContent)) {
+                    outputPreview = toolContent.map((c) => typeof c === "string" ? c : JSON.stringify(c)).join("").slice(0, 500);
+                  } else {
+                    outputPreview = JSON.stringify(toolContent).slice(0, 500);
+                  }
+                }
+
+                // Log step with colored formatting
+                this._logger.logStep(
+                  stepsCount,
+                  tc.name,
+                  tc.args as Record<string, unknown>,
+                  outputPreview,
+                );
+              }
+            }
+          }
+        }
+
+        // Always log the final response (including empty), so termination is visible.
+        this._logger.logFinalResponse(responseText, {
+          taskId: task.taskId,
+          taskName: task.name,
+          stepsCount,
+          messageCount: result.messages.length,
+          lastMessageType: lastMessage?._getType() ?? "none",
+        });
+
+        this._logger.info("Cron task execution complete", {
+          taskId: task.taskId,
+          taskName: task.name,
+          stepsCount,
+          responseLength: responseText.length,
+        });
+
+        return {
+          text: responseText,
+          stepsCount,
+        };
+      } catch (error: unknown) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (isContextExceededApiError(error) && attempt < maxRetries - 1) {
+          this._logger.warn("Cron context limit exceeded, retrying fresh", {
+            taskId: task.taskId,
+            taskName: task.name,
+            attempt: attempt + 1,
+          });
+          continue;
+        }
+
+        throw lastError;
       }
     }
 
-    this._logger.info("Cron task execution complete", {
-      taskId: task.taskId,
-      taskName: task.name,
-      stepsCount,
-      responseLength: responseText.length,
-    });
-
-    return {
-      text: responseText,
-      stepsCount,
-    };
+    throw lastError ?? new Error("Unexpected error in executeTaskAsync");
   }
 
   private async _resolveToolsAsync(
@@ -257,9 +373,11 @@ export class LangchainCronExecutor {
     return resolvedTools;
   }
 
-  private async _getCheckpointer(): Promise<SqliteSaver> {
-    const baseDir = path.join(os.homedir(), ".blackdogbot");
-    const dbPath = path.join(baseDir, "cron-checkpoints.db");
-    return SqliteSaver.fromConnString(dbPath);
+  private async _saveSystemPromptDebugFileAsync(name: string, content: string): Promise<void> {
+    const debugDir = path.join(os.homedir(), ".blackdogbot", "debug");
+    await fs.mkdir(debugDir, { recursive: true }).catch(() => {});
+    const debugPath = path.join(debugDir, `system-prompt-${name}.txt`);
+    await fs.writeFile(debugPath, content, "utf-8");
+    this._logger.debug("System prompt saved to debug file", { path: debugPath });
   }
 }

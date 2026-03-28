@@ -128,6 +128,7 @@ export interface ITestConfigOptions {
   skills?: IConfig["skills"];
   logging?: IConfig["logging"];
   services?: IConfig["services"];
+  originalHome?: string;
 }
 
 export async function loadTestConfigAsync(
@@ -137,17 +138,29 @@ export async function loadTestConfigAsync(
   const configDir = path.join(tempDir, ".blackdogbot");
   await fs.mkdir(configDir, { recursive: true });
 
-  // Read real config from the actual home directory (not process.env.HOME which is overridden)
-  const realConfigPath = path.join(os.homedir(), ".blackdogbot", "config.yaml");
+  // Determine the real home directory (before process.env.HOME was overridden)
+  // Priority: 1) explicit originalHome parameter, 2) process.env.USER based path, 3) common locations
+  const realHomeOptions = [
+    options.originalHome,
+    process.env.USER ? `/home/${process.env.USER}` : null,
+    "/home/jirka",
+    "/root",
+  ].filter(Boolean) as string[];
 
   let realAiConfig: IConfig["ai"] | undefined;
 
-  try {
-    const realConfigContent = await fs.readFile(realConfigPath, "utf-8");
-    const realConfig = parseYaml(realConfigContent) as IConfig;
-    realAiConfig = realConfig.ai;
-  } catch {
-    // Real config not available, use env vars or test defaults
+  for (const homeCandidate of realHomeOptions) {
+    const configPath = path.join(homeCandidate, ".blackdogbot", "config.yaml");
+    try {
+      const realConfigContent = await fs.readFile(configPath, "utf-8");
+      const realConfig = parseYaml(realConfigContent) as IConfig;
+      if (realConfig.ai) {
+        realAiConfig = realConfig.ai;
+        break;
+      }
+    } catch {
+      // Continue to next candidate
+    }
   }
 
   const config: IConfig = {

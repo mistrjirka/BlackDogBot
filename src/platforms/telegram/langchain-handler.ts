@@ -99,7 +99,8 @@ export class LangchainTelegramHandler {
       this._logger.info("Langchain Telegram message processed", {
         chatId,
         stepsCount: result.stepsCount,
-        responseLength: result.text.length,
+        responseLength: result.text?.length ?? 0,
+        sendMessageUsed: result.sendMessageUsed ?? false,
       });
     } catch (error: unknown) {
       this._logger.error("Error processing Langchain Telegram message", {

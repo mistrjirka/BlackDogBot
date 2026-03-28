@@ -1,16 +1,14 @@
 import { ChatOpenAI } from "@langchain/openai";
 import type { IAiConfig } from "../shared/types/config.types.js";
 import { LoggerService } from "./logger.service.js";
+import { ChatOpenAICompletionsReasoning } from "./providers/chat-openai-completions-reasoning.js";
 
 //#region Public Functions
 
 export function createChatModel(config: IAiConfig): ChatOpenAI {
   const logger: LoggerService = LoggerService.getInstance();
   const { baseURL, apiKey, model, timeout } = _resolveProviderConfig(config);
-
-  logger.info("LangChain model created", { provider: config.provider, model, baseURL });
-
-  return new ChatOpenAI({
+  const modelFields = {
     model,
     configuration: {
       baseURL,
@@ -19,6 +17,16 @@ export function createChatModel(config: IAiConfig): ChatOpenAI {
     temperature: 0.7,
     maxRetries: 3,
     timeout,
+  };
+
+  logger.info("LangChain model created", { provider: config.provider, model, baseURL });
+
+  return new ChatOpenAI({
+    ...modelFields,
+    completions:
+      config.provider === "openai-compatible" || config.provider === "lm-studio"
+        ? new ChatOpenAICompletionsReasoning(modelFields)
+        : undefined,
   });
 }
 

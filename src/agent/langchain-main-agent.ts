@@ -2,6 +2,7 @@ import type { DynamicStructuredTool } from "langchain";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import path from "node:path";
 import os from "node:os";
+import fs from "node:fs/promises";
 
 import { LoggerService } from "../services/logger.service.js";
 import { PromptService } from "../services/prompt.service.js";
@@ -12,6 +13,7 @@ import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { LangchainMcpService } from "../services/langchain-mcp.service.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
 import { createLangchainAgent, invokeAgentAsync } from "./langchain-agent.js";
+import { isContextExceededApiError } from "../utils/context-error.js";
 import type { IAiConfig } from "../shared/types/config.types.js";
 import type { IChatImageAttachment, IAgentResult, IToolCallSummary } from "./types.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
@@ -32,8 +34,6 @@ import {
   searchKnowledgeTool,
   addKnowledgeTool,
   editKnowledgeTool,
-  createSendMessageTool,
-  createGetPreviousMessageTool,
   createCallSkillTool,
   getSkillFileTool,
   addCronTool,
@@ -101,7 +101,18 @@ export class LangchainMainAgent {
     this._baseSystemPrompt = await PromptService.getInstance().getPromptAsync("main-agent");
     this._aiConfig = ConfigService.getInstance().getConfig().ai;
     this._checkpointer = await this._createCheckpointer();
-    this._logger.info("LangchainMainAgent initialized");
+    this._logger.info("LangchainMainAgent initialized", {
+      systemPromptLength: this._baseSystemPrompt.length,
+    });
+    await this._saveSystemPromptDebugFileAsync("main-agent", this._baseSystemPrompt);
+  }
+
+  private async _saveSystemPromptDebugFileAsync(name: string, content: string): Promise<void> {
+    const debugDir = path.join(os.homedir(), ".blackdogbot", "debug");
+    await fs.mkdir(debugDir, { recursive: true }).catch(() => {});
+    const debugPath = path.join(debugDir, `system-prompt-${name}.txt`);
+    await fs.writeFile(debugPath, content, "utf-8");
+    this._logger.debug("System prompt saved to debug file", { path: debugPath });
   }
 
   private async _createCheckpointer(): Promise<SqliteSaver> {
@@ -156,12 +167,11 @@ export class LangchainMainAgent {
 
   private async _buildToolsForChatAsync(
     permission: ChannelPermission,
-    messageSender: MessageSender,
+    _messageSender: MessageSender,
     readTracker: FileReadTracker,
   ): Promise<DynamicStructuredTool[]> {
     const allTools: Record<string, DynamicStructuredTool> = {};
     const supportsVision = AiCapabilityService.getInstance().getSupportsVision();
-    const executionContext = { toolCallHistory: [] as string[] };
 
     allTools.think = thinkTool;
     allTools.run_cmd = runCmdTool;
@@ -175,8 +185,6 @@ export class LangchainMainAgent {
     allTools.search_knowledge = searchKnowledgeTool;
     allTools.add_knowledge = addKnowledgeTool;
     allTools.edit_knowledge = editKnowledgeTool;
-    allTools.send_message = createSendMessageTool(messageSender);
-    allTools.get_previous_message = createGetPreviousMessageTool(executionContext);
     allTools.fetch_rss = fetchRssTool;
     allTools.searxng = searxngTool;
     allTools.crawl4ai = crawl4aiTool;
@@ -272,28 +280,56 @@ export class LangchainMainAgent {
     const abortController = new AbortController();
     this._abortControllers.set(chatId, abortController);
 
-    try {
-      const agent = createLangchainAgent({
-        aiConfig: this._aiConfig,
-        systemPrompt: this._baseSystemPrompt,
-        tools: session.tools,
-        checkpointer: this._checkpointer,
-      });
+    const maxRetries = 2;
+    let lastError: Error | null = null;
 
-      const result = await invokeAgentAsync(
-        agent,
-        userMessage,
-        chatId,
-        imageAttachments,
-      );
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const agent = createLangchainAgent({
+          aiConfig: this._aiConfig,
+          systemPrompt: this._baseSystemPrompt,
+          tools: session.tools,
+          checkpointer: this._checkpointer,
+        });
 
-      return {
-        text: result.text,
-        stepsCount: result.stepsCount,
-      };
-    } finally {
-      this._abortControllers.delete(chatId);
+        const result = await invokeAgentAsync(
+          agent,
+          userMessage,
+          chatId,
+          imageAttachments,
+          session.onStepAsync,
+        );
+
+        return {
+          text: result.text,
+          stepsCount: result.stepsCount,
+        };
+      } catch (error: unknown) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (isContextExceededApiError(error)) {
+          this._logger.warn("Context limit exceeded, clearing checkpoint and retrying", {
+            chatId,
+            attempt: attempt + 1,
+            maxRetries,
+          });
+
+          if (this._checkpointer) {
+            this._checkpointer.deleteThread(chatId);
+          }
+
+          if (attempt < maxRetries - 1) {
+            continue;
+          }
+        }
+
+        throw lastError;
+      } finally {
+        this._abortControllers.delete(chatId);
+      }
     }
+
+    throw lastError ?? new Error("Unexpected error in processMessageForChatAsync");
   }
 
   public stopChat(chatId: string): boolean {
@@ -307,30 +343,40 @@ export class LangchainMainAgent {
     return false;
   }
 
-  public async compactSessionMessagesForChatAsync(chatId: string): Promise<boolean> {
+  public compactSessionMessagesForChatAsync(chatId: string): Promise<boolean> {
     const session = this._sessions.get(chatId);
     if (!session) {
-      return false;
+      return Promise.resolve(false);
     }
-    this._logger.info("Compaction requested for chat (LangGraph handles context automatically)", { chatId });
-    return true;
+    this._logger.info("Compaction requested for chat (clearing LangGraph checkpoint)", { chatId });
+    if (this._checkpointer) {
+      this._checkpointer.deleteThread(chatId);
+    }
+    return Promise.resolve(true);
   }
 
   public clearChatHistory(chatId: string): void {
     this._sessions.delete(chatId);
     this._abortControllers.delete(chatId);
     ToolHotReloadService.getInstance().unregisterRebuildCallback(chatId);
+    if (this._checkpointer) {
+      this._checkpointer.deleteThread(chatId);
+      this._logger.info("LangGraph checkpoint cleared", { chatId });
+    }
     this._logger.info("Chat history cleared", { chatId });
   }
 
   public clearAllChatHistory(): void {
-    const count = this._sessions.size;
-    for (const chatId of this._sessions.keys()) {
+    const chatIds = Array.from(this._sessions.keys());
+    for (const chatId of chatIds) {
       ToolHotReloadService.getInstance().unregisterRebuildCallback(chatId);
+      if (this._checkpointer) {
+        this._checkpointer.deleteThread(chatId);
+      }
     }
     this._sessions.clear();
     this._abortControllers.clear();
-    this._logger.info("All chat history cleared", { count });
+    this._logger.info("All chat history cleared", { count: chatIds.length });
   }
 
   public async refreshAllSessionsAsync(): Promise<IRefreshSessionsResult> {
