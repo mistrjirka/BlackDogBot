@@ -351,7 +351,7 @@ function _convertMcpToolToLangchain(
   const description = mcpTool.description ?? `MCP tool: ${mcpTool.name} (server: ${serverId})`;
   const schema = jsonSchemaToZod(mcpTool.inputSchema);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any — LangChain tool() requires DynamicStructuredTool typing that MCP adapters don't satisfy
   return tool(
     async (input: Record<string, unknown>) => {
       try {

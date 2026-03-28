@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import type { IQueryResult } from "../helpers/litesql.js";
+import { validateTableExistsAsync } from "../helpers/litesql-validation.js";
 
 export const readFromDatabaseTool = tool(
   async ({
@@ -26,27 +27,7 @@ export const readFromDatabaseTool = tool(
     totalCount: number;
     returnedCount: number;
   }> => {
-    const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
-    if (!dbExists) {
-      const allDbs = await litesql.listDatabasesAsync();
-      const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
-      throw new Error(
-        `Database "${databaseName}" does not exist.\n` +
-          `Available databases: ${available}`,
-      );
-    }
-
-    const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
-    if (!tableExists) {
-      const allTables: string[] = await litesql.listTablesAsync(databaseName);
-      const available: string = allTables.join(", ") || "(none)";
-
-      throw new Error(
-        `Table "${tableName}" does not exist in database "${databaseName}".\n` +
-          `Available tables: ${available}`,
-      );
-    }
+    await validateTableExistsAsync(databaseName, tableName);
 
     const result: IQueryResult = await litesql.queryTableAsync(databaseName, tableName, {
       where,

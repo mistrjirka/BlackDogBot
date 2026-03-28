@@ -1,6 +1,7 @@
 import { tool } from "langchain";
 import { z } from "zod";
 import { addCronToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { validateCronToolNames, buildSchedule } from "../helpers/cron-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { ConfigService } from "../services/config.service.js";
@@ -33,47 +34,6 @@ const TOOL_DESCRIPTION: string =
 
 //#endregion Const
 
-//#region Private methods
-
-function _buildSchedule(input: {
-  scheduleType: "once" | "interval" | "cron";
-  scheduleRunAt?: string;
-  scheduleIntervalMs?: number;
-  scheduleCron?: string;
-}): Schedule {
-  switch (input.scheduleType) {
-    case "once": {
-      if (!input.scheduleRunAt || input.scheduleRunAt.trim().length === 0) {
-        throw new Error("scheduleRunAt is required for scheduleType='once'");
-      }
-      return {
-        type: "once",
-        runAt: input.scheduleRunAt,
-      };
-    }
-    case "interval": {
-      if (input.scheduleIntervalMs === undefined || !Number.isFinite(input.scheduleIntervalMs) || input.scheduleIntervalMs <= 0) {
-        throw new Error("scheduleIntervalMs is required and must be > 0 for scheduleType='interval'");
-      }
-      return {
-        type: "interval",
-        intervalMs: input.scheduleIntervalMs,
-      };
-    }
-    case "cron": {
-      if (!input.scheduleCron || input.scheduleCron.trim().length === 0) {
-        throw new Error("scheduleCron is required for scheduleType='cron'");
-      }
-      return {
-        type: "cron",
-        expression: input.scheduleCron,
-      };
-    }
-  }
-}
-
-//#endregion Private methods
-
 //#region Tool
 
 export const addCronTool = tool(
@@ -102,11 +62,7 @@ export const addCronTool = tool(
 
     try {
       // 0. Validate tool names at runtime
-      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = tools.filter(
-        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
-      );
+      const invalidTools: string[] = validateCronToolNames(tools);
       if (invalidTools.length > 0) {
         return {
           taskId: "",
@@ -186,7 +142,7 @@ Output a JSON object with:
       // 2. Schedule the task
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
-      const builtSchedule: Schedule = _buildSchedule({ scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron });
+      const builtSchedule: Schedule = buildSchedule({ scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron });
 
       const task: IScheduledTask = {
         taskId,

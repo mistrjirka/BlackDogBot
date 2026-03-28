@@ -1,5 +1,6 @@
 import { tool } from "langchain";
 import { editCronToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { validateCronToolNames, patchSchedule } from "../helpers/cron-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
@@ -52,11 +53,7 @@ const executeEditCron = async ({
   try {
     // 0. Validate tool names at runtime (if provided)
     if (patch.tools !== undefined) {
-      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = patch.tools.filter(
-        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
-      );
+      const invalidTools: string[] = validateCronToolNames(patch.tools);
       if (invalidTools.length > 0) {
         return {
           success: false,
@@ -83,30 +80,9 @@ const executeEditCron = async ({
         });
       }
 
-      const schedule: Record<string, unknown> = { type: existingTask.schedule.type };
-
-      if (existingTask.schedule.type === "once") {
-        schedule.runAt = scheduleRunAt !== undefined ? scheduleRunAt : existingTask.schedule.runAt;
-      } else if (existingTask.schedule.type === "interval") {
-        schedule.intervalMs = scheduleIntervalMs !== undefined ? scheduleIntervalMs : existingTask.schedule.intervalMs;
-      } else {
-        schedule.expression = scheduleCron !== undefined ? scheduleCron : existingTask.schedule.expression;
-      }
-
-      updatePayload.schedule = schedule;
+      updatePayload.schedule = patchSchedule(existingTask.schedule, { scheduleRunAt, scheduleIntervalMs, scheduleCron });
     } else if (scheduleRunAt !== undefined || scheduleIntervalMs !== undefined || scheduleCron !== undefined) {
-      // Allow schedule value-only edits without requiring scheduleType.
-      const schedule: Record<string, unknown> = { type: existingTask.schedule.type };
-
-      if (existingTask.schedule.type === "once") {
-        schedule.runAt = scheduleRunAt !== undefined ? scheduleRunAt : existingTask.schedule.runAt;
-      } else if (existingTask.schedule.type === "interval") {
-        schedule.intervalMs = scheduleIntervalMs !== undefined ? scheduleIntervalMs : existingTask.schedule.intervalMs;
-      } else {
-        schedule.expression = scheduleCron !== undefined ? scheduleCron : existingTask.schedule.expression;
-      }
-
-      updatePayload.schedule = schedule;
+      updatePayload.schedule = patchSchedule(existingTask.schedule, { scheduleRunAt, scheduleIntervalMs, scheduleCron });
     }
 
     if (Object.keys(updatePayload).length === 0) {

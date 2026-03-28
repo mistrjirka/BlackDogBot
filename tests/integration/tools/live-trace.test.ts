@@ -165,10 +165,23 @@ describe("Live Tool Trace", () => {
         }
       }
 
-      // 4. Total duration should be under 5 minutes
+      // 4. First callback must happen DURING execution (not after completion)
+      // With streaming, first callback should occur significantly before execution ends
+      const firstCallback = callbacks[0];
+      const firstCallbackRelativeTime = firstCallback.timestamp - executionStartTime;
+      const callbackProgressRatio = firstCallbackRelativeTime / totalDuration;
+
+      console.log(`[Test] First callback at ${firstCallbackRelativeTime}ms into ${totalDuration}ms (${(callbackProgressRatio * 100).toFixed(1)}% through execution)`);
+
+      // First callback must happen before execution ends (always true) but also
+      // should happen while execution is still ongoing - before the final 20% of execution.
+      // This distinguishes true live streaming from post-execution callbacks.
+      expect(callbackProgressRatio).toBeLessThan(0.8);
+
+      // 5. Total duration should be under 5 minutes
       expect(totalDuration).toBeLessThan(300000);
 
-      console.log(`[Test] SUCCESS: ${callbacks.length} callbacks over ${totalDuration}ms`);
+      console.log(`[Test] SUCCESS: ${callbacks.length} callbacks over ${totalDuration}ms, first callback at ${(callbackProgressRatio * 100).toFixed(1)}% through execution`);
     },
     300000
   );
@@ -263,6 +276,8 @@ describe("Live Tool Trace", () => {
       const fetchRssCallback = callbacks.find((cb) =>
         cb.toolCalls.some((tc) => tc.name === "fetch_rss")
       );
+
+      expect(fetchRssCallback).toBeDefined();
 
       if (fetchRssCallback) {
         const fetchRssTool = fetchRssCallback.toolCalls.find((tc) => tc.name === "fetch_rss");

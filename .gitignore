@@ -45,6 +45,9 @@ pnpm-debug.log*
 # OpenCode local data
 .opencode/
 
+# Local git worktrees
+.worktrees/
+
 # Session ledgers (developer-local continuity notes)
 thoughts/ledgers/
 

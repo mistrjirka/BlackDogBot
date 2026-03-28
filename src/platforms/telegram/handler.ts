@@ -28,6 +28,7 @@ import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-forma
 import { isCancelCommand } from "../../utils/command-utils.js";
 import { getTelegramChatsFilePath } from "../../utils/paths.js";
 import { getUploadsDir, ensureDirectoryExistsAsync } from "../../utils/paths.js";
+import { TYPING_INDICATOR_INTERVAL_MS, MAX_IMAGE_BYTES, IMAGE_AUTO_ANALYZE_DELAY_MS } from "../../shared/constants.js";
 import {
   compressImageToLimitAsync,
   getImageExtensionForMimeType,
@@ -327,7 +328,7 @@ export class TelegramHandler {
         } catch {
           // Silently ignore typing indicator failures
         }
-      }, 5000);
+      }, TYPING_INDICATOR_INTERVAL_MS);
 
       await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch((): void => { /* Typing indicator is best-effort */ });
 
@@ -394,39 +395,7 @@ export class TelegramHandler {
             if (i === 0) {
               options.reply_parameters = { message_id: message.message_id };
             }
-            try {
-              await ctx.reply(chunks[i], options);
-            } catch (replyError: unknown) {
-              const errorMsg: string = replyError instanceof Error ? replyError.message : String(replyError);
-
-              // If the replied-to message was deleted (e.g. by /cancel), retry without reply_parameters
-              if (errorMsg.includes("message to be replied not found") && options.reply_parameters) {
-                delete options.reply_parameters;
-                try {
-                  await ctx.reply(chunks[i], options);
-                } catch {
-                  // Last resort: try plain text without reply
-                  const plainText: string = stripAllHtml(chunks[i]);
-                  await ctx.reply(plainText).catch(() => {});
-                }
-              } else {
-                // HTML parse error or other issue — fall back to plain text
-                this._logger.warn("Telegram HTML parse error, falling back to plain text", {
-                  error: errorMsg,
-                });
-                const plainText: string = stripAllHtml(chunks[i]);
-                const fallbackOptions: Record<string, unknown> =
-                  i === 0 ? { reply_parameters: { message_id: message.message_id } } : {};
-                try {
-                  await ctx.reply("⚠️ Formatting error, showing plain text:", fallbackOptions);
-                  await ctx.reply(plainText, fallbackOptions);
-                } catch {
-                  // If even fallback fails (deleted message), send without reply
-                  await ctx.reply("⚠️ Formatting error, showing plain text:").catch(() => {});
-                  await ctx.reply(plainText).catch(() => {});
-                }
-              }
-            }
+            await this._replyWithFallbackAsync(ctx, chunks[i], options, i === 0, message.message_id);
           }
         }
 
@@ -532,7 +501,7 @@ export class TelegramHandler {
         return;
       }
 
-      const maxImageBytes: number = 10 * 1024 * 1024;
+      const maxImageBytes: number = MAX_IMAGE_BYTES;
       let imageBuffer: Buffer = extraction.imageBuffer;
       let resolvedMediaType: string = extraction.mediaType;
 
@@ -593,7 +562,7 @@ export class TelegramHandler {
             error: extractErrorMessage(error),
           });
         });
-      }, 2000);
+      }, IMAGE_AUTO_ANALYZE_DELAY_MS);
 
       this._pendingImagesByChat.set(chatId, {
         imageAttachments: combinedImageAttachments,
@@ -1084,6 +1053,48 @@ export class TelegramHandler {
     }
 
     return this._knownChatIds.has(chatId);
+  }
+
+  private async _replyWithFallbackAsync(
+    ctx: Context,
+    text: string,
+    options: Record<string, unknown>,
+    isFirstChunk: boolean,
+    originalMessageId: number,
+  ): Promise<void> {
+    try {
+      await ctx.reply(text, options);
+      return;
+    } catch (replyError: unknown) {
+      const errorMsg: string = replyError instanceof Error ? replyError.message : String(replyError);
+
+      // If the replied-to message was deleted (e.g. by /cancel), retry without reply_parameters
+      if (errorMsg.includes("message to be replied not found") && options.reply_parameters) {
+        const { reply_parameters: _, ...noReplyOptions } = options;
+        try {
+          await ctx.reply(text, noReplyOptions);
+          return;
+        } catch {
+          await ctx.reply(stripAllHtml(text)).catch(() => {});
+          return;
+        }
+      }
+
+      // HTML parse error or other issue — fall back to plain text
+      this._logger.warn("Telegram HTML parse error, falling back to plain text", {
+        error: errorMsg,
+      });
+      const plainText: string = stripAllHtml(text);
+      const fallbackOptions: Record<string, unknown> =
+        isFirstChunk ? { reply_parameters: { message_id: originalMessageId } } : {};
+      try {
+        await ctx.reply("⚠️ Formatting error, showing plain text:", fallbackOptions);
+        await ctx.reply(plainText, fallbackOptions);
+      } catch {
+        await ctx.reply("⚠️ Formatting error, showing plain text:").catch(() => {});
+        await ctx.reply(plainText).catch(() => {});
+      }
+    }
   }
 
   //#endregion Private Methods

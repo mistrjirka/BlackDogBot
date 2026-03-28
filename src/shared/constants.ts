@@ -39,6 +39,16 @@ export const ID_LENGTH: number = 12;
 
 //#endregion Defaults
 
+//#region Timing & Size Constants
+
+export const TYPING_INDICATOR_INTERVAL_MS: number = 5000;
+export const MAX_IMAGE_BYTES: number = 10 * 1024 * 1024;
+export const IMAGE_AUTO_ANALYZE_DELAY_MS: number = 2000;
+export const OPENROUTER_EMBEDDING_TIMEOUT_MS: number = 60000;
+export const DISCORD_MESSAGE_CHUNK_LENGTH: number = 2000;
+
+//#endregion Timing & Size Constants
+
 //#region Prompt Names
 
 export const PROMPT_MAIN_AGENT: string = "main-agent";

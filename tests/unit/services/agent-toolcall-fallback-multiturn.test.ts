@@ -5,9 +5,64 @@ import { invokeAgentAsync } from "../../../src/agent/langchain-agent.js";
 
 function createStubAgent(messages: Array<HumanMessage | AIMessage | ToolMessage>): {
   invoke: (input: unknown, options: unknown) => Promise<{ messages: Array<HumanMessage | AIMessage | ToolMessage> }>;
+  stream: (input: unknown, options: unknown) => Promise<AsyncGenerator<["tools" | "updates", Record<string, unknown>]>>;
+  getState: (config: unknown) => Promise<{ values: { messages: Array<HumanMessage | AIMessage | ToolMessage> } }>;
 } {
+  function extractReasoningContent(aiMsg: AIMessage): string | undefined {
+    return aiMsg.additional_kwargs?.reasoning_content as string | undefined;
+  }
+
+  function parseTextualToolCalls(reasoningContent: string): Array<{ name: string; args: Record<string, unknown>; id: string }> {
+    const toolCalls: Array<{ name: string; args: Record<string, unknown>; id: string }> = [];
+    const regex = /<tool_call><function=(\w+)>([^<]+)<\/function><\/tool_call>/g;
+    let match;
+    while ((match = regex.exec(reasoningContent)) !== null) {
+      const name = match[1];
+      const argsStr = match[2];
+      try {
+        const args = JSON.parse(argsStr) as Record<string, unknown>;
+        toolCalls.push({ name, args, id: `text-${toolCalls.length}` });
+      } catch {
+        // ignore parse errors
+      }
+    }
+    return toolCalls;
+  }
+
+  async function* generateToolEvents(): AsyncGenerator<["tools" | "updates", Record<string, unknown>]> {
+    for (const msg of messages) {
+      if (msg._getType() === "ai") {
+        const aiMsg = msg as AIMessage;
+        if (aiMsg.tool_calls && aiMsg.tool_calls.length > 0) {
+          for (const tc of aiMsg.tool_calls) {
+            yield ["tools", {
+              event: "on_tool_start",
+              name: tc.name,
+              input: tc.args,
+              toolCallId: tc.id,
+            }];
+          }
+        }
+        const reasoningContent = extractReasoningContent(aiMsg);
+        if (reasoningContent) {
+          const textualToolCalls = parseTextualToolCalls(reasoningContent);
+          for (const tc of textualToolCalls) {
+            yield ["tools", {
+              event: "on_tool_start",
+              name: tc.name,
+              input: tc.args,
+              toolCallId: tc.id,
+            }];
+          }
+        }
+      }
+    }
+  }
+
   return {
     invoke: async (_input: unknown, _options: unknown) => ({ messages }),
+    stream: async (_input: unknown, _options: unknown) => generateToolEvents(),
+    getState: async (_config: unknown) => ({ values: { messages } }),
   };
 }
 
@@ -39,9 +94,9 @@ describe("invokeAgentAsync textual tool-call fallback in agentic multi-turn mode
       new AIMessage({ content: "Done. Retrieved cron task-123." }),
     ];
 
-    const agent = createStubAgent(messages);
+    const agent = createStubAgent(messages) as any;
     const result = await invokeAgentAsync(
-      agent as unknown as ReturnType<typeof createStubAgent>,
+      agent,
       "start",
       "thread-multi-turn",
     );
