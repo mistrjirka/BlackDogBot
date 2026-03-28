@@ -16,10 +16,35 @@ import { McpRegistryService } from "../../../src/services/mcp-registry.service.j
 import { LangchainMcpService } from "../../../src/services/langchain-mcp.service.js";
 import { createLangchainAgent, invokeAgentAsync } from "../../../src/agent/langchain-agent.js";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
-import { thinkTool } from "../../../src/tools/index.js";
+import { listCronsTool, getCronTool } from "../../../src/tools/index.js";
+import { SchedulerService } from "../../../src/services/scheduler.service.js";
+import type { IScheduledTask } from "../../../src/shared/types/index.js";
 import type { IConfig } from "../../../src/shared/types/config.types.js";
 
 const env = createTestEnvironment("tool-call-multi-turn");
+
+function _createCronTask(overrides: Partial<IScheduledTask> = {}): IScheduledTask {
+  const nowIso: string = new Date().toISOString();
+
+  return {
+    taskId: overrides.taskId ?? "cron-test-1",
+    name: overrides.name ?? "Nightly digest",
+    description: overrides.description ?? "Send nightly digest",
+    instructions: overrides.instructions ?? "Run nightly summary",
+    tools: overrides.tools ?? ["think"],
+    schedule: overrides.schedule ?? { type: "interval", intervalMs: 3600000 },
+    enabled: overrides.enabled ?? true,
+    notifyUser: overrides.notifyUser ?? false,
+    lastRunAt: overrides.lastRunAt ?? null,
+    lastRunStatus: overrides.lastRunStatus ?? null,
+    lastRunError: overrides.lastRunError ?? null,
+    createdAt: overrides.createdAt ?? nowIso,
+    updatedAt: overrides.updatedAt ?? nowIso,
+    messageHistory: overrides.messageHistory ?? [],
+    messageSummary: overrides.messageSummary ?? null,
+    summaryGeneratedAt: overrides.summaryGeneratedAt ?? null,
+  };
+}
 
 /**
  * E2E test that validates the agent can make tool calls and produce
@@ -63,24 +88,36 @@ describe("Tool Call Multi-Turn E2E", () => {
 
   describe("agent loop continuation", () => {
     it("should continue after tool execution and produce final response", async () => {
+      const scheduler = SchedulerService.getInstance();
+      await scheduler.removeAllTasksAsync();
+
+      await scheduler.addTaskAsync(
+        _createCronTask({
+          taskId: "cron-test-1",
+          name: "Morning Brief",
+          description: "Daily morning briefing",
+          tools: ["think", "list_crons", "get_cron"],
+        }),
+      );
+
       const aiConfig = ConfigService.getInstance().getConfig().ai;
       const systemPrompt = await PromptService.getInstance().getPromptAsync("main-agent");
 
       const checkpointerPath = path.join(env.tempDir, "checkpoints.db");
       const checkpointer = SqliteSaver.fromConnString(checkpointerPath);
 
-      // Create agent with think tool to test multi-turn
+      // Create agent with real cron tools to enforce real multi-turn tool usage
       const agent = createLangchainAgent({
         aiConfig,
         systemPrompt,
-        tools: [thinkTool],
+        tools: [listCronsTool, getCronTool],
         checkpointer,
       });
 
-      // Invoke agent with a request that requires tool use
+      // Invoke agent with request that requires list->get multi-turn tool calls
       const result = await invokeAgentAsync(
         agent,
-        "Think about what 2+2 equals, then tell me the answer.",
+        "List scheduled tasks, then fetch full details for cron-test-1, then summarize name and schedule.",
         "test-thread-multi-turn"
       );
 
@@ -94,11 +131,36 @@ describe("Tool Call Multi-Turn E2E", () => {
       expect(typeof result.text).toBe("string");
       expect(result.text.length).toBeGreaterThan(0);
 
-      // The response should contain the answer
-      expect(result.text.toLowerCase()).toContain("4");
+      // The response should contain cron details rather than arithmetic direct answer
+      expect(result.text.toLowerCase()).toContain("morning brief");
+      expect(result.text.toLowerCase()).toContain("schedule");
     }, 120000);
 
     it("should produce response after multiple tool calls", async () => {
+      const scheduler = SchedulerService.getInstance();
+      await scheduler.removeAllTasksAsync();
+
+      await scheduler.addTaskAsync(
+        _createCronTask({
+          taskId: "cron-other-1",
+          name: "Background Cleanup",
+          description: "non-target task",
+          instructions: "IGNORE_ME",
+          tools: ["think", "list_crons", "get_cron"],
+        }),
+      );
+
+      await scheduler.addTaskAsync(
+        _createCronTask({
+          taskId: "cron-target-42",
+          name: "Target Task",
+          description: "needle-desc-42",
+          instructions: "INSTR_UNIQUE_42_TOKEN",
+          tools: ["think", "list_crons", "get_cron"],
+          schedule: { type: "interval", intervalMs: 987654 },
+        }),
+      );
+
       const agent = LangchainMainAgent.getInstance();
       await agent.initializeAsync();
 
@@ -113,24 +175,26 @@ describe("Tool Call Multi-Turn E2E", () => {
         "telegram"
       );
 
-      // Ask something that requires using the think tool
+      // Ask for fields that require list_crons then get_cron (instructions are only in get_cron)
       const result = await agent.processMessageForChatAsync(
         "test-chat-toolcall",
-        "Use the think tool to plan your response, then answer: what is 5+5?"
+        "Find the scheduled task whose description is exactly needle-desc-42. First list tasks to discover its taskId, then fetch full details for that task, then return exactly: taskId|instructions|intervalMs."
       );
 
       console.log("Tool call result:", JSON.stringify(result, null, 2));
 
-      // Should have made at least one tool call
-      expect(result.stepsCount).toBeGreaterThanOrEqual(1);
+      // Should require at least two tool calls (list + get)
+      expect(result.stepsCount).toBeGreaterThanOrEqual(2);
 
       // Should produce a text response with the answer
       expect(result.text).toBeDefined();
       expect(typeof result.text).toBe("string");
       expect(result.text.length).toBeGreaterThan(0);
 
-      // Should contain the answer
-      expect(result.text.toLowerCase()).toContain("10");
+      // Should contain fetched values that are not present in prompt
+      expect(result.text).toContain("cron-target-42");
+      expect(result.text).toContain("INSTR_UNIQUE_42_TOKEN");
+      expect(result.text).toContain("987654");
     }, 120000);
   });
 });

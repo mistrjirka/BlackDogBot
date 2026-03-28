@@ -58,6 +58,7 @@ import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
 import { ReasoningParserService } from "../services/providers/reasoning/reasoning-parser.service.js";
 import { ReasoningNormalizerService } from "../services/providers/reasoning/reasoning-normalizer.service.js";
+import type { IResolvedToolCall } from "../services/providers/reasoning/reasoning.types.js";
 
 //#endregion Imports
 
@@ -196,8 +197,17 @@ export class LangchainCronExecutor {
         for (const msg of result.messages) {
           if (msg._getType() === "ai") {
             const aiMsg = msg as AIMessage;
-            if (aiMsg.tool_calls && aiMsg.tool_calls.length > 0) {
-              for (const tc of aiMsg.tool_calls) {
+            const aiContent: string = _extractTextContent(aiMsg.content);
+            const additionalKwargs: Record<string, unknown> =
+              (aiMsg.additional_kwargs ?? {}) as Record<string, unknown>;
+            const resolvedToolCalls: IResolvedToolCall[] = ReasoningNormalizerService.resolveToolCalls(
+              aiMsg.tool_calls,
+              aiContent,
+              additionalKwargs,
+            );
+
+            if (resolvedToolCalls.length > 0) {
+              for (const tc of resolvedToolCalls) {
                 stepsCount++;
 
                 const toolResultMsg = result.messages.find((m: BaseMessage): boolean => {
@@ -380,4 +390,34 @@ export class LangchainCronExecutor {
     await fs.writeFile(debugPath, content, "utf-8");
     this._logger.debug("System prompt saved to debug file", { path: debugPath });
   }
+}
+
+function _extractTextContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const textParts: string[] = [];
+
+  for (const contentPart of content) {
+    if (typeof contentPart === "string") {
+      textParts.push(contentPart);
+      continue;
+    }
+
+    if (typeof contentPart !== "object" || contentPart === null) {
+      continue;
+    }
+
+    const contentRecord: Record<string, unknown> = contentPart as Record<string, unknown>;
+    if (contentRecord.type === "text" && typeof contentRecord.text === "string") {
+      textParts.push(contentRecord.text);
+    }
+  }
+
+  return textParts.join("\n");
 }

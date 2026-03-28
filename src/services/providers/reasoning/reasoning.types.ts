@@ -27,3 +27,9 @@ export interface IReasoningNormalizationResult {
   text: string;
   method: ReasoningAnswerMethod;
 }
+
+export interface IResolvedToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  id?: string;
+}
