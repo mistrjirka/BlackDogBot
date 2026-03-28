@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { waitForCmdToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { CommandProcessService, type ProcessStatus } from "../services/command-process.service.js";
@@ -9,10 +9,8 @@ type IInput = z.infer<typeof waitForCmdToolInputSchema>;
 const terminalStatuses: Set<ProcessStatus> = new Set(["completed", "failed", "timed_out", "killed"]);
 const pollIntervalMs: number = 100;
 
-export const waitForCmdTool = tool({
-  description: "Wait for a running command to finish (or await input) and return final status plus output.",
-  inputSchema: waitForCmdToolInputSchema,
-  execute: async ({ handleId, timeoutMs, maxBytes }: IInput): Promise<Record<string, unknown>> => {
+export const waitForCmdTool = tool(
+  async ({ handleId, timeoutMs, maxBytes }: IInput): Promise<Record<string, unknown>> => {
     const processService: CommandProcessService = CommandProcessService.getInstance();
     const waitStartAt: number = Date.now();
 
@@ -59,4 +57,9 @@ export const waitForCmdTool = tool({
       error: finalStatus.error,
     };
   },
-});
+  {
+    name: "wait_for_cmd",
+    description: "Wait for a running command to finish (or await input) and return final status plus output.",
+    schema: waitForCmdToolInputSchema,
+  },
+);

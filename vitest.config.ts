@@ -8,8 +8,8 @@ export default defineConfig({
     include: [
       "tests/unit/**/*.test.ts",
       "tests/integration/core/**/*.test.ts",
-      "tests/integration/jobs/**/*.test.ts",
       "tests/integration/mcp/**/*.test.ts",
+      "tests/integration/tools/**/*.test.ts",
     ],
     coverage: {
       provider: "v8",

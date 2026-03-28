@@ -1,20 +1,11 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 
-export const dropTableTool = tool({
-  description: "Drop (delete) a table from a database",
-  inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Name of the database"),
-    tableName: z.string()
-      .min(1)
-      .describe("Name of the table to drop"),
-  }),
-  execute: async ({ databaseName, tableName }: { databaseName: string; tableName: string }): Promise<{
+export const dropTableTool = tool(
+  async ({ databaseName, tableName }: { databaseName: string; tableName: string }): Promise<{
     success: boolean;
     databaseName: string;
     tableName: string;
@@ -58,4 +49,16 @@ export const dropTableTool = tool({
       };
     }
   },
-});
+  {
+    name: "drop_table",
+    description: "Drop (delete) a table from a database",
+    schema: z.object({
+      databaseName: z.string()
+        .min(1)
+        .describe("Name of the database"),
+      tableName: z.string()
+        .min(1)
+        .describe("Name of the table to drop"),
+    }),
+  },
+);

@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { stopCmdToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { CommandProcessService } from "../services/command-process.service.js";
@@ -7,10 +7,8 @@ import type { z } from "zod";
 
 type IInput = z.infer<typeof stopCmdToolInputSchema>;
 
-export const stopCmdTool = tool({
-  description: "Stop a running command by sending a signal (SIGTERM, SIGKILL, SIGINT). Use the handleId returned by a previous run_cmd call.",
-  inputSchema: stopCmdToolInputSchema,
-  execute: async ({ handleId, signal }: IInput): Promise<Record<string, unknown>> => {
+export const stopCmdTool = tool(
+  async ({ handleId, signal }: IInput): Promise<Record<string, unknown>> => {
     const logger: LoggerService = LoggerService.getInstance();
     const processService: CommandProcessService = CommandProcessService.getInstance();
 
@@ -31,4 +29,9 @@ export const stopCmdTool = tool({
       error: result.error ?? null,
     };
   },
-});
+  {
+    name: "stop_cmd",
+    description: "Stop a running command by sending a signal (SIGTERM, SIGKILL, SIGINT). Use the handleId returned by a previous run_cmd call.",
+    schema: stopCmdToolInputSchema,
+  },
+);

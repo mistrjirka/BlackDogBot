@@ -7,10 +7,6 @@ import {
   getBaseDir,
   getConfigPath,
   getSkillsDir,
-  getJobsDir,
-  getJobDir,
-  getJobNodesDir,
-  getJobTestsDir,
   getKnowledgeDir,
   getLanceDbDir,
   getCronDir,
@@ -21,8 +17,6 @@ import {
   getSkillDir,
   getSkillFilePath,
   getSkillStatePath,
-  getNodeFilePath,
-  getNodeTestFilePath,
   getCronFilePath,
   getPromptFilePath,
   getWorkspaceDir,
@@ -80,33 +74,6 @@ describe("paths utility", () => {
     expect(skillsDir).toContain("skills");
   });
 
-  it("should return jobs directory", () => {
-    const jobsDir: string = getJobsDir();
-
-    expect(jobsDir).toContain("jobs");
-  });
-
-  it("should return job-specific directory", () => {
-    const jobDir: string = getJobDir("job-123");
-
-    expect(jobDir).toContain("job-123");
-    expect(jobDir).toContain("jobs");
-  });
-
-  it("should return job nodes directory", () => {
-    const nodesDir: string = getJobNodesDir("job-123");
-
-    expect(nodesDir).toContain("nodes");
-    expect(nodesDir).toContain("job-123");
-  });
-
-  it("should return job tests directory", () => {
-    const testsDir: string = getJobTestsDir("job-123");
-
-    expect(testsDir).toContain("tests");
-    expect(testsDir).toContain("job-123");
-  });
-
   it("should return knowledge and lance directories", () => {
     const knowledgeDir: string = getKnowledgeDir();
     const lanceDir: string = getLanceDbDir();
@@ -162,16 +129,6 @@ describe("paths utility", () => {
     expect(skillDir).toContain("my-skill");
     expect(skillFilePath).toContain("SKILL.md");
     expect(skillStatePath).toContain("state.json");
-  });
-
-  it("should return node file paths", () => {
-    const nodeFilePath: string = getNodeFilePath("job-1", "node-1");
-    const nodeTestFilePath: string = getNodeTestFilePath("job-1", "node-1");
-
-    expect(nodeFilePath).toContain("node-1.json");
-    expect(nodeTestFilePath).toContain("node-1.json");
-    expect(nodeFilePath).toContain("nodes");
-    expect(nodeTestFilePath).toContain("tests");
   });
 
   it("should return cron and prompt file paths", () => {

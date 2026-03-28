@@ -80,6 +80,7 @@ export class PromptService {
     await ensureDirectoryExistsAsync(getPromptFragmentsDir());
     await ensureDirectoryExistsAsync(getCacheDir());
     await this._copyDefaultsIfNeededAsync();
+    await this._syncUpdatedDefaultsAsync();
     await this._initializePromptSyncStateIfMissingAsync();
 
     this._initialized = true;
@@ -274,6 +275,23 @@ export class PromptService {
         await fs.writeFile(targetPath, content, "utf-8");
       }
     }
+  }
+
+  private async _syncUpdatedDefaultsAsync(): Promise<void> {
+    const defaultFiles: string[] = await this._listFilesRecursiveAsync(this._defaultsDir);
+    const mdFiles: string[] = defaultFiles.filter((file: string) => file.endsWith(".md"));
+
+    for (const defaultFile of mdFiles) {
+      const relativePath: string = path.relative(this._defaultsDir, defaultFile);
+      const targetPath: string = path.join(this._promptsDir, relativePath);
+      const parentDir: string = path.dirname(targetPath);
+      await ensureDirectoryExistsAsync(parentDir);
+
+      const defaultContent: string = await fs.readFile(defaultFile, "utf-8");
+      await fs.writeFile(targetPath, defaultContent, "utf-8");
+    }
+
+    await this._markPromptsSyncedToCurrentDefaultsAsync();
   }
 
   private async _resolveIncludesAsync(content: string, depth: number = 0): Promise<string> {

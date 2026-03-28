@@ -1,12 +1,11 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
-import { editCronInstructionsToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
-import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
+import { editCronInstructionsToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
+import { ConfigService } from "../services/config.service.js";
+import { createChatModel } from "../services/langchain-model.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
@@ -37,8 +36,7 @@ const TOOL_DESCRIPTION: string =
 
 //#region Tool
 
-const executeEditCronInstructions = async (
-  {
+const executeEditCronInstructions = async ({
     taskId,
     instructions,
     intention,
@@ -48,9 +46,7 @@ const executeEditCronInstructions = async (
     instructions: string;
     intention: string;
     tools?: string[];
-  },
-  _context: ToolExecuteContext,
-): Promise<IEditCronInstructionsResult> => {
+  }): Promise<IEditCronInstructionsResult> => {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
 
@@ -177,7 +173,7 @@ Current Instructions:
 ${existingTask.instructions}
 """
 
-=== PROPOSED NEW INSTRUCTIONS ===
+=== PROPOSED NEW INSTRUCTIONS
 """
 ${normalizedInstructions}
 """
@@ -193,30 +189,24 @@ Output a JSON object with:
 - "missingContext": string (if invalid, describe exactly what information is missing and why it cannot be derived; if valid, use empty string)
 `;
 
-    const aiService: AiProviderService = AiProviderService.getInstance();
-    const model = aiService.getModel();
+    const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
-    const verificationResult = await generateObjectWithRetryAsync({
-      model,
-      schema: z.object({
-        isClear: z.boolean(),
-        missingContext: z.string(),
-      }),
-      prompt: verifierPrompt,
-      retryOptions: { callType: "schema_extraction" },
-    });
+    const verificationResult = await model.withStructuredOutput(z.object({
+      isClear: z.boolean(),
+      missingContext: z.string(),
+    })).invoke(verifierPrompt);
 
-    if (!verificationResult.object.isClear) {
+    if (!verificationResult.isClear) {
       const errorMsg =
         `EDIT REJECTED. The updated instructions were not approved by the verifier.\n\n` +
-        `Verifier reason: ${verificationResult.object.missingContext}\n\n` +
+        `Verifier reason: ${verificationResult.missingContext}\n\n` +
         `Current instructions:\n${existingTask.instructions}\n\n` +
         `Proposed instructions:\n${normalizedInstructions}\n\n` +
         `Intention: ${normalizedIntention}`;
 
       logger.warn(`[${TOOL_NAME}] Edit rejected`, {
         taskId,
-        reason: verificationResult.object.missingContext,
+        reason: verificationResult.missingContext,
       });
 
       return { success: false, error: errorMsg };
@@ -255,14 +245,13 @@ Output a JSON object with:
   }
 };
 
-export const editCronInstructionsTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: editCronInstructionsToolInputSchema,
-  execute: createToolWithPrerequisites(
-    "edit_cron_instructions",
-    TOOL_PREREQUISITES["edit_cron_instructions"] || [],
-    executeEditCronInstructions,
-  ) as any,
-});
+export const editCronInstructionsTool = tool(
+  executeEditCronInstructions,
+  {
+    name: "edit_cron_instructions",
+    description: TOOL_DESCRIPTION,
+    schema: editCronInstructionsToolInputSchema,
+  },
+);
 
 //#endregion Tool

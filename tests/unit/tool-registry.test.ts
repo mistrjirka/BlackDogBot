@@ -34,30 +34,6 @@ describe("tool-registry", () => {
       expect(toolRegistry.isToolAllowed("list_files", "read_only", {})).toBe(true);
     });
 
-    it("should block job creation tools when jobCreationEnabled is false", () => {
-      expect(
-        toolRegistry.isToolAllowed("start_job_creation", "full", { jobCreationEnabled: false })
-      ).toBe(false);
-      expect(
-        toolRegistry.isToolAllowed("add_agent_node", "full", { jobCreationEnabled: false })
-      ).toBe(false);
-      expect(
-        toolRegistry.isToolAllowed("add_python_code_node", "full", { jobCreationEnabled: false })
-      ).toBe(false);
-    });
-
-    it("should allow job creation tools when jobCreationEnabled is true", () => {
-      expect(
-        toolRegistry.isToolAllowed("start_job_creation", "full", { jobCreationEnabled: true })
-      ).toBe(true);
-      expect(
-        toolRegistry.isToolAllowed("add_agent_node", "full", { jobCreationEnabled: true })
-      ).toBe(true);
-      expect(
-        toolRegistry.isToolAllowed("run_node_test", "full", { jobCreationEnabled: true })
-      ).toBe(true);
-    });
-
     it("should allow skill tools when skill is in skillNames", () => {
       expect(
         toolRegistry.isToolAllowed("my_skill", "full", { skillNames: ["my_skill", "other_skill"] })
@@ -72,15 +48,6 @@ describe("tool-registry", () => {
         true
       );
     });
-
-    it("should block read_only destructive tools even when jobCreationEnabled is true", () => {
-      expect(
-        toolRegistry.isToolAllowed("run_cmd", "read_only", { jobCreationEnabled: true })
-      ).toBe(false);
-      expect(
-        toolRegistry.isToolAllowed("write_file", "read_only", { jobCreationEnabled: true })
-      ).toBe(false);
-    });
   });
 
   describe("getAllowedToolNames", () => {
@@ -90,19 +57,12 @@ describe("tool-registry", () => {
     });
 
     it("should return all core tools for 'full' permission", () => {
-      const allowed = toolRegistry.getAllowedToolNames("full", { jobCreationEnabled: false });
+      const allowed = toolRegistry.getAllowedToolNames("full", {});
       expect(allowed).toContain("think");
       expect(allowed).toContain("send_message");
       expect(allowed).toContain("get_cron");
       expect(allowed).toContain("wait_for_cmd");
       expect(allowed).toContain("read_image");
-      expect(allowed).not.toContain("start_job_creation");
-    });
-
-    it("should include job creation tools when enabled", () => {
-      const allowed = toolRegistry.getAllowedToolNames("full", { jobCreationEnabled: true });
-      expect(allowed).toContain("start_job_creation");
-      expect(allowed).toContain("add_agent_node");
     });
 
     it("should exclude destructive tools for 'read_only' permission", () => {
@@ -133,18 +93,7 @@ describe("tool-registry", () => {
       expect(blocked).toContain("add_cron");
       expect(blocked).toContain("remove_cron");
       expect(blocked).toContain("create_database");
-      expect(blocked.length).toBeGreaterThan(30);
-    });
-  });
-
-  describe("getJobCreationToolNames", () => {
-    it("should return job creation tools", () => {
-      const tools = toolRegistry.getJobCreationToolNames();
-      expect(tools).toContain("start_job_creation");
-      expect(tools).toContain("finish_job_creation");
-      expect(tools).toContain("add_agent_node");
-      expect(tools).toContain("add_python_code_node");
-      expect(tools).toContain("run_node_test");
+      expect(blocked.length).toBeGreaterThan(15);
     });
   });
 });

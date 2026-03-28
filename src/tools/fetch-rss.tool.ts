@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import TurndownService from "turndown";
 
 import { fetchRssToolInputSchema } from "../shared/schemas/tool-schemas.js";
@@ -12,11 +12,16 @@ const turndownService = new TurndownService({
   codeBlockStyle: "fenced",
 });
 
+interface IDomElement {
+  getAttribute(name: string): string | null;
+}
+
 // Add custom rule for Telegram links (e.g., ?q=%23Breaking -> #Breaking)
 turndownService.addRule("telegramLinks", {
   filter: "a",
-  replacement: function (content, node: any) {
-    const href = node.getAttribute("href");
+  replacement: function (content, node) {
+    const element = node as unknown as IDomElement;
+    const href = element.getAttribute("href");
     if (href && href.startsWith("?q=")) {
       // Decode URL-encoded hashtags/mentions (e.g., ?q=%23Breaking -> #Breaking)
       const decoded = decodeURIComponent(href.substring(3));
@@ -82,11 +87,8 @@ function transformItem(item: Record<string, unknown>): Record<string, unknown> {
 
 //#region Tool
 
-export const fetchRssTool = tool({
-  description:
-    "Fetch and parse an RSS or Atom feed. Returns feed metadata and items. Use mode='unseen' to only get new items since the last fetch (state is persisted per URL).",
-  inputSchema: fetchRssToolInputSchema,
-  execute: async ({ url, maxItems, mode }): Promise<IFetchRssResult> => {
+export const fetchRssTool = tool(
+  async ({ url, maxItems, mode }): Promise<IFetchRssResult> => {
     const response: Response = await fetch(url, {
       method: "GET",
       headers: {
@@ -117,7 +119,7 @@ export const fetchRssTool = tool({
       unseenCount = unseenItems.length;
       returnedItems = unseenItems.slice(0, maxItems);
 
-      const updatedSeenIds: string[] = rssState.mergeRssSeenIds(state?.seenIds ?? [], allItems);
+      const updatedSeenIds: string[] = rssState.mergeRssSeenIds(state?.seenGuids ?? [], allItems);
       await rssState.saveRssStateAsync(url, updatedSeenIds);
     } else {
       returnedItems = transformedAllItems.slice(0, maxItems);
@@ -139,6 +141,12 @@ export const fetchRssTool = tool({
 
     return output;
   },
-});
+  {
+    name: "fetch_rss",
+    description:
+      "Fetch and parse an RSS or Atom feed. Returns feed metadata and items. Use mode='unseen' to only get new items since the last fetch (state is persisted per URL).",
+    schema: fetchRssToolInputSchema,
+  },
+);
 
 //#endregion Tool

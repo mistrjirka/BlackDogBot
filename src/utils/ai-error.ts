@@ -1,7 +1,14 @@
-import { APICallError } from "ai";
 import { extractErrorMessage } from "./error.js";
 
 //#region Interfaces
+
+interface IAPICallErrorLike {
+  statusCode?: number | null;
+  responseBody?: string | null;
+  isRetryable?: boolean | null;
+  url?: string | null;
+  requestBodyValues?: Record<string, unknown> | null;
+}
 
 export interface IAiErrorDetails {
   message: string;
@@ -20,7 +27,7 @@ export interface IAiErrorDetails {
 
 /**
  * Extracts structured error details from an AI SDK error.
- * If the error is an `APICallError` from the `ai` package, all available
+ * If the error has the shape of an `APICallError` (statusCode, responseBody, etc.), all available
  * fields (status code, response body, URL, retryable flag) are returned.
  * For any other error type, only the message is populated.
  */
@@ -36,7 +43,7 @@ export function extractAiErrorDetails(error: unknown): IAiErrorDetails {
     url: null,
   };
 
-  if (APICallError.isInstance(error)) {
+  if (_isAPICallError(error)) {
     details.statusCode = error.statusCode ?? null;
     details.responseBody = error.responseBody ?? null;
     details.isRetryable = error.isRetryable ?? null;
@@ -66,6 +73,19 @@ export function extractAiErrorDetails(error: unknown): IAiErrorDetails {
   }
 
   return details;
+}
+
+function _isAPICallError(error: unknown): error is IAPICallErrorLike {
+  if (error instanceof Error && "statusCode" in error) {
+    const err = error as IAPICallErrorLike;
+    return (
+      err.statusCode !== undefined ||
+      err.responseBody !== undefined ||
+      err.isRetryable !== undefined ||
+      err.url !== undefined
+    );
+  }
+  return false;
 }
 
 /**

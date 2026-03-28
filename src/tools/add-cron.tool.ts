@@ -1,11 +1,12 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 import { addCronToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { validateCronToolNames, buildSchedule } from "../helpers/cron-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
+import { ConfigService } from "../services/config.service.js";
+import { createChatModel } from "../services/langchain-model.service.js";
 import { generateId } from "../utils/id.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
@@ -33,53 +34,10 @@ const TOOL_DESCRIPTION: string =
 
 //#endregion Const
 
-//#region Private methods
-
-function _buildSchedule(input: {
-  scheduleType: "once" | "interval" | "cron";
-  scheduleRunAt?: string;
-  scheduleIntervalMs?: number;
-  scheduleCron?: string;
-}): Schedule {
-  switch (input.scheduleType) {
-    case "once": {
-      if (!input.scheduleRunAt || input.scheduleRunAt.trim().length === 0) {
-        throw new Error("scheduleRunAt is required for scheduleType='once'");
-      }
-      return {
-        type: "once",
-        runAt: input.scheduleRunAt,
-      };
-    }
-    case "interval": {
-      if (input.scheduleIntervalMs === undefined || !Number.isFinite(input.scheduleIntervalMs) || input.scheduleIntervalMs <= 0) {
-        throw new Error("scheduleIntervalMs is required and must be > 0 for scheduleType='interval'");
-      }
-      return {
-        type: "interval",
-        intervalMs: input.scheduleIntervalMs,
-      };
-    }
-    case "cron": {
-      if (!input.scheduleCron || input.scheduleCron.trim().length === 0) {
-        throw new Error("scheduleCron is required for scheduleType='cron'");
-      }
-      return {
-        type: "cron",
-        expression: input.scheduleCron,
-      };
-    }
-  }
-}
-
-//#endregion Private methods
-
 //#region Tool
 
-export const addCronTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: addCronToolInputSchema,
-  execute: async ({
+export const addCronTool = tool(
+  async ({
     name,
     description,
     instructions,
@@ -104,11 +62,7 @@ export const addCronTool = tool({
 
     try {
       // 0. Validate tool names at runtime
-      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = tools.filter(
-        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
-      );
+      const invalidTools: string[] = validateCronToolNames(tools);
       if (invalidTools.length > 0) {
         return {
           taskId: "",
@@ -172,21 +126,15 @@ Output a JSON object with:
 - "missingContext": string (if invalid, describe exactly what information is missing and why it cannot be derived; if valid, use empty string)
 `;
 
-      const aiService = AiProviderService.getInstance();
-      const model = aiService.getModel();
+      const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
-      const verificationResult = await generateObjectWithRetryAsync({
-        model,
-        schema: z.object({
-          isClear: z.boolean(),
-          missingContext: z.string(),
-        }),
-        prompt: verifierPrompt,
-        retryOptions: { callType: "schema_extraction" },
-      });
+      const verificationResult = await model.withStructuredOutput(z.object({
+        isClear: z.boolean(),
+        missingContext: z.string(),
+      })).invoke(verifierPrompt);
 
-      if (!verificationResult.object.isClear) {
-        const errorMsg = `CRON REJECTED. The instructions are ambiguous or missing context: ${verificationResult.object.missingContext}. Please provide complete, self-contained instructions.`;
+      if (!verificationResult.isClear) {
+        const errorMsg = `CRON REJECTED. The instructions are ambiguous or missing context: ${verificationResult.missingContext}. Please provide complete, self-contained instructions.`;
         logger.warn(`[${TOOL_NAME}] Cron rejected: ${errorMsg}`);
         return { taskId: "", success: false, error: errorMsg };
       }
@@ -194,7 +142,7 @@ Output a JSON object with:
       // 2. Schedule the task
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
-      const builtSchedule: Schedule = _buildSchedule({ scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron });
+      const builtSchedule: Schedule = buildSchedule({ scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron });
 
       const task: IScheduledTask = {
         taskId,
@@ -225,6 +173,11 @@ Output a JSON object with:
       return { taskId: "", success: false, error: errorMessage };
     }
   },
-});
+  {
+    name: "add_cron",
+    description: TOOL_DESCRIPTION,
+    schema: addCronToolInputSchema,
+  },
+);
 
 //#endregion Tool

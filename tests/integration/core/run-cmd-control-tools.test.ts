@@ -79,12 +79,6 @@ type IStopCmdOutput = {
   error: string | null;
 };
 
-const TOOL_OPTIONS = {
-  toolCallId: "tc-run-cmd-control",
-  messages: [] as never[],
-  abortSignal: new AbortController().signal,
-};
-
 async function execRunCmd(args: {
   command: string;
   cwd?: string;
@@ -93,14 +87,14 @@ async function execRunCmd(args: {
   deterministicInputDetection?: boolean;
 }): Promise<IRunCmdOutput> {
   return await (runCmdTool as unknown as {
-    execute: (input: typeof args, options: typeof TOOL_OPTIONS) => Promise<IRunCmdOutput>;
-  }).execute(args, TOOL_OPTIONS);
+    invoke: (input: typeof args) => Promise<IRunCmdOutput>;
+  }).invoke(args);
 }
 
 async function execGetCmdStatus(handleId: string): Promise<ICmdStatusToolOutput> {
   return await (getCmdStatusTool as unknown as {
-    execute: (input: { handleId: string }, options: typeof TOOL_OPTIONS) => Promise<ICmdStatusToolOutput>;
-  }).execute({ handleId }, TOOL_OPTIONS);
+    invoke: (input: { handleId: string }) => Promise<ICmdStatusToolOutput>;
+  }).invoke({ handleId });
 }
 
 async function execGetCmdOutput(args: {
@@ -109,8 +103,8 @@ async function execGetCmdOutput(args: {
   maxBytes: number;
 }): Promise<ICmdOutputToolOutput> {
   return await (getCmdOutputTool as unknown as {
-    execute: (input: typeof args, options: typeof TOOL_OPTIONS) => Promise<ICmdOutputToolOutput>;
-  }).execute(args, TOOL_OPTIONS);
+    invoke: (input: typeof args) => Promise<ICmdOutputToolOutput>;
+  }).invoke(args);
 }
 
 async function execRunCmdInput(args: {
@@ -119,8 +113,8 @@ async function execRunCmdInput(args: {
   closeStdin?: boolean;
 }): Promise<IRunCmdInputResult> {
   return await (runCmdInputTool as unknown as {
-    execute: (input: typeof args, options: typeof TOOL_OPTIONS) => Promise<IRunCmdInputResult>;
-  }).execute(args, TOOL_OPTIONS);
+    invoke: (input: typeof args) => Promise<IRunCmdInputResult>;
+  }).invoke(args);
 }
 
 async function execWaitForCmd(args: {
@@ -129,8 +123,8 @@ async function execWaitForCmd(args: {
   maxBytes?: number;
 }): Promise<IWaitForCmdOutput> {
   return await (waitForCmdTool as unknown as {
-    execute: (input: typeof args, options: typeof TOOL_OPTIONS) => Promise<IWaitForCmdOutput>;
-  }).execute(args, TOOL_OPTIONS);
+    invoke: (input: typeof args) => Promise<IWaitForCmdOutput>;
+  }).invoke(args);
 }
 
 async function execStopCmd(args: {
@@ -138,8 +132,8 @@ async function execStopCmd(args: {
   signal?: "SIGTERM" | "SIGKILL" | "SIGINT";
 }): Promise<IStopCmdOutput> {
   return await (stopCmdTool as unknown as {
-    execute: (input: typeof args, options: typeof TOOL_OPTIONS) => Promise<IStopCmdOutput>;
-  }).execute(args, TOOL_OPTIONS);
+    invoke: (input: typeof args) => Promise<IStopCmdOutput>;
+  }).invoke(args);
 }
 
 async function waitForTerminalStatusAsync(handleId: string, timeoutMs: number): Promise<string> {

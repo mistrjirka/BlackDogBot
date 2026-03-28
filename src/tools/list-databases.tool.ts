@@ -1,13 +1,11 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 
-export const listDatabasesTool = tool({
-  description: "List all available databases.",
-  inputSchema: z.object({}),
-  execute: async (): Promise<{
+export const listDatabasesTool = tool(
+  async (): Promise<{
     databases: {
       name: string;
       tableCount: number;
@@ -38,4 +36,9 @@ export const listDatabasesTool = tool({
       };
     }
   },
-});
+  {
+    name: "list_databases",
+    description: "List all available databases.",
+    schema: z.object({}),
+  },
+);

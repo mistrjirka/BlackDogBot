@@ -135,6 +135,25 @@ describe("PromptService", () => {
     expect(afterResetResolved).not.toContain("temporary override content");
   });
 
+  it("should auto-sync modified existing prompt to defaults on initialize", async () => {
+    const service: PromptService = PromptService.getInstance();
+
+    await service.initializeAsync();
+
+    const defaultCronPrompt: string = await service.getPromptRawAsync("cron-agent");
+
+    await service.writePromptAsync("cron-agent", "manually changed prompt content");
+
+    // Recreate singleton to simulate app restart.
+    (PromptService as unknown as { _instance: null })._instance = null;
+    const reloadedService: PromptService = PromptService.getInstance();
+    await reloadedService.initializeAsync();
+
+    const afterRestartPrompt: string = await reloadedService.getPromptRawAsync("cron-agent");
+    expect(afterRestartPrompt).toBe(defaultCronPrompt);
+    expect(afterRestartPrompt).not.toContain("manually changed prompt content");
+  });
+
   it("should recommend update when stored prompt fingerprint is stale", async () => {
     const service: PromptService = PromptService.getInstance();
 

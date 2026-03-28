@@ -106,6 +106,75 @@ export class LoggerService {
     this._log("error", message, context);
   }
 
+  /**
+   * Log a tool step with colored formatting for console.
+   * Console: colored output with step number, tool name, args, and result preview.
+   * File: plain text format without ANSI codes.
+   */
+  public logStep(
+    stepNumber: number,
+    toolName: string,
+    args: Record<string, unknown>,
+    resultPreview: string,
+  ): void {
+    if (LOG_LEVELS["info"] < LOG_LEVELS[this._logLevel]) {
+      return;
+    }
+
+    const timestamp: string = new Date().toISOString();
+    const argsStr: string = JSON.stringify(args).slice(0, 500);
+    const resultStr: string = resultPreview.slice(0, 500);
+
+    // Plain text for log file
+    const fileLine: string =
+      `[${timestamp}] [INFO] [Step ${stepNumber}] ${toolName}\n` +
+      `  args: ${argsStr}\n` +
+      `  result: ${resultStr}`;
+
+    // Colored output for console
+    const consoleLine: string = ConsoleColor.enabled
+      ? `${ConsoleColor.gray(`[${timestamp}]`)} [${ConsoleColor.brightCyan("INFO")}] ${ConsoleColor.blue(`[Step ${stepNumber}]`)} ${ConsoleColor.yellow(toolName)}\n` +
+        `  ${ConsoleColor.gray("args:")} ${argsStr}\n` +
+        `  ${ConsoleColor.green("result:")} ${ConsoleColor.green(resultStr)}`
+      : fileLine;
+
+    console.log(consoleLine);
+    void this._writeToFileAsync(fileLine);
+  }
+
+  /**
+   * Log the final response from the model with colored formatting.
+   */
+  public logFinalResponse(
+    responseText: string,
+    context?: Record<string, unknown>,
+  ): void {
+    if (LOG_LEVELS["info"] < LOG_LEVELS[this._logLevel]) {
+      return;
+    }
+
+    const timestamp: string = new Date().toISOString();
+    const hasResponseText: boolean = responseText.trim().length > 0;
+    const responsePreview: string = hasResponseText
+      ? responseText.slice(0, 500)
+      : "<empty final response from model>";
+    const contextStr: string = context ? ` ${JSON.stringify(context)}` : "";
+
+    // Plain text for log file
+    const fileLine: string =
+      `[${timestamp}] [INFO] Final response (${responseText.length} chars):${contextStr}\n` +
+      `  ${responsePreview}`;
+
+    // Colored output for console
+    const consoleLine: string = ConsoleColor.enabled
+      ? `${ConsoleColor.gray(`[${timestamp}]`)} [${ConsoleColor.brightCyan("INFO")}] ${ConsoleColor.brightMagenta("Final response")} (${ConsoleColor.yellow(responseText.length.toString())} chars):${contextStr}\n` +
+        `  ${ConsoleColor.green(responsePreview)}`
+      : fileLine;
+
+    console.log(consoleLine);
+    void this._writeToFileAsync(fileLine);
+  }
+
   //#endregion Public methods
 
   //#region Private methods

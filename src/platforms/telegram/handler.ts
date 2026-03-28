@@ -5,11 +5,12 @@ import { dirname } from "path";
 
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
-import { AiProviderService } from "../../services/ai-provider.service.js";
-import { MainAgent } from "../../agent/main-agent.js";
+import { AiCapabilityService } from "../../services/ai-capability.service.js";
+import type { IChatAgent } from "../../agent/agent-interface.js";
+import { LangchainMainAgent } from "../../agent/langchain-main-agent.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
-import type { IAgentResult, OnStepCallback, IToolCallSummary } from "../../agent/base-agent.js";
-import type { IChatImageAttachment } from "../../agent/main-agent.js";
+import type { IAgentResult, OnStepCallback, IToolCallSummary } from "../../agent/types.js";
+import type { IChatImageAttachment } from "../../agent/types.js";
 import type { IIncomingMessage } from "../../shared/types/messaging.types.js";
 import type { IPlatformDeps } from "../types.js";
 import type { ITelegramConfig } from "./types.js";
@@ -27,6 +28,7 @@ import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-forma
 import { isCancelCommand } from "../../utils/command-utils.js";
 import { getTelegramChatsFilePath } from "../../utils/paths.js";
 import { getUploadsDir, ensureDirectoryExistsAsync } from "../../utils/paths.js";
+import { TYPING_INDICATOR_INTERVAL_MS, MAX_IMAGE_BYTES, IMAGE_AUTO_ANALYZE_DELAY_MS } from "../../shared/constants.js";
 import {
   compressImageToLimitAsync,
   getImageExtensionForMimeType,
@@ -42,15 +44,6 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
   search_knowledge: "query",
   add_knowledge: "knowledge",
   edit_knowledge: "id",
-  add_job: "name",
-  edit_job: "jobId",
-  remove_job: "jobId",
-  run_job: "jobId",
-  finish_job: "jobId",
-  edit_node: "nodeId",
-  remove_node: "nodeId",
-  connect_nodes: "fromNodeId",
-  set_entrypoint: "nodeId",
   call_skill: "skillName",
   get_skill_file: "skillName",
   modify_prompt: "promptName",
@@ -59,7 +52,6 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
   write_file: "filePath",
   append_file: "filePath",
   edit_file: "filePath",
-  render_graph: "jobId",
   add_cron: "name",
   edit_cron: "taskId",
   edit_cron_instructions: "taskId",
@@ -94,7 +86,7 @@ export class TelegramHandler {
   private static _instance: TelegramHandler | null;
   private _logger: LoggerService;
   private _messagingService: MessagingService;
-  private _mainAgent: MainAgent;
+  private _agent: IChatAgent;
   private _channelRegistry: ChannelRegistryService;
   private _processing: Set<string>;
   private _pendingMessages: Map<string, IPendingTelegramMessage[]>;
@@ -113,7 +105,7 @@ export class TelegramHandler {
   private constructor() {
     this._logger = LoggerService.getInstance();
     this._messagingService = MessagingService.getInstance();
-    this._mainAgent = MainAgent.getInstance();
+    this._agent = LangchainMainAgent.getInstance() as IChatAgent;
     this._channelRegistry = ChannelRegistryService.getInstance();
     this._processing = new Set<string>();
     this._pendingMessages = new Map<string, IPendingTelegramMessage[]>();
@@ -327,7 +319,7 @@ export class TelegramHandler {
             }
           : undefined;
 
-      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
+      await this._agent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
 
       // Start typing indicator
       const typingInterval: ReturnType<typeof setInterval> = setInterval(async () => {
@@ -336,14 +328,14 @@ export class TelegramHandler {
         } catch {
           // Silently ignore typing indicator failures
         }
-      }, 5000);
+      }, TYPING_INDICATOR_INTERVAL_MS);
 
-      await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
+      await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch((): void => { /* Typing indicator is best-effort */ });
 
       try {
         const result: IAgentResult = await this._processWithContextRecoveryAsync(
           chatId,
-          async (): Promise<IAgentResult> => await this._mainAgent.processMessageForChatAsync(
+          async (): Promise<IAgentResult> => await this._agent.processMessageForChatAsync(
             chatId,
             incoming.text,
             pendingImageAttachments.length > 0 ? pendingImageAttachments : undefined,
@@ -403,47 +395,22 @@ export class TelegramHandler {
             if (i === 0) {
               options.reply_parameters = { message_id: message.message_id };
             }
-            try {
-              await ctx.reply(chunks[i], options);
-            } catch (replyError: unknown) {
-              const errorMsg: string = replyError instanceof Error ? replyError.message : String(replyError);
-
-              // If the replied-to message was deleted (e.g. by /cancel), retry without reply_parameters
-              if (errorMsg.includes("message to be replied not found") && options.reply_parameters) {
-                delete options.reply_parameters;
-                try {
-                  await ctx.reply(chunks[i], options);
-                } catch {
-                  // Last resort: try plain text without reply
-                  const plainText: string = stripAllHtml(chunks[i]);
-                  await ctx.reply(plainText).catch(() => {});
-                }
-              } else {
-                // HTML parse error or other issue — fall back to plain text
-                this._logger.warn("Telegram HTML parse error, falling back to plain text", {
-                  error: errorMsg,
-                });
-                const plainText: string = stripAllHtml(chunks[i]);
-                const fallbackOptions: Record<string, unknown> =
-                  i === 0 ? { reply_parameters: { message_id: message.message_id } } : {};
-                try {
-                  await ctx.reply("⚠️ Formatting error, showing plain text:", fallbackOptions);
-                  await ctx.reply(plainText, fallbackOptions);
-                } catch {
-                  // If even fallback fails (deleted message), send without reply
-                  await ctx.reply("⚠️ Formatting error, showing plain text:").catch(() => {});
-                  await ctx.reply(plainText).catch(() => {});
-                }
-              }
-            }
+            await this._replyWithFallbackAsync(ctx, chunks[i], options, i === 0, message.message_id);
           }
         }
 
-        this._logger.info("Telegram message processed", {
+        const logData: Record<string, unknown> = {
           chatId,
           stepsCount: result.stepsCount,
-          responseLength: result.text.length,
-        });
+          responseLength: result.text?.length ?? 0,
+          sendMessageUsed: result.sendMessageUsed ?? false,
+        };
+
+        if (result.sendMessageUsed) {
+          logData.note = "Final response suppressed - send_message tool was used";
+        }
+
+        this._logger.info("Telegram message processed", logData);
       } finally {
         clearInterval(typingInterval);
       }
@@ -521,7 +488,7 @@ export class TelegramHandler {
         this._logger.info("Auto-registered Telegram channel", { chatId });
       }
 
-      if (!AiProviderService.getInstance().getSupportsVision()) {
+      if (!AiCapabilityService.getInstance().getSupportsVision()) {
         await ctx.reply(
           "Image analysis is currently unavailable because the active model does not support vision. " +
           "Switch to a vision-capable model/provider and try again.",
@@ -534,7 +501,7 @@ export class TelegramHandler {
         return;
       }
 
-      const maxImageBytes: number = 10 * 1024 * 1024;
+      const maxImageBytes: number = MAX_IMAGE_BYTES;
       let imageBuffer: Buffer = extraction.imageBuffer;
       let resolvedMediaType: string = extraction.mediaType;
 
@@ -595,7 +562,7 @@ export class TelegramHandler {
             error: extractErrorMessage(error),
           });
         });
-      }, 2000);
+      }, IMAGE_AUTO_ANALYZE_DELAY_MS);
 
       this._pendingImagesByChat.set(chatId, {
         imageAttachments: combinedImageAttachments,
@@ -633,7 +600,7 @@ export class TelegramHandler {
       this._pendingImagesByChat.delete(chatId);
     }
 
-    const stopped: boolean = this._mainAgent.stopChat(chatId);
+    const stopped: boolean = this._agent.stopChat?.(chatId) ?? false;
     let deletedInFlightMessage: boolean = false;
     let droppedQueuedMessages: number = 0;
 
@@ -757,7 +724,7 @@ export class TelegramHandler {
         error: processingError instanceof Error ? processingError.message : String(processingError),
       });
 
-      const compacted: boolean = await this._mainAgent.compactSessionMessagesForChatAsync(chatId);
+      const compacted: boolean = await this._agent.compactSessionMessagesForChatAsync?.(chatId) ?? false;
       if (!compacted) {
         throw processingError;
       }
@@ -843,14 +810,14 @@ export class TelegramHandler {
             }
           : undefined;
 
-      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
+      await this._agent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
 
       await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
 
       if (!hasAnyImageAttachment) {
         const result: IAgentResult = await this._processWithContextRecoveryAsync(
           chatId,
-          async (): Promise<IAgentResult> => await this._mainAgent.processMessageForChatAsync(chatId, mergedText),
+          async (): Promise<IAgentResult> => await this._agent.processMessageForChatAsync(chatId, mergedText),
           "merged_queue_text",
         );
 
@@ -885,7 +852,7 @@ export class TelegramHandler {
       for (const queuedMessage of queuedMessages) {
         const result: IAgentResult = await this._processWithContextRecoveryAsync(
           chatId,
-          async (): Promise<IAgentResult> => await this._mainAgent.processMessageForChatAsync(
+          async (): Promise<IAgentResult> => await this._agent.processMessageForChatAsync(
             chatId,
             queuedMessage.text,
             queuedMessage.imageAttachments.length > 0 ? queuedMessage.imageAttachments : undefined,
@@ -1086,6 +1053,48 @@ export class TelegramHandler {
     }
 
     return this._knownChatIds.has(chatId);
+  }
+
+  private async _replyWithFallbackAsync(
+    ctx: Context,
+    text: string,
+    options: Record<string, unknown>,
+    isFirstChunk: boolean,
+    originalMessageId: number,
+  ): Promise<void> {
+    try {
+      await ctx.reply(text, options);
+      return;
+    } catch (replyError: unknown) {
+      const errorMsg: string = replyError instanceof Error ? replyError.message : String(replyError);
+
+      // If the replied-to message was deleted (e.g. by /cancel), retry without reply_parameters
+      if (errorMsg.includes("message to be replied not found") && options.reply_parameters) {
+        const { reply_parameters: _, ...noReplyOptions } = options;
+        try {
+          await ctx.reply(text, noReplyOptions);
+          return;
+        } catch {
+          await ctx.reply(stripAllHtml(text)).catch(() => {});
+          return;
+        }
+      }
+
+      // HTML parse error or other issue — fall back to plain text
+      this._logger.warn("Telegram HTML parse error, falling back to plain text", {
+        error: errorMsg,
+      });
+      const plainText: string = stripAllHtml(text);
+      const fallbackOptions: Record<string, unknown> =
+        isFirstChunk ? { reply_parameters: { message_id: originalMessageId } } : {};
+      try {
+        await ctx.reply("⚠️ Formatting error, showing plain text:", fallbackOptions);
+        await ctx.reply(plainText, fallbackOptions);
+      } catch {
+        await ctx.reply("⚠️ Formatting error, showing plain text:").catch(() => {});
+        await ctx.reply(plainText).catch(() => {});
+      }
+    }
   }
 
   //#endregion Private Methods

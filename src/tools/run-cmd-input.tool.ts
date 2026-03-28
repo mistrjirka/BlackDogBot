@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { runCmdInputToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { CommandProcessService } from "../services/command-process.service.js";
@@ -7,10 +7,8 @@ import type { z } from "zod";
 
 type IInput = z.infer<typeof runCmdInputToolInputSchema>;
 
-export const runCmdInputTool = tool({
-  description: "Send input to a running command that is waiting for stdin. Use the handleId returned by a previous run_cmd call. A newline is automatically appended.",
-  inputSchema: runCmdInputToolInputSchema,
-  execute: async ({ handleId, input, closeStdin }: IInput): Promise<Record<string, unknown>> => {
+export const runCmdInputTool = tool(
+  async ({ handleId, input, closeStdin }: IInput): Promise<Record<string, unknown>> => {
     const logger: LoggerService = LoggerService.getInstance();
     const processService: CommandProcessService = CommandProcessService.getInstance();
 
@@ -43,4 +41,9 @@ export const runCmdInputTool = tool({
       };
     }
   },
-});
+  {
+    name: "run_cmd_input",
+    description: "Send input to a running command that is waiting for stdin. Use the handleId returned by a previous run_cmd call. A newline is automatically appended.",
+    schema: runCmdInputToolInputSchema,
+  },
+);
