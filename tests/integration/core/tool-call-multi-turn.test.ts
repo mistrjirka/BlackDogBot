@@ -196,5 +196,48 @@ describe("Tool Call Multi-Turn E2E", () => {
       expect(result.text).toContain("INSTR_UNIQUE_42_TOKEN");
       expect(result.text).toContain("987654");
     }, 120000);
+
+    it("should hot-reload write_table tool after create_table in the same chat session", async () => {
+      const agent = LangchainMainAgent.getInstance();
+      await agent.initializeAsync();
+
+      const messageSender = vi.fn().mockResolvedValue("msg-hotreload");
+      const photoSender = vi.fn().mockResolvedValue("photo-hotreload");
+      const observedToolNames: string[] = [];
+
+      const chatId = "test-chat-hotreload";
+      await agent.initializeForChatAsync(
+        chatId,
+        messageSender,
+        photoSender,
+        async (_stepNumber: number, toolCalls) => {
+          for (const call of toolCalls) {
+            observedToolNames.push(call.name);
+          }
+        },
+        "telegram",
+      );
+
+      const suffix = Date.now().toString().slice(-6);
+      const databaseName = `hotreload_db_${suffix}`;
+      const tableName = `items_${suffix}`;
+      const writeToolName = `write_table_${tableName}`;
+
+      await agent.processMessageForChatAsync(
+        chatId,
+        `Create database ${databaseName} and create table ${tableName} with columns id INTEGER primary key, title TEXT not null, and created_at TEXT not null.`,
+      );
+
+      observedToolNames.length = 0;
+
+      const result = await agent.processMessageForChatAsync(
+        chatId,
+        `Now insert exactly one row using ONLY tool ${writeToolName}. Use title "alpha" and created_at "2026-01-01T00:00:00Z". Do not use write_to_database.`,
+      );
+
+      expect(result.stepsCount).toBeGreaterThanOrEqual(1);
+      expect(observedToolNames).toContain(writeToolName);
+      expect(result.text.length).toBeGreaterThan(0);
+    }, 180000);
   });
 });

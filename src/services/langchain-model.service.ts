@@ -9,10 +9,14 @@ import { getModelProfilesDir } from "../utils/paths.js";
 
 //#region Public Functions
 
-export function createChatModel(config: IAiConfig): ChatOpenAI {
+interface ICreateChatModelOptions {
+  disableThinking?: boolean;
+}
+
+export function createChatModel(config: IAiConfig, options: ICreateChatModelOptions = {}): ChatOpenAI {
   const logger: LoggerService = LoggerService.getInstance();
   const { baseURL, apiKey, model, timeout } = _resolveProviderConfig(config);
-  const modelKwargs: Record<string, unknown> = _resolveModelKwargs(config);
+  const modelKwargs: Record<string, unknown> = _resolveModelKwargs(config, options);
   const modelFields = {
     model,
     configuration: {
@@ -90,30 +94,42 @@ function _resolveProviderConfig(config: IAiConfig): IResolvedProviderConfig {
   throw new Error(`No provider configuration found for: ${config.provider}`);
 }
 
-function _resolveModelKwargs(config: IAiConfig): Record<string, unknown> {
+function _resolveModelKwargs(config: IAiConfig, options: ICreateChatModelOptions): Record<string, unknown> {
   const profileContext = _resolveProfileContext(config);
-  if (profileContext === null) {
-    return {};
-  }
-
-  const profileData = _loadProfileYaml(profileContext.profileName, profileContext.profilesDir);
-  if (profileData === null || typeof profileData.defaults !== "object" || profileData.defaults === null) {
-    return {};
-  }
-
-  const defaults: IModelProfileDefaults = profileData.defaults;
   const modelKwargs: Record<string, unknown> = {};
 
-  if (typeof defaults.reasoningFormat === "string" && defaults.reasoningFormat.length > 0) {
-    modelKwargs.reasoning_format = defaults.reasoningFormat;
+  if (profileContext !== null) {
+    const profileData = _loadProfileYaml(profileContext.profileName, profileContext.profilesDir);
+    if (profileData !== null && typeof profileData.defaults === "object" && profileData.defaults !== null) {
+      const defaults: IModelProfileDefaults = profileData.defaults;
+
+      if (typeof defaults.reasoningFormat === "string" && defaults.reasoningFormat.length > 0) {
+        modelKwargs.reasoning_format = defaults.reasoningFormat;
+      }
+
+      if (typeof defaults.parallelToolCalls === "boolean") {
+        modelKwargs.parallel_tool_calls = defaults.parallelToolCalls;
+      }
+
+      if (typeof defaults.chatTemplateKwargs === "object" && defaults.chatTemplateKwargs !== null) {
+        modelKwargs.chat_template_kwargs = {
+          ...defaults.chatTemplateKwargs,
+        };
+      }
+    }
   }
 
-  if (typeof defaults.parallelToolCalls === "boolean") {
-    modelKwargs.parallel_tool_calls = defaults.parallelToolCalls;
-  }
+  if (options.disableThinking) {
+    const currentChatTemplateKwargs: Record<string, unknown> =
+      typeof modelKwargs.chat_template_kwargs === "object" &&
+      modelKwargs.chat_template_kwargs !== null
+        ? modelKwargs.chat_template_kwargs as Record<string, unknown>
+        : {};
 
-  if (typeof defaults.chatTemplateKwargs === "object" && defaults.chatTemplateKwargs !== null) {
-    modelKwargs.chat_template_kwargs = defaults.chatTemplateKwargs;
+    modelKwargs.chat_template_kwargs = {
+      ...currentChatTemplateKwargs,
+      enable_thinking: false,
+    };
   }
 
   return modelKwargs;

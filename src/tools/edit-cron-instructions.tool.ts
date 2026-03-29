@@ -20,6 +20,11 @@ interface IEditCronInstructionsResult {
   error?: string;
 }
 
+interface IInstructionVerificationResult {
+  isClear: boolean;
+  missingContext: string;
+}
+
 //#endregion Interfaces
 
 //#region Constants
@@ -32,7 +37,129 @@ const TOOL_DESCRIPTION: string =
   "IMPORTANT: 'intention' is metadata only and does NOT change instructions by itself. " +
   "IMPORTANT: You MUST call 'get_cron' first to retrieve the current task configuration before using this tool.";
 
+const instructionVerificationResultSchema = z.object({
+  isClear: z.boolean(),
+  missingContext: z.string(),
+});
+
 //#endregion Constants
+
+//#region Helper methods
+
+function _extractTextFromAiContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    const textParts: string[] = content
+      .filter((part: unknown): part is { type: string; text?: unknown } => typeof part === "object" && part !== null)
+      .filter((part: { type: string; text?: unknown }): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
+      .map((part: { type: "text"; text: string }) => part.text);
+
+    return textParts.join("\n").trim();
+  }
+
+  return "";
+}
+
+function _extractTextFromReasoningContent(additionalKwargs: unknown): string {
+  if (typeof additionalKwargs !== "object" || additionalKwargs === null) {
+    return "";
+  }
+
+  const rawReasoning: unknown = (additionalKwargs as { reasoning_content?: unknown }).reasoning_content;
+  if (typeof rawReasoning === "string") {
+    return rawReasoning;
+  }
+
+  return "";
+}
+
+function _extractTopLevelJsonObjectCandidates(rawText: string): string[] {
+  const candidates: string[] = [];
+  let depth: number = 0;
+  let inString: boolean = false;
+  let escape: boolean = false;
+  let objectStart: number = -1;
+
+  for (let i: number = 0; i < rawText.length; i++) {
+    const char: string = rawText[i];
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escape = true;
+        continue;
+      }
+
+      if (char === "\"") {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) {
+        objectStart = i;
+      }
+
+      depth++;
+      continue;
+    }
+
+    if (char === "}") {
+      if (depth === 0) {
+        continue;
+      }
+
+      depth--;
+      if (depth === 0 && objectStart >= 0) {
+        candidates.push(rawText.slice(objectStart, i + 1));
+        objectStart = -1;
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function _parseVerificationResultOrThrow(rawText: string): IInstructionVerificationResult {
+  const trimmed: string = rawText.trim();
+
+  const parseWithSchema = (candidate: string): IInstructionVerificationResult | null => {
+    try {
+      const parsedJson: unknown = JSON.parse(candidate);
+      const parsed = instructionVerificationResultSchema.safeParse(parsedJson);
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const candidates: string[] = [trimmed, ..._extractTopLevelJsonObjectCandidates(trimmed)];
+
+  for (const candidate of candidates) {
+    const parsed: IInstructionVerificationResult | null = parseWithSchema(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  throw new Error(`Verifier returned invalid structured response: ${trimmed.slice(0, 200)}`);
+}
+
+//#endregion Helper methods
 
 //#region Tool
 
@@ -191,10 +318,24 @@ Output a JSON object with:
 
     const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
-    const verificationResult = await model.withStructuredOutput(z.object({
-      isClear: z.boolean(),
-      missingContext: z.string(),
-    })).invoke(verifierPrompt);
+    const verificationResponse = await model.invoke(verifierPrompt);
+    const rawText: string = _extractTextFromAiContent(verificationResponse.content);
+    const rawReasoningText: string = _extractTextFromReasoningContent(
+      (verificationResponse as { additional_kwargs?: unknown }).additional_kwargs,
+    );
+
+    logger.debug(`[${TOOL_NAME}] Verifier raw response`, {
+      contentPreview: rawText.slice(0, 200),
+      reasoningPreview: rawReasoningText.slice(0, 200),
+      contentLength: rawText.length,
+      reasoningLength: rawReasoningText.length,
+    });
+
+    const mergedRawText: string = [rawText, rawReasoningText]
+      .filter((value: string): boolean => value.trim().length > 0)
+      .join("\n");
+
+    const verificationResult: IInstructionVerificationResult = _parseVerificationResultOrThrow(mergedRawText);
 
     if (!verificationResult.isClear) {
       const errorMsg =

@@ -37,17 +37,129 @@ const TOOL_DESCRIPTION: string =
   "Examples: once => scheduleRunAt='2026-03-20T08:00:00Z'; interval => scheduleIntervalMs=7200000; cron => scheduleCron='0 */2 * * *'. " +
   "If the task's instructions reference a database, ensure the database and table(s) have been created first using create_database and create_table, then reference them by name (without .db extension) in the instructions.";
 
-const CONVERSATIONAL_REFERENCE_PATTERNS: RegExp[] = [
-  /\bdo what we discussed\b/i,
-  /\bthat (feed|url|api|endpoint|file|database|table|report|source)\b/i,
-  /\b(the|that) (url|endpoint|api|feed|path|file) (i|we) mentioned\b/i,
-  /\bthe same as (before|last time)\b/i,
-  /\bas before\b/i,
-];
+const instructionVerificationResultSchema = z.object({
+  isClear: z.boolean(),
+  missingContext: z.string(),
+});
 
 //#endregion Const
 
 //#region Private methods
+
+function _extractTextFromAiContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    const textParts = content
+      .filter((part): part is { type: string; text?: unknown } => typeof part === "object" && part !== null)
+      .filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
+      .map((part) => part.text);
+
+    return textParts.join("\n").trim();
+  }
+
+  return "";
+}
+
+function _extractTextFromReasoningContent(additionalKwargs: unknown): string {
+  if (typeof additionalKwargs !== "object" || additionalKwargs === null) {
+    return "";
+  }
+
+  const rawReasoning = (additionalKwargs as { reasoning_content?: unknown }).reasoning_content;
+  if (typeof rawReasoning === "string") {
+    return rawReasoning;
+  }
+
+  return "";
+}
+
+function _parseVerificationResultOrThrow(rawText: string): IInstructionVerificationResult {
+  const trimmed = rawText.trim();
+
+  const parseWithSchema = (candidate: string): IInstructionVerificationResult | null => {
+    try {
+      const parsedJson = JSON.parse(candidate) as unknown;
+      const parsed = instructionVerificationResultSchema.safeParse(parsedJson);
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const candidates: string[] = [
+    trimmed,
+    ..._extractTopLevelJsonObjectCandidates(trimmed),
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = parseWithSchema(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  throw new Error(`Verifier returned invalid structured response: ${trimmed.slice(0, 200)}`);
+}
+
+function _extractTopLevelJsonObjectCandidates(rawText: string): string[] {
+  const candidates: string[] = [];
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let objectStart = -1;
+
+  for (let i = 0; i < rawText.length; i++) {
+    const char = rawText[i];
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escape = true;
+        continue;
+      }
+
+      if (char === "\"") {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) {
+        objectStart = i;
+      }
+      depth++;
+      continue;
+    }
+
+    if (char === "}") {
+      if (depth === 0) {
+        continue;
+      }
+
+      depth--;
+      if (depth === 0 && objectStart >= 0) {
+        candidates.push(rawText.slice(objectStart, i + 1));
+        objectStart = -1;
+      }
+    }
+  }
+
+  return candidates;
+}
 
 async function _verifyInstructionsAsync(instructions: string, tools: string[], logger: LoggerService): Promise<IInstructionVerificationResult> {
   const toolContextBlock: string = await buildCronToolContextBlockAsync(tools);
@@ -100,29 +212,24 @@ Output a JSON object with:
 `;
 
   const model = createChatModel(ConfigService.getInstance().getAiConfig());
+  const response = await model.invoke(verifierPrompt);
+  const rawText: string = _extractTextFromAiContent(response.content);
+  const rawReasoningText: string = _extractTextFromReasoningContent(
+    (response as { additional_kwargs?: unknown }).additional_kwargs,
+  );
 
-  try {
-    return await model.withStructuredOutput(z.object({
-      isClear: z.boolean(),
-      missingContext: z.string(),
-    })).invoke(verifierPrompt) as IInstructionVerificationResult;
-  } catch (error: unknown) {
-    const errorMessage: string = extractErrorMessage(error);
-    logger.warn(`[${TOOL_NAME}] Verifier model unavailable, using heuristic fallback`, {
-      error: errorMessage,
-    });
+  logger.debug(`[${TOOL_NAME}] Verifier raw response`, {
+    contentPreview: rawText.slice(0, 200),
+    reasoningPreview: rawReasoningText.slice(0, 200),
+    contentLength: rawText.length,
+    reasoningLength: rawReasoningText.length,
+  });
 
-    for (const pattern of CONVERSATIONAL_REFERENCE_PATTERNS) {
-      if (pattern.test(instructions)) {
-        return {
-          isClear: false,
-          missingContext: "Instructions depend on prior conversation context (for example 'that feed' or 'what we discussed'). Provide explicit, self-contained resource identifiers and actions.",
-        };
-      }
-    }
+  const mergedRawText: string = [rawText, rawReasoningText]
+    .filter((value: string): boolean => value.trim().length > 0)
+    .join("\n");
 
-    return { isClear: true, missingContext: "" };
-  }
+  return _parseVerificationResultOrThrow(mergedRawText);
 }
 
 //#endregion Private methods

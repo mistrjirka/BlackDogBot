@@ -36,6 +36,9 @@ const MessageDispatchPolicySchema = z.object({
   shouldDispatch: z.boolean(),
 });
 
+type MessageNoveltyDecision = z.infer<typeof MessageNoveltySchema>;
+type MessageDispatchDecision = z.infer<typeof MessageDispatchPolicySchema>;
+
 //#endregion Constants
 
 //#region Interfaces
@@ -64,6 +67,155 @@ export interface ICheckMessageDispatchResult {
 }
 
 //#endregion Interfaces
+
+//#region Helper methods
+
+function _extractTextFromAiContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    const textParts: string[] = content
+      .filter((part: unknown): part is { type: string; text?: unknown } => typeof part === "object" && part !== null)
+      .filter((part: { type: string; text?: unknown }): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
+      .map((part: { type: "text"; text: string }) => part.text);
+
+    return textParts.join("\n").trim();
+  }
+
+  return "";
+}
+
+function _extractTextFromReasoningContent(additionalKwargs: unknown): string {
+  if (typeof additionalKwargs !== "object" || additionalKwargs === null) {
+    return "";
+  }
+
+  const rawReasoning: unknown = (additionalKwargs as { reasoning_content?: unknown }).reasoning_content;
+  if (typeof rawReasoning === "string") {
+    return rawReasoning;
+  }
+
+  return "";
+}
+
+function _extractTopLevelJsonObjectCandidates(rawText: string): string[] {
+  const candidates: string[] = [];
+  let depth: number = 0;
+  let inString: boolean = false;
+  let escape: boolean = false;
+  let objectStart: number = -1;
+
+  for (let i: number = 0; i < rawText.length; i++) {
+    const char: string = rawText[i];
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escape = true;
+        continue;
+      }
+
+      if (char === "\"") {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) {
+        objectStart = i;
+      }
+
+      depth++;
+      continue;
+    }
+
+    if (char === "}") {
+      if (depth === 0) {
+        continue;
+      }
+
+      depth--;
+      if (depth === 0 && objectStart >= 0) {
+        candidates.push(rawText.slice(objectStart, i + 1));
+        objectStart = -1;
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function _parseStructuredDecisionOrThrow<TSchema extends z.ZodTypeAny>(
+  rawText: string,
+  schema: TSchema,
+  label: string,
+): z.infer<TSchema> {
+  const trimmed: string = rawText.trim();
+
+  const parseWithSchema = (candidate: string): z.infer<TSchema> | null => {
+    try {
+      const parsedJson: unknown = JSON.parse(candidate);
+      const parsed = schema.safeParse(parsedJson);
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const candidates: string[] = [trimmed, ..._extractTopLevelJsonObjectCandidates(trimmed)];
+
+  for (const candidate of candidates) {
+    const parsed: z.infer<TSchema> | null = parseWithSchema(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  throw new Error(`${label}: ${trimmed.slice(0, 200)}`);
+}
+
+async function _invokeStructuredDecisionAsync<TSchema extends z.ZodTypeAny>(
+  prompt: string,
+  schema: TSchema,
+  logger: LoggerService,
+  logLabel: string,
+): Promise<z.infer<TSchema>> {
+  const model = createChatModel(ConfigService.getInstance().getAiConfig());
+  const response = await model.invoke(prompt);
+
+  const rawText: string = _extractTextFromAiContent(response.content);
+  const rawReasoningText: string = _extractTextFromReasoningContent(
+    (response as { additional_kwargs?: unknown }).additional_kwargs,
+  );
+
+  logger.debug(`${logLabel} raw response`, {
+    contentPreview: rawText.slice(0, 200),
+    reasoningPreview: rawReasoningText.slice(0, 200),
+    contentLength: rawText.length,
+    reasoningLength: rawReasoningText.length,
+  });
+
+  const mergedRawText: string = [rawText, rawReasoningText]
+    .filter((value: string): boolean => value.trim().length > 0)
+    .join("\n");
+
+  return _parseStructuredDecisionOrThrow(mergedRawText, schema, `${logLabel} returned invalid structured response`);
+}
+
+//#endregion Helper methods
 
 //#region CronMessageHistoryService
 
@@ -218,78 +370,68 @@ export class CronMessageHistoryService {
     taskName?: string,
     taskDescription?: string,
   ): Promise<ICheckMessageNoveltyResult> {
-    try {
-      const similarMessages: ISimilarMessage[] = await this.getSimilarMessagesAsync(message);
-      const sameTaskSimilarMessages: ISimilarMessage[] = similarMessages.filter(
-        (item: ISimilarMessage): boolean => item.taskId === taskId,
-      );
+    const similarMessages: ISimilarMessage[] = await this.getSimilarMessagesAsync(message);
+    const sameTaskSimilarMessages: ISimilarMessage[] = similarMessages.filter(
+      (item: ISimilarMessage): boolean => item.taskId === taskId,
+    );
 
-      if (sameTaskSimilarMessages.length === 0) {
-        return {
-          isNewInformation: true,
-          similarCount: 0,
-        };
-      }
-
-      const model = createChatModel(ConfigService.getInstance().getAiConfig());
-      const candidateMessage: string = message.trim();
-      const similarMessagesBlock: string = sameTaskSimilarMessages
-        .map((item: ISimilarMessage, index: number): string => {
-          const score: number = Number(item.score.toFixed(4));
-          return [
-            `#${index + 1}`,
-            `score: ${score}`,
-            `taskId: ${item.taskId}`,
-            `sentAt: ${item.sentAt || "unknown"}`,
-            `content: ${item.content}`,
-          ].join("\n");
-        })
-        .join("\n\n");
-
-      const normalizedInstructions: string = (taskInstructions ?? "").trim();
-      const taskContextBlock: string = normalizedInstructions.length > 0
-        ? [
-            "Task context:",
-            `taskName: ${taskName ?? "unknown"}`,
-            `taskDescription: ${taskDescription ?? ""}`,
-            "taskInstructions:",
-            normalizedInstructions,
-          ].join("\n")
-        : "Task context:\n(task instructions unavailable)";
-
-      const noveltyPrompt: string = buildCronNoveltyPrompt({
-        taskContextBlock,
-        candidateMessage,
-        similarMessagesBlock,
-      });
-
-      const decision = await model.withStructuredOutput(MessageNoveltySchema).invoke(noveltyPrompt);
-
-      this._logger.info("Cron message novelty decision computed", {
-        taskId,
-        isNewInformation: decision.isNewInformation,
-        reasoning: decision.reasoning,
-        similarCount: sameTaskSimilarMessages.length,
-        queryPreview: buildSearchPreview(message, SEARCH_LOG_PREVIEW_LENGTH),
-      });
-
-      return {
-        isNewInformation: decision.isNewInformation,
-        similarCount: sameTaskSimilarMessages.length,
-      };
-    } catch (error: unknown) {
-      const details: string = error instanceof Error ? error.message : String(error);
-
-      this._logger.warn("Cron message novelty check failed, allowing send", {
-        taskId,
-        error: details,
-      });
-
+    if (sameTaskSimilarMessages.length === 0) {
       return {
         isNewInformation: true,
         similarCount: 0,
       };
     }
+
+    const candidateMessage: string = message.trim();
+    const similarMessagesBlock: string = sameTaskSimilarMessages
+      .map((item: ISimilarMessage, index: number): string => {
+        const score: number = Number(item.score.toFixed(4));
+        return [
+          `#${index + 1}`,
+          `score: ${score}`,
+          `taskId: ${item.taskId}`,
+          `sentAt: ${item.sentAt || "unknown"}`,
+          `content: ${item.content}`,
+        ].join("\n");
+      })
+      .join("\n\n");
+
+    const normalizedInstructions: string = (taskInstructions ?? "").trim();
+    const taskContextBlock: string = normalizedInstructions.length > 0
+      ? [
+          "Task context:",
+          `taskName: ${taskName ?? "unknown"}`,
+          `taskDescription: ${taskDescription ?? ""}`,
+          "taskInstructions:",
+          normalizedInstructions,
+        ].join("\n")
+      : "Task context:\n(task instructions unavailable)";
+
+    const noveltyPrompt: string = buildCronNoveltyPrompt({
+      taskContextBlock,
+      candidateMessage,
+      similarMessagesBlock,
+    });
+
+    const decision: MessageNoveltyDecision = await _invokeStructuredDecisionAsync(
+      noveltyPrompt,
+      MessageNoveltySchema,
+      this._logger,
+      "Cron message novelty decision",
+    );
+
+    this._logger.info("Cron message novelty decision computed", {
+      taskId,
+      isNewInformation: decision.isNewInformation,
+      reasoning: decision.reasoning,
+      similarCount: sameTaskSimilarMessages.length,
+      queryPreview: buildSearchPreview(message, SEARCH_LOG_PREVIEW_LENGTH),
+    });
+
+    return {
+      isNewInformation: decision.isNewInformation,
+      similarCount: sameTaskSimilarMessages.length,
+    };
   }
 
   public async checkMessageDispatchPolicyAsync(
@@ -298,43 +440,35 @@ export class CronMessageHistoryService {
     taskName?: string,
     taskDescription?: string,
   ): Promise<ICheckMessageDispatchResult> {
-    try {
-      const normalizedInstructions: string = (taskInstructions ?? "").trim();
-      if (normalizedInstructions.length === 0) {
-        return { shouldDispatch: true };
-      }
-
-      const model = createChatModel(ConfigService.getInstance().getAiConfig());
-      const candidateMessage: string = message.trim();
-      const prompt: string = buildCronDispatchPolicyPrompt({
-        taskInstructions: normalizedInstructions,
-        taskName,
-        taskDescription,
-        candidateMessage,
-      });
-
-      const decision = await model.withStructuredOutput(MessageDispatchPolicySchema).invoke(prompt);
-
-      this._logger.info("Cron message dispatch policy decision computed", {
-        shouldDispatch: decision.shouldDispatch,
-        reasoning: decision.reasoning,
-        queryPreview: buildSearchPreview(message, SEARCH_LOG_PREVIEW_LENGTH),
-      });
-
-      return {
-        shouldDispatch: decision.shouldDispatch,
-      };
-    } catch (error: unknown) {
-      const details: string = error instanceof Error ? error.message : String(error);
-
-      this._logger.warn("Cron message dispatch policy check failed, allowing send", {
-        error: details,
-      });
-
-      return {
-        shouldDispatch: true,
-      };
+    const normalizedInstructions: string = (taskInstructions ?? "").trim();
+    if (normalizedInstructions.length === 0) {
+      return { shouldDispatch: true };
     }
+
+    const candidateMessage: string = message.trim();
+    const prompt: string = buildCronDispatchPolicyPrompt({
+      taskInstructions: normalizedInstructions,
+      taskName,
+      taskDescription,
+      candidateMessage,
+    });
+
+    const decision: MessageDispatchDecision = await _invokeStructuredDecisionAsync(
+      prompt,
+      MessageDispatchPolicySchema,
+      this._logger,
+      "Cron message dispatch policy decision",
+    );
+
+    this._logger.info("Cron message dispatch policy decision computed", {
+      shouldDispatch: decision.shouldDispatch,
+      reasoning: decision.reasoning,
+      queryPreview: buildSearchPreview(message, SEARCH_LOG_PREVIEW_LENGTH),
+    });
+
+    return {
+      shouldDispatch: decision.shouldDispatch,
+    };
   }
 
   //#endregion Public methods

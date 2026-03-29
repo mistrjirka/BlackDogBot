@@ -325,6 +325,7 @@ export class LangchainMainAgent {
 
         throw lastError;
       } finally {
+        await ToolHotReloadService.getInstance().triggerRebuildAsync(chatId);
         this._abortControllers.delete(chatId);
       }
     }

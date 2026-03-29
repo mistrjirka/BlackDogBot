@@ -5,7 +5,7 @@ import { SchedulerService } from "./scheduler.service.js";
 import { PromptService } from "./prompt.service.js";
 import { LangchainMainAgent } from "../agent/langchain-main-agent.js";
 import { LangchainMcpService } from "./langchain-mcp.service.js";
-import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, getSessionsDir, getMcpServersFilePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
+import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, getSessionsDir, getMcpServersFilePath, ensureDirectoryExistsAsync, getBaseDir } from "../utils/paths.js";
 import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
@@ -69,6 +69,11 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
   await _safeStepAsync("Clear chat history", errors, async (): Promise<void> => {
     const mainAgent = LangchainMainAgent.getInstance();
     mainAgent.clearAllChatHistory();
+  });
+
+  await _safeStepAsync("Delete chat checkpoints DB", errors, async (): Promise<void> => {
+    const checkpointsPath: string = `${getBaseDir()}/chat-checkpoints.db`;
+    await fs.rm(checkpointsPath, { recursive: true, force: true });
   });
 
   // 6b. Close MCP connections and wipe config
