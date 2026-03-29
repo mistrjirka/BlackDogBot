@@ -40,6 +40,7 @@ describe("factoryResetAsync", () => {
     await fs.writeFile(path.join(blackdogbotDir, "logs", "blackdogbot-2026-01-01.log"), "log entry");
     await fs.writeFile(path.join(blackdogbotDir, "knowledge", "lancedb", "knowledge.lance", "data", "test.lance"), "data");
     await fs.writeFile(path.join(blackdogbotDir, "known-telegram-chats.json"), '["123456"]');
+    await fs.writeFile(path.join(blackdogbotDir, "chat-checkpoints.db"), "checkpoint-data");
     await fs.writeFile(path.join(blackdogbotDir, "prompts", "system-prompt.md"), "default prompt");
     await fs.writeFile(path.join(blackdogbotDir, "skills", "test-skill", "state.json"), "{}");
     await fs.writeFile(path.join(blackdogbotDir, "skills", "test-skill", "SKILL.md"), "# Test Skill");
@@ -129,6 +130,13 @@ describe("factoryResetAsync", () => {
 
     const chatsFile: string = path.join(tempDir, ".blackdogbot", "known-telegram-chats.json");
     await expect(fs.access(chatsFile)).rejects.toThrow();
+  });
+
+  it("should delete chat-checkpoints.db", async () => {
+    await factoryResetAsync();
+
+    const checkpointsDb: string = path.join(tempDir, ".blackdogbot", "chat-checkpoints.db");
+    await expect(fs.access(checkpointsDb)).rejects.toThrow();
   });
 
   it("should delete skill state files but preserve skill definitions", async () => {

@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { setupSkillToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
@@ -22,13 +22,8 @@ export const createSetupSkillTool = (
   allowedKinds: SkillInstallKind[] = DEFAULT_ALLOWED_KINDS,
   timeout: number = 300000,
 ) => {
-  return tool({
-    description:
-      "Set up a skill by installing its dependencies. " +
-      "Use this when a skill is in 'needs-setup' state. " +
-      "Some install steps may require manual action (pacman, apt, download).",
-    inputSchema: setupSkillToolInputSchema,
-    execute: async ({ skillName }: { skillName: string }): Promise<ISetupSkillResult> => {
+  return tool(
+    async ({ skillName }: { skillName: string }): Promise<ISetupSkillResult> => {
       const logger = LoggerService.getInstance();
       const skillLoader = SkillLoaderService.getInstance();
 
@@ -155,5 +150,13 @@ export const createSetupSkillTool = (
         error: result.error,
       };
     },
-  });
+    {
+      name: "setup_skill",
+      description:
+        "Set up a skill by installing its dependencies. " +
+        "Use this when a skill is in 'needs-setup' state. " +
+        "Some install steps may require manual action (pacman, apt, download).",
+      schema: setupSkillToolInputSchema,
+    },
+  );
 };

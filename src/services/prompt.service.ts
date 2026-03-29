@@ -1,10 +1,14 @@
 import fs from "node:fs/promises";
-import { Dirent } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 
-import { INCLUDE_DIRECTIVE_REGEX } from "../shared/constants.js";
+import {
+  ensureParentAndWriteFileAsync,
+  fileExistsAsync,
+  listFilesRecursiveAsync,
+  resolvePromptIncludesAsync,
+} from "./prompt-service-helpers.js";
 import {
   getPromptsDir,
   getPromptFragmentsDir,
@@ -80,6 +84,7 @@ export class PromptService {
     await ensureDirectoryExistsAsync(getPromptFragmentsDir());
     await ensureDirectoryExistsAsync(getCacheDir());
     await this._copyDefaultsIfNeededAsync();
+    await this._syncUpdatedDefaultsAsync();
     await this._initializePromptSyncStateIfMissingAsync();
 
     this._initialized = true;
@@ -96,12 +101,12 @@ export class PromptService {
 
     const filePath: string = this._getPromptPath(promptName);
 
-    if (!(await this._fileExistsAsync(filePath))) {
+    if (!(await fileExistsAsync(filePath))) {
       throw new Error(`Prompt not found: ${promptName}`);
     }
 
     const rawContent: string = await fs.readFile(filePath, "utf-8");
-    const resolvedContent: string = await this._resolveIncludesAsync(rawContent);
+    const resolvedContent: string = await resolvePromptIncludesAsync(rawContent, this._promptsDir, MAX_INCLUDE_DEPTH);
 
     this._promptCache.set(promptName, resolvedContent);
 
@@ -113,7 +118,7 @@ export class PromptService {
 
     const filePath: string = this._getPromptPath(promptName);
 
-    if (!(await this._fileExistsAsync(filePath))) {
+    if (!(await fileExistsAsync(filePath))) {
       throw new Error(`Prompt not found: ${promptName}`);
     }
 
@@ -126,10 +131,7 @@ export class PromptService {
     this._ensureInitialized();
 
     const filePath: string = this._getPromptPath(promptName);
-    const parentDir: string = path.dirname(filePath);
-
-    await ensureDirectoryExistsAsync(parentDir);
-    await fs.writeFile(filePath, content, "utf-8");
+    await ensureParentAndWriteFileAsync(filePath, content);
 
     this._promptCache.delete(promptName);
   }
@@ -139,7 +141,7 @@ export class PromptService {
 
     const filePath: string = this._getPromptPath(promptName);
 
-    if (!(await this._fileExistsAsync(filePath))) {
+    if (!(await fileExistsAsync(filePath))) {
       throw new Error(`Prompt not found: ${promptName}`);
     }
 
@@ -156,16 +158,13 @@ export class PromptService {
 
     const defaultPath: string = this._getDefaultPath(promptName);
 
-    if (!(await this._fileExistsAsync(defaultPath))) {
+    if (!(await fileExistsAsync(defaultPath))) {
       throw new Error(`No default exists for prompt: ${promptName}`);
     }
 
     const defaultContent: string = await fs.readFile(defaultPath, "utf-8");
     const targetPath: string = this._getPromptPath(promptName);
-    const parentDir: string = path.dirname(targetPath);
-
-    await ensureDirectoryExistsAsync(parentDir);
-    await fs.writeFile(targetPath, defaultContent, "utf-8");
+    await ensureParentAndWriteFileAsync(targetPath, defaultContent);
 
     this._promptCache.delete(promptName);
   }
@@ -173,18 +172,14 @@ export class PromptService {
   public async resetAllPromptsAsync(): Promise<void> {
     this._ensureInitialized();
 
-    const defaultFiles: string[] = await this._listFilesRecursiveAsync(this._defaultsDir);
+    const defaultFiles: string[] = await listFilesRecursiveAsync(this._defaultsDir);
 
     for (const defaultFile of defaultFiles) {
       const relativePath: string = path.relative(this._defaultsDir, defaultFile);
       const targetPath: string = path.join(this._promptsDir, relativePath);
-      const parentDir: string = path.dirname(targetPath);
-
-      await ensureDirectoryExistsAsync(parentDir);
-
       const content: string = await fs.readFile(defaultFile, "utf-8");
 
-      await fs.writeFile(targetPath, content, "utf-8");
+      await ensureParentAndWriteFileAsync(targetPath, content);
     }
 
     this._promptCache.clear();
@@ -206,7 +201,7 @@ export class PromptService {
   public async listPromptsAsync(): Promise<IPromptInfo[]> {
     this._ensureInitialized();
 
-    const allFiles: string[] = await this._listFilesRecursiveAsync(this._promptsDir);
+    const allFiles: string[] = await listFilesRecursiveAsync(this._promptsDir);
     const mdFiles: string[] = allFiles.filter((file: string) => file.endsWith(".md"));
     const promptInfos: IPromptInfo[] = [];
 
@@ -216,7 +211,7 @@ export class PromptService {
       const defaultPath: string = this._getDefaultPath(name);
       let isModified: boolean = false;
 
-      if (await this._fileExistsAsync(defaultPath)) {
+      if (await fileExistsAsync(defaultPath)) {
         const userContent: string = await fs.readFile(filePath, "utf-8");
         const defaultContent: string = await fs.readFile(defaultPath, "utf-8");
 
@@ -257,57 +252,34 @@ export class PromptService {
   }
 
   private async _copyDefaultsIfNeededAsync(): Promise<void> {
-    const defaultFiles: string[] = await this._listFilesRecursiveAsync(this._defaultsDir);
+    const defaultFiles: string[] = await listFilesRecursiveAsync(this._defaultsDir);
     const mdFiles: string[] = defaultFiles.filter((file: string) => file.endsWith(".md"));
 
     for (const defaultFile of mdFiles) {
       const relativePath: string = path.relative(this._defaultsDir, defaultFile);
       const targetPath: string = path.join(this._promptsDir, relativePath);
 
-      if (!(await this._fileExistsAsync(targetPath))) {
-        const parentDir: string = path.dirname(targetPath);
-
-        await ensureDirectoryExistsAsync(parentDir);
-
+      if (!(await fileExistsAsync(targetPath))) {
         const content: string = await fs.readFile(defaultFile, "utf-8");
 
-        await fs.writeFile(targetPath, content, "utf-8");
+        await ensureParentAndWriteFileAsync(targetPath, content);
       }
     }
   }
 
-  private async _resolveIncludesAsync(content: string, depth: number = 0): Promise<string> {
-    if (depth >= MAX_INCLUDE_DEPTH) {
-      return content;
+  private async _syncUpdatedDefaultsAsync(): Promise<void> {
+    const defaultFiles: string[] = await listFilesRecursiveAsync(this._defaultsDir);
+    const mdFiles: string[] = defaultFiles.filter((file: string) => file.endsWith(".md"));
+
+    for (const defaultFile of mdFiles) {
+      const relativePath: string = path.relative(this._defaultsDir, defaultFile);
+      const targetPath: string = path.join(this._promptsDir, relativePath);
+      const defaultContent: string = await fs.readFile(defaultFile, "utf-8");
+
+      await ensureParentAndWriteFileAsync(targetPath, defaultContent);
     }
 
-    const matches: RegExpStringIterator<RegExpExecArray> = content.matchAll(INCLUDE_DIRECTIVE_REGEX);
-    let result: string = "";
-    let lastIndex: number = 0;
-
-    for (const match of matches) {
-      const fullMatch: string = match[0];
-      const filename: string = match[1];
-      const matchIndex: number = match.index;
-
-      result += content.slice(lastIndex, matchIndex);
-
-      const includePath: string = path.join(this._promptsDir, filename);
-
-      if (!(await this._fileExistsAsync(includePath))) {
-        throw new Error(`Include file not found: ${filename}`);
-      }
-
-      const includeContent: string = await fs.readFile(includePath, "utf-8");
-      const resolvedInclude: string = await this._resolveIncludesAsync(includeContent, depth + 1);
-
-      result += resolvedInclude;
-      lastIndex = matchIndex + fullMatch.length;
-    }
-
-    result += content.slice(lastIndex);
-
-    return result;
+    await this._markPromptsSyncedToCurrentDefaultsAsync();
   }
 
   private async _initializePromptSyncStateIfMissingAsync(): Promise<void> {
@@ -327,14 +299,12 @@ export class PromptService {
     };
 
     const statePath: string = this._getPromptSyncStatePath();
-    const parentDir: string = path.dirname(statePath);
-    await ensureDirectoryExistsAsync(parentDir);
-    await fs.writeFile(statePath, JSON.stringify(state, null, 2), "utf-8");
+    await ensureParentAndWriteFileAsync(statePath, JSON.stringify(state, null, 2));
   }
 
   private async _readPromptSyncStateAsync(): Promise<IPromptSyncState | null> {
     const statePath: string = this._getPromptSyncStatePath();
-    if (!(await this._fileExistsAsync(statePath))) {
+    if (!(await fileExistsAsync(statePath))) {
       return null;
     }
 
@@ -367,7 +337,7 @@ export class PromptService {
   }
 
   private async _computeDefaultsFingerprintAsync(): Promise<string> {
-    const defaultFiles: string[] = await this._listFilesRecursiveAsync(this._defaultsDir);
+    const defaultFiles: string[] = await listFilesRecursiveAsync(this._defaultsDir);
     const sortedFiles: string[] = defaultFiles
       .filter((filePath: string): boolean => filePath.endsWith(".md"))
       .sort((a: string, b: string): number => a.localeCompare(b));
@@ -404,35 +374,6 @@ export class PromptService {
     }
 
     return path.join(this._defaultsDir, `${promptName}.md`);
-  }
-
-  private async _fileExistsAsync(filePath: string): Promise<boolean> {
-    try {
-      await fs.access(filePath);
-
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private async _listFilesRecursiveAsync(dir: string): Promise<string[]> {
-    const entries: Dirent[] = await fs.readdir(dir, { withFileTypes: true });
-    const files: string[] = [];
-
-    for (const entry of entries) {
-      const fullPath: string = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        const subFiles: string[] = await this._listFilesRecursiveAsync(fullPath);
-
-        files.push(...subFiles);
-      } else {
-        files.push(fullPath);
-      }
-    }
-
-    return files;
   }
 
   //#endregion Private methods

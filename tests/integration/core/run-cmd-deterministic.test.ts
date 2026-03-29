@@ -23,8 +23,6 @@ type IRunCmdOutput = {
   error: string | null;
 };
 
-const TOOL_OPTIONS = { toolCallId: "tc1", messages: [] as never[], abortSignal: new AbortController().signal };
-
 async function execRunCmd(args: {
   command: string;
   cwd?: string;
@@ -32,7 +30,7 @@ async function execRunCmd(args: {
   mode?: string;
   deterministicInputDetection?: boolean;
 }): Promise<IRunCmdOutput> {
-  return await (runCmdTool as unknown as { execute: (input: typeof args, options: typeof TOOL_OPTIONS) => Promise<IRunCmdOutput> }).execute(args, TOOL_OPTIONS);
+  return await (runCmdTool as unknown as { invoke: (input: typeof args) => Promise<IRunCmdOutput> }).invoke(args);
 }
 
 async function execRunCmdInput(args: {
@@ -41,11 +39,10 @@ async function execRunCmdInput(args: {
   closeStdin?: boolean;
 }): Promise<{ success: boolean; status: string; stdout: string; stderr: string; exitCode: number | null; error: string | null }> {
   return await (runCmdInputTool as unknown as {
-    execute: (
+    invoke: (
       input: { handleId: string; input: string; closeStdin?: boolean },
-      options: typeof TOOL_OPTIONS,
     ) => Promise<{ success: boolean; status: string; stdout: string; stderr: string; exitCode: number | null; error: string | null }>;
-  }).execute(args, TOOL_OPTIONS);
+  }).invoke(args);
 }
 
 describe("run_cmd tool", () => {

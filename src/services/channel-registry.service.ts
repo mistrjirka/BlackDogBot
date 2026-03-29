@@ -47,6 +47,7 @@ export class ChannelRegistryService {
   private _logger: LoggerService;
   private _config: IChannelsConfig;
   private _filePath: string;
+  private _warnedInvalidTelegramChannelIds: Set<string>;
 
   //#endregion Data Members
 
@@ -61,6 +62,8 @@ export class ChannelRegistryService {
       version: 1,
       channels: [],
     };
+
+    this._warnedInvalidTelegramChannelIds = new Set<string>();
   }
 
   //#endregion Constructor
@@ -204,13 +207,9 @@ export class ChannelRegistryService {
    * Used by CronTaskExecutor to broadcast messages.
    */
   public getNotificationChannels(): IRegisteredChannel[] {
-    const channels = this._config.channels.filter((c) => c.receiveNotifications);
-
-    for (const channel of channels) {
-      this._validateChannelId(channel.platform, channel.channelId);
-    }
-
-    return channels;
+    return this._config.channels
+      .filter((c) => c.receiveNotifications)
+      .filter((c) => this._validateChannelId(c.platform, c.channelId));
   }
 
   /**
@@ -221,10 +220,13 @@ export class ChannelRegistryService {
     if (platform === "telegram") {
       const isValid: boolean = /^-?\d+$/.test(channelId);
       if (!isValid) {
-        this._logger.warn("Invalid Telegram channel ID detected (should be numeric)", {
-          channelId,
-          hint: "Send a message to the bot to auto-register the correct chat ID",
-        });
+        if (!this._warnedInvalidTelegramChannelIds.has(channelId)) {
+          this._warnedInvalidTelegramChannelIds.add(channelId);
+          this._logger.warn("Invalid Telegram channel ID detected (should be numeric)", {
+            channelId,
+            hint: "Send a message to the bot to auto-register the correct chat ID",
+          });
+        }
       }
       return isValid;
     }

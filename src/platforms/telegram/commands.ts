@@ -2,26 +2,16 @@ import { Context, Bot } from "grammy";
 
 import { LoggerService } from "../../services/logger.service.js";
 import { PromptService } from "../../services/prompt.service.js";
-import { MainAgent } from "../../agent/main-agent.js";
-import type { IRefreshSessionsResult } from "../../agent/main-agent.js";
+import { LangchainMainAgent } from "../../agent/langchain-main-agent.js";
+import type { IRefreshSessionsResult } from "../../agent/types.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
 import { McpRegistryService } from "../../services/mcp-registry.service.js";
-import { McpService } from "../../services/mcp.service.js";
-import { AiProviderService } from "../../services/ai-provider.service.js";
-import { ConfigService } from "../../services/config.service.js";
+import { LangchainMcpService } from "../../services/langchain-mcp.service.js";
 import { TelegramHandler } from "./handler.js";
 import { factoryResetAsync, type IFactoryResetResult } from "../../services/factory-reset.service.js";
 import { extractErrorMessage } from "../../utils/error.js";
 import type { IMcpServerConfig, IMcpServersFile } from "../../shared/types/mcp.types.js";
 import { mcpServerConfigSchema } from "../../shared/schemas/mcp.schemas.js";
-import type {
-  AiProvider,
-  IAiConfig,
-  IAiFallbackEntry,
-  IProviderCapabilitySummary,
-  IProviderModelListEntry,
-  IRateLimitConfig,
-} from "../../shared/types/index.js";
 
 //#region Telegram Commands
 
@@ -33,7 +23,7 @@ export function setupTelegramCommands(bot: Bot): void {
   const logger = LoggerService.getInstance();
   const channelRegistry = ChannelRegistryService.getInstance();
   const promptService = PromptService.getInstance();
-  const mainAgent = MainAgent.getInstance();
+  const mainAgent = LangchainMainAgent.getInstance();
   const telegramHandler = TelegramHandler.getInstance();
 
   // /start command
@@ -219,246 +209,7 @@ export function setupTelegramCommands(bot: Bot): void {
       `Registered: ${new Date(channel.createdAt).toLocaleDateString()}`,
     ];
 
-    await ctx.reply(statusLines.join("\n"));
-  });
-
-  // /models command
-  bot.command("models", async (ctx: Context): Promise<void> => {
-    const raw: string = (typeof ctx.match === "string" ? ctx.match : "").trim();
-    const parts: string[] = raw.length > 0 ? raw.split(/\s+/g) : [];
-
-    const aiProviderService: AiProviderService = AiProviderService.getInstance();
-    const configService: ConfigService = ConfigService.getInstance();
-    const aiConfig: IAiConfig = configService.getAiConfig();
-
-    try {
-
-    if (parts.length === 0 || parts[0] === "status") {
-      const activeProvider: AiProvider = aiProviderService.getActiveProvider();
-      const primaryProvider: AiProvider = aiProviderService.getPrimaryProvider();
-      const fallbackChain: IAiFallbackEntry[] = aiProviderService.getFallbackChain();
-
-      const lines: string[] = [
-        "AI Model Management",
-        "",
-        `Active provider: ${activeProvider}`,
-        `Primary provider: ${primaryProvider}`,
-        `Active model: ${aiProviderService.getActiveModelId()}`,
-        `Structured mode: ${aiProviderService.getStructuredOutputMode()}`,
-        `Vision support: ${aiProviderService.getSupportsVision() ? "yes" : "no"}`,
-        "",
-        "Configured providers:",
-      ];
-
-      if (aiConfig.openrouter) {
-        lines.push(
-          `- openrouter: model=${aiConfig.openrouter.model}, key=${aiProviderService.maskApiKey(aiConfig.openrouter.apiKey)}`,
-        );
-      }
-      if (aiConfig.openaiCompatible) {
-        lines.push(
-          `- openai-compatible: model=${aiConfig.openaiCompatible.model}, baseUrl=${aiConfig.openaiCompatible.baseUrl}, key=${aiProviderService.maskApiKey(aiConfig.openaiCompatible.apiKey)}`,
-        );
-      }
-      if (aiConfig.lmStudio) {
-        lines.push(
-          `- lm-studio: model=${aiConfig.lmStudio.model}, baseUrl=${aiConfig.lmStudio.baseUrl}, key=${aiProviderService.maskApiKey(aiConfig.lmStudio.apiKey)}`,
-        );
-      }
-
-      lines.push("");
-      lines.push("Fallback chain:");
-      if (fallbackChain.length === 0) {
-        lines.push("- (none)");
-      } else {
-        for (const entry of fallbackChain) {
-          lines.push(`- ${entry.provider}${entry.model ? ` (${entry.model})` : ""}`);
-        }
-      }
-
-      lines.push("");
-      lines.push("Usage:");
-      lines.push("/models list [provider] [filter]");
-      lines.push("/models switch <provider> [model]");
-      lines.push("/models add <provider> ...");
-      lines.push("/models fallback list");
-      lines.push("/models fallback add <provider> [model]");
-      lines.push("/models fallback remove <provider>");
-      lines.push("/models fallback swap");
-      lines.push("/models reset");
-
-      await _replyInChunksAsync(ctx, lines.join("\n"));
-      return;
-    }
-
-    if (parts[0] === "list") {
-      const currentProvider: AiProvider = aiProviderService.getActiveProvider();
-      const parsedProvider: AiProvider | null = parts[1] ? _parseProvider(parts[1]) : null;
-
-      const provider: AiProvider = parsedProvider ?? currentProvider;
-      const filterStartIndex: number = parsedProvider ? 2 : 1;
-      const rawFilter: string = parts.slice(filterStartIndex).join(" ").trim();
-      const filter: string | undefined = rawFilter.length > 0 && rawFilter.toLowerCase() !== "all"
-        ? rawFilter
-        : undefined;
-
-      const models: IProviderModelListEntry[] = await aiProviderService.listModelsAsync(provider, filter);
-
-      if (models.length === 0) {
-        await ctx.reply(`No tool-capable models found for provider ${provider}${filter ? ` with filter "${filter}"` : ""}.`);
-        return;
-      }
-
-      const lines: string[] = [
-        `Models (${provider})`,
-        `Only models with tool calling support are shown. Total: ${models.length}`,
-        "",
-      ];
-
-      for (const model of models) {
-        const contextWindow: string = model.contextWindow !== null ? String(model.contextWindow) : "?";
-        const promptPrice: string = model.promptPrice ?? "?";
-        const completionPrice: string = model.completionPrice ?? "?";
-
-        lines.push(
-          `- ${model.id} | ctx=${contextWindow} | in=${promptPrice} | out=${completionPrice}`,
-        );
-      }
-
-      await _replyInChunksAsync(ctx, lines.join("\n"));
-      return;
-    }
-
-    if (parts[0] === "switch") {
-      const providerArg: string | undefined = parts[1];
-      if (!providerArg) {
-        await ctx.reply("Usage: /models switch <provider> [model]");
-        return;
-      }
-
-      const provider: AiProvider | null = _parseProvider(providerArg);
-      if (!provider) {
-        await ctx.reply(`Unknown provider: ${providerArg}`);
-        return;
-      }
-
-      const modelOverride: string | undefined = parts.slice(2).join(" ").trim() || undefined;
-      const summary: IProviderCapabilitySummary = await aiProviderService.switchPrimaryProviderAsync(provider, modelOverride);
-
-      await ctx.reply(_formatCapabilitySummary(summary, "Primary provider switched and persisted to config.yaml."));
-      return;
-    }
-
-    if (parts[0] === "add") {
-      const providerArg: string | undefined = parts[1];
-      if (!providerArg) {
-        await ctx.reply(_getModelsAddUsageText());
-        return;
-      }
-
-      const provider: AiProvider | null = _parseProvider(providerArg);
-      if (!provider) {
-        await ctx.reply(`Unknown provider: ${providerArg}`);
-        return;
-      }
-
-      const args: string[] = parts.slice(2);
-      const configPatch: Record<string, unknown> = _buildProviderPatch(provider, args);
-
-      await aiProviderService.addOrUpdateProviderConfigAsync(provider, configPatch);
-
-      const modelForProbe: string = String(configPatch.model ?? "");
-      if (modelForProbe.trim().length === 0) {
-        throw new Error("Provider model is required.");
-      }
-      const summary: IProviderCapabilitySummary = await aiProviderService.probeCapabilitiesForProviderModelAsync(provider, modelForProbe);
-      await ctx.reply(_formatCapabilitySummary(summary, `Provider ${provider} saved to config.yaml.`));
-      return;
-    }
-
-    if (parts[0] === "fallback") {
-      const action: string | undefined = parts[1];
-
-      if (!action || action === "list") {
-        const chain: IAiFallbackEntry[] = aiProviderService.getFallbackChain();
-        const lines: string[] = ["Fallback chain:"];
-
-        if (chain.length === 0) {
-          lines.push("- (none)");
-        } else {
-          for (const entry of chain) {
-            lines.push(`- ${entry.provider}${entry.model ? ` (${entry.model})` : ""}`);
-          }
-        }
-
-        await ctx.reply(lines.join("\n"));
-        return;
-      }
-
-      if (action === "add") {
-        const providerArg: string | undefined = parts[2];
-        if (!providerArg) {
-          await ctx.reply("Usage: /models fallback add <provider> [model]");
-          return;
-        }
-
-        const provider: AiProvider | null = _parseProvider(providerArg);
-        if (!provider) {
-          await ctx.reply(`Unknown provider: ${providerArg}`);
-          return;
-        }
-
-        const modelOverride: string | undefined = parts.slice(3).join(" ").trim() || undefined;
-        const summary: IProviderCapabilitySummary = await aiProviderService.addFallbackAsync(provider, modelOverride);
-        await ctx.reply(_formatCapabilitySummary(summary, `Fallback provider ${provider} saved to config.yaml.`));
-        return;
-      }
-
-      if (action === "remove") {
-        const providerArg: string | undefined = parts[2];
-        if (!providerArg) {
-          await ctx.reply("Usage: /models fallback remove <provider>");
-          return;
-        }
-
-        const provider: AiProvider | null = _parseProvider(providerArg);
-        if (!provider) {
-          await ctx.reply(`Unknown provider: ${providerArg}`);
-          return;
-        }
-
-        await aiProviderService.removeFallbackAsync(provider);
-        await ctx.reply(`Fallback provider ${provider} removed and config persisted.`);
-        return;
-      }
-
-      if (action === "swap") {
-        const summary: IProviderCapabilitySummary = await aiProviderService.swapPrimaryWithFirstFallbackAsync();
-        await ctx.reply(_formatCapabilitySummary(summary, "Primary and first fallback swapped. Changes persisted."));
-        return;
-      }
-
-      await ctx.reply("Usage: /models fallback [list|add|remove|swap]");
-      return;
-    }
-
-    if (parts[0] === "reset") {
-      await aiProviderService.resetToPrimaryProviderAsync();
-      await ctx.reply("Runtime provider reset to primary. Next request uses the primary provider.");
-      return;
-    }
-
-      await ctx.reply(
-        "Unknown /models subcommand. Use: status, list, switch, add, fallback, reset.",
-      );
-    } catch (error: unknown) {
-      const errorMessage: string = extractErrorMessage(error);
-      await ctx.reply(`Model command failed: ${errorMessage}`);
-      logger.error("Failed to process /models command", {
-        error: errorMessage,
-        args: raw,
-      });
-    }
+await ctx.reply(statusLines.join("\n"));
   });
 
   // /add_mcp_server command
@@ -481,7 +232,7 @@ export function setupTelegramCommands(bot: Bot): void {
     }
 
     const mcpRegistry = McpRegistryService.getInstance();
-    const mcpService = McpService.getInstance();
+    const mcpService = LangchainMcpService.getInstance();
 
     try {
       const parsed: Record<string, unknown> = JSON.parse(raw);
@@ -542,7 +293,7 @@ export function setupTelegramCommands(bot: Bot): void {
   // /list_mcp_servers command
   bot.command("list_mcp_servers", async (ctx: Context): Promise<void> => {
     const mcpRegistry = McpRegistryService.getInstance();
-    const mcpService = McpService.getInstance();
+    const mcpService = LangchainMcpService.getInstance();
     const servers = mcpRegistry.getAllServers();
     const results = mcpService.getServerResults();
 
@@ -582,7 +333,7 @@ export function setupTelegramCommands(bot: Bot): void {
     }
 
     const mcpRegistry = McpRegistryService.getInstance();
-    const mcpService = McpService.getInstance();
+    const mcpService = LangchainMcpService.getInstance();
 
     const removed = await mcpRegistry.removeServerAsync(id);
 
@@ -598,7 +349,7 @@ export function setupTelegramCommands(bot: Bot): void {
 
   // /mcp_status command
   bot.command("mcp_status", async (ctx: Context): Promise<void> => {
-    const mcpService = McpService.getInstance();
+    const mcpService = LangchainMcpService.getInstance();
     const tools = mcpService.getTools();
     const results = mcpService.getServerResults();
 
@@ -619,113 +370,6 @@ export function setupTelegramCommands(bot: Bot): void {
 
     await ctx.reply(lines.join("\n"));
   });
-}
-
-function _parseProvider(raw: string): AiProvider | null {
-  const value: string = raw.trim().toLowerCase();
-
-  if (value === "openrouter") {
-    return "openrouter";
-  }
-
-  if (value === "openai-compatible" || value === "openai" || value === "openai_compatible") {
-    return "openai-compatible";
-  }
-
-  if (value === "lm-studio" || value === "lmstudio") {
-    return "lm-studio";
-  }
-
-  return null;
-}
-
-function _formatCapabilitySummary(summary: IProviderCapabilitySummary, prefix: string): string {
-  return [
-    prefix,
-    `Provider: ${summary.provider}`,
-    `Model: ${summary.model}`,
-    `Tool calling: ${summary.supportsToolCalling ? "yes" : "no"}`,
-    `Structured outputs: ${summary.supportsStructuredOutputs ? "yes" : "no"}`,
-    `Vision: ${summary.supportsVision ? "yes" : "no"}`,
-    `Structured mode: ${summary.structuredOutputMode}`,
-    `Context window: ${summary.contextWindow}`,
-  ].join("\n");
-}
-
-function _getModelsAddUsageText(): string {
-  return [
-    "Usage:",
-    "/models add openrouter <apiKey> <model>",
-    "/models add openai-compatible <baseUrl> <apiKey> <model>",
-    "/models add lm-studio <baseUrl> <model> [apiKey]",
-  ].join("\n");
-}
-
-function _buildProviderPatch(provider: AiProvider, args: string[]): Record<string, unknown> {
-  if (provider === "openrouter") {
-    if (args.length < 2) {
-      throw new Error("Usage: /models add openrouter <apiKey> <model>");
-    }
-
-    const rateLimits: IRateLimitConfig = { rpm: 60, tpm: 100000 };
-    return {
-      apiKey: args[0],
-      model: args.slice(1).join(" "),
-      rateLimits,
-    };
-  }
-
-  if (provider === "openai-compatible") {
-    if (args.length < 3) {
-      throw new Error("Usage: /models add openai-compatible <baseUrl> <apiKey> <model>");
-    }
-
-    const rateLimits: IRateLimitConfig = { rpm: 120, tpm: 200000, maxConcurrent: 1 };
-    return {
-      baseUrl: args[0],
-      apiKey: args[1],
-      model: args.slice(2).join(" "),
-      rateLimits,
-    };
-  }
-
-  if (args.length < 2) {
-    throw new Error("Usage: /models add lm-studio <baseUrl> <model> [apiKey]");
-  }
-
-  const rateLimits: IRateLimitConfig = { rpm: 120, tpm: 200000, maxConcurrent: 1 };
-  return {
-    baseUrl: args[0],
-    model: args[1],
-    ...(args[2] ? { apiKey: args[2] } : {}),
-    rateLimits,
-  };
-}
-
-async function _replyInChunksAsync(ctx: Context, text: string): Promise<void> {
-  const maxChunkLength: number = 3500;
-  const lines: string[] = text.split("\n");
-
-  let currentChunk: string = "";
-
-  for (const line of lines) {
-    const next: string = currentChunk.length === 0 ? line : `${currentChunk}\n${line}`;
-
-    if (next.length <= maxChunkLength) {
-      currentChunk = next;
-      continue;
-    }
-
-    if (currentChunk.length > 0) {
-      await ctx.reply(currentChunk);
-    }
-
-    currentChunk = line;
-  }
-
-  if (currentChunk.length > 0) {
-    await ctx.reply(currentChunk);
-  }
 }
 
 //#endregion Telegram Commands

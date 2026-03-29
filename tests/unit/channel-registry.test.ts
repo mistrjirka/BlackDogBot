@@ -1,35 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { promises as fs } from "node:fs";
-import * as path from "node:path";
 import { ChannelRegistryService } from "../../src/services/channel-registry.service.js";
 import { LoggerService } from "../../src/services/logger.service.js";
 import type { IRegisteredChannel } from "../../src/shared/types/channel.types.js";
-import { resetSingletons, silenceLogger } from "../utils/test-helpers.js";
+import { createTestEnvironment, resetSingletons, silenceLogger } from "../utils/test-helpers.js";
 
-async function createTempChannelsFile(
-  content: Record<string, unknown>
-): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
-  const tempDir = path.join(process.cwd(), "tests", "temp");
-  await fs.mkdir(tempDir, { recursive: true });
-  const filePath = path.join(tempDir, `channels-${Date.now()}.yaml`);
-
-  const yaml = require("js-yaml");
-  await fs.writeFile(filePath, yaml.dump(content));
-
-  return {
-    filePath,
-    cleanup: async () => {
-      try {
-        await fs.unlink(filePath);
-      } catch {}
-    },
-  };
-}
+const env = createTestEnvironment("channel-registry-unit");
 
 describe("ChannelRegistryService", () => {
   let registry: ChannelRegistryService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await env.setupAsync({ logLevel: "error" });
     resetSingletons();
 
     const logger = LoggerService.getInstance();
@@ -39,12 +20,7 @@ describe("ChannelRegistryService", () => {
   afterEach(async () => {
     resetSingletons();
     vi.restoreAllMocks();
-
-    // Clean up temp directory
-    try {
-      const tempDir = path.join(process.cwd(), "tests", "temp");
-      await fs.rm(tempDir, { recursive: true, force: true });
-    } catch {}
+    await env.teardownAsync();
   });
 
   describe("getPermission", () => {
@@ -116,7 +92,7 @@ describe("ChannelRegistryService", () => {
     });
 
     it("should return channels with receiveNotifications=true", async () => {
-      await registry.registerChannelAsync("telegram", "chat-1", {
+      await registry.registerChannelAsync("telegram", "12345", {
         permission: "full",
         receiveNotifications: true,
       });
@@ -132,9 +108,27 @@ describe("ChannelRegistryService", () => {
       const channels = registry.getNotificationChannels();
 
       expect(channels.length).toBe(2);
-      expect(channels.map((c) => c.channelId)).toContain("chat-1");
+      expect(channels.map((c) => c.channelId)).toContain("12345");
       expect(channels.map((c) => c.channelId)).toContain("channel-2");
       expect(channels.map((c) => c.channelId)).not.toContain("chat-3");
+    });
+
+    it("should warn only once for the same invalid telegram channel id", async () => {
+      await registry.registerChannelAsync("telegram", "chat-1", {
+        permission: "full",
+        receiveNotifications: true,
+      });
+
+      const logger = LoggerService.getInstance();
+      const warnMock = logger.warn as unknown as ReturnType<typeof vi.fn>;
+      const warnCallsBefore = warnMock.mock.calls.length;
+
+      registry.getNotificationChannels();
+      registry.getNotificationChannels();
+      registry.getNotificationChannels();
+
+      const warnCallsAfter = warnMock.mock.calls.length;
+      expect(warnCallsAfter - warnCallsBefore).toBe(1);
     });
   });
 
@@ -144,11 +138,11 @@ describe("ChannelRegistryService", () => {
     });
 
     it("should enable notifications for an existing channel", async () => {
-      await registry.registerChannelAsync("telegram", "chat-1");
-      const result = await registry.setNotificationsEnabledAsync("telegram", "chat-1", true);
+      await registry.registerChannelAsync("telegram", "12345");
+      const result = await registry.setNotificationsEnabledAsync("telegram", "12345", true);
 
       expect(result).toBe(true);
-      expect(registry.getNotificationChannels().map((c) => c.channelId)).toContain("chat-1");
+      expect(registry.getNotificationChannels().map((c) => c.channelId)).toContain("12345");
     });
 
     it("should disable notifications for an existing channel", async () => {

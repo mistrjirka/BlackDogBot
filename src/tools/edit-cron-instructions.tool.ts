@@ -1,12 +1,11 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
-import { editCronInstructionsToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
-import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
+import { editCronInstructionsToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
+import { ConfigService } from "../services/config.service.js";
+import { createChatModel } from "../services/langchain-model.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
@@ -21,6 +20,11 @@ interface IEditCronInstructionsResult {
   error?: string;
 }
 
+interface IInstructionVerificationResult {
+  isClear: boolean;
+  missingContext: string;
+}
+
 //#endregion Interfaces
 
 //#region Constants
@@ -33,12 +37,133 @@ const TOOL_DESCRIPTION: string =
   "IMPORTANT: 'intention' is metadata only and does NOT change instructions by itself. " +
   "IMPORTANT: You MUST call 'get_cron' first to retrieve the current task configuration before using this tool.";
 
+const instructionVerificationResultSchema = z.object({
+  isClear: z.boolean(),
+  missingContext: z.string(),
+});
+
 //#endregion Constants
+
+//#region Helper methods
+
+function _extractTextFromAiContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    const textParts: string[] = content
+      .filter((part: unknown): part is { type: string; text?: unknown } => typeof part === "object" && part !== null)
+      .filter((part: { type: string; text?: unknown }): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
+      .map((part: { type: "text"; text: string }) => part.text);
+
+    return textParts.join("\n").trim();
+  }
+
+  return "";
+}
+
+function _extractTextFromReasoningContent(additionalKwargs: unknown): string {
+  if (typeof additionalKwargs !== "object" || additionalKwargs === null) {
+    return "";
+  }
+
+  const rawReasoning: unknown = (additionalKwargs as { reasoning_content?: unknown }).reasoning_content;
+  if (typeof rawReasoning === "string") {
+    return rawReasoning;
+  }
+
+  return "";
+}
+
+function _extractTopLevelJsonObjectCandidates(rawText: string): string[] {
+  const candidates: string[] = [];
+  let depth: number = 0;
+  let inString: boolean = false;
+  let escape: boolean = false;
+  let objectStart: number = -1;
+
+  for (let i: number = 0; i < rawText.length; i++) {
+    const char: string = rawText[i];
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escape = true;
+        continue;
+      }
+
+      if (char === "\"") {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) {
+        objectStart = i;
+      }
+
+      depth++;
+      continue;
+    }
+
+    if (char === "}") {
+      if (depth === 0) {
+        continue;
+      }
+
+      depth--;
+      if (depth === 0 && objectStart >= 0) {
+        candidates.push(rawText.slice(objectStart, i + 1));
+        objectStart = -1;
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function _parseVerificationResultOrThrow(rawText: string): IInstructionVerificationResult {
+  const trimmed: string = rawText.trim();
+
+  const parseWithSchema = (candidate: string): IInstructionVerificationResult | null => {
+    try {
+      const parsedJson: unknown = JSON.parse(candidate);
+      const parsed = instructionVerificationResultSchema.safeParse(parsedJson);
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const candidates: string[] = [trimmed, ..._extractTopLevelJsonObjectCandidates(trimmed)];
+
+  for (const candidate of candidates) {
+    const parsed: IInstructionVerificationResult | null = parseWithSchema(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  throw new Error(`Verifier returned invalid structured response: ${trimmed.slice(0, 200)}`);
+}
+
+//#endregion Helper methods
 
 //#region Tool
 
-const executeEditCronInstructions = async (
-  {
+const executeEditCronInstructions = async ({
     taskId,
     instructions,
     intention,
@@ -48,9 +173,7 @@ const executeEditCronInstructions = async (
     instructions: string;
     intention: string;
     tools?: string[];
-  },
-  _context: ToolExecuteContext,
-): Promise<IEditCronInstructionsResult> => {
+  }): Promise<IEditCronInstructionsResult> => {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
 
@@ -177,7 +300,7 @@ Current Instructions:
 ${existingTask.instructions}
 """
 
-=== PROPOSED NEW INSTRUCTIONS ===
+=== PROPOSED NEW INSTRUCTIONS
 """
 ${normalizedInstructions}
 """
@@ -193,30 +316,38 @@ Output a JSON object with:
 - "missingContext": string (if invalid, describe exactly what information is missing and why it cannot be derived; if valid, use empty string)
 `;
 
-    const aiService: AiProviderService = AiProviderService.getInstance();
-    const model = aiService.getModel();
+    const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
-    const verificationResult = await generateObjectWithRetryAsync({
-      model,
-      schema: z.object({
-        isClear: z.boolean(),
-        missingContext: z.string(),
-      }),
-      prompt: verifierPrompt,
-      retryOptions: { callType: "schema_extraction" },
+    const verificationResponse = await model.invoke(verifierPrompt);
+    const rawText: string = _extractTextFromAiContent(verificationResponse.content);
+    const rawReasoningText: string = _extractTextFromReasoningContent(
+      (verificationResponse as { additional_kwargs?: unknown }).additional_kwargs,
+    );
+
+    logger.debug(`[${TOOL_NAME}] Verifier raw response`, {
+      contentPreview: rawText.slice(0, 200),
+      reasoningPreview: rawReasoningText.slice(0, 200),
+      contentLength: rawText.length,
+      reasoningLength: rawReasoningText.length,
     });
 
-    if (!verificationResult.object.isClear) {
+    const mergedRawText: string = [rawText, rawReasoningText]
+      .filter((value: string): boolean => value.trim().length > 0)
+      .join("\n");
+
+    const verificationResult: IInstructionVerificationResult = _parseVerificationResultOrThrow(mergedRawText);
+
+    if (!verificationResult.isClear) {
       const errorMsg =
         `EDIT REJECTED. The updated instructions were not approved by the verifier.\n\n` +
-        `Verifier reason: ${verificationResult.object.missingContext}\n\n` +
+        `Verifier reason: ${verificationResult.missingContext}\n\n` +
         `Current instructions:\n${existingTask.instructions}\n\n` +
         `Proposed instructions:\n${normalizedInstructions}\n\n` +
         `Intention: ${normalizedIntention}`;
 
       logger.warn(`[${TOOL_NAME}] Edit rejected`, {
         taskId,
-        reason: verificationResult.object.missingContext,
+        reason: verificationResult.missingContext,
       });
 
       return { success: false, error: errorMsg };
@@ -255,14 +386,13 @@ Output a JSON object with:
   }
 };
 
-export const editCronInstructionsTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: editCronInstructionsToolInputSchema,
-  execute: createToolWithPrerequisites(
-    "edit_cron_instructions",
-    TOOL_PREREQUISITES["edit_cron_instructions"] || [],
-    executeEditCronInstructions,
-  ) as any,
-});
+export const editCronInstructionsTool = tool(
+  executeEditCronInstructions,
+  {
+    name: "edit_cron_instructions",
+    description: TOOL_DESCRIPTION,
+    schema: editCronInstructionsToolInputSchema,
+  },
+);
 
 //#endregion Tool

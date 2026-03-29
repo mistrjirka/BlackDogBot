@@ -1,12 +1,20 @@
-import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { LoggerService } from "./logger.service.js";
-import { AiProviderService } from "./ai-provider.service.js";
+import { ConfigService } from "./config.service.js";
+import { createChatModel } from "./langchain-model.service.js";
 import { EmbeddingService } from "./embedding.service.js";
 import { VectorStoreService } from "./vector-store.service.js";
 import { generateId } from "../utils/id.js";
 import type { ICronMessageHistory } from "../shared/types/index.js";
+import {
+  buildCronDispatchPolicyPrompt,
+  buildCronNoveltyPrompt,
+  buildSearchPreview,
+  parseSearchMetadata,
+  type ISearchResultMetadata,
+} from "./cron-message-history-helpers.js";
 import { z } from "zod";
+
+export { buildCronNoveltyPrompt } from "./cron-message-history-helpers.js";
 
 //#region Constants
 
@@ -27,6 +35,9 @@ const MessageDispatchPolicySchema = z.object({
   reasoning: z.string(),
   shouldDispatch: z.boolean(),
 });
+
+type MessageNoveltyDecision = z.infer<typeof MessageNoveltySchema>;
+type MessageDispatchDecision = z.infer<typeof MessageDispatchPolicySchema>;
 
 //#endregion Constants
 
@@ -55,71 +66,156 @@ export interface ICheckMessageDispatchResult {
   shouldDispatch: boolean;
 }
 
-interface ISearchResultMetadata {
-  sentAt?: string;
-  taskId?: string;
-}
-
-interface IBuildNoveltyPromptInput {
-  taskContextBlock: string;
-  candidateMessage: string;
-  similarMessagesBlock: string;
-}
-
 //#endregion Interfaces
 
-//#region Prompt builders
+//#region Helper methods
 
-export function buildCronNoveltyPrompt(input: IBuildNoveltyPromptInput): string {
-  return `You are a strict deduplication checker for cron notifications.
+function _extractTextFromAiContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
 
-Your job: determine whether the CANDIDATE MESSAGE describes a genuinely NEW EVENT that users have not already been notified about.
+  if (Array.isArray(content)) {
+    const textParts: string[] = content
+      .filter((part: unknown): part is { type: string; text?: unknown } => typeof part === "object" && part !== null)
+      .filter((part: { type: string; text?: unknown }): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
+      .map((part: { type: "text"; text: string }) => part.text);
 
-RULES:
-- If the candidate and any previous message describe the SAME CORE EVENT, classify as DUPLICATE (isNewInformation=false).
-- "Same core event" means same real-world incident/alert subject, even if the candidate adds new context, extra details, statistics, or stronger wording.
-- Added details about an already-known event are NOT new information.
-- Rephrasing, different tone, reordered wording, timestamp formatting, or style changes are NOT new information.
-- Status/progress chatter ("task done", "fetched X", "processing complete") is NOT new information unless task instructions explicitly require those updates.
-- Only classify as NEW when the core event itself is different (different incident/entity/location/outcome), not just richer description of the same incident.
-- When uncertain, choose isNewInformation=false.
+    return textParts.join("\n").trim();
+  }
 
-CORE EVENT TEST (must be applied first):
-1) Identify the core event in the candidate.
-2) Check whether that same core event appears in any previous message.
-3) If yes, isNewInformation MUST be false.
-4) Only if core event is absent from all previous messages may isNewInformation be true.
-
-EXAMPLE A (duplicate -> false):
-Candidate: "ENERGY ALERT: Trump threatens Iranian power plants; US weighs Kharg Island seizure"
-Previous:  "ENERGY ALERT: Trump's ultimatum threatens Iranian power infrastructure; US considers seizing Kharg Island"
-Reason: same core event, different wording.
-
-EXAMPLE B (duplicate -> false):
-Candidate: "ENERGY ALERT: Czech factory arson verified; IEA says crisis worse than 1970s"
-Previous:  "ENERGY ALERT: Czech thermal imaging factory arson attack confirmed"
-Reason: same core event (Czech factory arson). Added IEA context does not create a new event.
-
-EXAMPLE C (new -> true):
-Candidate: "ENERGY ALERT: Slovenia starts fuel rationing at 50L/day"
-Previous:  "ENERGY ALERT: Trump threatens Iranian power plants; Kharg Island risk"
-Reason: different core event.
-
-OUTPUT REQUIREMENTS:
-1) In \`reasoning\`, explicitly state the candidate core event and whether it already exists in previous messages (cite the matching rank numbers when applicable).
-2) If core event already exists, isNewInformation MUST be false.
-3) Only mark true if the candidate core event is genuinely different.
-
-${input.taskContextBlock}
-
-Candidate message:
-${input.candidateMessage}
-
-Top similar previous messages:
-${input.similarMessagesBlock}`;
+  return "";
 }
 
-//#endregion Prompt builders
+function _extractTextFromReasoningContent(additionalKwargs: unknown): string {
+  if (typeof additionalKwargs !== "object" || additionalKwargs === null) {
+    return "";
+  }
+
+  const rawReasoning: unknown = (additionalKwargs as { reasoning_content?: unknown }).reasoning_content;
+  if (typeof rawReasoning === "string") {
+    return rawReasoning;
+  }
+
+  return "";
+}
+
+function _extractTopLevelJsonObjectCandidates(rawText: string): string[] {
+  const candidates: string[] = [];
+  let depth: number = 0;
+  let inString: boolean = false;
+  let escape: boolean = false;
+  let objectStart: number = -1;
+
+  for (let i: number = 0; i < rawText.length; i++) {
+    const char: string = rawText[i];
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escape = true;
+        continue;
+      }
+
+      if (char === "\"") {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) {
+        objectStart = i;
+      }
+
+      depth++;
+      continue;
+    }
+
+    if (char === "}") {
+      if (depth === 0) {
+        continue;
+      }
+
+      depth--;
+      if (depth === 0 && objectStart >= 0) {
+        candidates.push(rawText.slice(objectStart, i + 1));
+        objectStart = -1;
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function _parseStructuredDecisionOrThrow<TSchema extends z.ZodTypeAny>(
+  rawText: string,
+  schema: TSchema,
+  label: string,
+): z.infer<TSchema> {
+  const trimmed: string = rawText.trim();
+
+  const parseWithSchema = (candidate: string): z.infer<TSchema> | null => {
+    try {
+      const parsedJson: unknown = JSON.parse(candidate);
+      const parsed = schema.safeParse(parsedJson);
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const candidates: string[] = [trimmed, ..._extractTopLevelJsonObjectCandidates(trimmed)];
+
+  for (const candidate of candidates) {
+    const parsed: z.infer<TSchema> | null = parseWithSchema(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  throw new Error(`${label}: ${trimmed.slice(0, 200)}`);
+}
+
+async function _invokeStructuredDecisionAsync<TSchema extends z.ZodTypeAny>(
+  prompt: string,
+  schema: TSchema,
+  logger: LoggerService,
+  logLabel: string,
+): Promise<z.infer<TSchema>> {
+  const model = createChatModel(ConfigService.getInstance().getAiConfig());
+  const response = await model.invoke(prompt);
+
+  const rawText: string = _extractTextFromAiContent(response.content);
+  const rawReasoningText: string = _extractTextFromReasoningContent(
+    (response as { additional_kwargs?: unknown }).additional_kwargs,
+  );
+
+  logger.debug(`${logLabel} raw response`, {
+    contentPreview: rawText.slice(0, 200),
+    reasoningPreview: rawReasoningText.slice(0, 200),
+    contentLength: rawText.length,
+    reasoningLength: rawReasoningText.length,
+  });
+
+  const mergedRawText: string = [rawText, rawReasoningText]
+    .filter((value: string): boolean => value.trim().length > 0)
+    .join("\n");
+
+  return _parseStructuredDecisionOrThrow(mergedRawText, schema, `${logLabel} returned invalid structured response`);
+}
+
+//#endregion Helper methods
 
 //#region CronMessageHistoryService
 
@@ -238,10 +334,10 @@ export class CronMessageHistoryService {
       );
     }
 
-    const embedding: number[] = await embeddingService.embedAsync(message);
-    const results = await vectorStore.searchAsync(embedding, SIMILARITY_SEARCH_LIMIT, undefined, VECTOR_TABLE_NAME);
-    const similarMessages: ISimilarMessage[] = results.map((result) => {
-      const metadata: ISearchResultMetadata = this._parseSearchMetadata(result.metadata);
+      const embedding: number[] = await embeddingService.embedAsync(message);
+      const results = await vectorStore.searchAsync(embedding, SIMILARITY_SEARCH_LIMIT, undefined, VECTOR_TABLE_NAME);
+      const similarMessages: ISimilarMessage[] = results.map((result) => {
+      const metadata: ISearchResultMetadata = parseSearchMetadata(result.metadata);
 
       return {
         content: result.content,
@@ -253,14 +349,14 @@ export class CronMessageHistoryService {
 
     this._logger.info("Cron similar message search completed", {
       queryLength: message.length,
-      queryPreview: this._buildSearchPreview(message),
+      queryPreview: buildSearchPreview(message, SEARCH_LOG_PREVIEW_LENGTH),
       resultCount: similarMessages.length,
       results: similarMessages.map((item: ISimilarMessage, index: number) => ({
         rank: index + 1,
         score: Number(item.score.toFixed(4)),
         taskId: item.taskId,
         sentAt: item.sentAt,
-        preview: this._buildSearchPreview(item.content),
+        preview: buildSearchPreview(item.content, SEARCH_LOG_PREVIEW_LENGTH),
       })),
     });
 
@@ -274,85 +370,68 @@ export class CronMessageHistoryService {
     taskName?: string,
     taskDescription?: string,
   ): Promise<ICheckMessageNoveltyResult> {
-    try {
-      const similarMessages: ISimilarMessage[] = await this.getSimilarMessagesAsync(message);
-      const sameTaskSimilarMessages: ISimilarMessage[] = similarMessages.filter(
-        (item: ISimilarMessage): boolean => item.taskId === taskId,
-      );
+    const similarMessages: ISimilarMessage[] = await this.getSimilarMessagesAsync(message);
+    const sameTaskSimilarMessages: ISimilarMessage[] = similarMessages.filter(
+      (item: ISimilarMessage): boolean => item.taskId === taskId,
+    );
 
-      if (sameTaskSimilarMessages.length === 0) {
-        return {
-          isNewInformation: true,
-          similarCount: 0,
-        };
-      }
-
-      const model = AiProviderService.getInstance().getModel();
-      const candidateMessage: string = message.trim();
-      const similarMessagesBlock: string = sameTaskSimilarMessages
-        .map((item: ISimilarMessage, index: number): string => {
-          const score: number = Number(item.score.toFixed(4));
-          return [
-            `#${index + 1}`,
-            `score: ${score}`,
-            `taskId: ${item.taskId}`,
-            `sentAt: ${item.sentAt || "unknown"}`,
-            `content: ${item.content}`,
-          ].join("\n");
-        })
-        .join("\n\n");
-
-      const normalizedInstructions: string = (taskInstructions ?? "").trim();
-      const taskContextBlock: string = normalizedInstructions.length > 0
-        ? [
-            "Task context:",
-            `taskName: ${taskName ?? "unknown"}`,
-            `taskDescription: ${taskDescription ?? ""}`,
-            "taskInstructions:",
-            normalizedInstructions,
-          ].join("\n")
-        : "Task context:\n(task instructions unavailable)";
-
-      const noveltyPrompt: string = buildCronNoveltyPrompt({
-        taskContextBlock,
-        candidateMessage,
-        similarMessagesBlock,
-      });
-
-      const decision = await generateObjectWithRetryAsync({
-        model,
-        schema: MessageNoveltySchema,
-        prompt: noveltyPrompt,
-        retryOptions: {
-          callType: "schema_extraction",
-        },
-      });
-
-      this._logger.info("Cron message novelty decision computed", {
-        taskId,
-        isNewInformation: decision.object.isNewInformation,
-        reasoning: decision.object.reasoning,
-        similarCount: sameTaskSimilarMessages.length,
-        queryPreview: this._buildSearchPreview(message),
-      });
-
-      return {
-        isNewInformation: decision.object.isNewInformation,
-        similarCount: sameTaskSimilarMessages.length,
-      };
-    } catch (error: unknown) {
-      const details: string = error instanceof Error ? error.message : String(error);
-
-      this._logger.warn("Cron message novelty check failed, allowing send", {
-        taskId,
-        error: details,
-      });
-
+    if (sameTaskSimilarMessages.length === 0) {
       return {
         isNewInformation: true,
         similarCount: 0,
       };
     }
+
+    const candidateMessage: string = message.trim();
+    const similarMessagesBlock: string = sameTaskSimilarMessages
+      .map((item: ISimilarMessage, index: number): string => {
+        const score: number = Number(item.score.toFixed(4));
+        return [
+          `#${index + 1}`,
+          `score: ${score}`,
+          `taskId: ${item.taskId}`,
+          `sentAt: ${item.sentAt || "unknown"}`,
+          `content: ${item.content}`,
+        ].join("\n");
+      })
+      .join("\n\n");
+
+    const normalizedInstructions: string = (taskInstructions ?? "").trim();
+    const taskContextBlock: string = normalizedInstructions.length > 0
+      ? [
+          "Task context:",
+          `taskName: ${taskName ?? "unknown"}`,
+          `taskDescription: ${taskDescription ?? ""}`,
+          "taskInstructions:",
+          normalizedInstructions,
+        ].join("\n")
+      : "Task context:\n(task instructions unavailable)";
+
+    const noveltyPrompt: string = buildCronNoveltyPrompt({
+      taskContextBlock,
+      candidateMessage,
+      similarMessagesBlock,
+    });
+
+    const decision: MessageNoveltyDecision = await _invokeStructuredDecisionAsync(
+      noveltyPrompt,
+      MessageNoveltySchema,
+      this._logger,
+      "Cron message novelty decision",
+    );
+
+    this._logger.info("Cron message novelty decision computed", {
+      taskId,
+      isNewInformation: decision.isNewInformation,
+      reasoning: decision.reasoning,
+      similarCount: sameTaskSimilarMessages.length,
+      queryPreview: buildSearchPreview(message, SEARCH_LOG_PREVIEW_LENGTH),
+    });
+
+    return {
+      isNewInformation: decision.isNewInformation,
+      similarCount: sameTaskSimilarMessages.length,
+    };
   }
 
   public async checkMessageDispatchPolicyAsync(
@@ -361,82 +440,35 @@ export class CronMessageHistoryService {
     taskName?: string,
     taskDescription?: string,
   ): Promise<ICheckMessageDispatchResult> {
-    try {
-      const normalizedInstructions: string = (taskInstructions ?? "").trim();
-      if (normalizedInstructions.length === 0) {
-        return { shouldDispatch: true };
-      }
-
-      const model = AiProviderService.getInstance().getModel();
-      const candidateMessage: string = message.trim();
-
-      const prompt: string = `You are a strict cron notification policy checker.
-
-Decide whether the candidate message should be dispatched to the user based on task instructions.
-
-Rule: If task instructions indicate silent/background execution or say not to send status/progress updates, then status/progress messages must NOT be dispatched.
-
-Allow dispatch only when at least one is true:
-1) Task instructions explicitly require sending this kind of update, or
-2) Candidate message contains a critical error/warning requiring user action, or
-3) Candidate message is the requested final deliverable/output.
-
-Status/progress messages include: "task complete", "fetched X", "processed Y", "stored records", "silent operation complete", and similar operational summaries.
-
-If unsure, prefer shouldDispatch=false.
-
-EXAMPLE A (dispatch=false):
-Task instructions: "Run silently. Send only critical alerts."
-Candidate: "Task complete: fetched 16 articles, stored in DB."
-Reason: routine status update, not a critical alert, must be suppressed.
-
-EXAMPLE B (dispatch=true):
-Task instructions: "Run silently. Send only critical alerts."
-Candidate: "ENERGY ALERT: Strait disruption now impacting Czechia-relevant supply routes."
-Reason: this is a critical alert class explicitly allowed by instructions.
-
-OUTPUT REQUIREMENTS:
-1) In \`reasoning\`, cite which instruction lines allow or forbid this message type.
-2) Decide shouldDispatch accordingly.
-
-Task context:
-taskName: ${taskName ?? "unknown"}
-taskDescription: ${taskDescription ?? ""}
-taskInstructions:
-${normalizedInstructions}
-
-Candidate message:
-${candidateMessage}`;
-
-      const decision = await generateObjectWithRetryAsync({
-        model,
-        schema: MessageDispatchPolicySchema,
-        prompt,
-        retryOptions: {
-          callType: "schema_extraction",
-        },
-      });
-
-      this._logger.info("Cron message dispatch policy decision computed", {
-        shouldDispatch: decision.object.shouldDispatch,
-        reasoning: decision.object.reasoning,
-        queryPreview: this._buildSearchPreview(message),
-      });
-
-      return {
-        shouldDispatch: decision.object.shouldDispatch,
-      };
-    } catch (error: unknown) {
-      const details: string = error instanceof Error ? error.message : String(error);
-
-      this._logger.warn("Cron message dispatch policy check failed, allowing send", {
-        error: details,
-      });
-
-      return {
-        shouldDispatch: true,
-      };
+    const normalizedInstructions: string = (taskInstructions ?? "").trim();
+    if (normalizedInstructions.length === 0) {
+      return { shouldDispatch: true };
     }
+
+    const candidateMessage: string = message.trim();
+    const prompt: string = buildCronDispatchPolicyPrompt({
+      taskInstructions: normalizedInstructions,
+      taskName,
+      taskDescription,
+      candidateMessage,
+    });
+
+    const decision: MessageDispatchDecision = await _invokeStructuredDecisionAsync(
+      prompt,
+      MessageDispatchPolicySchema,
+      this._logger,
+      "Cron message dispatch policy decision",
+    );
+
+    this._logger.info("Cron message dispatch policy decision computed", {
+      shouldDispatch: decision.shouldDispatch,
+      reasoning: decision.reasoning,
+      queryPreview: buildSearchPreview(message, SEARCH_LOG_PREVIEW_LENGTH),
+    });
+
+    return {
+      shouldDispatch: decision.shouldDispatch,
+    };
   }
 
   //#endregion Public methods
@@ -481,15 +513,11 @@ ${historyText}
 Output a single concise summary paragraph.`;
 
     try {
-      const model = AiProviderService.getInstance().getModel();
+      const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
-      const result = await generateTextWithRetryAsync({
-        model,
-        prompt,
-        retryOptions: { callType: "cron_history" },
-      });
+      const result = await model.invoke(prompt);
 
-      const newSummary: string = result.text ?? "";
+      const newSummary: string = typeof result.content === "string" ? result.content : "";
 
       CronMessageHistoryService._sharedHistory = recentMessages;
 
@@ -505,24 +533,6 @@ Output a single concise summary paragraph.`;
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  }
-
-  private _parseSearchMetadata(rawMetadata: string): ISearchResultMetadata {
-    try {
-      return JSON.parse(rawMetadata) as ISearchResultMetadata;
-    } catch {
-      return {};
-    }
-  }
-
-  private _buildSearchPreview(content: string): string {
-    const normalized: string = content.replace(/\s+/g, " ").trim();
-
-    if (normalized.length <= SEARCH_LOG_PREVIEW_LENGTH) {
-      return normalized;
-    }
-
-    return `${normalized.slice(0, SEARCH_LOG_PREVIEW_LENGTH)}...`;
   }
 
   //#endregion Private methods

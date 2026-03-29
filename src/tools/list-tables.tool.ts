@@ -1,17 +1,11 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 
-export const listTablesTool = tool({
-  description: "List all tables in a specific database",
-  inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Name of the database"),
-  }),
-  execute: async ({ databaseName }: { databaseName: string }): Promise<{
+export const listTablesTool = tool(
+  async ({ databaseName }: { databaseName: string }): Promise<{
     databaseName: string;
     tables: string[];
     error?: string;
@@ -47,4 +41,13 @@ export const listTablesTool = tool({
       };
     }
   },
-});
+  {
+    name: "list_tables",
+    description: "List all tables in a specific database",
+    schema: z.object({
+      databaseName: z.string()
+        .min(1)
+        .describe("Name of the database"),
+    }),
+  },
+);

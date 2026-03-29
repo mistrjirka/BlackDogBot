@@ -1,8 +1,9 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import type { IInsertResult, ITableInfo, IColumnInfo } from "../helpers/litesql.js";
+import { validateTableExistsAsync } from "../helpers/litesql-validation.js";
 
 const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
   "created_at",
@@ -12,21 +13,8 @@ const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
   "updated",
 ]);
 
-export const writeToDatabaseTool = tool({
-  description: "Write a row of data into a table in a database. Prefer per-table tools (write_table_<tableName>) when available — they enforce exact column schemas.",
-  inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Name of the database to write to"),
-    tableName: z.string()
-      .min(1)
-      .describe("Name of the table to write to"),
-    data: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
-      .array()
-      .min(1)
-      .describe("Array of row objects to insert (e.g. [{title: 'Hello', score: 5}]). Values must be flat primitives — no nested objects."),
-  }),
-  execute: async ({
+export const writeToDatabaseTool = tool(
+  async ({
     databaseName,
     tableName,
     data,
@@ -43,11 +31,9 @@ export const writeToDatabaseTool = tool({
     message: string;
     error?: string;
   }> => {
-    const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
-    if (!dbExists) {
-      const allDbs = await litesql.listDatabasesAsync();
-      const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
+    try {
+      await validateTableExistsAsync(databaseName, tableName);
+    } catch (error: unknown) {
       return {
         success: false,
         databaseName,
@@ -55,23 +41,7 @@ export const writeToDatabaseTool = tool({
         insertedCount: 0,
         lastRowId: 0,
         message: "",
-        error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
-      };
-    }
-
-    const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
-    if (!tableExists) {
-      const allTables: string[] = await litesql.listTablesAsync(databaseName);
-      const available: string = allTables.join(", ") || "(none)";
-
-      return {
-        success: false,
-        databaseName,
-        tableName,
-        insertedCount: 0,
-        lastRowId: 0,
-        message: "",
-        error: `Table "${tableName}" does not exist in database "${databaseName}".\nAvailable tables: ${available}`,
+        error: error instanceof Error ? error.message : String(error),
       };
     }
 
@@ -142,4 +112,20 @@ export const writeToDatabaseTool = tool({
       message: `Inserted ${result.insertedCount} row(s) into "${tableName}" (columns: ${columns}). Last Row ID: ${result.lastRowId}`,
     };
   },
-});
+  {
+    name: "write_to_database",
+    description: "Write a row of data into a table in a database. Prefer per-table tools (write_table_<tableName>) when available — they enforce exact column schemas.",
+    schema: z.object({
+      databaseName: z.string()
+        .min(1)
+        .describe("Name of the database to write to"),
+      tableName: z.string()
+        .min(1)
+        .describe("Name of the table to write to"),
+      data: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+        .array()
+        .min(1)
+        .describe("Array of row objects to insert (e.g. [{title: 'Hello', score: 5}]). Values must be flat primitives — no nested objects."),
+    }),
+  },
+);

@@ -1,15 +1,7 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { searxngToolInputSchema } from "../shared/schemas/tool-schemas.js";
-import { searchSearxngAsync } from "../utils/searxng-client.js";
+import { searchSearxngAsync, type ISearxngResult } from "../utils/searxng-client.js";
 import { extractErrorMessage } from "../utils/error.js";
-
-interface ISearxngResult {
-  title?: string;
-  url?: string;
-  content?: string;
-  img_src?: string;
-  thumbnail?: string;
-}
 
 function formatResultsAsMarkdown(
   query: string,
@@ -38,12 +30,8 @@ function formatResultsAsMarkdown(
   return markdown;
 }
 
-export const searxngTool = tool({
-  description:
-    "Search the web using SearXNG. Returns search results formatted as markdown for easy reading. " +
-    "Supports categories (general, news, images, videos, etc.) and safe search levels.",
-  inputSchema: searxngToolInputSchema,
-  execute: async ({
+export const searxngTool = tool(
+  async ({
     query,
     categories,
     maxResults,
@@ -76,4 +64,11 @@ export const searxngTool = tool({
       return { results: "", error: `SearXNG search failed: ${errorMessage}` };
     }
   },
-});
+  {
+    name: "searxng",
+    description:
+      "Search the web using SearXNG. Returns search results formatted as markdown for easy reading. " +
+      "Supports categories (general, news, images, videos, etc.) and safe search levels.",
+    schema: searxngToolInputSchema,
+  },
+);

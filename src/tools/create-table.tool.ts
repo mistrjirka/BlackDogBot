@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
@@ -23,21 +23,8 @@ const columnDefinitionSchema = z.object({
     .describe("Default value for the column"),
 });
 
-export const createTableTool = tool({
-  description: "Create a new table in a database. Call this after prerequisite checks/tool calls are complete for the current run.",
-  inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Name of the database"),
-    tableName: z.string()
-      .min(1)
-      .describe("Name of the table to create"),
-    columns: columnDefinitionSchema
-      .array()
-      .min(1)
-      .describe("Array of column definitions"),
-  }),
-  execute: async ({
+export const createTableTool = tool(
+  async ({
     databaseName,
     tableName,
     columns,
@@ -126,4 +113,20 @@ export const createTableTool = tool({
       };
     }
   },
-});
+  {
+    name: "create_table",
+    description: "Create a new table in a database. Call this after prerequisite checks/tool calls are complete for the current run.",
+    schema: z.object({
+      databaseName: z.string()
+        .min(1)
+        .describe("Name of the database"),
+      tableName: z.string()
+        .min(1)
+        .describe("Name of the table to create"),
+      columns: columnDefinitionSchema
+        .array()
+        .min(1)
+        .describe("Array of column definitions"),
+    }),
+  },
+);

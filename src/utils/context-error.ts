@@ -1,4 +1,4 @@
-import { APICallError, InvalidToolInputError, JSONParseError } from "ai";
+import { extractAiErrorDetails, type IAiErrorDetails } from "./ai-error.js";
 
 const CONTEXT_ERROR_STATUS_CODES: number[] = [400, 413, 422, 500];
 const CONTEXT_ERROR_KEYWORDS: string[] = [
@@ -40,8 +40,29 @@ const CONNECTION_RETRY_MULTIPLIER: number = 2;
 
 export const MAX_CONNECTION_RETRIES: number = 5;
 
+interface IAPICallErrorLike extends Error {
+  statusCode?: number | null;
+  responseBody?: string | null;
+  isRetryable?: boolean | null;
+}
+
+function _isAPICallError(error: unknown): error is IAPICallErrorLike {
+  if (error instanceof Error && "statusCode" in error) {
+    return true;
+  }
+  return false;
+}
+
+function _hasRetryableParseErrorName(error: unknown): boolean {
+  if (error instanceof Error) {
+    const name = error.name.toLowerCase();
+    return name === "invalidtoolinputerror" || name === "jsonparseerror";
+  }
+  return false;
+}
+
 export function isContextExceededApiError(error: unknown): boolean {
-  if (!APICallError.isInstance(error)) {
+  if (!_isAPICallError(error)) {
     return false;
   }
 
@@ -59,11 +80,11 @@ export function isContextExceededApiError(error: unknown): boolean {
 }
 
 export function isRetryableApiError(error: unknown): boolean {
-  if (JSONParseError.isInstance(error) || InvalidToolInputError.isInstance(error)) {
+  if (_hasRetryableParseErrorName(error)) {
     return true;
   }
 
-  if (APICallError.isInstance(error)) {
+  if (_isAPICallError(error)) {
     if (error.statusCode === 401 || error.statusCode === 403) {
       return false;
     }
@@ -93,7 +114,7 @@ export function isRetryableApiError(error: unknown): boolean {
 }
 
 export function isConnectionError(error: unknown): boolean {
-  if (APICallError.isInstance(error)) {
+  if (_isAPICallError(error)) {
     const responseBody: string = typeof error.responseBody === "string"
       ? error.responseBody
       : JSON.stringify(error.responseBody ?? "");
@@ -120,4 +141,20 @@ function _hasRetryableParseErrorKeyword(input: string): boolean {
 
 function _hasConnectionErrorKeyword(input: string): boolean {
   return CONNECTION_ERROR_KEYWORDS.some((keyword: string): boolean => input.includes(keyword));
+}
+
+export function isContextExceededTelegramError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const details: IAiErrorDetails = extractAiErrorDetails(error);
+  const combined: string = `${details.message ?? ""} ${details.providerMessage ?? ""} ${details.responseBody ?? ""}`.toLowerCase();
+
+  if (details.statusCode === 400 && combined.includes("context") && combined.includes("exceeded")) {
+    return true;
+  }
+
+  return combined.includes("context_length_exceeded") ||
+    (combined.includes("context") && combined.includes("token") && combined.includes("limit"));
 }

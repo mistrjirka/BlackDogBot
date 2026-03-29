@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { thinkToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
 import { ThinkOperationTracker } from "../utils/think-limit.js";
@@ -10,10 +10,8 @@ const thinkTracker = new ThinkOperationTracker({
   maxSingleThoughtLength: 3000,
 });
 
-export const thinkTool = tool({
-  description: "Use this to think through a problem step by step before acting.",
-  inputSchema: thinkToolInputSchema,
-  execute: async ({ thought }: { thought: string }): Promise<{ acknowledged: boolean }> => {
+export const thinkTool = tool(
+  async ({ thought }: { thought: string }): Promise<{ acknowledged: boolean }> => {
     const logger = LoggerService.getInstance();
     
     // Record the think operation and check limits
@@ -32,7 +30,12 @@ export const thinkTool = tool({
     
     return { acknowledged: true };
   },
-});
+  {
+    name: "think",
+    description: "Use this to think through a problem step by step before acting.",
+    schema: thinkToolInputSchema,
+  },
+);
 
 // Export the tracker for resetting between tasks
 export { thinkTracker };

@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
@@ -12,17 +12,8 @@ const columnSchema = z.object({
   defaultValue: z.string().nullable(),
 });
 
-export const getTableSchemaTool = tool({
-  description: "Get the schema (columns and types) of a specific table",
-  inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Name of the database"),
-    tableName: z.string()
-      .min(1)
-      .describe("Name of the table"),
-  }),
-  execute: async ({ databaseName, tableName }: { databaseName: string; tableName: string }): Promise<{
+export const getTableSchemaTool = tool(
+  async ({ databaseName, tableName }: { databaseName: string; tableName: string }): Promise<{
     databaseName: string;
     tableName: string;
     columns: z.infer<typeof columnSchema>[];
@@ -75,4 +66,16 @@ export const getTableSchemaTool = tool({
       };
     }
   },
-});
+  {
+    name: "get_table_schema",
+    description: "Get the schema (columns and types) of a specific table",
+    schema: z.object({
+      databaseName: z.string()
+        .min(1)
+        .describe("Name of the database"),
+      tableName: z.string()
+        .min(1)
+        .describe("Name of the table"),
+    }),
+  },
+);

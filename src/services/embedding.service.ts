@@ -12,6 +12,16 @@ import {
 // transformers.js ONNX backend only exposes "cpu" and "cuda" as device options.
 type PipelineDevice = "cpu" | "cuda";
 
+// ONNX Runtime environment with configurable backends
+interface IOnnxEnv {
+  cacheDir?: string;
+  backends?: {
+    onnx?: {
+      executionProviders?: string[];
+    };
+  };
+}
+
 const _execAsync = promisify(exec);
 
 import {
@@ -22,6 +32,7 @@ import {
   DEFAULT_OPENROUTER_EMBEDDING_MODEL,
   DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
   EMBEDDING_DIMENSION,
+  OPENROUTER_EMBEDDING_TIMEOUT_MS,
 } from "../shared/constants.js";
 import type {
   EmbeddingDevice,
@@ -226,22 +237,23 @@ export class EmbeddingService {
 
     this._device = await this._resolveDeviceAsync(requestedDevice);
 
-    env.cacheDir = getModelsDir();
+    // Cast env to our typed interface
+    const onnxEnv = env as unknown as IOnnxEnv;
+    onnxEnv.cacheDir = getModelsDir();
     
     // Explicitly configure ONNX execution providers to prevent onnxruntime-node from 
     // crashing when probing for missing CUDA libraries on CPU fallback.
     // Ensure env.backends.onnx exists first.
-    const backends = env.backends as any;
-    if (!backends) (env as any).backends = {};
-    if (!(env.backends as any).onnx) (env.backends as any).onnx = {};
+    if (!onnxEnv.backends) onnxEnv.backends = {};
+    if (!onnxEnv.backends.onnx) onnxEnv.backends.onnx = {};
     
     // Onnxruntime-node attempts to load all available providers (including CUDA) by default.
     // When CUDA libraries are missing, this causes a fatal crash even if device='cpu' is passed to pipeline.
     // By strictly limiting the executionProviders, we bypass this issue.
     if (this._device === "cuda") {
-        (env.backends as any).onnx.executionProviders = ['cuda', 'cpu'];
+        onnxEnv.backends.onnx.executionProviders = ['cuda', 'cpu'];
     } else {
-        (env.backends as any).onnx.executionProviders = ['cpu'];
+        onnxEnv.backends.onnx.executionProviders = ['cpu'];
     }
 
     logger.info("Loading embedding model...", {
@@ -254,72 +266,14 @@ export class EmbeddingService {
       await this._loadPipelineAsync();
     } catch (error: unknown) {
       if (this._isCorruptionError(error)) {
-        logger.warn("Corrupted model cache detected. Clearing and re-downloading...", {
-          modelPath: this._modelPath,
-        });
-
-        await this._clearModelCacheAsync();
-
-        logger.info("Model cache cleared. Retrying download...", {
-          modelPath: this._modelPath,
-        });
-
-        try {
-          await this._loadPipelineAsync();
-        } catch (retryError: unknown) {
-          if (
-            this._modelPath === DEFAULT_EMBEDDING_MODEL &&
-            this._shouldFallbackToDefaultLocalModel(retryError)
-          ) {
-            const requestedModel: string = this._modelPath;
-
-            logger.warn(
-              "Default local embedding model still failed after cache reset. " +
-                "Falling back to compatible multilingual model.",
-          {
-            requestedModel,
-            fallbackModel: DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
-            error: extractErrorMessage(error),
-          },
-        );
-
-        this._modelPath = DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL;
-        await this._loadPipelineAsync();
-          } else {
-            throw retryError;
-          }
-        }
+        await this._handleCorruptionAndRetryAsync();
       } else if (
         this._modelPath === DEFAULT_EMBEDDING_MODEL &&
         this._shouldFallbackToDefaultLocalModel(error)
       ) {
-        const requestedModel: string = this._modelPath;
-
-        logger.warn(
-          "Default local embedding model failed to load in current Transformers.js runtime. " +
-            "Falling back to compatible multilingual model.",
-          {
-            requestedModel,
-            fallbackModel: DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
-            error: extractErrorMessage(error),
-          },
-        );
-
-        this._modelPath = DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL;
-        await this._loadPipelineAsync();
-      } else if (
-        this._device === "cuda" &&
-        error instanceof Error &&
-        (error.message.includes("libonnxruntime_providers_cuda") ||
-          error.message.includes("cannot open shared object file"))
-      ) {
-        logger.warn(
-          "Failed to load CUDA providers (missing libraries). Falling back to CPU inference. " +
-          "To enable GPU acceleration, please install the CUDA 12 toolkit (e.g., sudo pacman -S cuda).",
-          { error: error.message }
-        );
-        this._device = "cpu";
-        await this._loadPipelineAsync();
+        await this._fallbackToAlternativeModelAsync(error);
+      } else if (this._isCudaLibraryError(error)) {
+        await this._fallbackToCpuAsync(error);
       } else {
         throw error;
       }
@@ -488,6 +442,69 @@ export class EmbeddingService {
     return CorruptionPatterns.some((pattern: RegExp): boolean => pattern.test(error.message));
   }
 
+  private _isCudaLibraryError(error: unknown): boolean {
+    return (
+      this._device === "cuda" &&
+      error instanceof Error &&
+      (error.message.includes("libonnxruntime_providers_cuda") ||
+        error.message.includes("cannot open shared object file"))
+    );
+  }
+
+  private async _fallbackToAlternativeModelAsync(error: unknown): Promise<void> {
+    const logger: LoggerService = LoggerService.getInstance();
+    const requestedModel: string = this._modelPath;
+
+    logger.warn(
+      "Default local embedding model failed. Falling back to compatible multilingual model.",
+      {
+        requestedModel,
+        fallbackModel: DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL,
+        error: extractErrorMessage(error),
+      },
+    );
+
+    this._modelPath = DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL;
+    await this._loadPipelineAsync();
+  }
+
+  private async _fallbackToCpuAsync(error: unknown): Promise<void> {
+    const logger: LoggerService = LoggerService.getInstance();
+    logger.warn(
+      "Failed to load CUDA providers (missing libraries). Falling back to CPU inference. " +
+      "To enable GPU acceleration, please install the CUDA 12 toolkit (e.g., sudo pacman -S cuda).",
+      { error: (error as Error).message },
+    );
+    this._device = "cpu";
+    await this._loadPipelineAsync();
+  }
+
+  private async _handleCorruptionAndRetryAsync(): Promise<void> {
+    const logger: LoggerService = LoggerService.getInstance();
+    logger.warn("Corrupted model cache detected. Clearing and re-downloading...", {
+      modelPath: this._modelPath,
+    });
+
+    await this._clearModelCacheAsync();
+
+    logger.info("Model cache cleared. Retrying download...", {
+      modelPath: this._modelPath,
+    });
+
+    try {
+      await this._loadPipelineAsync();
+    } catch (retryError: unknown) {
+      if (
+        this._modelPath === DEFAULT_EMBEDDING_MODEL &&
+        this._shouldFallbackToDefaultLocalModel(retryError)
+      ) {
+        await this._fallbackToAlternativeModelAsync(retryError);
+      } else {
+        throw retryError;
+      }
+    }
+  }
+
   private async _resolveDeviceAsync(device: EmbeddingDevice): Promise<PipelineDevice> {
     if (device !== "auto") {
       return device;
@@ -640,7 +657,7 @@ export class EmbeddingService {
           input: texts,
         }),
       },
-      60000,
+      OPENROUTER_EMBEDDING_TIMEOUT_MS,
     );
 
     if (!response.ok) {

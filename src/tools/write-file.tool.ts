@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { writeFileToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -19,16 +19,8 @@ interface IWriteFileResult {
 //#region Factory
 
 export function createWriteFileTool(readTracker: IFileReadTracker) {
-  return tool({
-    description:
-      "Write content to a file, completely replacing its contents. " +
-      "IMPORTANT: You MUST read the file with read_file first before overwriting it. " +
-      "If the file does not exist yet, you can write to it without reading first. " +
-      "The default location is the workspace directory (~/.blackdogbot/workspace/). " +
-      "For most tasks, just provide a filename (e.g. 'notes.txt') without a full path. " +
-      "Only specify an absolute path when accessing files outside the workspace.",
-    inputSchema: writeFileToolInputSchema,
-    execute: async ({ filePath, content }: { filePath: string; content: string }): Promise<IWriteFileResult> => {
+  return tool(
+    async ({ filePath, content }: { filePath: string; content: string }): Promise<IWriteFileResult> => {
       const logger: LoggerService = LoggerService.getInstance();
 
       const operationResult = await runFileOperationAsync<IWriteFileResult>({
@@ -74,7 +66,18 @@ export function createWriteFileTool(readTracker: IFileReadTracker) {
 
       return operationResult.value;
     },
-  });
+    {
+      name: "write_file",
+      description:
+        "Write content to a file, completely replacing its contents. " +
+        "IMPORTANT: You MUST read the file with read_file first before overwriting it. " +
+        "If the file does not exist yet, you can write to it without reading first. " +
+        "The default location is the workspace directory (~/.blackdogbot/workspace/). " +
+        "For most tasks, just provide a filename (e.g. 'notes.txt') without a full path. " +
+        "Only specify an absolute path when accessing files outside the workspace.",
+      schema: writeFileToolInputSchema,
+    },
+  );
 }
 
 //#endregion Factory

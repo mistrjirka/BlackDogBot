@@ -5,7 +5,7 @@ import os from "node:os";
 
 import { DiscordHandler } from "../../../src/platforms/discord/handler.js";
 import type { IDiscordConfig } from "../../../src/shared/types/discord.types.js";
-import { MainAgent } from "../../../src/agent/main-agent.js";
+import { LangchainMainAgent } from "../../../src/agent/langchain-main-agent.js";
 import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { MessagingService } from "../../../src/services/messaging.service.js";
@@ -29,7 +29,7 @@ function createMockDiscordConfig(): IDiscordConfig {
 
 function createMockDeps(): IPlatformDeps {
   return {
-    mainAgent: MainAgent.getInstance(),
+    agent: LangchainMainAgent.getInstance(),
     messagingService: MessagingService.getInstance(),
     channelRegistry: ChannelRegistryService.getInstance(),
     toolRegistry,
@@ -73,7 +73,7 @@ describe("Discord /cancel", () => {
 
     await handler.initializeAsync(client as unknown as any, config, createMockDeps());
 
-    const mainAgent = MainAgent.getInstance();
+    const mainAgent = LangchainMainAgent.getInstance();
     vi.spyOn(mainAgent, "initializeForChatAsync").mockResolvedValue(undefined);
 
     let resolveProcess: () => void;
@@ -145,7 +145,7 @@ describe("Discord /cancel", () => {
 
     await handler.initializeAsync(client as unknown as any, config, createMockDeps());
 
-    const mainAgent = MainAgent.getInstance();
+    const mainAgent = LangchainMainAgent.getInstance();
     const stopSpy = vi.spyOn(mainAgent, "stopChat").mockReturnValue(true);
 
     const interaction = {

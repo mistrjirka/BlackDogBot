@@ -51,8 +51,6 @@ interface IEditFileResult {
 let tempDir: string;
 let originalHome: string;
 
-const TOOL_OPTIONS = { toolCallId: "tc1", messages: [] as never[], abortSignal: undefined as unknown as AbortSignal };
-
 async function setupTempHomeAsync(): Promise<void> {
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-file-tools-"));
   originalHome = process.env.HOME ?? os.homedir();
@@ -163,7 +161,7 @@ describe("read_file tool", () => {
     const readTool = createReadFileTool(tracker);
 
     executeRead = async (input: { filePath: string }): Promise<IReadFileResult> => {
-      return await readTool.execute!(input, TOOL_OPTIONS) as IReadFileResult;
+      return await readTool.invoke(input) as IReadFileResult;
     };
   });
 
@@ -234,7 +232,7 @@ describe("read_image tool", () => {
     const readImageTool = createReadImageTool(tracker);
 
     executeReadImage = async (input: { filePath: string }): Promise<IReadImageResult> => {
-      return await readImageTool.execute!(input, TOOL_OPTIONS) as IReadImageResult;
+      return await readImageTool.invoke(input) as IReadImageResult;
     };
   });
 
@@ -293,11 +291,11 @@ describe("write_file tool", () => {
     const writeTool = createWriteFileTool(tracker);
 
     executeRead = async (input: { filePath: string }): Promise<IReadFileResult> => {
-      return await readTool.execute!(input, TOOL_OPTIONS) as IReadFileResult;
+      return await readTool.invoke(input) as IReadFileResult;
     };
 
     executeWrite = async (input: { filePath: string; content: string }): Promise<IWriteFileResult> => {
-      return await writeTool.execute!(input, TOOL_OPTIONS) as IWriteFileResult;
+      return await writeTool.invoke(input) as IWriteFileResult;
     };
   });
 
@@ -392,7 +390,7 @@ describe("append_file tool", () => {
     await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
 
     executeAppend = async (input: { filePath: string; content: string }): Promise<IAppendFileResult> => {
-      return await appendFileTool.execute!(input, TOOL_OPTIONS) as IAppendFileResult;
+      return await appendFileTool.invoke(input) as IAppendFileResult;
     };
   });
 
@@ -446,7 +444,7 @@ describe("edit_file tool", () => {
     await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
 
     executeEdit = async (input: { filePath: string; oldString: string; newString: string; replaceAll: boolean }): Promise<IEditFileResult> => {
-      return await editFileTool.execute!(input, TOOL_OPTIONS) as IEditFileResult;
+      return await editFileTool.invoke(input) as IEditFileResult;
     };
   });
 

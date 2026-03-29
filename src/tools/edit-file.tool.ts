@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { editFileToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -18,15 +18,8 @@ interface IEditFileResult {
 
 //#region Tool
 
-export const editFileTool = tool({
-  description:
-    "Find and replace text in a file. Does NOT require reading the file first. " +
-    "Replaces the first occurrence of oldString by default, or all occurrences if replaceAll is true. " +
-    "The default location is the workspace directory (~/.blackdogbot/workspace/). " +
-    "For most tasks, just provide a filename (e.g. 'notes.txt') without a full path. " +
-    "Only specify an absolute path when accessing files outside the workspace.",
-  inputSchema: editFileToolInputSchema,
-  execute: async ({
+export const editFileTool = tool(
+  async ({
     filePath,
     oldString,
     newString,
@@ -86,6 +79,16 @@ export const editFileTool = tool({
 
     return operationResult.value;
   },
-});
+  {
+    name: "edit_file",
+    description:
+      "Find and replace text in a file. Does NOT require reading the file first. " +
+      "Replaces the first occurrence of oldString by default, or all occurrences if replaceAll is true. " +
+      "The default location is the workspace directory (~/.blackdogbot/workspace/). " +
+      "For most tasks, just provide a filename (e.g. 'notes.txt') without a full path. " +
+      "Only specify an absolute path when accessing files outside the workspace.",
+    schema: editFileToolInputSchema,
+  },
+);
 
 //#endregion Tool

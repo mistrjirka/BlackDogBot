@@ -10,7 +10,7 @@ import { LoggerService } from "../../../src/services/logger.service.js";
 import { MessagingService } from "../../../src/services/messaging.service.js";
 import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
 import { TelegramHandler } from "../../../src/platforms/telegram/handler.js";
-import { MainAgent } from "../../../src/agent/main-agent.js";
+import { LangchainMainAgent } from "../../../src/agent/langchain-main-agent.js";
 import type { ITelegramConfig } from "../../../src/platforms/telegram/types.js";
 import type { IPlatformDeps } from "../../../src/platforms/types.js";
 
@@ -20,7 +20,7 @@ let originalHome: string;
 
 function createMockDeps(): IPlatformDeps {
   return {
-    mainAgent: MainAgent.getInstance(),
+    agent: LangchainMainAgent.getInstance(),
     messagingService: MessagingService.getInstance(),
     channelRegistry: ChannelRegistryService.getInstance(),
     toolRegistry: {
@@ -104,7 +104,7 @@ describe("TelegramHandler authorization", () => {
 
     const ctx = createMockCtx("111");
 
-    vi.spyOn(MainAgent.getInstance() as any, "processMessageForChatAsync").mockResolvedValue({
+    vi.spyOn(LangchainMainAgent.getInstance() as any, "processMessageForChatAsync").mockResolvedValue({
       text: "Hello!",
       stepsCount: 1,
     });
@@ -143,7 +143,7 @@ describe("TelegramHandler authorization", () => {
 
     const ctx = createMockCtx("333");
 
-    vi.spyOn(MainAgent.getInstance() as any, "processMessageForChatAsync").mockResolvedValue({
+    vi.spyOn(LangchainMainAgent.getInstance() as any, "processMessageForChatAsync").mockResolvedValue({
       text: "Hello!",
       stepsCount: 1,
     });

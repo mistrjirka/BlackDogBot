@@ -2,9 +2,10 @@ import { ApplicationCommandType, type ChatInputCommandInteraction, type Client, 
 
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
-import { MainAgent } from "../../agent/main-agent.js";
+import { LangchainMainAgent } from "../../agent/langchain-main-agent.js";
+import type { IChatAgent } from "../../agent/agent-interface.js";
 import { ChannelRegistryService } from "../../services/channel-registry.service.js";
-import type { IAgentResult } from "../../agent/base-agent.js";
+import type { IAgentResult } from "../../agent/types.js";
 import type { IIncomingMessage } from "../../shared/types/messaging.types.js";
 import type { IPlatformDeps } from "../types.js";
 import type { IDiscordConfig } from "../../shared/types/discord.types.js";
@@ -16,6 +17,7 @@ import {
 } from "../../utils/ai-error.js";
 import { formatMarkdownForDiscord } from "../../utils/discord-format.js";
 import { splitMessageByLength } from "../../utils/message-split.js";
+import { TYPING_INDICATOR_INTERVAL_MS, DISCORD_MESSAGE_CHUNK_LENGTH } from "../../shared/constants.js";
 import { isCancelCommand } from "../../utils/command-utils.js";
 
 //#region DiscordHandler
@@ -34,7 +36,7 @@ export class DiscordHandler {
   private static _instance: DiscordHandler | null;
   private _logger: LoggerService;
   private _messagingService: MessagingService;
-  private _mainAgent: MainAgent;
+  private _agent: IChatAgent;
   private _channelRegistry: ChannelRegistryService;
   private _processing: Set<string>;
   private _inFlightMessageIdByChannel: Map<string, string>;
@@ -46,7 +48,7 @@ export class DiscordHandler {
   private constructor() {
     this._logger = LoggerService.getInstance();
     this._messagingService = MessagingService.getInstance();
-    this._mainAgent = MainAgent.getInstance();
+    this._agent = LangchainMainAgent.getInstance() as IChatAgent;
     this._channelRegistry = ChannelRegistryService.getInstance();
     this._processing = new Set<string>();
     this._inFlightMessageIdByChannel = new Map<string, string>();
@@ -167,7 +169,7 @@ export class DiscordHandler {
       const photoSender = this._messagingService.createPhotoSenderForChat("discord", channelId);
 
       // Initialize agent for this chat
-      await this._mainAgent.initializeForChatAsync(channelId, sender, photoSender, undefined, "discord");
+      await this._agent.initializeForChatAsync(channelId, sender, photoSender, undefined, "discord");
 
       // Start typing indicator loop
       const typingInterval: ReturnType<typeof setInterval> = setInterval(async () => {
@@ -176,10 +178,10 @@ export class DiscordHandler {
         } catch {
           // Silently ignore
         }
-      }, 5000);
+      }, TYPING_INDICATOR_INTERVAL_MS);
 
       try {
-        const result: IAgentResult = await this._mainAgent.processMessageForChatAsync(
+        const result: IAgentResult = await this._agent.processMessageForChatAsync(
           channelId,
           incoming.text
         );
@@ -187,7 +189,7 @@ export class DiscordHandler {
         // Send response
         if (result.text) {
           const markdownText: string = formatMarkdownForDiscord(result.text);
-          const chunks: string[] = splitMessageByLength(markdownText, 2000);
+          const chunks: string[] = splitMessageByLength(markdownText, DISCORD_MESSAGE_CHUNK_LENGTH);
           for (const chunk of chunks) {
             await message.reply(chunk);
           }
@@ -256,7 +258,7 @@ export class DiscordHandler {
   }
 
   private async _cancelChannelWorkAsync(channelId: string, channel: TextBasedChannel | null): Promise<string> {
-    const stopped: boolean = this._mainAgent.stopChat(channelId);
+    const stopped: boolean = this._agent.stopChat?.(channelId) ?? false;
     let deletedInFlightPrompt: boolean = false;
 
     const inFlightMessageId: string | undefined = this._inFlightMessageIdByChannel.get(channelId);

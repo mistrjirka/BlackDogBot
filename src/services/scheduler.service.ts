@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import Bottleneck from "bottleneck";
+
 import { CronScheduler } from "./cron-scheduler.js";
 
 import { IScheduledTask } from "../shared/types/index.js";
@@ -15,6 +17,14 @@ import { LoggerService } from "./logger.service.js";
 import { ConfigService } from "./config.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
+import {
+  createSchedulerQueueState,
+  dispatchOrEnqueueTask,
+  drainQueuedTasks,
+  type IQueuedTask,
+  type ISchedulerQueueDeps,
+  type ISchedulerQueueState,
+} from "./scheduler-queue-helpers.js";
 
 //#region Const
 
@@ -25,11 +35,6 @@ const LEGACY_WRITE_TOOL_NAMES: readonly string[] = ["write_to_database", "write_
 //#endregion Const
 
 //#region Interfaces
-
-interface IQueuedTask {
-  task: IScheduledTask;
-  executeCallback: () => Promise<void>;
-}
 
 interface ILegacyWriteToolMigrationResult {
   task: IScheduledTask;
@@ -52,12 +57,16 @@ export class SchedulerService {
   private _onTaskSkipped: ((task: IScheduledTask, reason: string) => Promise<void>) | null;
   private _intervals: Map<string, NodeJS.Timeout>;
   private _timeouts: Map<string, NodeJS.Timeout>;
+  private _isStarted: boolean;
 
   // Concurrency control
   private _maxParallelCrons: number;
   private _cronQueueSize: number;
   private _runningTaskCount: number;
   private _taskQueue: IQueuedTask[];
+
+  // Rate limiting for task-skipped notifications
+  private _taskSkippedLimiter: Bottleneck;
 
   //#endregion Data members
 
@@ -72,12 +81,19 @@ export class SchedulerService {
     this._onTaskSkipped = null;
     this._intervals = new Map();
     this._timeouts = new Map();
+    this._isStarted = false;
 
     // Concurrency control — defaults, overridden in startAsync from config
     this._maxParallelCrons = DEFAULT_MAX_PARALLEL_CRONS;
     this._cronQueueSize = DEFAULT_CRON_QUEUE_SIZE;
     this._runningTaskCount = 0;
     this._taskQueue = [];
+
+    // Rate limit task-skipped notifications to max 1 per 10 seconds
+    this._taskSkippedLimiter = new Bottleneck({
+      minTime: 600,
+      maxConcurrent: 1,
+    });
   }
 
   //#endregion Constructors
@@ -121,6 +137,11 @@ export class SchedulerService {
   }
 
   public async startAsync(): Promise<void> {
+    if (this._isStarted) {
+      this._logger.warn("Scheduler start called while already started");
+      return;
+    }
+
     await ensureDirectoryExistsAsync(getCronDir());
     await this._loadAllTasksAsync();
 
@@ -137,6 +158,8 @@ export class SchedulerService {
       }
     }
 
+    this._isStarted = true;
+
     this._logger.info("Scheduler started", {
       totalTasks: this._tasks.size,
       enabledTasks: this.getTasksByEnabled(true).length,
@@ -146,6 +169,10 @@ export class SchedulerService {
   }
 
   public async stopAsync(): Promise<void> {
+    if (!this._isStarted) {
+      return;
+    }
+
     this._cronScheduler.stop();
 
     for (const [taskId, intervalId] of this._intervals) {
@@ -164,6 +191,10 @@ export class SchedulerService {
     // Clear the queue on stop — queued tasks are abandoned
     this._taskQueue = [];
 
+    await this._waitForRunningTasksToDrainAsync();
+    this._runningTaskCount = 0;
+    this._isStarted = false;
+
     this._logger.info("Scheduler stopped");
   }
 
@@ -173,7 +204,7 @@ export class SchedulerService {
     await this._saveTaskAsync(validatedTask);
     this._tasks.set(validatedTask.taskId, validatedTask);
 
-    if (validatedTask.enabled) {
+    if (validatedTask.enabled && this._isStarted) {
       this._scheduleTask(validatedTask);
     }
 
@@ -216,7 +247,9 @@ export class SchedulerService {
     await this._saveTaskAsync(task);
 
     if (enabled) {
-      this._scheduleTask(task);
+      if (this._isStarted) {
+        this._scheduleTask(task);
+      }
     } else {
       this._unscheduleTask(taskId);
     }
@@ -252,7 +285,7 @@ export class SchedulerService {
 
     if (enabledChanged || scheduleChanged) {
       this._unscheduleTask(taskId);
-      if (validatedTask.enabled) {
+      if (validatedTask.enabled && this._isStarted) {
         this._scheduleTask(validatedTask);
       }
     }
@@ -424,6 +457,24 @@ export class SchedulerService {
     };
   }
 
+  private async _waitForRunningTasksToDrainAsync(): Promise<void> {
+    const pollIntervalMs = 25;
+    const maxWaitMs = 30000;
+    let waitedMs = 0;
+
+    while (this._runningTaskCount > 0 && waitedMs < maxWaitMs) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      waitedMs += pollIntervalMs;
+    }
+
+    if (this._runningTaskCount > 0) {
+      this._logger.warn("Timed out waiting for running tasks to drain during stop", {
+        runningTasks: this._runningTaskCount,
+        waitedMs,
+      });
+    }
+  }
+
   private async _saveTaskAsync(task: IScheduledTask): Promise<void> {
     const filePath: string = getCronFilePath(task.taskId);
 
@@ -437,48 +488,30 @@ export class SchedulerService {
    * and the onTaskSkipped callback is fired.
    */
   private _dispatchOrEnqueue(task: IScheduledTask, executeCallback: () => Promise<void>): void {
-    if (this._runningTaskCount < this._maxParallelCrons) {
-      this._executeWithConcurrencyTracking(task, executeCallback);
-      return;
-    }
-
-    // At concurrency limit — try to enqueue
-    if (this._taskQueue.length < this._cronQueueSize) {
-      this._taskQueue.push({ task, executeCallback });
-
-      this._logger.warn("Task queued (concurrency limit reached)", {
-        taskId: task.taskId,
-        name: task.name,
-        runningTasks: this._runningTaskCount,
-        queueLength: this._taskQueue.length,
-        maxParallelCrons: this._maxParallelCrons,
-        cronQueueSize: this._cronQueueSize,
-      });
-      return;
-    }
-
-    // Queue is full — skip the task
-    const reason: string =
-      `Concurrency limit reached (${this._runningTaskCount}/${this._maxParallelCrons} running, ` +
-      `${this._taskQueue.length}/${this._cronQueueSize} queued). Task skipped.`;
-
-    this._logger.warn("Task skipped (queue full)", {
-      taskId: task.taskId,
-      name: task.name,
-      runningTasks: this._runningTaskCount,
-      queueLength: this._taskQueue.length,
+    const state: ISchedulerQueueState = createSchedulerQueueState({
       maxParallelCrons: this._maxParallelCrons,
       cronQueueSize: this._cronQueueSize,
+      runningTaskCount: this._runningTaskCount,
+      taskQueue: this._taskQueue,
     });
+    const deps: ISchedulerQueueDeps = {
+      logger: this._logger,
+      onTaskSkipped: this._onTaskSkipped,
+      taskSkippedLimiter: this._taskSkippedLimiter,
+    };
 
-    if (this._onTaskSkipped) {
-      this._onTaskSkipped(task, reason).catch((error: unknown) => {
-        this._logger.error("Failed to send task-skipped notification", {
-          taskId: task.taskId,
-          error: extractErrorMessage(error),
-        });
-      });
-    }
+    dispatchOrEnqueueTask(
+      state,
+      deps,
+      task,
+      executeCallback,
+      (taskToRun: IScheduledTask, callback: () => Promise<void>): void => {
+        this._executeWithConcurrencyTracking(taskToRun, callback);
+      },
+    );
+
+    this._runningTaskCount = state.runningTaskCount;
+    this._taskQueue = state.taskQueue;
   }
 
   /**
@@ -489,8 +522,6 @@ export class SchedulerService {
     task: IScheduledTask,
     executeCallback: () => Promise<void>,
   ): void {
-    this._runningTaskCount++;
-
     this._logger.info("Task dispatched", {
       taskId: task.taskId,
       name: task.name,
@@ -498,35 +529,44 @@ export class SchedulerService {
       queueLength: this._taskQueue.length,
     });
 
-    executeCallback()
-      .finally(() => {
-        this._runningTaskCount--;
+    executeCallback().finally((): void => {
+      this._runningTaskCount = Math.max(0, this._runningTaskCount - 1);
 
-        this._logger.info("Task finished", {
-          taskId: task.taskId,
-          name: task.name,
-          runningTasks: this._runningTaskCount,
-          queueLength: this._taskQueue.length,
-        });
-
-        // Drain the queue
-        this._drainQueue();
+      this._logger.info("Task finished", {
+        taskId: task.taskId,
+        name: task.name,
+        runningTasks: this._runningTaskCount,
+        queueLength: this._taskQueue.length,
       });
+
+      this._drainQueue();
+    });
   }
 
   /** Dequeues and dispatches tasks while below the concurrency limit. */
   private _drainQueue(): void {
-    while (this._runningTaskCount < this._maxParallelCrons && this._taskQueue.length > 0) {
-      const next: IQueuedTask = this._taskQueue.shift()!;
+    const state: ISchedulerQueueState = createSchedulerQueueState({
+      maxParallelCrons: this._maxParallelCrons,
+      cronQueueSize: this._cronQueueSize,
+      runningTaskCount: this._runningTaskCount,
+      taskQueue: this._taskQueue,
+    });
+    const deps: ISchedulerQueueDeps = {
+      logger: this._logger,
+      onTaskSkipped: this._onTaskSkipped,
+      taskSkippedLimiter: this._taskSkippedLimiter,
+    };
 
-      this._logger.info("Dequeuing task", {
-        taskId: next.task.taskId,
-        name: next.task.name,
-        remainingQueue: this._taskQueue.length,
-      });
+    drainQueuedTasks(
+      state,
+      deps,
+      (taskToRun: IScheduledTask, callback: () => Promise<void>): void => {
+        this._executeWithConcurrencyTracking(taskToRun, callback);
+      },
+    );
 
-      this._executeWithConcurrencyTracking(next.task, next.executeCallback);
-    }
+    this._runningTaskCount = state.runningTaskCount;
+    this._taskQueue = state.taskQueue;
   }
 
   private _scheduleTask(task: IScheduledTask): void {

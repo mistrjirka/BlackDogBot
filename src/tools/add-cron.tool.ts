@@ -1,11 +1,12 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 import { addCronToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { validateCronToolNames, buildSchedule } from "../helpers/cron-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
+import { ConfigService } from "../services/config.service.js";
+import { createChatModel } from "../services/langchain-model.service.js";
 import { generateId } from "../utils/id.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
@@ -16,6 +17,11 @@ interface IAddCronResult {
   taskId: string;
   success: boolean;
   error?: string;
+}
+
+interface IInstructionVerificationResult {
+  isClear: boolean;
+  missingContext: string;
 }
 
 //#endregion Interfaces
@@ -31,101 +37,134 @@ const TOOL_DESCRIPTION: string =
   "Examples: once => scheduleRunAt='2026-03-20T08:00:00Z'; interval => scheduleIntervalMs=7200000; cron => scheduleCron='0 */2 * * *'. " +
   "If the task's instructions reference a database, ensure the database and table(s) have been created first using create_database and create_table, then reference them by name (without .db extension) in the instructions.";
 
+const instructionVerificationResultSchema = z.object({
+  isClear: z.boolean(),
+  missingContext: z.string(),
+});
+
 //#endregion Const
 
 //#region Private methods
 
-function _buildSchedule(input: {
-  scheduleType: "once" | "interval" | "cron";
-  scheduleRunAt?: string;
-  scheduleIntervalMs?: number;
-  scheduleCron?: string;
-}): Schedule {
-  switch (input.scheduleType) {
-    case "once": {
-      if (!input.scheduleRunAt || input.scheduleRunAt.trim().length === 0) {
-        throw new Error("scheduleRunAt is required for scheduleType='once'");
-      }
-      return {
-        type: "once",
-        runAt: input.scheduleRunAt,
-      };
-    }
-    case "interval": {
-      if (input.scheduleIntervalMs === undefined || !Number.isFinite(input.scheduleIntervalMs) || input.scheduleIntervalMs <= 0) {
-        throw new Error("scheduleIntervalMs is required and must be > 0 for scheduleType='interval'");
-      }
-      return {
-        type: "interval",
-        intervalMs: input.scheduleIntervalMs,
-      };
-    }
-    case "cron": {
-      if (!input.scheduleCron || input.scheduleCron.trim().length === 0) {
-        throw new Error("scheduleCron is required for scheduleType='cron'");
-      }
-      return {
-        type: "cron",
-        expression: input.scheduleCron,
-      };
-    }
+function _extractTextFromAiContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
   }
+
+  if (Array.isArray(content)) {
+    const textParts = content
+      .filter((part): part is { type: string; text?: unknown } => typeof part === "object" && part !== null)
+      .filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
+      .map((part) => part.text);
+
+    return textParts.join("\n").trim();
+  }
+
+  return "";
 }
 
-//#endregion Private methods
+function _extractTextFromReasoningContent(additionalKwargs: unknown): string {
+  if (typeof additionalKwargs !== "object" || additionalKwargs === null) {
+    return "";
+  }
 
-//#region Tool
+  const rawReasoning = (additionalKwargs as { reasoning_content?: unknown }).reasoning_content;
+  if (typeof rawReasoning === "string") {
+    return rawReasoning;
+  }
 
-export const addCronTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: addCronToolInputSchema,
-  execute: async ({
-    name,
-    description,
-    instructions,
-    tools,
-    scheduleType,
-    scheduleRunAt,
-    scheduleIntervalMs,
-    scheduleCron,
-    notifyUser,
-  }: {
-    name: string;
-    description: string;
-    instructions: string;
-    tools: string[];
-    scheduleType: "once" | "interval" | "cron";
-    scheduleRunAt?: string;
-    scheduleIntervalMs?: number;
-    scheduleCron?: string;
-    notifyUser: boolean;
-  }): Promise<IAddCronResult> => {
-    const logger: LoggerService = LoggerService.getInstance();
+  return "";
+}
 
+function _parseVerificationResultOrThrow(rawText: string): IInstructionVerificationResult {
+  const trimmed = rawText.trim();
+
+  const parseWithSchema = (candidate: string): IInstructionVerificationResult | null => {
     try {
-      // 0. Validate tool names at runtime
-      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = tools.filter(
-        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
-      );
-      if (invalidTools.length > 0) {
-        return {
-          taskId: "",
-          success: false,
-          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}`,
-        };
+      const parsedJson = JSON.parse(candidate) as unknown;
+      const parsed = instructionVerificationResultSchema.safeParse(parsedJson);
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const candidates: string[] = [
+    trimmed,
+    ..._extractTopLevelJsonObjectCandidates(trimmed),
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = parseWithSchema(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  throw new Error(`Verifier returned invalid structured response: ${trimmed.slice(0, 200)}`);
+}
+
+function _extractTopLevelJsonObjectCandidates(rawText: string): string[] {
+  const candidates: string[] = [];
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let objectStart = -1;
+
+  for (let i = 0; i < rawText.length; i++) {
+    const char = rawText[i];
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
       }
 
-      // 1. Verify instructions using LLM
-      logger.debug(`[${TOOL_NAME}] Verifying cron instructions for: ${name}`);
+      if (char === "\\") {
+        escape = true;
+        continue;
+      }
 
-      // Build a human-readable tool list so the verifier knows what each tool does.
-      // This prevents it from flagging well-known tools (e.g. send_message) as
-      // "unresolved destinations" simply because it has no context about them.
-      const toolContextBlock: string = await buildCronToolContextBlockAsync(tools);
+      if (char === "\"") {
+        inString = false;
+      }
 
-      const verifierPrompt = `
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) {
+        objectStart = i;
+      }
+      depth++;
+      continue;
+    }
+
+    if (char === "}") {
+      if (depth === 0) {
+        continue;
+      }
+
+      depth--;
+      if (depth === 0 && objectStart >= 0) {
+        candidates.push(rawText.slice(objectStart, i + 1));
+        objectStart = -1;
+      }
+    }
+  }
+
+  return candidates;
+}
+
+async function _verifyInstructionsAsync(instructions: string, tools: string[], logger: LoggerService): Promise<IInstructionVerificationResult> {
+  const toolContextBlock: string = await buildCronToolContextBlockAsync(tools);
+
+  const verifierPrompt = `
 You are a task instruction verifier for an autonomous AI agent.
 The agent runs periodically on a fixed schedule and has NO memory of past conversations when it wakes up.
 The agent executing these instructions is an intelligent AI (an LLM). It can read tool descriptions, reason about conventions, compose arguments, and derive values — it is NOT a dumb script that needs every value pre-computed.
@@ -172,21 +211,73 @@ Output a JSON object with:
 - "missingContext": string (if invalid, describe exactly what information is missing and why it cannot be derived; if valid, use empty string)
 `;
 
-      const aiService = AiProviderService.getInstance();
-      const model = aiService.getModel();
+  const model = createChatModel(ConfigService.getInstance().getAiConfig());
+  const response = await model.invoke(verifierPrompt);
+  const rawText: string = _extractTextFromAiContent(response.content);
+  const rawReasoningText: string = _extractTextFromReasoningContent(
+    (response as { additional_kwargs?: unknown }).additional_kwargs,
+  );
 
-      const verificationResult = await generateObjectWithRetryAsync({
-        model,
-        schema: z.object({
-          isClear: z.boolean(),
-          missingContext: z.string(),
-        }),
-        prompt: verifierPrompt,
-        retryOptions: { callType: "schema_extraction" },
-      });
+  logger.debug(`[${TOOL_NAME}] Verifier raw response`, {
+    contentPreview: rawText.slice(0, 200),
+    reasoningPreview: rawReasoningText.slice(0, 200),
+    contentLength: rawText.length,
+    reasoningLength: rawReasoningText.length,
+  });
 
-      if (!verificationResult.object.isClear) {
-        const errorMsg = `CRON REJECTED. The instructions are ambiguous or missing context: ${verificationResult.object.missingContext}. Please provide complete, self-contained instructions.`;
+  const mergedRawText: string = [rawText, rawReasoningText]
+    .filter((value: string): boolean => value.trim().length > 0)
+    .join("\n");
+
+  return _parseVerificationResultOrThrow(mergedRawText);
+}
+
+//#endregion Private methods
+
+//#region Tool
+
+export const addCronTool = tool(
+  async ({
+    name,
+    description,
+    instructions,
+    tools,
+    scheduleType,
+    scheduleRunAt,
+    scheduleIntervalMs,
+    scheduleCron,
+    notifyUser,
+  }: {
+    name: string;
+    description: string;
+    instructions: string;
+    tools: string[];
+    scheduleType: "once" | "interval" | "cron";
+    scheduleRunAt?: string;
+    scheduleIntervalMs?: number;
+    scheduleCron?: string;
+    notifyUser: boolean;
+  }): Promise<IAddCronResult> => {
+    const logger: LoggerService = LoggerService.getInstance();
+
+    try {
+      // 0. Validate tool names at runtime
+      const invalidTools: string[] = validateCronToolNames(tools);
+      if (invalidTools.length > 0) {
+        return {
+          taskId: "",
+          success: false,
+          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}`,
+        };
+      }
+
+      // 1. Verify instructions using LLM
+      logger.debug(`[${TOOL_NAME}] Verifying cron instructions for: ${name}`);
+
+      const verificationResult: IInstructionVerificationResult = await _verifyInstructionsAsync(instructions, tools, logger);
+
+      if (!verificationResult.isClear) {
+        const errorMsg = `CRON REJECTED. The instructions are ambiguous or missing context: ${verificationResult.missingContext}. Please provide complete, self-contained instructions.`;
         logger.warn(`[${TOOL_NAME}] Cron rejected: ${errorMsg}`);
         return { taskId: "", success: false, error: errorMsg };
       }
@@ -194,7 +285,7 @@ Output a JSON object with:
       // 2. Schedule the task
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
-      const builtSchedule: Schedule = _buildSchedule({ scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron });
+      const builtSchedule: Schedule = buildSchedule({ scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron });
 
       const task: IScheduledTask = {
         taskId,
@@ -225,6 +316,11 @@ Output a JSON object with:
       return { taskId: "", success: false, error: errorMessage };
     }
   },
-});
+  {
+    name: "add_cron",
+    description: TOOL_DESCRIPTION,
+    schema: addCronToolInputSchema,
+  },
+);
 
 //#endregion Tool

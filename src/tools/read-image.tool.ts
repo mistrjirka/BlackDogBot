@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { readImageToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -45,13 +45,8 @@ const imageMediaTypesByExt: Record<string, string> = {
 //#region Factory
 
 export function createReadImageTool(readTracker: IFileReadTracker) {
-  return tool({
-    description:
-      "Read an image file and pass it to the model as media content. " +
-      "Use this when you want the model to inspect screenshots or other local images. " +
-      "Supports png/jpg/jpeg/gif/webp/bmp/svg up to 10MB.",
-    inputSchema: readImageToolInputSchema,
-    execute: async ({ filePath }: { filePath: string }): Promise<IReadImageResult> => {
+  return tool(
+    async ({ filePath }: { filePath: string }): Promise<IReadImageResult> => {
       const logger: LoggerService = LoggerService.getInstance();
 
       const operationResult = await runFileOperationAsync<IReadImagePayload>({
@@ -112,26 +107,15 @@ export function createReadImageTool(readTracker: IFileReadTracker) {
         message: `Image read successfully (${operationResult.value.bytes} bytes).`,
       };
     },
-    toModelOutput: ({ output }: { output: IReadImageResult }) => {
-      if (!output.success || !output.data || !output.mediaType) {
-        return {
-          type: "text" as const,
-          value: output.message,
-        };
-      }
-
-      return {
-        type: "content" as const,
-        value: [
-          {
-            type: "media" as const,
-            data: output.data,
-            mediaType: output.mediaType,
-          },
-        ],
-      };
+    {
+      name: "read_image",
+      description:
+        "Read an image file and pass it to the model as media content. " +
+        "Use this when you want the model to inspect screenshots or other local images. " +
+        "Supports png/jpg/jpeg/gif/webp/bmp/svg up to 10MB.",
+      schema: readImageToolInputSchema,
     },
-  });
+  );
 }
 
 //#endregion Factory
