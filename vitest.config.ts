@@ -5,6 +5,8 @@ export default defineConfig({
     globals: true,
     environment: "node",
     fileParallelism: false,
+    minWorkers: 1,
+    maxWorkers: 1,
     include: [
       "tests/unit/**/*.test.ts",
       "tests/integration/core/**/*.test.ts",
