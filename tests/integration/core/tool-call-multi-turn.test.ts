@@ -197,7 +197,7 @@ describe("Tool Call Multi-Turn E2E", () => {
       expect(result.text).toContain("987654");
     }, 120000);
 
-    it("should hot-reload write_table tool after create_table in the same chat session", async () => {
+    it("should hot-reload write_table tool within the same message", async () => {
       const agent = LangchainMainAgent.getInstance();
       await agent.initializeAsync();
 
@@ -223,16 +223,9 @@ describe("Tool Call Multi-Turn E2E", () => {
       const tableName = `items_${suffix}`;
       const writeToolName = `write_table_${tableName}`;
 
-      await agent.processMessageForChatAsync(
-        chatId,
-        `Create database ${databaseName} and create table ${tableName} with columns id INTEGER primary key, title TEXT not null, and created_at TEXT not null.`,
-      );
-
-      observedToolNames.length = 0;
-
       const result = await agent.processMessageForChatAsync(
         chatId,
-        `Now insert exactly one row using ONLY tool ${writeToolName}. Use title "alpha" and created_at "2026-01-01T00:00:00Z". Do not use write_to_database.`,
+        `Create database ${databaseName} and create table ${tableName} with columns id INTEGER primary key, title TEXT not null, and created_at TEXT not null. Then insert exactly one row using ONLY tool ${writeToolName}. Use title "alpha" and created_at "2026-01-01T00:00:00Z". Do not use write_to_database and do not use run_cmd/sqlite3. If tools are missing, say so explicitly.`,
       );
 
       expect(result.stepsCount).toBeGreaterThanOrEqual(1);

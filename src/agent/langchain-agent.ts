@@ -34,6 +34,7 @@ export interface ILangchainAgentResult {
   text: string;
   stepsCount: number;
   sendMessageUsed?: boolean;
+  toolsChanged?: boolean;
 }
 
 //#endregion Interfaces
@@ -147,24 +148,32 @@ export function buildHumanMessage(
 
 export async function invokeAgentAsync(
   agent: ReturnType<typeof createLangchainAgent>,
-  text: string,
+  text: string | null,
   threadId: string,
   images?: IChatImageAttachment[],
   onStepAsync?: (stepNumber: number, toolCalls: IToolCallSummary[]) => Promise<void>,
+  onToolEndAsync?: (toolName: string) => Promise<boolean>,
 ): Promise<ILangchainAgentResult> {
   const logger: LoggerService = LoggerService.getInstance();
-  const userMessage: HumanMessage = buildHumanMessage(text, images);
-
   let stepsCount: number = 0;
   let progressStepCount: number = 0;
   let sendMessageUsed: boolean = false;
+  let toolsChanged: boolean = false;
 
   let stream: AsyncIterable<unknown>;
   try {
-    stream = await agent.stream(
-      { messages: [userMessage] },
-      { configurable: { thread_id: threadId }, streamMode: ["tools", "updates"] },
-    );
+    if (text === null) {
+      stream = await agent.stream(
+        null,
+        { configurable: { thread_id: threadId }, streamMode: ["tools", "updates"] },
+      );
+    } else {
+      const userMessage: HumanMessage = buildHumanMessage(text, images);
+      stream = await agent.stream(
+        { messages: [userMessage] },
+        { configurable: { thread_id: threadId }, streamMode: ["tools", "updates"] },
+      );
+    }
   } catch (error: unknown) {
     logger.error("Failed to initialize agent stream", {
       threadId,
@@ -210,6 +219,17 @@ export async function invokeAgentAsync(
           hasOutput: event.output !== undefined,
           hasError: event.error !== undefined,
         });
+
+        if (event.event === "on_tool_end" && onToolEndAsync) {
+          toolsChanged = await onToolEndAsync(event.name);
+          if (toolsChanged) {
+            logger.info("Tools changed mid-stream, stopping current invocation for rebuild", {
+              threadId,
+              toolName: event.name,
+            });
+            break;
+          }
+        }
       }
     }
   }
@@ -256,6 +276,7 @@ export async function invokeAgentAsync(
     text: responseText,
     stepsCount,
     sendMessageUsed,
+    toolsChanged,
   };
 }
 

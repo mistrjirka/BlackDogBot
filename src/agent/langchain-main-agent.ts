@@ -282,6 +282,9 @@ export class LangchainMainAgent {
 
     const maxRetries = 2;
     let lastError: Error | null = null;
+    let totalStepsCount: number = 0;
+    let shouldResumeWithoutInput: boolean = false;
+    const tableMutationTools: ReadonlySet<string> = new Set(["create_table", "drop_table"]);
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
@@ -294,15 +297,48 @@ export class LangchainMainAgent {
 
         const result = await invokeAgentAsync(
           agent,
-          userMessage,
+          shouldResumeWithoutInput ? null : userMessage,
           chatId,
-          imageAttachments,
+          shouldResumeWithoutInput ? undefined : imageAttachments,
           session.onStepAsync,
+          async (toolName: string): Promise<boolean> => {
+            this._logger.debug("Tools available after step", {
+              chatId,
+              endedToolName: toolName,
+              toolCount: session.tools.length,
+              toolNames: session.tools.map((tool: DynamicStructuredTool): string => tool.name),
+            });
+
+            if (!tableMutationTools.has(toolName)) {
+              return false;
+            }
+
+            const toolCountBefore: number = session.tools.length;
+            const didRebuild: boolean = await ToolHotReloadService.getInstance().triggerRebuildAsync(chatId);
+            const toolCountAfter: number = session.tools.length;
+
+            this._logger.info("Tool rebuild check after table mutation", {
+              chatId,
+              endedToolName: toolName,
+              didRebuild,
+              toolCountBefore,
+              toolCountAfter,
+            });
+
+            return didRebuild && toolCountAfter > toolCountBefore;
+          },
         );
+
+        totalStepsCount += result.stepsCount;
+
+        if (result.toolsChanged) {
+          shouldResumeWithoutInput = true;
+          continue;
+        }
 
         return {
           text: result.text,
-          stepsCount: result.stepsCount,
+          stepsCount: totalStepsCount,
         };
       } catch (error: unknown) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -325,7 +361,6 @@ export class LangchainMainAgent {
 
         throw lastError;
       } finally {
-        await ToolHotReloadService.getInstance().triggerRebuildAsync(chatId);
         this._abortControllers.delete(chatId);
       }
     }
