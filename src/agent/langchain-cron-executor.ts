@@ -56,9 +56,11 @@ import {
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
-import { ReasoningParserService } from "../services/providers/reasoning/reasoning-parser.service.js";
-import { ReasoningNormalizerService } from "../services/providers/reasoning/reasoning-normalizer.service.js";
-import type { IResolvedToolCall } from "../services/providers/reasoning/reasoning.types.js";
+import {
+  buildToolResultPreview,
+  extractNormalizedCronResponseText,
+  resolveToolCallsFromAiMessage,
+} from "./langchain-cron-executor-helpers.js";
 
 //#endregion Imports
 
@@ -128,50 +130,7 @@ export class LangchainCronExecutor {
 
         const lastMessage = result.messages[result.messages.length - 1];
 
-        // Extract response text from the last AI message with normalization.
-        let responseText: string = "";
-        for (let i = result.messages.length - 1; i >= 0; i--) {
-          const msg = result.messages[i];
-          if (msg._getType() !== "ai") {
-            continue;
-          }
-
-          const aiMsg = msg as AIMessage;
-          const content = aiMsg.content;
-          let contentText: string = "";
-
-          if (typeof content === "string") {
-            contentText = content;
-          } else if (Array.isArray(content)) {
-            const textBlocks = content.filter(
-              (block): block is { type: "text"; text: string } =>
-                typeof block === "object" && block !== null && block.type === "text"
-            );
-            contentText = textBlocks.map((b) => b.text).join("");
-          }
-
-          const additionalKwargs: Record<string, unknown> =
-            (aiMsg.additional_kwargs ?? {}) as Record<string, unknown>;
-          const reasoningContent: string = ReasoningParserService.extractReasoningFromAdditionalKwargs(additionalKwargs);
-          const normalized = ReasoningNormalizerService.normalize({
-            content: contentText,
-            reasoningContent,
-          });
-
-          this._logger.debug("Cron reasoning normalization", {
-            taskId: task.taskId,
-            messageIndex: i,
-            method: normalized.method,
-            reasoningLength: normalized.reasoning.length,
-            answerLength: normalized.answer.length,
-            textLength: normalized.text.length,
-          });
-
-          responseText = normalized.text;
-          if (responseText.length > 0) {
-            break;
-          }
-        }
+        const responseText: string = extractNormalizedCronResponseText(result.messages);
 
         let stepsCount: number = 0;
 
@@ -197,14 +156,7 @@ export class LangchainCronExecutor {
         for (const msg of result.messages) {
           if (msg._getType() === "ai") {
             const aiMsg = msg as AIMessage;
-            const aiContent: string = _extractTextContent(aiMsg.content);
-            const additionalKwargs: Record<string, unknown> =
-              (aiMsg.additional_kwargs ?? {}) as Record<string, unknown>;
-            const resolvedToolCalls: IResolvedToolCall[] = ReasoningNormalizerService.resolveToolCalls(
-              aiMsg.tool_calls,
-              aiContent,
-              additionalKwargs,
-            );
+            const resolvedToolCalls = resolveToolCallsFromAiMessage(aiMsg);
 
             if (resolvedToolCalls.length > 0) {
               for (const tc of resolvedToolCalls) {
@@ -224,17 +176,7 @@ export class LangchainCronExecutor {
                   return toolMessage.name === tc.name;
                 });
 
-                let outputPreview = "";
-                if (toolResultMsg) {
-                  const toolContent = (toolResultMsg as unknown as { content?: unknown }).content;
-                  if (typeof toolContent === "string") {
-                    outputPreview = toolContent.slice(0, 500);
-                  } else if (Array.isArray(toolContent)) {
-                    outputPreview = toolContent.map((c) => typeof c === "string" ? c : JSON.stringify(c)).join("").slice(0, 500);
-                  } else {
-                    outputPreview = JSON.stringify(toolContent).slice(0, 500);
-                  }
-                }
+                const outputPreview: string = buildToolResultPreview(toolResultMsg);
 
                 // Log step with colored formatting
                 this._logger.logStep(
@@ -390,34 +332,4 @@ export class LangchainCronExecutor {
     await fs.writeFile(debugPath, content, "utf-8");
     this._logger.debug("System prompt saved to debug file", { path: debugPath });
   }
-}
-
-function _extractTextContent(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  const textParts: string[] = [];
-
-  for (const contentPart of content) {
-    if (typeof contentPart === "string") {
-      textParts.push(contentPart);
-      continue;
-    }
-
-    if (typeof contentPart !== "object" || contentPart === null) {
-      continue;
-    }
-
-    const contentRecord: Record<string, unknown> = contentPart as Record<string, unknown>;
-    if (contentRecord.type === "text" && typeof contentRecord.text === "string") {
-      textParts.push(contentRecord.text);
-    }
-  }
-
-  return textParts.join("\n");
 }

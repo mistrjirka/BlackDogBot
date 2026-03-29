@@ -1,7 +1,5 @@
 import { Bot, Context } from "grammy";
-import { readFile, writeFile, mkdir } from "fs/promises";
-import { existsSync } from "fs";
-import { dirname } from "path";
+import { writeFile } from "fs/promises";
 
 import { LoggerService } from "../../services/logger.service.js";
 import { MessagingService } from "../../services/messaging.service.js";
@@ -22,6 +20,7 @@ import {
   formatAiErrorForUser,
   type IAiErrorDetails,
 } from "../../utils/ai-error.js";
+import { isContextExceededTelegramError } from "../../utils/context-error.js";
 import { extractErrorMessage } from "../../utils/error.js";
 import { PromptService } from "../../services/prompt.service.js";
 import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
@@ -30,37 +29,22 @@ import { getTelegramChatsFilePath } from "../../utils/paths.js";
 import { getUploadsDir, ensureDirectoryExistsAsync } from "../../utils/paths.js";
 import { TYPING_INDICATOR_INTERVAL_MS, MAX_IMAGE_BYTES, IMAGE_AUTO_ANALYZE_DELAY_MS } from "../../shared/constants.js";
 import {
-  compressImageToLimitAsync,
-  getImageExtensionForMimeType,
-  getUniqueUploadPathAsync,
-  sanitizeImageFileName,
-} from "../../utils/image-helpers.js";
+  buildCancelResponseText,
+  detectThinkLeakInModelText,
+} from "./telegram-formatters.js";
+import { TelegramProgressTracker } from "./telegram-progress-tracker.js";
+import {
+  isTelegramChatAuthorizedAsync,
+  loadKnownChatIdsAsync,
+  saveKnownChatIdsAsync,
+} from "./telegram-auth-helpers.js";
+import {
+  extractTelegramImageAsync,
+  type IExtractedTelegramImage,
+} from "./telegram-image-helpers.js";
+import { compressImageToLimitAsync, getImageExtensionForMimeType, getUniqueUploadPathAsync, sanitizeImageFileName } from "../../utils/image-helpers.js";
 
 //#region Constants
-
-const TOOL_PRIMARY_KEY: Record<string, string> = {
-  run_cmd: "command",
-  fetch_rss: "url",
-  search_knowledge: "query",
-  add_knowledge: "knowledge",
-  edit_knowledge: "id",
-  call_skill: "skillName",
-  get_skill_file: "skillName",
-  modify_prompt: "promptName",
-  send_message: "message",
-  read_file: "filePath",
-  write_file: "filePath",
-  append_file: "filePath",
-  edit_file: "filePath",
-  add_cron: "name",
-  edit_cron: "taskId",
-  edit_cron_instructions: "taskId",
-  remove_cron: "taskId",
-  get_cron: "taskId",
-  list_crons: "taskId",
-  run_cron: "taskId",
-  think: "thought",
-};
 
 const PROMPT_UPDATE_NOTICE_TEXT: string =
   "A new BlackDogBot update changed default prompts. Run /update_prompts to apply them.";
@@ -210,18 +194,7 @@ export class TelegramHandler {
 
     // Progress message state
     let progressMsgId: number | null = null;
-    const stepLogs: string[] = [];
-
-    const buildProgressText = (status: string): string => {
-      if (stepLogs.length === 0) {
-        return status;
-      }
-      const escapedStepLogs: string = stepLogs
-        .map((line: string): string => _escapeTelegramHtml(line))
-        .join("\n");
-
-      return `${status}\n\n<blockquote expandable>${escapedStepLogs}</blockquote>`;
-    };
+    const progressTracker: TelegramProgressTracker = new TelegramProgressTracker();
 
     try {
       const incoming: IIncomingMessage = {
@@ -270,31 +243,28 @@ export class TelegramHandler {
                 stepNumber,
                 toolCallsCount: toolCalls.length,
                 toolNames: toolCalls.map((tc: IToolCallSummary): string => tc.name),
-                stepLogsCountBefore: stepLogs.length,
+                stepLogsCountBefore: progressTracker.getStepLogCount(),
               });
 
               if (toolCalls.length > 0) {
-                const formatted: string = toolCalls
-                  .map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input))
-                  .join(", ");
-                stepLogs.push(`Step ${stepNumber}: ${formatted}`);
+                progressTracker.appendStep(stepNumber, toolCalls);
 
                 this._logger.debug("Telegram tool step appended to progress trace", {
                   chatId,
                   stepNumber,
-                  formattedLength: formatted.length,
-                  stepLogsCountAfter: stepLogs.length,
-                  formattedPreview: formatted.slice(0, 180),
+                  formattedLength: 0,
+                  stepLogsCountAfter: progressTracker.getStepLogCount(),
+                  formattedPreview: "",
                 });
               } else {
                 this._logger.debug("Telegram onStep received empty toolCalls", {
                   chatId,
                   stepNumber,
-                  stepLogsCount: stepLogs.length,
+                  stepLogsCount: progressTracker.getStepLogCount(),
                 });
               }
 
-              const progressText: string = buildProgressText("⚙️ Working...");
+              const progressText: string = progressTracker.buildProgressText("⚙️ Working...");
 
               try {
                 await ctx.api.editMessageText(chatId, progressMsgId!, progressText, {
@@ -304,14 +274,14 @@ export class TelegramHandler {
                   chatId,
                   stepNumber,
                   progressLength: progressText.length,
-                  hasTrace: stepLogs.length > 0,
+                  hasTrace: progressTracker.hasTrace(),
                 });
               } catch (editError: unknown) {
                 this._logger.warn("Failed to update Telegram progress message", {
                   chatId,
                   stepNumber,
                   progressLength: progressText.length,
-                  hasTrace: stepLogs.length > 0,
+                  hasTrace: progressTracker.hasTrace(),
                   error: editError instanceof Error ? editError.message : String(editError),
                 });
                 // Ignore edit failures
@@ -347,7 +317,7 @@ export class TelegramHandler {
         if (progressMsgId !== null) {
           try {
             const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
-            const doneProgressText: string = buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`);
+            const doneProgressText: string = progressTracker.buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`);
             await ctx.api.editMessageText(
               chatId,
               progressMsgId,
@@ -358,13 +328,13 @@ export class TelegramHandler {
               chatId,
               stepsCount: result.stepsCount,
               progressLength: doneProgressText.length,
-              hasTrace: stepLogs.length > 0,
+              hasTrace: progressTracker.hasTrace(),
             });
           } catch (doneEditError: unknown) {
             this._logger.warn("Failed to mark Telegram progress as done", {
               chatId,
               stepsCount: result.stepsCount,
-              hasTrace: stepLogs.length > 0,
+              hasTrace: progressTracker.hasTrace(),
               error: doneEditError instanceof Error ? doneEditError.message : String(doneEditError),
             });
             // Ignore
@@ -374,7 +344,7 @@ export class TelegramHandler {
         // Send response
         if (result.text) {
           const thinkLeakInfo: { hasThinkTags: boolean; hasReasoningPhrases: boolean } =
-            _detectThinkLeakInModelText(result.text);
+            detectThinkLeakInModelText(result.text);
 
           if (thinkLeakInfo.hasThinkTags || thinkLeakInfo.hasReasoningPhrases) {
             this._logger.info("Potential model thinking text detected in Telegram final reply", {
@@ -418,19 +388,19 @@ export class TelegramHandler {
       // Update progress message to error state
       if (progressMsgId !== null) {
         try {
-          const errorProgressText: string = buildProgressText("❌ Error");
+          const errorProgressText: string = progressTracker.buildProgressText("❌ Error");
           await ctx.api.editMessageText(chatId, progressMsgId, errorProgressText, {
             parse_mode: "HTML",
           });
           this._logger.debug("Telegram progress marked error", {
             chatId,
             progressLength: errorProgressText.length,
-            hasTrace: stepLogs.length > 0,
+            hasTrace: progressTracker.hasTrace(),
           });
         } catch (errorEditError: unknown) {
           this._logger.warn("Failed to mark Telegram progress as error", {
             chatId,
-            hasTrace: stepLogs.length > 0,
+            hasTrace: progressTracker.hasTrace(),
             error: errorEditError instanceof Error ? errorEditError.message : String(errorEditError),
           });
           // Ignore
@@ -634,7 +604,7 @@ export class TelegramHandler {
       droppedQueuedMessages,
     });
 
-    const responseText: string = _buildCancelResponseText(stopped, deletedInFlightMessage, droppedQueuedMessages);
+    const responseText: string = buildCancelResponseText(stopped, deletedInFlightMessage, droppedQueuedMessages);
     await ctx.reply(responseText);
   }
 
@@ -643,33 +613,11 @@ export class TelegramHandler {
   //#region Private Methods
 
   private async _loadKnownChatIdsAsync(): Promise<void> {
-    try {
-      if (existsSync(this._chatIdsFilePath)) {
-        const data = await readFile(this._chatIdsFilePath, "utf-8");
-        const chatIds: string[] = JSON.parse(data);
-        this._knownChatIds = new Set(chatIds);
-        this._logger.info(`Loaded ${chatIds.length} known Telegram chat IDs`);
-      }
-    } catch (error) {
-      this._logger.warn("Failed to load known Telegram chat IDs", {
-        error: extractErrorMessage(error),
-      });
-    }
+    this._knownChatIds = await loadKnownChatIdsAsync(this._chatIdsFilePath, this._logger);
   }
 
   private async _saveKnownChatIdsAsync(): Promise<void> {
-    try {
-      const dir = dirname(this._chatIdsFilePath);
-      if (!existsSync(dir)) {
-        await mkdir(dir, { recursive: true });
-      }
-      const chatIds = Array.from(this._knownChatIds);
-      await writeFile(this._chatIdsFilePath, JSON.stringify(chatIds, null, 2));
-    } catch (error) {
-      this._logger.warn("Failed to save known Telegram chat IDs", {
-        error: extractErrorMessage(error),
-      });
-    }
+    await saveKnownChatIdsAsync(this._chatIdsFilePath, this._knownChatIds, this._logger);
   }
 
   private async _maybeNotifyPromptUpdateAsync(ctx: Context, chatId: string): Promise<void> {
@@ -693,18 +641,6 @@ export class TelegramHandler {
     }
   }
 
-  private _isContextExceededError(error: unknown): boolean {
-    const details: IAiErrorDetails = extractAiErrorDetails(error);
-    const combined: string = `${details.message ?? ""} ${details.providerMessage ?? ""} ${details.responseBody ?? ""}`.toLowerCase();
-
-    if (details.statusCode === 400 && combined.includes("context") && combined.includes("exceeded")) {
-      return true;
-    }
-
-    return combined.includes("context_length_exceeded") ||
-      (combined.includes("context") && combined.includes("token") && combined.includes("limit"));
-  }
-
   private async _processWithContextRecoveryAsync(
     chatId: string,
     runAsync: () => Promise<IAgentResult>,
@@ -713,7 +649,7 @@ export class TelegramHandler {
     try {
       return await runAsync();
     } catch (processingError: unknown) {
-      const isContextExceeded: boolean = this._isContextExceededError(processingError);
+      const isContextExceeded: boolean = isContextExceededTelegramError(processingError);
       if (!isContextExceeded) {
         throw processingError;
       }
@@ -747,19 +683,7 @@ export class TelegramHandler {
     }
 
     let progressMsgId: number | null = null;
-    const stepLogs: string[] = [];
-
-    const buildProgressText = (status: string): string => {
-      if (stepLogs.length === 0) {
-        return status;
-      }
-
-      const escapedStepLogs: string = stepLogs
-        .map((line: string): string => _escapeTelegramHtml(line))
-        .join("\n");
-
-      return `${status}\n\n<blockquote expandable>${escapedStepLogs}</blockquote>`;
-    };
+    const progressTracker: TelegramProgressTracker = new TelegramProgressTracker();
 
     const hasAnyImageAttachment: boolean = queuedMessages.some(
       (queuedMessage: IPendingTelegramMessage): boolean => queuedMessage.imageAttachments.length > 0,
@@ -794,14 +718,11 @@ export class TelegramHandler {
         progressMsgId !== null
           ? async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
               if (toolCalls.length > 0) {
-                const formatted: string = toolCalls
-                  .map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input))
-                  .join(", ");
-                stepLogs.push(`Step ${stepNumber}: ${formatted}`);
+                progressTracker.appendStep(stepNumber, toolCalls);
               }
 
               try {
-                await bot!.api.editMessageText(chatId, progressMsgId!, buildProgressText("⚙️ Working..."), {
+                await bot!.api.editMessageText(chatId, progressMsgId!, progressTracker.buildProgressText("⚙️ Working..."), {
                   parse_mode: "HTML",
                 });
               } catch {
@@ -831,7 +752,7 @@ export class TelegramHandler {
             await bot!.api.editMessageText(
               chatId,
               progressMsgId,
-              buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`),
+              progressTracker.buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`),
               { parse_mode: "HTML" },
             );
           } catch {
@@ -874,7 +795,7 @@ export class TelegramHandler {
           await bot!.api.editMessageText(
             chatId,
             progressMsgId,
-            buildProgressText(`✅ Done (${totalStepsCount} ${stepWord})`),
+            progressTracker.buildProgressText(`✅ Done (${totalStepsCount} ${stepWord})`),
             { parse_mode: "HTML" },
           );
         } catch {
@@ -903,7 +824,7 @@ export class TelegramHandler {
 
       if (progressMsgId !== null) {
         try {
-          await bot!.api.editMessageText(chatId, progressMsgId, buildProgressText("❌ Error"), {
+          await bot!.api.editMessageText(chatId, progressMsgId, progressTracker.buildProgressText("❌ Error"), {
             parse_mode: "HTML",
           });
         } catch {
@@ -927,54 +848,20 @@ export class TelegramHandler {
   private async _extractTelegramImageAsync(
     ctx: Context,
   ): Promise<{ imageBuffer: Buffer; mediaType: string; originalFileName: string | null; captionText: string | null } | null> {
-    const message = ctx.message;
-    if (!message) {
+    if (!this._config) {
       return null;
     }
 
-    let fileId: string | null = null;
-    let mediaType: string = "image/jpeg";
-    let originalFileName: string | null = null;
-
-    if ("photo" in message && Array.isArray(message.photo) && message.photo.length > 0) {
-      const largestPhoto = message.photo[message.photo.length - 1];
-      fileId = largestPhoto.file_id;
-      mediaType = "image/jpeg";
-      originalFileName = null;
-    } else if ("document" in message && message.document) {
-      const doc = message.document;
-      const mimeType: string = doc.mime_type ?? "";
-      if (!mimeType.startsWith("image/")) {
-        return null;
-      }
-      fileId = doc.file_id;
-      mediaType = mimeType;
-      originalFileName = doc.file_name ?? null;
-    }
-
-    if (!fileId || !this._config) {
+    const extracted: IExtractedTelegramImage | null = await extractTelegramImageAsync(ctx, this._config.botToken);
+    if (!extracted) {
       return null;
     }
-
-    const file = await ctx.api.getFile(fileId);
-    if (!file.file_path) {
-      throw new Error("Telegram API did not return file_path for image.");
-    }
-
-    const url: string = `https://api.telegram.org/file/bot${this._config.botToken}/${file.file_path}`;
-    const response: Response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to download Telegram image (${response.status} ${response.statusText}).`);
-    }
-
-    const arrayBuffer: ArrayBuffer = await response.arrayBuffer();
-    const imageBuffer: Buffer = Buffer.from(arrayBuffer);
 
     return {
-      imageBuffer,
-      mediaType,
-      originalFileName,
-      captionText: ("caption" in message && typeof message.caption === "string") ? message.caption : null,
+      imageBuffer: extracted.imageBuffer,
+      mediaType: extracted.mediaType,
+      originalFileName: extracted.originalFileName,
+      captionText: extracted.captionText,
     };
   }
 
@@ -1037,22 +924,15 @@ export class TelegramHandler {
   }
 
   private async _isAuthorizedAsync(chatId: string): Promise<boolean> {
-    if (!this._config) return false;
-
-    const allowedUsers = this._config.allowedUsers;
-
-    if (allowedUsers && allowedUsers.length > 0) {
-      return allowedUsers.includes(chatId);
-    }
-
-    if (this._knownChatIds.size === 0) {
-      this._knownChatIds.add(chatId);
-      await this._saveKnownChatIdsAsync();
-      this._logger.info(`Registered first Telegram user: ${chatId}`);
-      return true;
-    }
-
-    return this._knownChatIds.has(chatId);
+    return await isTelegramChatAuthorizedAsync(
+      chatId,
+      this._config,
+      this._knownChatIds,
+      async (): Promise<void> => {
+        await this._saveKnownChatIdsAsync();
+      },
+      this._logger,
+    );
   }
 
   private async _replyWithFallbackAsync(
@@ -1103,80 +983,5 @@ export class TelegramHandler {
 //#endregion TelegramHandler
 
 //#region Private Functions
-
-function _formatToolCall(name: string, input: Record<string, unknown>): string {
-  const key: string | undefined = TOOL_PRIMARY_KEY[name];
-  const reasoningSuffix: string = _formatReasoningSuffix(input);
-
-  if (!key || !(key in input)) {
-    return reasoningSuffix.length > 0 ? `${name} ${reasoningSuffix}` : name;
-  }
-
-  const val: string = String(input[key] ?? "");
-  const truncated: string = val.length > 60 ? val.slice(0, 60) + "…" : val;
-
-  return reasoningSuffix.length > 0
-    ? `${name}(${truncated}) ${reasoningSuffix}`
-    : `${name}(${truncated})`;
-}
-
-function _buildCancelResponseText(
-  stopped: boolean,
-  deletedInFlightMessage: boolean,
-  droppedQueuedMessages: number,
-): string {
-  if (!stopped && !deletedInFlightMessage && droppedQueuedMessages === 0) {
-    return "Nothing to cancel.";
-  }
-
-  const details: string[] = [];
-  if (stopped) {
-    details.push("stopped current generation");
-  }
-  if (deletedInFlightMessage) {
-    details.push("deleted progress message");
-  }
-  if (droppedQueuedMessages > 0) {
-    details.push(`cleared ${droppedQueuedMessages} queued message${droppedQueuedMessages > 1 ? "s" : ""}`);
-  }
-
-  return `Cancelled: ${details.join(", ")}.`;
-}
-
-function _escapeTelegramHtml(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function _formatReasoningSuffix(input: Record<string, unknown>): string {
-  const reasoningValue: unknown = input.reasoning;
-
-  if (typeof reasoningValue !== "string") {
-    return "";
-  }
-
-  const trimmed: string = reasoningValue.trim();
-
-  if (trimmed.length === 0) {
-    return "";
-  }
-
-  const preview: string = trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
-
-  return `[reasoning: ${preview}]`;
-}
-
-function _detectThinkLeakInModelText(text: string): { hasThinkTags: boolean; hasReasoningPhrases: boolean } {
-  const hasThinkTags: boolean = /<\/?(think|thinking|reasoning)>/i.test(text);
-  const hasReasoningPhrases: boolean =
-    /\b(the user is asking|i should|let me think|i need to|my approach)\b/i.test(text);
-
-  return {
-    hasThinkTags,
-    hasReasoningPhrases,
-  };
-}
 
 //#endregion Private Functions
