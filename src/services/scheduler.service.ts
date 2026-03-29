@@ -510,7 +510,7 @@ export class SchedulerService {
     });
 
     executeCallback().finally((): void => {
-      this._runningTaskCount--;
+      this._runningTaskCount = Math.max(0, this._runningTaskCount - 1);
 
       this._logger.info("Task finished", {
         taskId: task.taskId,

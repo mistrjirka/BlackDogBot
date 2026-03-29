@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -7,10 +7,25 @@ import { createTestEnvironment, resetSingletons } from "../../utils/test-helpers
 import { SchedulerService } from "../../../src/services/scheduler.service.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
+import { getCronDir } from "../../../src/utils/paths.js";
 import type { IScheduledTask } from "../../../src/shared/types/index.js";
 import type { IConfig } from "../../../src/shared/types/config.types.js";
 
 const env = createTestEnvironment("scheduler-execution");
+
+const TEST_TASK_IDS: readonly string[] = [
+  "test-add-task",
+  "test-get-task",
+  "test-remove-task",
+  "test-update-task",
+  "test-enable-task",
+  "list-test-1",
+  "list-test-2",
+  "filter-enabled-1",
+  "filter-enabled-2",
+  "test-execution",
+  "persist-test",
+];
 
 function createTestTask(overrides: Partial<IScheduledTask> ={}): IScheduledTask {
   const taskId = overrides.taskId || `test-task-${Date.now()}`;
@@ -92,6 +107,44 @@ describe("SchedulerService", () => {
   afterAll(async () => {
     resetSingletons();
     await env.teardownAsync();
+  });
+
+  afterEach(async () => {
+    const scheduler = SchedulerService.getInstance();
+
+    try {
+      await scheduler.stopAsync();
+    } catch {
+      // best-effort cleanup for tests
+    }
+
+    const cleanupIds = new Set<string>(TEST_TASK_IDS);
+    for (let i = 0; i < 8; i++) {
+      cleanupIds.add(`concurrent-${i}`);
+    }
+
+    for (const task of scheduler.getAllTasks()) {
+      if (task.taskId.startsWith("concurrent-") || cleanupIds.has(task.taskId)) {
+        try {
+          await scheduler.removeTaskAsync(task.taskId);
+        } catch {
+          // best-effort cleanup for tests
+        }
+      }
+    }
+
+    try {
+      const cronDir = getCronDir();
+      const entries = await fs.readdir(cronDir);
+
+      for (const entry of entries) {
+        if (entry.startsWith("concurrent-") && entry.endsWith(".json")) {
+          await fs.rm(path.join(cronDir, entry), { force: true });
+        }
+      }
+    } catch {
+      // best-effort cleanup for tests
+    }
   });
 
   describe("getInstance", () => {
