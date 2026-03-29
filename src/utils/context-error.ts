@@ -1,3 +1,5 @@
+import { extractAiErrorDetails, type IAiErrorDetails } from "./ai-error.js";
+
 const CONTEXT_ERROR_STATUS_CODES: number[] = [400, 413, 422, 500];
 const CONTEXT_ERROR_KEYWORDS: string[] = [
   "context",
@@ -139,4 +141,20 @@ function _hasRetryableParseErrorKeyword(input: string): boolean {
 
 function _hasConnectionErrorKeyword(input: string): boolean {
   return CONNECTION_ERROR_KEYWORDS.some((keyword: string): boolean => input.includes(keyword));
+}
+
+export function isContextExceededTelegramError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const details: IAiErrorDetails = extractAiErrorDetails(error);
+  const combined: string = `${details.message ?? ""} ${details.providerMessage ?? ""} ${details.responseBody ?? ""}`.toLowerCase();
+
+  if (details.statusCode === 400 && combined.includes("context") && combined.includes("exceeded")) {
+    return true;
+  }
+
+  return combined.includes("context_length_exceeded") ||
+    (combined.includes("context") && combined.includes("token") && combined.includes("limit"));
 }

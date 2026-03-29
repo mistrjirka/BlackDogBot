@@ -235,8 +235,10 @@ function _buildZodSchemaForColumns(columns: IColumnInfo[]): z.ZodArray<z.ZodObje
 
     const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
     const baseType = SQLITE_TO_ZOD_TYPE[normalizedType] ?? z.string();
+    const isAutoFillTimestampColumn: boolean =
+      COMMON_TIMESTAMP_COLUMNS.has(col.name) && col.notNull && !col.primaryKey;
 
-    if (col.notNull && !col.defaultValue) {
+    if (col.notNull && !col.defaultValue && !isAutoFillTimestampColumn) {
       shape[col.name] = baseType.describe(`${col.type}${col.notNull ? " NOT NULL" : ""}`);
     } else {
       shape[col.name] = baseType.optional().describe(

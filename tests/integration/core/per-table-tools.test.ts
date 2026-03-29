@@ -44,7 +44,7 @@ describe("Per-Table Write Tools", () => {
 
       expect(tools).toHaveProperty("write_table_users");
       expect(tools.write_table_users).toBeDefined();
-      expect(typeof tools.write_table_users.execute).toBe("function");
+      expect(typeof tools.write_table_users.invoke).toBe("function");
     });
 
     it("should return empty object when no databases exist", async () => {
@@ -808,13 +808,13 @@ describe("Per-Table Write Tools", () => {
       }]);
       expect(bad1.success).toBe(false);
 
-      // Missing required created_at should fail
+      // Missing created_at should pass (auto-filled by write tool runtime)
       const bad2 = schema.safeParse([{
         title: "Breaking News",
         source: "https://example.com",
         pub_date: "2026-03-20T12:00:00Z",
       }]);
-      expect(bad2.success).toBe(false);
+      expect(bad2.success).toBe(true);
 
       // Optional fields omitted should pass
       const minimal = schema.safeParse([{

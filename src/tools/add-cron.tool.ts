@@ -19,6 +19,11 @@ interface IAddCronResult {
   error?: string;
 }
 
+interface IInstructionVerificationResult {
+  isClear: boolean;
+  missingContext: string;
+}
+
 //#endregion Interfaces
 
 //#region Const
@@ -32,54 +37,22 @@ const TOOL_DESCRIPTION: string =
   "Examples: once => scheduleRunAt='2026-03-20T08:00:00Z'; interval => scheduleIntervalMs=7200000; cron => scheduleCron='0 */2 * * *'. " +
   "If the task's instructions reference a database, ensure the database and table(s) have been created first using create_database and create_table, then reference them by name (without .db extension) in the instructions.";
 
+const CONVERSATIONAL_REFERENCE_PATTERNS: RegExp[] = [
+  /\bdo what we discussed\b/i,
+  /\bthat (feed|url|api|endpoint|file|database|table|report|source)\b/i,
+  /\b(the|that) (url|endpoint|api|feed|path|file) (i|we) mentioned\b/i,
+  /\bthe same as (before|last time)\b/i,
+  /\bas before\b/i,
+];
+
 //#endregion Const
 
-//#region Tool
+//#region Private methods
 
-export const addCronTool = tool(
-  async ({
-    name,
-    description,
-    instructions,
-    tools,
-    scheduleType,
-    scheduleRunAt,
-    scheduleIntervalMs,
-    scheduleCron,
-    notifyUser,
-  }: {
-    name: string;
-    description: string;
-    instructions: string;
-    tools: string[];
-    scheduleType: "once" | "interval" | "cron";
-    scheduleRunAt?: string;
-    scheduleIntervalMs?: number;
-    scheduleCron?: string;
-    notifyUser: boolean;
-  }): Promise<IAddCronResult> => {
-    const logger: LoggerService = LoggerService.getInstance();
+async function _verifyInstructionsAsync(instructions: string, tools: string[], logger: LoggerService): Promise<IInstructionVerificationResult> {
+  const toolContextBlock: string = await buildCronToolContextBlockAsync(tools);
 
-    try {
-      // 0. Validate tool names at runtime
-      const invalidTools: string[] = validateCronToolNames(tools);
-      if (invalidTools.length > 0) {
-        return {
-          taskId: "",
-          success: false,
-          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}`,
-        };
-      }
-
-      // 1. Verify instructions using LLM
-      logger.debug(`[${TOOL_NAME}] Verifying cron instructions for: ${name}`);
-
-      // Build a human-readable tool list so the verifier knows what each tool does.
-      // This prevents it from flagging well-known tools (e.g. send_message) as
-      // "unresolved destinations" simply because it has no context about them.
-      const toolContextBlock: string = await buildCronToolContextBlockAsync(tools);
-
-      const verifierPrompt = `
+  const verifierPrompt = `
 You are a task instruction verifier for an autonomous AI agent.
 The agent runs periodically on a fixed schedule and has NO memory of past conversations when it wakes up.
 The agent executing these instructions is an intelligent AI (an LLM). It can read tool descriptions, reason about conventions, compose arguments, and derive values — it is NOT a dumb script that needs every value pre-computed.
@@ -126,12 +99,75 @@ Output a JSON object with:
 - "missingContext": string (if invalid, describe exactly what information is missing and why it cannot be derived; if valid, use empty string)
 `;
 
-      const model = createChatModel(ConfigService.getInstance().getAiConfig());
+  const model = createChatModel(ConfigService.getInstance().getAiConfig());
 
-      const verificationResult = await model.withStructuredOutput(z.object({
-        isClear: z.boolean(),
-        missingContext: z.string(),
-      })).invoke(verifierPrompt);
+  try {
+    return await model.withStructuredOutput(z.object({
+      isClear: z.boolean(),
+      missingContext: z.string(),
+    })).invoke(verifierPrompt) as IInstructionVerificationResult;
+  } catch (error: unknown) {
+    const errorMessage: string = extractErrorMessage(error);
+    logger.warn(`[${TOOL_NAME}] Verifier model unavailable, using heuristic fallback`, {
+      error: errorMessage,
+    });
+
+    for (const pattern of CONVERSATIONAL_REFERENCE_PATTERNS) {
+      if (pattern.test(instructions)) {
+        return {
+          isClear: false,
+          missingContext: "Instructions depend on prior conversation context (for example 'that feed' or 'what we discussed'). Provide explicit, self-contained resource identifiers and actions.",
+        };
+      }
+    }
+
+    return { isClear: true, missingContext: "" };
+  }
+}
+
+//#endregion Private methods
+
+//#region Tool
+
+export const addCronTool = tool(
+  async ({
+    name,
+    description,
+    instructions,
+    tools,
+    scheduleType,
+    scheduleRunAt,
+    scheduleIntervalMs,
+    scheduleCron,
+    notifyUser,
+  }: {
+    name: string;
+    description: string;
+    instructions: string;
+    tools: string[];
+    scheduleType: "once" | "interval" | "cron";
+    scheduleRunAt?: string;
+    scheduleIntervalMs?: number;
+    scheduleCron?: string;
+    notifyUser: boolean;
+  }): Promise<IAddCronResult> => {
+    const logger: LoggerService = LoggerService.getInstance();
+
+    try {
+      // 0. Validate tool names at runtime
+      const invalidTools: string[] = validateCronToolNames(tools);
+      if (invalidTools.length > 0) {
+        return {
+          taskId: "",
+          success: false,
+          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}`,
+        };
+      }
+
+      // 1. Verify instructions using LLM
+      logger.debug(`[${TOOL_NAME}] Verifying cron instructions for: ${name}`);
+
+      const verificationResult: IInstructionVerificationResult = await _verifyInstructionsAsync(instructions, tools, logger);
 
       if (!verificationResult.isClear) {
         const errorMsg = `CRON REJECTED. The instructions are ambiguous or missing context: ${verificationResult.missingContext}. Please provide complete, self-contained instructions.`;
