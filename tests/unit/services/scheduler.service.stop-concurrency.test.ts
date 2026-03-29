@@ -77,11 +77,11 @@ describe("SchedulerService stop concurrency handling", () => {
     await scheduler.startAsync();
 
     await started;
-    await scheduler.stopAsync();
+    const stopPromise = scheduler.stopAsync();
+    releaseExecution();
+    await stopPromise;
 
     expect(scheduler.getRunningTaskCount()).toBe(0);
-
-    releaseExecution();
 
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(scheduler.getRunningTaskCount()).toBe(0);
@@ -89,5 +89,42 @@ describe("SchedulerService stop concurrency handling", () => {
     const cronDir = path.join(env.tempDir, ".blackdogbot", "cron");
     const entries = await fs.readdir(cronDir);
     expect(entries.includes("stop-mid-flight.json")).toBe(true);
+  });
+
+  it("should wait for in-flight task execution to finish before stopAsync resolves", async () => {
+    const scheduler = SchedulerService.getInstance();
+    const logger = LoggerService.getInstance();
+    await logger.initializeAsync("error", path.join(env.tempDir, "logs"));
+
+    let releaseExecution: () => void = () => {
+      throw new Error("releaseExecution was not set");
+    };
+    let stopResolved = false;
+
+    const started = new Promise<void>((resolve) => {
+      scheduler.setTaskExecutor(async () => {
+        resolve();
+        await new Promise<void>((release) => {
+          releaseExecution = release;
+        });
+      });
+    });
+
+    const task = createIntervalTask("stop-awaits-inflight", 20);
+    await scheduler.addTaskAsync(task);
+    await scheduler.startAsync();
+    await started;
+
+    const stopPromise = scheduler.stopAsync().then(() => {
+      stopResolved = true;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(stopResolved).toBe(false);
+
+    releaseExecution();
+    await stopPromise;
+    expect(stopResolved).toBe(true);
+    expect(scheduler.getRunningTaskCount()).toBe(0);
   });
 });

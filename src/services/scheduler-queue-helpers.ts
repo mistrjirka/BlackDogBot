@@ -58,6 +58,14 @@ export function dispatchOrEnqueueTask(
   }
 
   if (state.taskQueue.length < state.cronQueueSize) {
+    const alreadyQueued: boolean = state.taskQueue.some(
+      (queued: IQueuedTask): boolean => queued.task.taskId === task.taskId,
+    );
+
+    if (alreadyQueued) {
+      return "queued";
+    }
+
     state.taskQueue.push({ task, executeCallback });
 
     deps.logger.warn("Task queued (concurrency limit reached)", {

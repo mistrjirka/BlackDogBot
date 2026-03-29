@@ -190,6 +190,8 @@ export class SchedulerService {
 
     // Clear the queue on stop — queued tasks are abandoned
     this._taskQueue = [];
+
+    await this._waitForRunningTasksToDrainAsync();
     this._runningTaskCount = 0;
     this._isStarted = false;
 
@@ -453,6 +455,24 @@ export class SchedulerService {
       replacedTools,
       addedWriteTableTools: perTableWriteToolNames.length,
     };
+  }
+
+  private async _waitForRunningTasksToDrainAsync(): Promise<void> {
+    const pollIntervalMs = 25;
+    const maxWaitMs = 30000;
+    let waitedMs = 0;
+
+    while (this._runningTaskCount > 0 && waitedMs < maxWaitMs) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      waitedMs += pollIntervalMs;
+    }
+
+    if (this._runningTaskCount > 0) {
+      this._logger.warn("Timed out waiting for running tasks to drain during stop", {
+        runningTasks: this._runningTaskCount,
+        waitedMs,
+      });
+    }
   }
 
   private async _saveTaskAsync(task: IScheduledTask): Promise<void> {
