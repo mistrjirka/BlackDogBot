@@ -49,6 +49,7 @@ See [Commands Guide](docs/commands.md) for full command reference.
 - Web tools unavailable: ensure optional services are running (`docker compose -f ~/.blackdogbot/docker-compose.yaml up -d`).
 - Embedding model issues: first run downloads model files; check internet connection and retry.
 - Cron notifications missing: verify channel notifications are enabled and task has `notifyUser: true`.
+- Native runtime crash on startup (`ELIFECYCLE` with exit code `132`): run `pnpm rebuild better-sqlite3 sharp onnxruntime-node` and retry. If it still fails with `132`, your CPU likely cannot run the prebuilt native binary.
 
 See [Troubleshooting Guide](docs/troubleshooting.md) for detailed fixes.
 

@@ -21,6 +21,18 @@ First run may download embedding assets.
 2. Clear local Hugging Face cache if corrupted: `rm -rf ~/.cache/huggingface/`.
 3. Restart the bot.
 
+## Startup Fails With Exit Code 132
+
+`132` usually means `SIGILL` (illegal instruction) from a native addon.
+
+1. Rebuild required native modules:
+   `pnpm rebuild better-sqlite3 sharp onnxruntime-node`
+2. Verify runtime imports manually:
+   `node -e "require('better-sqlite3'); require('sharp'); import('@huggingface/transformers').then(() => console.log('ok'))"`
+3. Retry startup: `pnpm start`
+
+If step 2 still exits with `132`, the machine CPU is not compatible with one of the prebuilt native binaries.
+
 ## Optional Web Services Not Working
 
 If web search/scrape tools fail:

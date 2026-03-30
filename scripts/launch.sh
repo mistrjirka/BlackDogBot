@@ -57,9 +57,16 @@ fi
 
 cd "$PROJECT_DIR"
 
+if [[ ! -d "node_modules" ]]; then
+    echo "[launch.sh] node_modules not found. Run 'pnpm install' first."
+    exit 1
+fi
+
+node scripts/verify-runtime-deps.mjs
+
 if [[ "${1:-}" == "--watch" ]]; then
     shift
-    exec npx tsx watch src/index.ts "$@"
+    exec pnpm exec tsx watch src/index.ts "$@"
 else
-    exec npx tsx src/index.ts "$@"
+    exec pnpm exec tsx src/index.ts "$@"
 fi
