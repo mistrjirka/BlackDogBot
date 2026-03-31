@@ -11,6 +11,7 @@ import { McpRegistryService } from "./services/mcp-registry.service.js";
 import { LangchainMcpService } from "./services/langchain-mcp.service.js";
 import { PromptService } from "./services/prompt.service.js";
 import { AiCapabilityService } from "./services/ai-capability.service.js";
+import { probeParallelToolCallSupportAsync } from "./services/parallel-tool-call-probe.service.js";
 import * as toolRegistry from "./helpers/tool-registry.js";
 import * as skillInstaller from "./helpers/skill-installer.js";
 import * as skillState from "./helpers/skill-state.js";
@@ -44,6 +45,26 @@ async function mainAsync(): Promise<void> {
   const logger: LoggerService = LoggerService.getInstance();
 
   await logger.initializeAsync(config.logging.level);
+
+  // Probe parallel tool call support for local providers
+  const aiCapabilityService = AiCapabilityService.getInstance();
+  const activeProvider = aiCapabilityService.getActiveProvider();
+  if (activeProvider === "openai-compatible" || activeProvider === "lm-studio") {
+    const providerConfig = activeProvider === "openai-compatible"
+      ? config.ai.openaiCompatible
+      : config.ai.lmStudio;
+
+    if (providerConfig) {
+      const supported = await probeParallelToolCallSupportAsync({
+        baseUrl: providerConfig.baseUrl,
+        apiKey: providerConfig.apiKey ?? "lm-studio",
+        model: providerConfig.model,
+        timeoutMs: 10000,
+      });
+      aiCapabilityService.setSupportsParallelToolCalls(supported);
+      logger.info("Parallel tool call probe completed", { supported });
+    }
+  }
 
   // Ensure runtime directories exist (including sessions/) before agents start.
   await ensureAllDirectoriesAsync();

@@ -6,6 +6,7 @@ import type { IAiConfig } from "../shared/types/config.types.js";
 import { LoggerService } from "./logger.service.js";
 import { ChatOpenAICompletionsReasoning } from "./providers/chat-openai-completions-reasoning.js";
 import { getModelProfilesDir } from "../utils/paths.js";
+import { AiCapabilityService } from "./ai-capability.service.js";
 
 //#region Public Functions
 
@@ -116,6 +117,14 @@ function _resolveModelKwargs(config: IAiConfig, options: ICreateChatModelOptions
           ...defaults.chatTemplateKwargs,
         };
       }
+    }
+  }
+
+  // If profile didn't set parallel_tool_calls, check capability service
+  if (modelKwargs.parallel_tool_calls === undefined) {
+    const supported = AiCapabilityService.getInstance().getSupportsParallelToolCalls();
+    if (supported) {
+      modelKwargs.parallel_tool_calls = true;
     }
   }
 
