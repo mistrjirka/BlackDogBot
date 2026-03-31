@@ -27,6 +27,7 @@ export interface IAiCapabilityInfo {
 export class AiCapabilityService {
   private static _instance: AiCapabilityService | null = null;
   private _config: IAiConfig | null = null;
+  private _supportsParallelToolCalls: boolean = false;
 
   public static getInstance(): AiCapabilityService {
     if (!AiCapabilityService._instance) {
@@ -91,6 +92,22 @@ export class AiCapabilityService {
       return providerConfig.supportsVision;
     }
     return false;
+  }
+
+  /**
+   * Check if the current model/server supports parallel tool calls.
+   * Returns false until explicitly set via probe or config override.
+   */
+  public getSupportsParallelToolCalls(): boolean {
+    return this._supportsParallelToolCalls;
+  }
+
+  /**
+   * Set the parallel tool calls support flag.
+   * Called by the startup probe or config override.
+   */
+  public setSupportsParallelToolCalls(supported: boolean): void {
+    this._supportsParallelToolCalls = supported;
   }
 
   /**
