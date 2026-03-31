@@ -2,17 +2,17 @@ import { CRON_TOOL_DESCRIPTIONS } from "../shared/constants/cron-descriptions.js
 import { buildPerTableToolsAsync } from "./per-table-tools.js";
 
 export async function buildCronToolContextBlockAsync(tools: string[]): Promise<string> {
-  const dynamicWriteToolDescriptions: Map<string, string> = new Map();
+  const dynamicToolDescriptions: Map<string, string> = new Map();
 
   try {
     const perTableTools = await buildPerTableToolsAsync();
     for (const [toolName, toolDef] of Object.entries(perTableTools)) {
       if (typeof toolDef.description === "string" && toolDef.description.trim().length > 0) {
-        dynamicWriteToolDescriptions.set(toolName, toolDef.description);
+        dynamicToolDescriptions.set(toolName, toolDef.description);
       }
     }
   } catch {
-    // Ignore and fall back to generic write_table descriptions.
+    // Ignore and fall back to generic descriptions.
   }
 
   const toolContextLines: string[] = tools.map((toolName: string) => {
@@ -22,13 +22,23 @@ export async function buildCronToolContextBlockAsync(tools: string[]): Promise<s
     }
 
     if (toolName.startsWith("write_table_")) {
-      const dynamicDescription: string | undefined = dynamicWriteToolDescriptions.get(toolName);
+      const dynamicDescription: string | undefined = dynamicToolDescriptions.get(toolName);
       if (dynamicDescription) {
         return `  - ${toolName}: ${dynamicDescription}`;
       }
 
       const tableName: string = toolName.replace(/^write_table_/, "");
       return `  - ${toolName}: Insert rows into the '${tableName}' table using validated column schemas.`;
+    }
+
+    if (toolName.startsWith("update_table_")) {
+      const dynamicDescription: string | undefined = dynamicToolDescriptions.get(toolName);
+      if (dynamicDescription) {
+        return `  - ${toolName}: ${dynamicDescription}`;
+      }
+
+      const tableName: string = toolName.replace(/^update_table_/, "");
+      return `  - ${toolName}: Update rows in the '${tableName}' table. Requires a WHERE clause for safety.`;
     }
 
     return `  - ${toolName}: (no description available)`;
