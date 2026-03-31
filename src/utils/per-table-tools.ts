@@ -5,6 +5,7 @@ import { z } from "zod";
 import * as litesql from "../helpers/litesql.js";
 import type { IColumnInfo, ITableInfo } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
+import { createUpdateTableTool } from "../tools/update-table.tool.js";
 
 //#region Constants
 
@@ -115,10 +116,35 @@ export async function buildPerTableToolsAsync(): Promise<Record<string, DynamicS
       } else {
         tools[toolName] = perTableTool;
       }
+
+      const updateTool = createUpdateTableTool(tableName, schema.columns.map(c => c.name), db.name);
+      const updateToolName = `update_table_${tableName}`;
+
+      if (updateToolName in tools) {
+        let prefixedName = `update_table_${db.name}_${tableName}`;
+
+        if (prefixedName in tools) {
+          let suffix = 2;
+          while (`${prefixedName}_${suffix}` in tools) {
+            suffix++;
+          }
+          prefixedName = `${prefixedName}_${suffix}`;
+        }
+
+        updateTool.name = prefixedName;
+        tools[prefixedName] = updateTool;
+        logger.debug("Per-table update tool name collision, using prefixed name", {
+          original: updateToolName,
+          prefixed: prefixedName,
+          database: db.name,
+        });
+      } else {
+        tools[updateToolName] = updateTool;
+      }
     }
   }
 
-  logger.info("Per-table write tools built", {
+  logger.info("Per-table write and update tools built", {
     toolCount: Object.keys(tools).length,
     toolNames: Object.keys(tools),
   });
@@ -139,6 +165,22 @@ export function buildSingleTableTool(
   return {
     name: `write_table_${tableName}`,
     toolInstance: perTableTool,
+  };
+}
+
+/**
+ * Build a single per-table update tool for a specific table.
+ * Useful for hot-reload after creating a new table.
+ */
+export function buildSingleUpdateTableTool(
+  databaseName: string,
+  tableName: string,
+  columns: IColumnInfo[],
+): { name: string; toolInstance: DynamicStructuredTool } {
+  const toolInstance = createUpdateTableTool(tableName, columns.map(c => c.name), databaseName);
+  return {
+    name: `update_table_${tableName}`,
+    toolInstance,
   };
 }
 

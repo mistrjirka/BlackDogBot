@@ -12,6 +12,7 @@ import { ChannelRegistryService } from "../services/channel-registry.service.js"
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { LangchainMcpService } from "../services/langchain-mcp.service.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
+import type { IRebuildResult } from "../services/tool-hot-reload.service.js";
 import { createLangchainAgent, invokeAgentAsync } from "./langchain-agent.js";
 import { isContextExceededApiError } from "../utils/context-error.js";
 import type { IAiConfig } from "../shared/types/config.types.js";
@@ -36,12 +37,9 @@ import {
   editKnowledgeTool,
   createCallSkillTool,
   getSkillFileTool,
-  addCronTool,
   removeCronTool,
   listCronsTool,
   getCronTool,
-  editCronTool,
-  editCronInstructionsTool,
   runCronTool,
   createReadFileTool,
   createReadImageTool,
@@ -63,6 +61,7 @@ import {
   FileReadTracker,
 } from "../tools/index.js";
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
+import { buildCronToolsAsync } from "../tools/build-cron-tools.js";
 
 type MessageSender = (message: string) => Promise<string | null>;
 type PhotoSender = (imageBuffer: Buffer, caption: string | null) => Promise<string | null>;
@@ -76,6 +75,8 @@ interface IChatSession {
   onStepAsync?: OnStepCallback;
   tools: DynamicStructuredTool[];
   readTracker: FileReadTracker;
+  lastAddedTableNames: string[];
+  lastDroppedTableNames: string[];
 }
 
 export class LangchainMainAgent {
@@ -118,7 +119,33 @@ export class LangchainMainAgent {
   private async _createCheckpointer(): Promise<SqliteSaver> {
     const baseDir = path.join(os.homedir(), ".blackdogbot");
     const dbPath = path.join(baseDir, "chat-checkpoints.db");
+    await this._recoverCorruptedCheckpointDb(dbPath);
     return SqliteSaver.fromConnString(dbPath);
+  }
+
+  private async _recoverCorruptedCheckpointDb(dbPath: string): Promise<void> {
+    const shmPath = `${dbPath}-shm`;
+    const walPath = `${dbPath}-wal`;
+
+    try {
+      const [dbStats, shmStats, walStats] = await Promise.all([
+        fs.stat(dbPath).catch(() => null),
+        fs.stat(shmPath).catch(() => null),
+        fs.stat(walPath).catch(() => null),
+      ]);
+
+      const isCorrupted = (dbStats !== null && dbStats.size === 0)
+        || (dbStats === null && (shmStats !== null || walStats !== null));
+
+      if (isCorrupted) {
+        await fs.unlink(dbPath).catch(() => {});
+        await fs.unlink(shmPath).catch(() => {});
+        await fs.unlink(walPath).catch(() => {});
+        this._logger.warn("Recovered corrupted checkpointer database", { dbPath });
+      }
+    } catch {
+      // Nothing to recover
+    }
   }
 
   public isInitializedForChat(chatId: string): boolean {
@@ -140,7 +167,7 @@ export class LangchainMainAgent {
     const effectivePlatform = platform ?? "telegram";
     const readTracker = new FileReadTracker();
     const permission = this._getPermissionForChat(effectivePlatform, chatId);
-    const tools = await this._buildToolsForChatAsync(permission, messageSender, readTracker);
+    const tools = await this._buildToolsForChatAsync(permission, readTracker);
 
     this._sessions.set(chatId, {
       chatId,
@@ -150,10 +177,13 @@ export class LangchainMainAgent {
       onStepAsync,
       tools,
       readTracker,
+      lastAddedTableNames: [],
+      lastDroppedTableNames: [],
     });
 
-   ToolHotReloadService.getInstance().registerRebuildCallback(chatId, (perTableTools) => {
-      this._rebuildToolsForChat(chatId, perTableTools);
+    ToolHotReloadService.getInstance().unregisterRebuildCallback(chatId);
+    ToolHotReloadService.getInstance().registerRebuildCallback(chatId, (result: IRebuildResult) => {
+      this._rebuildToolsForChat(chatId, result);
     });
 
     this._logger.info("Session initialized", { chatId, platform: effectivePlatform, toolCount: tools.length });
@@ -167,7 +197,6 @@ export class LangchainMainAgent {
 
   private async _buildToolsForChatAsync(
     permission: ChannelPermission,
-    _messageSender: MessageSender,
     readTracker: FileReadTracker,
   ): Promise<DynamicStructuredTool[]> {
     const allTools: Record<string, DynamicStructuredTool> = {};
@@ -201,13 +230,15 @@ export class LangchainMainAgent {
     allTools.write_file = createWriteFileTool(readTracker);
     allTools.append_file = appendFileTool;
     allTools.edit_file = editFileTool;
-    allTools.add_cron = addCronTool;
     allTools.remove_cron = removeCronTool;
     allTools.list_crons = listCronsTool;
     allTools.get_cron = getCronTool;
-    allTools.edit_cron = editCronTool;
-    allTools.edit_cron_instructions = editCronInstructionsTool;
     allTools.run_cron = runCronTool;
+
+    const cronTools = await buildCronToolsAsync();
+    allTools.add_cron = cronTools.add_cron;
+    allTools.edit_cron = cronTools.edit_cron;
+    allTools.edit_cron_instructions = cronTools.edit_cron_instructions;
 
     if (supportsVision) {
       allTools.read_image = createReadImageTool(readTracker);
@@ -241,24 +272,43 @@ export class LangchainMainAgent {
     return filteredTools;
   }
 
-  private _rebuildToolsForChat(chatId: string, perTableTools: Record<string, DynamicStructuredTool>): void {
+  private _rebuildToolsForChat(chatId: string, result: IRebuildResult): void {
     const session = this._sessions.get(chatId);
     if (!session) {
       return;
     }
 
-    const newTools: DynamicStructuredTool[] = [...session.tools];
-    for (const [name, tool] of Object.entries(perTableTools)) {
-      const existingIndex = newTools.findIndex((t) => t.name === name);
-      if (existingIndex >= 0) {
-        newTools[existingIndex] = tool;
-      } else {
-        newTools.push(tool);
-      }
+    const perTableToolNames = Object.keys(result.perTableTools);
+    
+    if (perTableToolNames.length === 0 && result.addedTableNames.length === 0) {
+      this._logger.warn("Hot-rebuild returned empty tools, skipping tool replacement", { chatId });
+      return;
     }
+
+    const newTools = session.tools.filter(t => 
+      !t.name.startsWith("write_table_") && 
+      !t.name.startsWith("update_table_") &&
+      !["add_cron", "edit_cron", "edit_cron_instructions"].includes(t.name)
+    );
+    
+    for (const tool of Object.values(result.perTableTools)) {
+      newTools.push(tool);
+    }
+    
+    if (result.cronTools) {
+      newTools.push(result.cronTools.add_cron);
+      newTools.push(result.cronTools.edit_cron);
+      newTools.push(result.cronTools.edit_cron_instructions);
+    }
+    
     session.tools = newTools;
 
-    this._logger.info("Tools hot-reloaded", { chatId, newToolCount: newTools.length });
+    this._logger.info("Tools hot-reloaded", { 
+      chatId, 
+      newToolCount: newTools.length,
+      perTableToolNames,
+      addedTableNames: result.addedTableNames,
+    });
   }
 
   public async processMessageForChatAsync(
@@ -280,13 +330,16 @@ export class LangchainMainAgent {
     const abortController = new AbortController();
     this._abortControllers.set(chatId, abortController);
 
-    const maxRetries = 2;
+    const maxContextRetries = 2;
+    const maxHotReloadCycles = 20;
     let lastError: Error | null = null;
     let totalStepsCount: number = 0;
     let shouldResumeWithoutInput: boolean = false;
+    let hotReloadCycles: number = 0;
     const tableMutationTools: ReadonlySet<string> = new Set(["create_table", "drop_table"]);
 
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
+    let contextRetryAttempt = 0;
+    while (true) {
       try {
         const agent = createLangchainAgent({
           aiConfig: this._aiConfig,
@@ -301,7 +354,7 @@ export class LangchainMainAgent {
           chatId,
           shouldResumeWithoutInput ? undefined : imageAttachments,
           session.onStepAsync,
-          async (toolName: string): Promise<boolean> => {
+          async (toolName: string, toolInput: unknown, toolOutput: unknown, isError: boolean): Promise<boolean> => {
             this._logger.debug("Tools available after step", {
               chatId,
               endedToolName: toolName,
@@ -313,25 +366,190 @@ export class LangchainMainAgent {
               return false;
             }
 
-            const toolCountBefore: number = session.tools.length;
-            const didRebuild: boolean = await ToolHotReloadService.getInstance().triggerRebuildAsync(chatId);
-            const toolCountAfter: number = session.tools.length;
+            let outputRecord: Record<string, unknown> | null = null;
+            let parseSource: string = "none";
+
+            if (typeof toolOutput === "string") {
+              parseSource = "raw_string";
+              try {
+                const parsedUnknown: unknown = JSON.parse(toolOutput);
+                if (typeof parsedUnknown === "object" && parsedUnknown !== null) {
+                  outputRecord = parsedUnknown as Record<string, unknown>;
+                }
+              } catch {
+                outputRecord = null;
+              }
+            } else if (typeof toolOutput === "object" && toolOutput !== null) {
+              const toolOutputRecord: Record<string, unknown> = toolOutput as Record<string, unknown>;
+
+              if (toolOutputRecord.lc === 1 && typeof toolOutputRecord.kwargs === "object" && toolOutputRecord.kwargs !== null) {
+                parseSource = "tool_message_kwargs_content";
+                const kwargsRecord: Record<string, unknown> = toolOutputRecord.kwargs as Record<string, unknown>;
+                const contentUnknown: unknown = kwargsRecord.content;
+
+                if (typeof contentUnknown === "string") {
+                  try {
+                    const parsedUnknown: unknown = JSON.parse(contentUnknown);
+                    if (typeof parsedUnknown === "object" && parsedUnknown !== null) {
+                      outputRecord = parsedUnknown as Record<string, unknown>;
+                    }
+                  } catch {
+                    outputRecord = null;
+                  }
+                } else if (typeof contentUnknown === "object" && contentUnknown !== null) {
+                  outputRecord = contentUnknown as Record<string, unknown>;
+                }
+              } else {
+                parseSource = "plain_object";
+                outputRecord = toolOutputRecord;
+
+                if (typeof outputRecord.success !== "boolean") {
+                  const statusUnknown: unknown = toolOutputRecord.status;
+                  const contentUnknown: unknown = toolOutputRecord.content;
+
+                  if (statusUnknown === "success") {
+                    if (typeof contentUnknown === "string") {
+                      try {
+                        const parsedUnknown: unknown = JSON.parse(contentUnknown);
+                        if (typeof parsedUnknown === "object" && parsedUnknown !== null) {
+                          const parsedRecord: Record<string, unknown> = parsedUnknown as Record<string, unknown>;
+                          outputRecord = {
+                            ...parsedRecord,
+                            success: parsedRecord.success === true,
+                          };
+                        } else {
+                          outputRecord = { ...outputRecord, success: true };
+                        }
+                      } catch {
+                        outputRecord = { ...outputRecord, success: true };
+                      }
+                    } else {
+                      outputRecord = { ...outputRecord, success: true };
+                    }
+                  }
+                }
+              }
+            }
+
+            const wasSuccessful: boolean = !isError && outputRecord?.success === true;
+            if (!wasSuccessful) {
+              this._logger.info("Skipping tool hot-reload because table mutation tool did not succeed", {
+                chatId,
+                toolName,
+                isError,
+                success: outputRecord?.success,
+                outputType: typeof toolOutput,
+                parseSource,
+              });
+              return false;
+            }
+
+            const toolInputRecord = toolInput as Record<string, unknown>;
+            const tableName = toolInputRecord?.tableName as string | undefined;
+            if (tableName && toolName === "drop_table") {
+              session.lastDroppedTableNames.push(tableName);
+            } else if (tableName) {
+              session.lastAddedTableNames.push(tableName);
+            }
+
+            const expectedToolName: string | null = tableName
+              ? toolName === "drop_table"
+                ? null
+                : `write_table_${tableName}`
+              : null;
+
+            // Retry logic for SQLite timing issues
+            const maxRetries = 3;
+            let rebuildResult: IRebuildResult;
+            let hasExpectedTool = false;
+
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+              rebuildResult = await ToolHotReloadService.getInstance().triggerRebuildAsync(chatId);
+
+              hasExpectedTool = expectedToolName 
+                ? session.tools.some((t: DynamicStructuredTool): boolean => t.name === expectedToolName)
+                : rebuildResult.success;
+
+              if (hasExpectedTool || attempt === maxRetries - 1) {
+                break;
+              }
+
+              this._logger.warn("Tool not found after rebuild, retrying", {
+                chatId,
+                expectedToolName,
+                attempt: attempt + 1,
+                maxRetries,
+              });
+
+              await new Promise((resolve): void => {
+                setTimeout(resolve, 100);
+              });
+            }
 
             this._logger.info("Tool rebuild check after table mutation", {
               chatId,
               endedToolName: toolName,
-              didRebuild,
-              toolCountBefore,
-              toolCountAfter,
+              didRebuild: rebuildResult!.success,
+              expectedToolName,
+              hasExpectedTool,
+              toolCount: session.tools.length,
             });
 
-            return didRebuild && toolCountAfter > toolCountBefore;
+            if (!hasExpectedTool) {
+              throw new Error(`tool hot-reload failed to add expected tool "${expectedToolName}"`);
+            }
+
+            return rebuildResult!.success && hasExpectedTool;
           },
+          totalStepsCount,
         );
 
         totalStepsCount += result.stepsCount;
 
+        if (session.lastAddedTableNames?.length) {
+          hotReloadCycles += 1;
+          if (hotReloadCycles > maxHotReloadCycles) {
+            throw new Error(`Exceeded maximum hot-reload cycles (${maxHotReloadCycles}) in one message`);
+          }
+
+          const tableNames = session.lastAddedTableNames;
+          if (tableNames.length === 1) {
+            userMessage = `[System] New tools "write_table_${tableNames[0]}" and "update_table_${tableNames[0]}" for the "${tableNames[0]}" table are now available. Use them to insert and update data in that table.`;
+          } else {
+            const writeToolNames = tableNames.map(t => `write_table_${t}`).join(", ");
+            const updateToolNames = tableNames.map(t => `update_table_${t}`).join(", ");
+            userMessage = `[System] New tools "${writeToolNames}" and "${updateToolNames}" are now available. Use them to insert and update data in the respective tables.`;
+          }
+          shouldResumeWithoutInput = false;
+          session.lastAddedTableNames = [];
+          continue;
+        }
+
+        if (session.lastDroppedTableNames?.length) {
+          hotReloadCycles += 1;
+          if (hotReloadCycles > maxHotReloadCycles) {
+            throw new Error(`Exceeded maximum hot-reload cycles (${maxHotReloadCycles}) in one message`);
+          }
+
+          const tableNames = session.lastDroppedTableNames;
+          if (tableNames.length === 1) {
+            userMessage = `[System] The tools "write_table_${tableNames[0]}" and "update_table_${tableNames[0]}" have been removed. You can no longer write to or update the "${tableNames[0]}" table.`;
+          } else {
+            const writeToolNames = tableNames.map(t => `write_table_${t}`).join(", ");
+            const updateToolNames = tableNames.map(t => `update_table_${t}`).join(", ");
+            userMessage = `[System] The tools "${writeToolNames}" and "${updateToolNames}" have been removed. You can no longer write to or update the respective tables.`;
+          }
+          shouldResumeWithoutInput = false;
+          session.lastDroppedTableNames = [];
+          continue;
+        }
+
         if (result.toolsChanged) {
+          hotReloadCycles += 1;
+          if (hotReloadCycles > maxHotReloadCycles) {
+            throw new Error(`Exceeded maximum hot-reload cycles (${maxHotReloadCycles}) in one message`);
+          }
+
           shouldResumeWithoutInput = true;
           continue;
         }
@@ -343,20 +561,19 @@ export class LangchainMainAgent {
       } catch (error: unknown) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
-        if (isContextExceededApiError(error)) {
+        if (isContextExceededApiError(error) && contextRetryAttempt < maxContextRetries) {
+          contextRetryAttempt += 1;
           this._logger.warn("Context limit exceeded, clearing checkpoint and retrying", {
             chatId,
-            attempt: attempt + 1,
-            maxRetries,
+            attempt: contextRetryAttempt,
+            maxContextRetries,
           });
 
           if (this._checkpointer) {
             this._checkpointer.deleteThread(chatId);
           }
 
-          if (attempt < maxRetries - 1) {
-            continue;
-          }
+          continue;
         }
 
         throw lastError;
@@ -415,6 +632,16 @@ export class LangchainMainAgent {
     this._logger.info("All chat history cleared", { count: chatIds.length });
   }
 
+  public async resetCheckpointerAsync(): Promise<void> {
+    const baseDir = path.join(os.homedir(), ".blackdogbot");
+    const dbPath = path.join(baseDir, "chat-checkpoints.db");
+    await fs.unlink(dbPath).catch(() => {});
+    await fs.unlink(`${dbPath}-shm`).catch(() => {});
+    await fs.unlink(`${dbPath}-wal`).catch(() => {});
+    this._checkpointer = await this._createCheckpointer();
+    this._logger.info("Checkpointer reset");
+  }
+
   public async refreshAllSessionsAsync(): Promise<IRefreshSessionsResult> {
     this._baseSystemPrompt = await PromptService.getInstance().getPromptAsync("main-agent");
 
@@ -425,7 +652,6 @@ export class LangchainMainAgent {
       const permission = this._getPermissionForChat(session.platform, chatId);
       session.tools = await this._buildToolsForChatAsync(
         permission,
-        session.messageSender,
         session.readTracker,
       );
     }
