@@ -87,7 +87,7 @@ export function createUpdateTableTool(
           };
         }
 
-        const result = await litesql.updateTableAsync(databaseName, tableName, setColumns, where);
+        const result = await litesql.updateTableAsync(databaseName, tableName, setColumns, where as string);
 
         logger.info(`[update_table_${tableName}] Updated ${result.updatedCount} row(s) in ${tableName} where ${where}`, {
           databaseName,
