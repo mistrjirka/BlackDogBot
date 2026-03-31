@@ -3,12 +3,12 @@ import { createUpdateTableTool } from "../../../src/tools/update-table.tool.js";
 
 describe("createUpdateTableTool", () => {
   it("creates tool with correct name format", () => {
-    const tool = createUpdateTableTool("users", ["id", "name", "email"]);
+    const tool = createUpdateTableTool("users", ["id", "name", "email"], "testdb");
     expect(tool.name).toBe("update_table_users");
   });
 
   it("excludes primary key from settable columns", () => {
-    const tool = createUpdateTableTool("users", ["id", "name", "email"]);
+    const tool = createUpdateTableTool("users", ["id", "name", "email"], "testdb");
     const schema = tool.schema as any;
     const innerSchema = schema._def.schema;
     const shape = innerSchema.shape;
@@ -25,7 +25,7 @@ describe("createUpdateTableTool", () => {
   });
 
   it("requires at least one column to be set", async () => {
-    const tool = createUpdateTableTool("users", ["id", "name", "email"]);
+    const tool = createUpdateTableTool("users", ["id", "name", "email"], "testdb");
     const schema = tool.schema as any;
     
     // Should fail validation when only 'where' is provided
@@ -34,7 +34,7 @@ describe("createUpdateTableTool", () => {
   });
 
   it("allows setting multiple columns", async () => {
-    const tool = createUpdateTableTool("users", ["id", "name", "email"]);
+    const tool = createUpdateTableTool("users", ["id", "name", "email"], "testdb");
     const schema = tool.schema as any;
     
     const result = schema.safeParse({ 
