@@ -1,10 +1,12 @@
 import { tool } from "langchain";
+import type { DynamicStructuredTool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import type { IColumnInfo } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 import { columnsToJsonSchema, IJsonSchema } from "../utils/litesql-schema-helper.js";
+import { createUpdateTableTool } from "./update-table.tool.js";
 
 const columnDefinitionSchema = z.object({
   name: z.string()
@@ -20,6 +22,9 @@ const columnDefinitionSchema = z.object({
     .describe("Whether this column cannot be NULL"),
   defaultValue: z.string()
     .optional()
+    .refine((val) => val === undefined || val.trim().length > 0, {
+      message: "Default value cannot be empty string",
+    })
     .describe("Default value for the column"),
 });
 
@@ -39,6 +44,7 @@ export const createTableTool = tool(
     columns: IColumnInfo[];
     inputSchema: IJsonSchema;
     message: string;
+    updateTool?: DynamicStructuredTool;
     error?: string;
   }> => {
     const logger: LoggerService = LoggerService.getInstance();
@@ -87,6 +93,12 @@ export const createTableTool = tool(
       const inputSchema: IJsonSchema = columnsToJsonSchema(columnInfos);
       const schemaJson: string = JSON.stringify(inputSchema);
 
+      const updateTool: DynamicStructuredTool = createUpdateTableTool(
+        tableName,
+        columnInfos.map((c) => c.name),
+        databaseName,
+      );
+
       return {
         success: true,
         databaseName,
@@ -96,8 +108,10 @@ export const createTableTool = tool(
         message:
           `Table "${tableName}" created with columns: ${columns.map((c) => c.name).join(", ")}.\n` +
           `To insert rows, use the tool: write_table_${tableName}\n` +
+          `To update rows, use the tool: update_table_${tableName}\n` +
           `For LITESQL nodes inserting into this table, use this inputSchema (pass as inputSchemaHint to add_litesql_node):\n` +
           schemaJson,
+        updateTool,
       };
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
