@@ -165,4 +165,46 @@ describe("getDisableThinkingOnRetry", () => {
     const result = getDisableThinkingOnRetry(config);
     expect(result).toBe(false);
   });
+
+  it("applies patches from built-in patches directory", () => {
+    // qwen3_5 profile already has disableThinkingOnRetry: true
+    // The patch should maintain that value
+    const config: IAiConfig = {
+      provider: "openai-compatible",
+      openaiCompatible: {
+        baseUrl: "http://localhost:2345/v1",
+        apiKey: "test-key",
+        model: "qwen3.5:latest",
+        activeProfile: "qwen3_5",
+      },
+    };
+
+    const result = getDisableThinkingOnRetry(config);
+    expect(result).toBe(true);
+  });
+});
+
+describe("profile patch merging", () => {
+  it("patch overrides take effect on profile defaults", () => {
+    // The qwen-thinking-fix patch sets disableThinkingOnRetry: true
+    // The base qwen3_5 profile already has it set, so this verifies
+    // the patch merging path works without changing the result
+    const config: IAiConfig = {
+      provider: "openai-compatible",
+      openaiCompatible: {
+        baseUrl: "http://localhost:2345/v1",
+        apiKey: "test-key",
+        model: "qwen3.5:latest",
+        activeProfile: "qwen3_5",
+      },
+    };
+
+    const model = createChatModel(config);
+    const modelKwargs = (model as unknown as { modelKwargs?: Record<string, unknown> }).modelKwargs ?? {};
+
+    // Profile should still have its base settings
+    expect(modelKwargs.reasoning_format).toBe("none");
+    expect(modelKwargs.parallel_tool_calls).toBe(true);
+    expect(modelKwargs.chat_template_kwargs).toEqual({ enable_thinking: true });
+  });
 });

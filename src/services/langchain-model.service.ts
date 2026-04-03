@@ -47,8 +47,15 @@ export function getDisableThinkingOnRetry(config: IAiConfig): boolean {
     return false;
   }
 
-  const profileData = _loadProfileYaml(profileContext.profileName, profileContext.profilesDir);
-  if (profileData === null || typeof profileData.defaults !== "object" || profileData.defaults === null) {
+  let profileData = _loadProfileYaml(profileContext.profileName, profileContext.profilesDir);
+  if (profileData === null) {
+    return false;
+  }
+
+  // Apply patches before checking
+  profileData = _applyPatches(profileData, profileContext.profilesDir);
+
+  if (typeof profileData.defaults !== "object" || profileData.defaults === null) {
     return false;
   }
 
@@ -76,6 +83,11 @@ interface IModelProfileDefaults {
 interface IModelProfileYaml {
   activePatches?: string[];
   defaults?: IModelProfileDefaults;
+}
+
+interface IModelProfilePatch {
+  name: string;
+  overrides?: Partial<IModelProfileDefaults>;
 }
 
 function _resolveProviderConfig(config: IAiConfig): IResolvedProviderConfig {
@@ -116,7 +128,13 @@ function _resolveModelKwargs(config: IAiConfig, options: ICreateChatModelOptions
   const modelKwargs: Record<string, unknown> = {};
 
   if (profileContext !== null) {
-    const profileData = _loadProfileYaml(profileContext.profileName, profileContext.profilesDir);
+    let profileData = _loadProfileYaml(profileContext.profileName, profileContext.profilesDir);
+
+    // Apply patches if activePatches is set
+    if (profileData !== null) {
+      profileData = _applyPatches(profileData, profileContext.profilesDir);
+    }
+
     if (profileData !== null && typeof profileData.defaults === "object" && profileData.defaults !== null) {
       const defaults: IModelProfileDefaults = profileData.defaults;
 
@@ -225,6 +243,69 @@ function _loadProfileYaml(profileName: string, profilesDir: string): IModelProfi
   }
 
   return null;
+}
+
+function _loadPatches(
+  activePatches: string[],
+  profilesDir: string,
+): IModelProfilePatch[] {
+  const patchesDir: string = path.join(profilesDir, "patches");
+  const builtInPatchesDir: string = path.resolve(process.cwd(), "src", "defaults", "model-profiles", "patches");
+  const dirsToTry: string[] = [patchesDir, builtInPatchesDir];
+
+  const patches: IModelProfilePatch[] = [];
+
+  for (const patchName of activePatches) {
+    for (const dir of dirsToTry) {
+      const patchPath: string = path.join(dir, `${patchName}.yaml`);
+      if (!fs.existsSync(patchPath)) {
+        continue;
+      }
+
+      try {
+        const rawContent: string = fs.readFileSync(patchPath, "utf-8");
+        const parsed: unknown = parseYaml(rawContent);
+        if (typeof parsed === "object" && parsed !== null) {
+          patches.push(parsed as IModelProfilePatch);
+          break;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return patches;
+}
+
+function _mergeProfileWithPatches(
+  profile: IModelProfileYaml,
+  patches: IModelProfilePatch[],
+): IModelProfileYaml {
+  const merged: IModelProfileYaml = { ...profile };
+
+  for (const patch of patches) {
+    if (typeof patch.overrides === "object" && patch.overrides !== null) {
+      merged.defaults = {
+        ...merged.defaults,
+        ...patch.overrides,
+        chatTemplateKwargs: {
+          ...merged.defaults?.chatTemplateKwargs,
+          ...patch.overrides.chatTemplateKwargs,
+        },
+      };
+    }
+  }
+
+  return merged;
+}
+
+function _applyPatches(profileData: IModelProfileYaml, profilesDir: string): IModelProfileYaml {
+  if (Array.isArray(profileData.activePatches) && profileData.activePatches.length > 0) {
+    const patches = _loadPatches(profileData.activePatches, profilesDir);
+    return _mergeProfileWithPatches(profileData, patches);
+  }
+  return profileData;
 }
 
 //#endregion Private Functions

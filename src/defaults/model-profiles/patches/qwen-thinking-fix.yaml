@@ -1,0 +1,5 @@
+name: qwen-thinking-fix
+description: "Disable thinking on retry for Qwen3.5 to avoid llama.cpp parse errors"
+
+overrides:
+  disableThinkingOnRetry: true
