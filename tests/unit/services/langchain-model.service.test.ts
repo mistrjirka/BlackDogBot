@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AiCapabilityService } from "../../../src/services/ai-capability.service.js";
-import { createChatModel } from "../../../src/services/langchain-model.service.js";
+import { createChatModel, getDisableThinkingOnRetry } from "../../../src/services/langchain-model.service.js";
 import type { IAiConfig } from "../../../src/shared/types/config.types.js";
 
 describe("createChatModel profile request behavior", () => {
@@ -133,5 +133,36 @@ describe("createChatModel parallel tool calls from capability service", () => {
     const modelKwargs = (model as unknown as { modelKwargs?: Record<string, unknown> }).modelKwargs ?? {};
 
     expect(modelKwargs.parallel_tool_calls).toBe(true);
+  });
+});
+
+describe("getDisableThinkingOnRetry", () => {
+  it("returns true when profile has disableThinkingOnRetry: true", () => {
+    const config: IAiConfig = {
+      provider: "openai-compatible",
+      openaiCompatible: {
+        baseUrl: "http://localhost:2345/v1",
+        apiKey: "test-key",
+        model: "qwen3.5:latest",
+        activeProfile: "qwen3_5",
+      },
+    };
+
+    const result = getDisableThinkingOnRetry(config);
+    expect(result).toBe(true);
+  });
+
+  it("returns false when profile has no disableThinkingOnRetry", () => {
+    const config: IAiConfig = {
+      provider: "openai-compatible",
+      openaiCompatible: {
+        baseUrl: "http://localhost:2345/v1",
+        apiKey: "test-key",
+        model: "qwen3.5:latest",
+      },
+    };
+
+    const result = getDisableThinkingOnRetry(config);
+    expect(result).toBe(false);
   });
 });

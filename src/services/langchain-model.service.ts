@@ -41,6 +41,20 @@ export function createChatModel(config: IAiConfig, options: ICreateChatModelOpti
   });
 }
 
+export function getDisableThinkingOnRetry(config: IAiConfig): boolean {
+  const profileContext = _resolveProfileContext(config);
+  if (profileContext === null) {
+    return false;
+  }
+
+  const profileData = _loadProfileYaml(profileContext.profileName, profileContext.profilesDir);
+  if (profileData === null || typeof profileData.defaults !== "object" || profileData.defaults === null) {
+    return false;
+  }
+
+  return profileData.defaults.disableThinkingOnRetry === true;
+}
+
 //#endregion Public Functions
 
 //#region Private Functions
