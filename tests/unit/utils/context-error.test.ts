@@ -4,6 +4,7 @@ import {
   isConnectionError,
   isContextExceededApiError,
   isContextExceededTelegramError,
+  isLlamaCppParseError,
   isRetryableApiError,
   MAX_CONNECTION_RETRIES,
 } from "../../../src/utils/context-error.js";
@@ -126,5 +127,44 @@ describe("getConnectionRetryDelayMs", () => {
 describe("MAX_CONNECTION_RETRIES", () => {
   it("is set to expected default", () => {
     expect(MAX_CONNECTION_RETRIES).toBe(5);
+  });
+});
+
+describe("isLlamaCppParseError", () => {
+  it("returns true for 500 with 'Failed to parse input' in response body", () => {
+    const error = Object.assign(new Error("Request failed"), {
+      statusCode: 500,
+      responseBody: '{"error":{"code":500,"message":"Failed to parse input at pos 233","type":"server_error"}}',
+    });
+    expect(isLlamaCppParseError(error)).toBe(true);
+  });
+
+  it("returns true when error message contains 'failed to parse input'", () => {
+    const error = Object.assign(new Error("500 Failed to parse input at pos 233"), {
+      statusCode: 500,
+      responseBody: "some body",
+    });
+    expect(isLlamaCppParseError(error)).toBe(true);
+  });
+
+  it("returns false for 500 with context keywords (context error, not parse error)", () => {
+    const error = Object.assign(new Error("Request failed"), {
+      statusCode: 500,
+      responseBody: '{"error":{"code":500,"message":"context size exceeded","type":"server_error"}}',
+    });
+    expect(isLlamaCppParseError(error)).toBe(false);
+  });
+
+  it("returns false for non-500 errors", () => {
+    const error = Object.assign(new Error("Request failed"), {
+      statusCode: 400,
+      responseBody: "Failed to parse input",
+    });
+    expect(isLlamaCppParseError(error)).toBe(false);
+  });
+
+  it("returns false for plain errors without statusCode", () => {
+    const error = new Error("something went wrong");
+    expect(isLlamaCppParseError(error)).toBe(false);
   });
 });

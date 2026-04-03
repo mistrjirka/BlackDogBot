@@ -113,6 +113,27 @@ export function isRetryableApiError(error: unknown): boolean {
   return _hasRetryableParseErrorKeyword(combinedMessage);
 }
 
+export function isLlamaCppParseError(error: unknown): boolean {
+  if (!_isAPICallError(error)) {
+    return false;
+  }
+
+  if (error.statusCode !== 500) {
+    return false;
+  }
+
+  const responseBody: string = typeof error.responseBody === "string"
+    ? error.responseBody
+    : JSON.stringify(error.responseBody ?? "");
+  const combined: string = `${error.message ?? ""} ${responseBody}`.toLowerCase();
+
+  if (combined.includes("failed to parse input") && !combined.includes("context")) {
+    return true;
+  }
+
+  return false;
+}
+
 export function isConnectionError(error: unknown): boolean {
   if (_isAPICallError(error)) {
     const responseBody: string = typeof error.responseBody === "string"
