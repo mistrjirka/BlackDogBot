@@ -14,7 +14,8 @@ import { LangchainMcpService } from "../services/langchain-mcp.service.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
 import type { IRebuildResult } from "../services/tool-hot-reload.service.js";
 import { createLangchainAgent, invokeAgentAsync } from "./langchain-agent.js";
-import { isContextExceededApiError } from "../utils/context-error.js";
+import { isContextExceededApiError, isLlamaCppParseError } from "../utils/context-error.js";
+import { getDisableThinkingOnRetry } from "../services/langchain-model.service.js";
 import type { IAiConfig } from "../shared/types/config.types.js";
 import type { IChatImageAttachment, IAgentResult, IToolCallSummary } from "./types.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
@@ -337,6 +338,7 @@ export class LangchainMainAgent {
     const tableMutationTools: ReadonlySet<string> = new Set(["create_table", "drop_table"]);
 
     let contextRetryAttempt = 0;
+    let parseRetryAttempt = false;
     while (true) {
       try {
         const agent = createLangchainAgent({
@@ -344,6 +346,7 @@ export class LangchainMainAgent {
           systemPrompt: this._baseSystemPrompt,
           tools: session.tools,
           checkpointer: this._checkpointer,
+          disableThinking: parseRetryAttempt,
         });
 
         const result = await invokeAgentAsync(
@@ -573,6 +576,23 @@ export class LangchainMainAgent {
           }
 
           continue;
+        }
+
+        if (isLlamaCppParseError(error) && !parseRetryAttempt) {
+          const disableThinking = this._aiConfig ? getDisableThinkingOnRetry(this._aiConfig) : false;
+          if (disableThinking) {
+            parseRetryAttempt = true;
+            this._logger.warn("llama.cpp parse error detected, retrying with thinking disabled", {
+              chatId,
+              errorMessage: lastError.message,
+            });
+
+            if (this._checkpointer) {
+              this._checkpointer.deleteThread(chatId);
+            }
+
+            continue;
+          }
         }
 
         throw lastError;

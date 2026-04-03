@@ -26,6 +26,7 @@ export interface ILangchainAgentConfig {
   systemPrompt: string;
   tools: DynamicStructuredTool[];
   checkpointer?: SqliteSaver;
+  disableThinking?: boolean;
   skillSources?: string[];
   memorySources?: string[];
 }
@@ -42,7 +43,7 @@ export interface ILangchainAgentResult {
 //#region Public Functions
 
 export function createLangchainAgent(config: ILangchainAgentConfig): ReturnType<typeof createAgent> {
-  const model: ChatOpenAI = createChatModel(config.aiConfig);
+  const model: ChatOpenAI = createChatModel(config.aiConfig, { disableThinking: config.disableThinking });
   const logger: LoggerService = LoggerService.getInstance();
 
   logger.info("Creating LangChain agent", {
