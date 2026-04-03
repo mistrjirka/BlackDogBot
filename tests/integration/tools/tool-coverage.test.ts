@@ -364,22 +364,6 @@ describe("Database Tools", () => {
     );
   });
 
-  describe("write_to_database", () => {
-    it(
-      "should insert data into a table",
-      async () => {
-        const result = await runAgentTest(
-          "test-write-database",
-          "Insert a new user into the 'users' table in database 'test_db_temp' with name 'Alice' and email 'alice@example.com'."
-        );
-
-        expect(result.stepsCount).toBeGreaterThanOrEqual(1);
-        expect(result.text).toBeDefined();
-      },
-      600000
-    );
-  });
-
   describe("read_from_database", () => {
     it(
       "should read data from a table",

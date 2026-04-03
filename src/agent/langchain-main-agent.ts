@@ -54,7 +54,6 @@ import {
   createTableTool,
   dropTableTool,
   readFromDatabaseTool,
-  updateDatabaseTool,
   deleteFromDatabaseTool,
   searxngTool,
   crawl4aiTool,
@@ -224,7 +223,6 @@ export class LangchainMainAgent {
     allTools.create_table = createTableTool;
     allTools.drop_table = dropTableTool;
     allTools.read_from_database = readFromDatabaseTool;
-    allTools.update_database = updateDatabaseTool;
     allTools.delete_from_database = deleteFromDatabaseTool;
     allTools.read_file = createReadFileTool(readTracker);
     allTools.write_file = createWriteFileTool(readTracker);
@@ -417,15 +415,16 @@ export class LangchainMainAgent {
                             ...parsedRecord,
                             success: parsedRecord.success === true,
                           };
-                        } else {
-                          outputRecord = { ...outputRecord, success: true };
                         }
+                        // If parsed but not an object, leave outputRecord unchanged (fail closed)
                       } catch {
-                        outputRecord = { ...outputRecord, success: true };
+                        // JSON parse failure — do NOT default to success; leave outputRecord unchanged
+                        this._logger.warn("Tool output status is success but content is not valid JSON", {
+                          contentPreview: typeof contentUnknown === "string" ? contentUnknown.slice(0, 200) : "non-string",
+                        });
                       }
-                    } else {
-                      outputRecord = { ...outputRecord, success: true };
                     }
+                    // If content is not a string, leave outputRecord unchanged (fail closed)
                   }
                 }
               }

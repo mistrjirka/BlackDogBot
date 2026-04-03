@@ -1,28 +1,24 @@
-import { Cron } from "croner";
-
-interface ICronJob {
+interface IScheduledJob {
   id: string;
-  expression: string;
+  intervalMinutes: number;
+  startHour: number | null;
+  startMinute: number | null;
   timezone: string | undefined;
   callback: () => void;
   nextRunTime: Date | null;
 }
 
 /**
- * A single-tick cron scheduler that evaluates ALL registered jobs on every tick.
+ * A single-tick scheduler that evaluates ALL registered jobs on every tick.
  *
- * This solves the fundamental flaw in per-job-timer-chain schedulers (like croner's
- * default mode): when multiple jobs share the same cron expression, each gets its
- * own independent setTimeout chain. Accumulated drift between chains means one
- * timer fires just before the target second and reschedules for tomorrow, while
- * another fires correctly. Result: silent missed jobs.
+ * Uses interval-based scheduling (intervalMinutes + optional startHour/startMinute)
+ * instead of cron expressions to eliminate LLM confusion with cron syntax.
  *
- * Here, one setInterval fires once per second and iterates all jobs. Jobs scheduled
+ * One setInterval fires once per second and iterates all jobs. Jobs scheduled
  * for the same time fire in the same event loop iteration — no races, no drift.
- * Croner is kept only as a cron expression parser (new Cron(expr).nextRun()).
  */
 export class CronScheduler {
-  private _jobs: Map<string, ICronJob> = new Map();
+  private _jobs: Map<string, IScheduledJob> = new Map();
   private _tickInterval: NodeJS.Timeout | null = null;
 
   start(tickMs = 1000): void {
@@ -38,14 +34,24 @@ export class CronScheduler {
     this._jobs.clear();
   }
 
-  addJob(
+  addScheduledJob(
     id: string,
-    expression: string,
+    intervalMinutes: number,
+    startHour: number | null,
+    startMinute: number | null,
     timezone: string | undefined,
     callback: () => void,
   ): Date | null {
-    const nextRunTime = this._calculateNextRun(expression, timezone);
-    const job: ICronJob = { id, expression, timezone, callback, nextRunTime };
+    const nextRunTime = this._calculateNextRun(intervalMinutes, startHour, startMinute);
+    const job: IScheduledJob = {
+      id,
+      intervalMinutes,
+      startHour,
+      startMinute,
+      timezone,
+      callback,
+      nextRunTime,
+    };
     this._jobs.set(id, job);
     return nextRunTime;
   }
@@ -69,10 +75,10 @@ export class CronScheduler {
     for (const job of this._jobs.values()) {
       if (job.nextRunTime !== null && now >= job.nextRunTime) {
         job.callback();
-        // Advance from the scheduled time (not "now") so drift doesn't accumulate
         job.nextRunTime = this._calculateNextRun(
-          job.expression,
-          job.timezone,
+          job.intervalMinutes,
+          job.startHour,
+          job.startMinute,
           job.nextRunTime,
         );
       }
@@ -80,16 +86,49 @@ export class CronScheduler {
   }
 
   private _calculateNextRun(
-    expression: string,
-    timezone: string | undefined,
+    intervalMinutes: number,
+    startHour: number | null,
+    startMinute: number | null,
     after?: Date,
-  ): Date | null {
-    try {
-      // Use croner as a pure expression parser only — no callback means no scheduling
-      const parser = new Cron(expression, { timezone });
-      return parser.nextRun(after) ?? null;
-    } catch {
-      return null;
+  ): Date {
+    const now = after ?? new Date();
+
+    if (startHour === null && startMinute === null) {
+      // No phase anchor: just add interval to the reference time
+      return new Date(now.getTime() + intervalMinutes * 60_000);
     }
+
+    // Build a candidate at the next occurrence of startHour:startMinute
+    const candidate = new Date(now);
+    candidate.setSeconds(0, 0);
+
+    if (startHour !== null) {
+      candidate.setHours(startHour);
+    }
+
+    if (startMinute !== null) {
+      candidate.setMinutes(startMinute);
+    } else {
+      candidate.setMinutes(0);
+    }
+
+    // If candidate is at or before "now", advance by intervals until it's in the future
+    const intervalMs = intervalMinutes * 60_000;
+
+    if (candidate.getTime() <= now.getTime()) {
+      if (intervalMinutes >= 1440) {
+        // Daily or multi-day: advance by full intervals
+        const elapsed = now.getTime() - candidate.getTime();
+        const intervals = Math.ceil(elapsed / intervalMs);
+        candidate.setTime(candidate.getTime() + intervals * intervalMs);
+      } else {
+        // Sub-daily: advance by interval until we pass "now"
+        while (candidate.getTime() <= now.getTime()) {
+          candidate.setTime(candidate.getTime() + intervalMs);
+        }
+      }
+    }
+
+    return candidate;
   }
 }

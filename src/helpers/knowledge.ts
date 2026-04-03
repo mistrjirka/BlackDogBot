@@ -2,6 +2,8 @@ import { IKnowledgeDocument, IKnowledgeSearchResult, IKnowledgeSearchOptions } f
 import { DEFAULT_KNOWLEDGE_COLLECTION } from "../shared/constants.js";
 import { EmbeddingService } from "../services/embedding.service.js";
 import { VectorStoreService, IVectorRecord, IVectorSearchResult as IVectorSearchResultInternal } from "../services/vector-store.service.js";
+import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 import { generateId } from "../utils/id.js";
 
 //#region Public Functions
@@ -56,7 +58,12 @@ export async function searchKnowledgeAsync(options: IKnowledgeSearchOptions): Pr
 
     try {
       parsedMetadata = JSON.parse(result.metadata) as Record<string, unknown>;
-    } catch {
+    } catch (error: unknown) {
+      const logger = LoggerService.getInstance();
+      logger.warn("Failed to parse knowledge document metadata, using empty object", {
+        documentId: result.id,
+        error: extractErrorMessage(error),
+      });
       parsedMetadata = {};
     }
 

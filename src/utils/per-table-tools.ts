@@ -16,7 +16,7 @@ const WRITE_TO_TABLE_DESCRIPTION: string =
   "Auto-fills created_at, updated_at, and similar timestamp columns if missing. " +
   "Omit auto-increment primary key columns (they are assigned automatically).";
 
-const SQLITE_TO_ZOD_TYPE: Record<string, z.ZodType> = {
+export const SQLITE_TO_ZOD_TYPE: Record<string, z.ZodType> = {
   TEXT: z.string(),
   VARCHAR: z.string(),
   CHAR: z.string(),
@@ -117,7 +117,7 @@ export async function buildPerTableToolsAsync(): Promise<Record<string, DynamicS
         tools[toolName] = perTableTool;
       }
 
-      const updateTool = createUpdateTableTool(tableName, schema.columns.map(c => c.name), db.name);
+      const updateTool = createUpdateTableTool(tableName, schema.columns, db.name);
       const updateToolName = `update_table_${tableName}`;
 
       if (updateToolName in tools) {
@@ -177,7 +177,7 @@ export function buildSingleUpdateTableTool(
   tableName: string,
   columns: IColumnInfo[],
 ): { name: string; toolInstance: DynamicStructuredTool } {
-  const toolInstance = createUpdateTableTool(tableName, columns.map(c => c.name), databaseName);
+  const toolInstance = createUpdateTableTool(tableName, columns, databaseName);
   return {
     name: `update_table_${tableName}`,
     toolInstance,

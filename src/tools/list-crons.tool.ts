@@ -12,7 +12,9 @@ interface IListCronsTaskSummary {
   tools: string[];
   schedule: {
     type: string;
-    expression?: string;
+    intervalMinutes?: number;
+    startHour?: number | null;
+    startMinute?: number | null;
     intervalMs?: number;
     runAt?: string;
   };
@@ -41,8 +43,10 @@ function _mapTaskToSummary(task: IScheduledTask): IListCronsTaskSummary {
   };
 
   switch (task.schedule.type) {
-    case "cron":
-      scheduleSummary.expression = task.schedule.expression;
+    case "scheduled":
+      scheduleSummary.intervalMinutes = task.schedule.intervalMinutes;
+      scheduleSummary.startHour = task.schedule.startHour;
+      scheduleSummary.startMinute = task.schedule.startMinute;
       break;
     case "interval":
       scheduleSummary.intervalMs = task.schedule.intervalMs;

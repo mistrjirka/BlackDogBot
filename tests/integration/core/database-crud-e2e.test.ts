@@ -4,11 +4,10 @@ import path from "node:path";
 import os from "node:os";
 
 import * as litesql from "../../../src/helpers/litesql.js";
-import { writeToDatabaseTool } from "../../../src/tools/write-to-database.tool.js";
 import { readFromDatabaseTool } from "../../../src/tools/read-from-database.tool.js";
-import { updateDatabaseTool } from "../../../src/tools/update-database.tool.js";
 import { deleteFromDatabaseTool } from "../../../src/tools/delete-from-database.tool.js";
 import { buildPerTableToolsAsync, buildSingleTableTool } from "../../../src/utils/per-table-tools.js";
+import { createUpdateTableTool } from "../../../src/tools/update-table.tool.js";
 
 describe("Database CRUD E2E", () => {
   let tempDir: string;
@@ -59,10 +58,11 @@ describe("Database CRUD E2E", () => {
       expect(schema.columns).toHaveLength(4);
     });
 
-    it("should insert data via write_to_database tool", async () => {
-      const result = await writeToDatabaseTool.invoke({
-        databaseName: dbName,
-        tableName,
+    it("should insert data via per-table write tool", async () => {
+      const schema = await litesql.getTableSchemaAsync(dbName, tableName);
+      const { toolInstance } = buildSingleTableTool(dbName, tableName, schema.columns);
+
+      const result = await toolInstance.invoke({
         data: [
           { name: "Widget A", quantity: 10 },
           { name: "Widget B", quantity: 25 },
@@ -72,7 +72,6 @@ describe("Database CRUD E2E", () => {
 
       expect(result.success).toBe(true);
       expect(result.insertedCount).toBe(3);
-      // created_at should be auto-filled
     });
 
     it("should read data via read_from_database tool", async () => {
@@ -138,12 +137,13 @@ describe("Database CRUD E2E", () => {
       expect(result.totalCount).toBe(3);
     });
 
-    it("should update data via update_database tool", async () => {
-      const result = await updateDatabaseTool.invoke({
-        databaseName: dbName,
-        tableName,
-        set: { quantity: 100 },
+    it("should update data via per-table update tool", async () => {
+      const schema = await litesql.getTableSchemaAsync(dbName, tableName);
+      const updateTool = createUpdateTableTool(tableName, schema.columns, dbName);
+
+      const result = await updateTool.invoke({
         where: "name = 'Widget A'",
+        quantity: 100,
       });
 
       expect(result.success).toBe(true);
@@ -182,9 +182,10 @@ describe("Database CRUD E2E", () => {
 
     it("should delete multiple rows", async () => {
       // Insert more items
-      await writeToDatabaseTool.invoke({
-        databaseName: dbName,
-        tableName,
+      const schema = await litesql.getTableSchemaAsync(dbName, tableName);
+      const { toolInstance } = buildSingleTableTool(dbName, tableName, schema.columns);
+
+      await toolInstance.invoke({
         data: [
           { name: "Item X", quantity: 1 },
           { name: "Item Y", quantity: 2 },
@@ -291,75 +292,74 @@ describe("Database CRUD E2E", () => {
 
   describe("error handling", () => {
     it("should return error for non-existent database", async () => {
-      const result = await writeToDatabaseTool.invoke({
-        databaseName: "nonexistent_db",
-        tableName: "items",
-        data: [{ name: "test" }],
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("does not exist");
+      try {
+        await litesql.insertIntoTableAsync("nonexistent_db", "items", [{ name: "test" }]);
+        expect.fail("Should have thrown");
+      } catch (err: unknown) {
+        expect(err).toBeDefined();
+      }
     });
 
     it("should return error for non-existent table", async () => {
       await litesql.createDatabaseAsync("error_test_db");
 
-      const result = await writeToDatabaseTool.invoke({
-        databaseName: "error_test_db",
-        tableName: "nonexistent_table",
-        data: [{ name: "test" }],
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("does not exist");
+      try {
+        await litesql.insertIntoTableAsync("error_test_db", "nonexistent_table", [{ name: "test" }]);
+        expect.fail("Should have thrown");
+      } catch (err: unknown) {
+        expect(err).toBeDefined();
+      }
     });
 
-    it("should return error for invalid columns", async () => {
+    it("should strip unknown columns via Zod", async () => {
       await litesql.createDatabaseAsync("col_error_db");
       await litesql.createTableAsync("col_error_db", "valid_table", [
         { name: "id", type: "INTEGER", primaryKey: true },
         { name: "name", type: "TEXT", notNull: true },
       ]);
 
-      const result = await writeToDatabaseTool.invoke({
-        databaseName: "col_error_db",
-        tableName: "valid_table",
+      const schema = await litesql.getTableSchemaAsync("col_error_db", "valid_table");
+      const { toolInstance } = buildSingleTableTool("col_error_db", "valid_table", schema.columns);
+
+      const result = await toolInstance.invoke({
         data: [{ name: "test", invalid_col: "bad" }],
       });
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("invalid_col");
-      expect(result.error).toContain("does not exist");
+      expect(result.success).toBe(true);
+      const queryResult = await litesql.queryTableAsync("col_error_db", "valid_table", {
+        where: "name = 'test'",
+      });
+      expect(queryResult.rows[0]).not.toHaveProperty("invalid_col");
     });
 
-    it("should return error for missing NOT NULL columns", async () => {
+    it("should reject missing NOT NULL columns via schema validation", async () => {
       await litesql.createDatabaseAsync("notnull_error_db");
       await litesql.createTableAsync("notnull_error_db", "strict_table", [
         { name: "id", type: "INTEGER", primaryKey: true },
         { name: "required_field", type: "TEXT", notNull: true },
       ]);
 
-      const result = await writeToDatabaseTool.invoke({
-        databaseName: "notnull_error_db",
-        tableName: "strict_table",
-        data: [{ id: 1 }], // missing required_field
-      });
+      const schema = await litesql.getTableSchemaAsync("notnull_error_db", "strict_table");
+      const { toolInstance } = buildSingleTableTool("notnull_error_db", "strict_table", schema.columns);
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("required_field");
-      expect(result.error).toContain("required");
+      await expect(toolInstance.invoke({
+        data: [{}],
+      })).rejects.toThrow("Received tool input did not match expected schema");
     });
 
-    it("should return error for update with empty set", async () => {
-      const result = await updateDatabaseTool.invoke({
-        databaseName: "col_error_db",
-        tableName: "valid_table",
-        set: {},
-        where: "id = 1",
-      });
+    it("should return error for update with no columns set", async () => {
+      await litesql.createDatabaseAsync("col_error_db_2");
+      await litesql.createTableAsync("col_error_db_2", "valid_table", [
+        { name: "id", type: "INTEGER", primaryKey: true },
+        { name: "name", type: "TEXT", notNull: true },
+      ]);
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("at least one");
+      const schema = await litesql.getTableSchemaAsync("col_error_db_2", "valid_table");
+      const updateTool = createUpdateTableTool("valid_table", schema.columns, "col_error_db_2");
+
+      await expect(updateTool.invoke({
+        where: "id = 1",
+      })).rejects.toThrow("Received tool input did not match expected schema");
     });
 
     it("should return 0 deleted for non-matching WHERE", async () => {

@@ -13,7 +13,14 @@ import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
 
-interface IEditCronInstructionsResult {
+export interface IEditCronInstructionsInput {
+  taskId: string;
+  instructions: string;
+  intention: string;
+  tools?: string[];
+}
+
+export interface IEditCronInstructionsResult {
   success: boolean;
   task?: IScheduledTask;
   display?: string;
@@ -44,138 +51,12 @@ const instructionVerificationResultSchema = z.object({
 
 //#endregion Constants
 
-//#region Helper methods
-
-function _extractTextFromAiContent(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (Array.isArray(content)) {
-    const textParts: string[] = content
-      .filter((part: unknown): part is { type: string; text?: unknown } => typeof part === "object" && part !== null)
-      .filter((part: { type: string; text?: unknown }): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
-      .map((part: { type: "text"; text: string }) => part.text);
-
-    return textParts.join("\n").trim();
-  }
-
-  return "";
-}
-
-function _extractTextFromReasoningContent(additionalKwargs: unknown): string {
-  if (typeof additionalKwargs !== "object" || additionalKwargs === null) {
-    return "";
-  }
-
-  const rawReasoning: unknown = (additionalKwargs as { reasoning_content?: unknown }).reasoning_content;
-  if (typeof rawReasoning === "string") {
-    return rawReasoning;
-  }
-
-  return "";
-}
-
-function _extractTopLevelJsonObjectCandidates(rawText: string): string[] {
-  const candidates: string[] = [];
-  let depth: number = 0;
-  let inString: boolean = false;
-  let escape: boolean = false;
-  let objectStart: number = -1;
-
-  for (let i: number = 0; i < rawText.length; i++) {
-    const char: string = rawText[i];
-
-    if (inString) {
-      if (escape) {
-        escape = false;
-        continue;
-      }
-
-      if (char === "\\") {
-        escape = true;
-        continue;
-      }
-
-      if (char === "\"") {
-        inString = false;
-      }
-
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      if (depth === 0) {
-        objectStart = i;
-      }
-
-      depth++;
-      continue;
-    }
-
-    if (char === "}") {
-      if (depth === 0) {
-        continue;
-      }
-
-      depth--;
-      if (depth === 0 && objectStart >= 0) {
-        candidates.push(rawText.slice(objectStart, i + 1));
-        objectStart = -1;
-      }
-    }
-  }
-
-  return candidates;
-}
-
-function _parseVerificationResultOrThrow(rawText: string): IInstructionVerificationResult {
-  const trimmed: string = rawText.trim();
-
-  const parseWithSchema = (candidate: string): IInstructionVerificationResult | null => {
-    try {
-      const parsedJson: unknown = JSON.parse(candidate);
-      const parsed = instructionVerificationResultSchema.safeParse(parsedJson);
-      return parsed.success ? parsed.data : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const candidates: string[] = [trimmed, ..._extractTopLevelJsonObjectCandidates(trimmed)];
-
-  for (const candidate of candidates) {
-    const parsed: IInstructionVerificationResult | null = parseWithSchema(candidate);
-    if (parsed !== null) {
-      return parsed;
-    }
-  }
-
-  throw new Error(`Verifier returned invalid structured response: ${trimmed.slice(0, 200)}`);
-}
-
-//#endregion Helper methods
-
 //#region Tool
 
-const executeEditCronInstructions = async ({
-    taskId,
-    instructions,
-    intention,
-    tools,
-  }: {
-    taskId: string;
-    instructions: string;
-    intention: string;
-    tools?: string[];
-  }): Promise<IEditCronInstructionsResult> => {
+export async function executeEditCronInstructionsAsync(input: IEditCronInstructionsInput): Promise<IEditCronInstructionsResult> {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
+  const { taskId, instructions, intention, tools } = input;
 
   try {
     const existingTask: IScheduledTask | undefined = await scheduler.getTaskAsync(taskId);
@@ -201,8 +82,9 @@ const executeEditCronInstructions = async ({
 
     if (tools !== undefined) {
       const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = tools.filter((t: string) => !validToolSet.has(t) && !isDynamicWriteTableTool(t));
+      const isDynamicTableTool = (toolName: string): boolean =>
+        toolName.startsWith("write_table_") || toolName.startsWith("update_table_");
+      const invalidTools: string[] = tools.filter((t: string) => !validToolSet.has(t) && !isDynamicTableTool(t));
       if (invalidTools.length > 0) {
         return {
           success: false,
@@ -232,8 +114,8 @@ const executeEditCronInstructions = async ({
     if (mentionsRunCmd && mentionsSqlite) {
       const recommendedWriter: string | undefined = toolsToVerify.find((toolName: string) => toolName.startsWith("write_table_"));
       const guidance: string = recommendedWriter
-        ? `Use ${recommendedWriter} for inserts and database tools (read_from_database/update_database/delete_from_database) for mutations instead of run_cmd/sqlite3.`
-        : "Use write_table_<tableName> for inserts and database tools (read_from_database/update_database/delete_from_database) instead of run_cmd/sqlite3.";
+        ? `Use ${recommendedWriter} for inserts, update_table_<tableName> for updates, and read_from_database/delete_from_database for queries and deletes instead of run_cmd/sqlite3.`
+        : "Use write_table_<tableName> for inserts, update_table_<tableName> for updates, and read_from_database/delete_from_database for queries and deletes instead of run_cmd/sqlite3.";
 
       return {
         success: false,
@@ -254,7 +136,7 @@ ${toolContextBlock}
 
 RULES:
 
-1. Schedule/timing is already encoded in the cron expression — do NOT require the instructions to re-state when or how often the task runs.
+1. Schedule/timing is already encoded in the schedule configuration — do NOT require the instructions to re-state when or how often the task runs.
 
 2. Tools that handle routing or delivery implicitly do NOT need extra config in the instructions.
    Example: "send_message" always reaches the correct user — instructions that say "send the results" or "notify the user" are VALID without specifying a chat ID or destination.
@@ -278,11 +160,12 @@ RULES:
    - Set notifyUser=false for background tasks where only explicit send_message tool calls should reach Telegram (e.g. cleanup, archival, internal data processing).
    - The send_message tool ALWAYS sends to Telegram regardless of notifyUser — notifyUser only gates the automatic forwarding of the agent's final text output.
 
-7. Database rules are strict:
-   - NEVER use run_cmd with sqlite/sqlite3 for internal database work.
-   - For inserts, prefer write_table_<tableName> tools when available.
-   - Use read_from_database/update_database/delete_from_database for database access and mutation.
-   - Use just database names without .db extension.
+ 7. Database rules are strict:
+    - NEVER use run_cmd with sqlite/sqlite3 or any other database CLI for internal database work.
+    - ALWAYS use write_table_<tableName> for inserts and update_table_<tableName> for updates when available.
+    - Use read_from_database for queries and delete_from_database for deletes.
+    - Use just database names without .db extension.
+    - If write_table_<tableName> or update_table_<tableName> tools are available, instructions MUST use them — never run_cmd for database operations.
 
 8. If instructions mention tools not present in the tool list, they are invalid unless those tools are being added in this same update.
 
@@ -317,25 +200,16 @@ Output a JSON object with:
 `;
 
     const model = createChatModel(ConfigService.getInstance().getAiConfig());
-
-    const verificationResponse = await model.invoke(verifierPrompt);
-    const rawText: string = _extractTextFromAiContent(verificationResponse.content);
-    const rawReasoningText: string = _extractTextFromReasoningContent(
-      (verificationResponse as { additional_kwargs?: unknown }).additional_kwargs,
-    );
-
-    logger.debug(`[${TOOL_NAME}] Verifier raw response`, {
-      contentPreview: rawText.slice(0, 200),
-      reasoningPreview: rawReasoningText.slice(0, 200),
-      contentLength: rawText.length,
-      reasoningLength: rawReasoningText.length,
+    const structuredModel = model.withStructuredOutput(instructionVerificationResultSchema, {
+      name: "instruction_verification",
     });
 
-    const mergedRawText: string = [rawText, rawReasoningText]
-      .filter((value: string): boolean => value.trim().length > 0)
-      .join("\n");
+    const verificationResult: IInstructionVerificationResult = await structuredModel.invoke(verifierPrompt);
 
-    const verificationResult: IInstructionVerificationResult = _parseVerificationResultOrThrow(mergedRawText);
+    logger.debug(`[${TOOL_NAME}] Verifier structured response`, {
+      isClear: verificationResult.isClear,
+      missingContextPreview: verificationResult.missingContext.slice(0, 200),
+    });
 
     if (!verificationResult.isClear) {
       const errorMsg =
@@ -384,10 +258,10 @@ Output a JSON object with:
 
     return { success: false, error: errorMessage };
   }
-};
+}
 
 export const editCronInstructionsTool = tool(
-  executeEditCronInstructions,
+  executeEditCronInstructionsAsync,
   {
     name: "edit_cron_instructions",
     description: TOOL_DESCRIPTION,

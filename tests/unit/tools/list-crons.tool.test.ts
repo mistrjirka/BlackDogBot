@@ -18,8 +18,10 @@ function createScheduledTask(overrides: Partial<IScheduledTask> = {}): ISchedule
     instructions: "Do test work",
     tools: ["read_from_database", "send_message"],
     schedule: {
-      type: "cron",
-      expression: "0 * * * *",
+      type: "scheduled",
+      intervalMinutes: 60,
+      startHour: null,
+      startMinute: null,
     },
     enabled: true,
     notifyUser: false,

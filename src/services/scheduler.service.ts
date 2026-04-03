@@ -30,7 +30,9 @@ import {
 
 const DEFAULT_MAX_PARALLEL_CRONS: number = 1;
 const DEFAULT_CRON_QUEUE_SIZE: number = 3;
-const LEGACY_WRITE_TOOL_NAMES: readonly string[] = ["write_to_database", "write_database"];
+const LEGACY_WRITE_TOOL_NAMES: readonly string[] = ["write_database"];
+const DRAIN_POLL_INTERVAL_MS: number = 25;
+const MAX_DRAIN_WAIT_MS: number = 30000;
 
 //#endregion Const
 
@@ -343,6 +345,9 @@ export class SchedulerService {
       entry.endsWith(".json"),
     );
 
+    // Migrate old cron-expression schedule files to new interval-based format
+    await this._migrateCronExpressionSchedulesAsync(cronDir, jsonFiles);
+
     // Build per-table write tool names once to migrate legacy generic write tools
     // in existing persisted cron tasks.
     let perTableWriteToolNames: string[] = [];
@@ -391,7 +396,7 @@ export class SchedulerService {
 
         this._tasks.set(effectiveTask.taskId, effectiveTask);
       } catch (error: unknown) {
-        this._logger.warn("Failed to parse task file, skipping", {
+        this._logger.error("Failed to parse task file — task will not be loaded", {
           filePath,
           error: extractErrorMessage(error),
         });
@@ -457,14 +462,202 @@ export class SchedulerService {
     };
   }
 
+  /**
+   * One-time migration: converts old cron-expression schedule files to the new
+   * interval-based format (type: "scheduled" with intervalMinutes/startHour/startMinute).
+   *
+   * Reads raw JSON (bypasses schema validation which would reject old format),
+   * detects schedule.type === "cron", converts to new format, and writes back.
+   */
+  private async _migrateCronExpressionSchedulesAsync(
+    cronDir: string,
+    jsonFiles: string[],
+  ): Promise<void> {
+    const migratedCount: number = 0;
+
+    for (const fileName of jsonFiles) {
+      const filePath: string = path.join(cronDir, fileName);
+
+      try {
+        const content: string = await fs.readFile(filePath, "utf-8");
+        const raw: Record<string, unknown> = JSON.parse(content);
+
+        const schedule = raw.schedule as Record<string, unknown> | undefined;
+        if (!schedule || schedule.type !== "cron") {
+          continue;
+        }
+
+        const expression: string = (schedule.expression as string) ?? "";
+        const migrated = this._convertCronExpressionToScheduled(expression);
+
+        if (!migrated) {
+          this._logger.warn("Could not migrate cron expression, skipping", {
+            filePath,
+            expression,
+          });
+          continue;
+        }
+
+        raw.schedule = {
+          type: "scheduled",
+          intervalMinutes: migrated.intervalMinutes,
+          startHour: migrated.startHour,
+          startMinute: migrated.startMinute,
+        };
+        raw.updatedAt = new Date().toISOString();
+
+        await fs.writeFile(filePath, JSON.stringify(raw, null, 2), "utf-8");
+
+        this._logger.info("Migrated cron expression schedule to interval format", {
+          filePath,
+          oldExpression: expression,
+          newSchedule: raw.schedule,
+        });
+      } catch (error: unknown) {
+        this._logger.error("Failed to migrate cron expression schedule — task may not run correctly", {
+          filePath,
+          error: extractErrorMessage(error),
+        });
+      }
+    }
+
+    if (migratedCount > 0) {
+      this._logger.info("Cron expression migration complete", { migratedCount });
+    }
+  }
+
+  /**
+   * Converts a cron expression to the new scheduled interval format.
+   * Returns null if the expression cannot be converted.
+   *
+   * Supported patterns:
+   * - "0 H * * *" means daily at hour H means intervalMinutes=1440, startHour=H, startMinute=0
+   * - "M * * * *" means every hour at minute M means intervalMinutes=60, startHour=null, startMinute=M
+   * - "M STAR_SLASH_N * * *" means every N hours at minute M means intervalMinutes=N*60, startHour=null, startMinute=M
+   * - "STAR_SLASH_M * * * *" means every M minutes means intervalMinutes=M, startHour=null, startMinute=null
+   * - "0 0 * * *" means daily at midnight means intervalMinutes=1440, startHour=0, startMinute=0
+   */
+  private _convertCronExpressionToScheduled(
+    expression: string,
+  ): { intervalMinutes: number; startHour: number | null; startMinute: number | null } | null {
+    const parts = expression.trim().split(/\s+/);
+    if (parts.length < 5) {
+      return null;
+    }
+
+    const [minute, hour, _dayOfMonth, _month, _dayOfWeek] = parts;
+
+    // Parse minute field
+    const minuteParsed = this._parseCronMinute(minute);
+    if (!minuteParsed) {
+      return null;
+    }
+
+    // Parse hour field
+    const hourParsed = this._parseCronHour(hour);
+    if (!hourParsed) {
+      return null;
+    }
+
+    const { type: minuteType, value: minuteValue } = minuteParsed;
+    const { type: hourType, value: hourValue } = hourParsed;
+
+    // Case 1: Fixed hour, fixed minute → daily at specific time
+    // "0 8 * * *" → every day at 8:00
+    if (hourType === "fixed" && minuteType === "fixed") {
+      return {
+        intervalMinutes: 1440,
+        startHour: hourValue,
+        startMinute: minuteValue,
+      };
+    }
+
+    // Case 2: Every N hours, fixed minute → interval with minute anchor
+    // "30 */2 * * *" → every 2 hours at :30
+    if (hourType === "interval" && minuteType === "fixed") {
+      return {
+        intervalMinutes: hourValue * 60,
+        startHour: null,
+        startMinute: minuteValue,
+      };
+    }
+
+    // Case 3: Every hour, fixed minute → hourly at minute M
+    // "30 * * * *" → every hour at :30
+    if (hourType === "every" && minuteType === "fixed") {
+      return {
+        intervalMinutes: 60,
+        startHour: null,
+        startMinute: minuteValue,
+      };
+    }
+
+    // Case 4: Every N minutes → simple interval
+    // "*/15 * * * *" → every 15 minutes
+    if (hourType === "every" && minuteType === "interval") {
+      return {
+        intervalMinutes: minuteValue,
+        startHour: null,
+        startMinute: null,
+      };
+    }
+
+    // Case 5: Every minute
+    // "* * * * *" → every minute
+    if (hourType === "every" && minuteType === "every") {
+      return {
+        intervalMinutes: 1,
+        startHour: null,
+        startMinute: null,
+      };
+    }
+
+    // Unsupported pattern
+    return null;
+  }
+
+  private _parseCronMinute(field: string): { type: "fixed" | "interval" | "every"; value: number } | null {
+    if (field === "*") {
+      return { type: "every", value: 1 };
+    }
+    if (field.startsWith("*/")) {
+      const val = parseInt(field.slice(2), 10);
+      if (Number.isNaN(val) || val < 1) {
+        return null;
+      }
+      return { type: "interval", value: val };
+    }
+    const val = parseInt(field, 10);
+    if (Number.isNaN(val) || val < 0 || val > 59) {
+      return null;
+    }
+    return { type: "fixed", value: val };
+  }
+
+  private _parseCronHour(field: string): { type: "fixed" | "interval" | "every"; value: number } | null {
+    if (field === "*") {
+      return { type: "every", value: 1 };
+    }
+    if (field.startsWith("*/")) {
+      const val = parseInt(field.slice(2), 10);
+      if (Number.isNaN(val) || val < 1) {
+        return null;
+      }
+      return { type: "interval", value: val };
+    }
+    const val = parseInt(field, 10);
+    if (Number.isNaN(val) || val < 0 || val > 23) {
+      return null;
+    }
+    return { type: "fixed", value: val };
+  }
+
   private async _waitForRunningTasksToDrainAsync(): Promise<void> {
-    const pollIntervalMs = 25;
-    const maxWaitMs = 30000;
     let waitedMs = 0;
 
-    while (this._runningTaskCount > 0 && waitedMs < maxWaitMs) {
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-      waitedMs += pollIntervalMs;
+    while (this._runningTaskCount > 0 && waitedMs < MAX_DRAIN_WAIT_MS) {
+      await new Promise((resolve) => setTimeout(resolve, DRAIN_POLL_INTERVAL_MS));
+      waitedMs += DRAIN_POLL_INTERVAL_MS;
     }
 
     if (this._runningTaskCount > 0) {
@@ -617,21 +810,25 @@ export class SchedulerService {
     const schedule = task.schedule;
 
     switch (schedule.type) {
-      case "cron": {
+      case "scheduled": {
         const config = ConfigService.getInstance().getConfig();
         const timezone = config.scheduler.timezone;
-        const nextRun: Date | null = this._cronScheduler.addJob(
+        const nextRun: Date | null = this._cronScheduler.addScheduledJob(
           task.taskId,
-          schedule.expression,
+          schedule.intervalMinutes,
+          schedule.startHour,
+          schedule.startMinute,
           timezone,
           () => {
             this._dispatchOrEnqueue(task, executeCallback);
           },
         );
 
-        this._logger.debug("Scheduled cron task", {
+        this._logger.debug("Scheduled interval task", {
           taskId: task.taskId,
-          expression: schedule.expression,
+          intervalMinutes: schedule.intervalMinutes,
+          startHour: schedule.startHour,
+          startMinute: schedule.startMinute,
           timezone: timezone ?? "server local",
           nextRun: nextRun ? nextRun.toISOString() : "none",
         });

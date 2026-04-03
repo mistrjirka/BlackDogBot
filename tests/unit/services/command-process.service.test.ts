@@ -101,4 +101,16 @@ describe("CommandProcessService", () => {
     const handlesAfter = (service as any)._processes.size;
     expect(handlesAfter).toBe(handlesBefore - 1);
   });
+
+  it("spawnProcessAsync throws with clear error for non-existent cwd", async () => {
+    await expect(
+      service.spawnProcessAsync("echo test", "/nonexistent/path/that/does/not/exist", 5000),
+    ).rejects.toThrow(/working directory does not exist/i);
+  });
+
+  it("spawnProcessAsync throws with clear error for invalid cwd like tilde-in-path", async () => {
+    await expect(
+      service.spawnProcessAsync("echo test", "/~/.blackdogbot", 5000),
+    ).rejects.toThrow(/working directory does not exist/i);
+  });
 });

@@ -12,6 +12,15 @@ describe("ReasoningParserService", () => {
     expect(parsed.cleanedContent).toBe("Final answer text");
   });
 
+  it("extracts reasoning and cleaned answer from thinking tags", () => {
+    const parsed = ReasoningParserService.parseThinkTags(
+      "<thinking>Reasoning line\nSecond reasoning line</thinking>\nFinal answer text"
+    );
+
+    expect(parsed.reasoning).toBe("Reasoning line\nSecond reasoning line");
+    expect(parsed.cleanedContent).toBe("Final answer text");
+  });
+
   it("extracts answer from explicit Final Answer marker", () => {
     const extracted = ReasoningParserService.extractAnswerFromReasoning(
       "Thinking...\n\n**Final Answer**\nThe final value is 42."
@@ -60,6 +69,22 @@ describe("ReasoningParserService", () => {
     expect(parsed).toHaveLength(1);
     expect(parsed[0].name).toBe("get_cron");
     expect(parsed[0].arguments).toBe('{"taskId":"abc"}');
+  });
+
+  it("coerces python-style literals in qwen parameter envelopes", () => {
+    const parsed = ReasoningParserService.parseToolCallsFromText(
+      "<tool_call><function=add_cron><parameter=notifyUser>True</parameter><parameter=maxRetries>3</parameter><parameter=notes>Hello</parameter><parameter=fallback>None</parameter><parameter=enabled>False</parameter></function></tool_call>",
+    );
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].name).toBe("add_cron");
+    expect(JSON.parse(parsed[0].arguments)).toEqual({
+      notifyUser: true,
+      maxRetries: 3,
+      notes: "Hello",
+      fallback: null,
+      enabled: false,
+    });
   });
 
   it("normalizes object arguments to JSON string", () => {

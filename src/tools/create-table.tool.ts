@@ -95,7 +95,7 @@ export const createTableTool = tool(
 
       const updateTool: DynamicStructuredTool = createUpdateTableTool(
         tableName,
-        columnInfos.map((c) => c.name),
+        columnInfos,
         databaseName,
       );
 

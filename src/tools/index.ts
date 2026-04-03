@@ -37,8 +37,6 @@ export { createTableTool } from "./create-table.tool.js";
 export { dropTableTool } from "./drop-table.tool.js";
 export { queryDatabaseTool } from "./query-database.tool.js";
 export { readFromDatabaseTool } from "./read-from-database.tool.js";
-export { writeToDatabaseTool } from "./write-to-database.tool.js";
-export { updateDatabaseTool } from "./update-database.tool.js";
 export { deleteFromDatabaseTool } from "./delete-from-database.tool.js";
 export { FileReadTracker } from "../utils/file-tools-helper.js";
 export type { IFileReadTracker } from "../utils/file-tools-helper.js";

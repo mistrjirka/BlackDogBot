@@ -55,10 +55,12 @@ interface IResolvedProviderConfig {
 interface IModelProfileDefaults {
   reasoningFormat?: string;
   parallelToolCalls?: boolean;
+  disableThinkingOnRetry?: boolean;
   chatTemplateKwargs?: Record<string, unknown>;
 }
 
 interface IModelProfileYaml {
+  activePatches?: string[];
   defaults?: IModelProfileDefaults;
 }
 

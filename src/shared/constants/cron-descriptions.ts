@@ -124,17 +124,6 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Args: databaseName (string, required); tableName (string, required); " +
     "where (string, optional SQL WHERE); orderBy (string, optional); limit (number, optional, default 100); columns (string[], optional).",
 
-  write_to_database:
-    "Deprecated generic write tool. Prefer table-specific tools named write_table_<tableName> (for example write_table_news_items). " +
-    "Use just the database name, not a file path. Args: databaseName (string, required); tableName (string, required); " +
-    "data (array of row objects, required, e.g. [{title: 'Hello', score: 5}]).",
-
-  update_database:
-    "Update rows in a database table. Requires a WHERE clause for safety. " +
-    "Use just the database name, not a file path. " +
-    "Args: databaseName (string, required); tableName (string, required); " +
-    "set (object of column-value pairs, required); where (string, required).",
-
   delete_from_database:
     "Delete rows from a database table. Requires a WHERE clause for safety. " +
     "Use just the database name, not a file path. " +

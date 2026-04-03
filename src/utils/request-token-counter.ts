@@ -55,10 +55,13 @@ export function countRequestBodyTokens(requestBody: string): IRequestTokenBreakd
       toolCount: tools.length,
     };
   } catch (error: unknown) {
-    logger.warn("Failed to parse request body for token counting", { error: String(error) });
+    logger.error("Failed to parse request body for token counting — returning null to signal failure", {
+      error: String(error),
+    });
 
+    // Return null-like breakdown so caller knows counting failed
     return {
-      total: 0,
+      total: -1,
       messages: 0,
       image: 0,
       tools: 0,

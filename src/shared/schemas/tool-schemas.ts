@@ -313,7 +313,7 @@ export const getSkillFileToolOutputSchema = z.object({
 
 /** Maps deprecated tool names to their replacement(s). */
 export const CRON_TOOL_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  query_database: ["read_from_database", "update_database", "delete_from_database"],
+  query_database: ["read_from_database", "delete_from_database"],
 };
 
 export const CRON_VALID_TOOL_NAMES = [
@@ -345,7 +345,6 @@ export const CRON_VALID_TOOL_NAMES = [
   "create_table",
   "drop_table",
   "read_from_database",
-  "update_database",
   "delete_from_database",
   "call_skill",
   "get_skill_file",
@@ -368,17 +367,33 @@ export const addCronToolInputSchema = z.object({
     .array()
     .min(1)
     .describe("Tool names available to the task agent (required, at least one). send_message performs internal deduplication against previous cron messages."),
-  scheduleType: z.enum(["once", "interval", "cron"])
-    .describe("Schedule type (required): once, interval, or cron"),
+  scheduleType: z.enum(["once", "interval", "scheduled"])
+    .describe("Schedule type (required): once, interval, or scheduled"),
   scheduleRunAt: z.string()
     .optional()
     .describe("Required when scheduleType='once'. ISO 8601 datetime, e.g. '2025-06-01T10:00:00Z'"),
   scheduleIntervalMs: z.number()
     .optional()
     .describe("Required when scheduleType='interval'. Interval in milliseconds"),
-  scheduleCron: z.string()
+  scheduleIntervalMinutes: z.number()
+    .int()
+    .positive()
     .optional()
-    .describe("Required when scheduleType='cron'. Cron expression, e.g. '0 */6 * * *'"),
+    .describe("Required when scheduleType='scheduled'. Minutes between runs. Common: 2,5,10,15,30,60(hourly),120(2h),180(3h),240(4h),360(6h),720(12h),1440(daily),10080(weekly)"),
+  scheduleStartHour: z.number()
+    .int()
+    .min(0)
+    .max(23)
+    .nullable()
+    .optional()
+    .describe("Optional: anchor the interval to a specific hour of day (0-23). E.g., 9 for 9 AM. When omitted (null), the interval starts from the current time. Use together with scheduleStartMinute for precise scheduling."),
+  scheduleStartMinute: z.number()
+    .int()
+    .min(0)
+    .max(59)
+    .nullable()
+    .optional()
+    .describe("Optional: anchor the interval to a specific minute of hour (0-59). E.g., 30 for :30. When omitted (null), the interval starts from the current time. Use together with scheduleStartHour for precise scheduling."),
   notifyUser: z.boolean()
     .describe("Whether to send a Telegram notification when this task completes (required)"),
 }).superRefine((data, ctx) => {
@@ -402,12 +417,12 @@ export const addCronToolInputSchema = z.object({
     }
   }
 
-  if (data.scheduleType === "cron") {
-    if (!data.scheduleCron || data.scheduleCron.trim().length === 0) {
+  if (data.scheduleType === "scheduled") {
+    if (data.scheduleIntervalMinutes === undefined || !Number.isFinite(data.scheduleIntervalMinutes) || data.scheduleIntervalMinutes <= 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["scheduleCron"],
-        message: "scheduleCron is required when scheduleType is 'cron'",
+        path: ["scheduleIntervalMinutes"],
+        message: "scheduleIntervalMinutes is required and must be > 0 when scheduleType is 'scheduled'",
       });
     }
   }
@@ -461,7 +476,7 @@ export const editCronToolInputSchema = z.object({
     .min(1)
     .optional()
     .describe("Updated list of available tool names. send_message performs internal deduplication against previous cron messages."),
-  scheduleType: z.enum(["once", "interval", "cron"])
+  scheduleType: z.enum(["once", "interval", "scheduled"])
     .optional()
     .describe("Optional schedule type hint. Schedule type is immutable and cannot be changed by edit_cron."),
   scheduleRunAt: z.string()
@@ -470,9 +485,25 @@ export const editCronToolInputSchema = z.object({
   scheduleIntervalMs: z.number()
     .optional()
     .describe("Interval in milliseconds for 'interval' schedule"),
-  scheduleCron: z.string()
+  scheduleIntervalMinutes: z.number()
+    .int()
+    .positive()
     .optional()
-    .describe("Cron expression for 'cron' schedule"),
+    .describe("Interval in minutes between runs for 'scheduled' schedule"),
+  scheduleStartHour: z.number()
+    .int()
+    .min(0)
+    .max(23)
+    .nullable()
+    .optional()
+    .describe("Optional: anchor the interval to a specific hour of day (0-23) for 'scheduled' schedule. When omitted (null), the interval starts from the current time."),
+  scheduleStartMinute: z.number()
+    .int()
+    .min(0)
+    .max(59)
+    .nullable()
+    .optional()
+    .describe("Optional: anchor the interval to a specific minute of hour (0-59) for 'scheduled' schedule. When omitted (null), the interval starts from the current time."),
   notifyUser: z.boolean()
     .optional()
     .describe("Whether to send a Telegram notification"),
@@ -518,7 +549,13 @@ export const listCronsToolOutputSchema = z.object({
       .array(),
     schedule: z.object({
       type: z.string(),
-      expression: z.string()
+      intervalMinutes: z.number()
+        .optional(),
+      startHour: z.number()
+        .nullable()
+        .optional(),
+      startMinute: z.number()
+        .nullable()
         .optional(),
       intervalMs: z.number()
         .optional(),

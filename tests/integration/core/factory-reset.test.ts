@@ -132,11 +132,14 @@ describe("factoryResetAsync", () => {
     await expect(fs.access(chatsFile)).rejects.toThrow();
   });
 
-  it("should delete chat-checkpoints.db", async () => {
+  it("should reset chat-checkpoints.db (delete and recreate)", async () => {
     await factoryResetAsync();
 
     const checkpointsDb: string = path.join(tempDir, ".blackdogbot", "chat-checkpoints.db");
-    await expect(fs.access(checkpointsDb)).rejects.toThrow();
+    // The checkpointer recreates the file after deletion, so it should exist but be fresh
+    await expect(fs.access(checkpointsDb)).resolves.toBeUndefined();
+    const stats = await fs.stat(checkpointsDb);
+    expect(stats.size).toBeGreaterThanOrEqual(0);
   });
 
   it("should delete skill state files but preserve skill definitions", async () => {

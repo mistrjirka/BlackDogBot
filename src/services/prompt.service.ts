@@ -16,6 +16,7 @@ import {
   getCacheDir,
   ensureDirectoryExistsAsync,
 } from "../utils/paths.js";
+import { LoggerService } from "./logger.service.js";
 
 //#region Interfaces
 
@@ -47,6 +48,7 @@ export class PromptService {
   private _defaultsDir: string;
   private _initialized: boolean;
   private _promptCache: Map<string, string>;
+  private _logger: LoggerService;
 
   //#endregion Data members
 
@@ -57,6 +59,7 @@ export class PromptService {
     this._defaultsDir = "";
     this._initialized = false;
     this._promptCache = new Map<string, string>();
+    this._logger = LoggerService.getInstance();
   }
 
   //#endregion Constructors
@@ -331,7 +334,16 @@ export class PromptService {
         lastAppliedDefaultsFingerprint: fingerprint,
         updatedAt,
       };
-    } catch {
+    } catch (error: unknown) {
+      const code: string | undefined = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return null;
+      }
+
+      const message: string = error instanceof Error ? error.message : String(error);
+      this._logger.warn("Failed to read prompt sync state — treating as missing", {
+        error: message,
+      });
       return null;
     }
   }

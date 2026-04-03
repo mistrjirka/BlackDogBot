@@ -6,6 +6,7 @@ description: >-
 defaults:
   reasoningFormat: none
   parallelToolCalls: true
+  disableThinkingOnRetry: true
   chatTemplateKwargs:
     enable_thinking: true
 

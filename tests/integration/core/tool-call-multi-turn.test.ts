@@ -20,6 +20,10 @@ import { listCronsTool, getCronTool } from "../../../src/tools/index.js";
 import { SchedulerService } from "../../../src/services/scheduler.service.js";
 import type { IScheduledTask } from "../../../src/shared/types/index.js";
 import type { IConfig } from "../../../src/shared/types/config.types.js";
+import * as litesql from "../../../src/helpers/litesql.js";
+import { addCronTool } from "../../../src/tools/add-cron.tool.js";
+import { buildPerTableToolsAsync } from "../../../src/utils/per-table-tools.js";
+import { createChatModel } from "../../../src/services/langchain-model.service.js";
 
 const env = createTestEnvironment("tool-call-multi-turn");
 
@@ -225,12 +229,53 @@ describe("Tool Call Multi-Turn E2E", () => {
 
       const result = await agent.processMessageForChatAsync(
         chatId,
-        `Create database ${databaseName} and create table ${tableName} with columns id INTEGER primary key, title TEXT not null, and created_at TEXT not null. Then insert exactly one row using ONLY tool ${writeToolName}. Use title "alpha" and created_at "2026-01-01T00:00:00Z". Do not use write_to_database and do not use run_cmd/sqlite3. If tools are missing, say so explicitly.`,
+        `Create database ${databaseName} and create table ${tableName} with columns id INTEGER primary key, title TEXT not null, and created_at TEXT not null. Then insert exactly one row using ONLY tool ${writeToolName}. Use title "alpha" and created_at "2026-01-01T00:00:00Z". Do not use run_cmd/sqlite3. If tools are missing, say so explicitly.`,
       );
 
       expect(result.stepsCount).toBeGreaterThanOrEqual(1);
       expect(observedToolNames).toContain(writeToolName);
       expect(result.text.length).toBeGreaterThan(0);
+    }, 180000);
+
+    it("should select dynamic write_table tool when calling add_cron", async () => {
+      const suffix = Date.now().toString().slice(-6);
+      const databaseName = `cron_dynamic_db_${suffix}`;
+      const tableName = `cron_items_${suffix}`;
+      const writeToolName = `write_table_${tableName}`;
+      const cronName = `cron-insert-${suffix}`;
+
+      await litesql.createDatabaseAsync(databaseName);
+      await litesql.createTableAsync(databaseName, tableName, [
+        { name: "id", type: "INTEGER", primaryKey: true },
+        { name: "title", type: "TEXT", notNull: true },
+        { name: "created_at", type: "TEXT", notNull: true },
+      ]);
+
+      const perTableTools = await buildPerTableToolsAsync();
+      const dynamicWriteTool = perTableTools[writeToolName];
+
+      expect(dynamicWriteTool).toBeDefined();
+
+      const aiConfig = ConfigService.getInstance().getConfig().ai;
+      const model = createChatModel(aiConfig);
+      const modelWithTools = model.bindTools([addCronTool, dynamicWriteTool], {
+        tool_choice: "add_cron",
+      });
+
+      const response = await modelWithTools.invoke(
+        `Call add_cron with name=${cronName}, description='insert test row hourly', scheduleType='interval', scheduleIntervalMs=7200000, notifyUser=false, and instructions saying to insert into ${tableName} in ${databaseName}. In add_cron.tools include ${writeToolName}.`,
+      );
+
+      const toolCalls = response.tool_calls ?? [];
+      const addCronCall = toolCalls.find((toolCall) => toolCall.name === "add_cron");
+
+      expect(addCronCall).toBeDefined();
+
+      const addCronArgsRecord: Record<string, unknown> = (addCronCall?.args ?? {}) as Record<string, unknown>;
+      const selectedToolsRaw: unknown = addCronArgsRecord.tools;
+      const selectedTools: string[] = Array.isArray(selectedToolsRaw) ? (selectedToolsRaw as string[]) : [];
+
+      expect(selectedTools).toContain(writeToolName);
     }, 180000);
   });
 });

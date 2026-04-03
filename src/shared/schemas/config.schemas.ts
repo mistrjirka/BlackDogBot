@@ -154,7 +154,7 @@ const schedulerConfigSchema = z.object({
     .describe("Whether the scheduler is active"),
   timezone: z.string()
     .optional()
-    .describe("Timezone for cron expressions (e.g., 'Europe/Prague', 'UTC', 'America/New_York'). Defaults to server local time."),
+    .describe("Timezone for scheduled task intervals (e.g., 'Europe/Prague', 'UTC', 'America/New_York'). Defaults to server local time."),
   maxParallelCrons: z.number()
     .int()
     .positive()

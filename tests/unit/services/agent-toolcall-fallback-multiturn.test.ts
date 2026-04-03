@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 
 import { invokeAgentAsync } from "../../../src/agent/langchain-agent.js";
@@ -103,5 +103,51 @@ describe("invokeAgentAsync textual tool-call fallback in agentic multi-turn mode
 
     expect(result.stepsCount).toBeGreaterThanOrEqual(2);
     expect(result.text).toContain("Done.");
+  });
+
+  it("reuses tool input from on_tool_start when on_tool_end input is missing", async () => {
+    const streamEvents: Array<["tools" | "updates", Record<string, unknown>]> = [
+      ["tools", {
+        event: "on_tool_start",
+        name: "create_table",
+        input: { databaseName: "db", tableName: "items" },
+        toolCallId: "tc-1",
+      }],
+      ["tools", {
+        event: "on_tool_end",
+        name: "create_table",
+        toolCallId: "tc-1",
+        output: { success: true },
+      }],
+    ];
+
+    async function* generateToolEvents(): AsyncGenerator<["tools" | "updates", Record<string, unknown>]> {
+      for (const event of streamEvents) {
+        yield event;
+      }
+    }
+
+    const onToolEndAsync = vi.fn(async (_toolName: string, toolInput: unknown): Promise<boolean> => {
+      const input = toolInput as Record<string, unknown>;
+      expect(input.tableName).toBe("items");
+      return false;
+    });
+
+    const agent = {
+      stream: async () => generateToolEvents(),
+      getState: async () => ({ values: { messages: [new AIMessage({ content: "done" })] } }),
+    } as any;
+
+    const result = await invokeAgentAsync(
+      agent,
+      "start",
+      "thread-tool-input-resolution",
+      undefined,
+      undefined,
+      onToolEndAsync,
+    );
+
+    expect(result.text).toBe("done");
+    expect(onToolEndAsync).toHaveBeenCalledTimes(1);
   });
 });

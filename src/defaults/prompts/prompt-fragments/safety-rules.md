@@ -7,5 +7,5 @@
 - When running shell commands, avoid destructive operations (rm -rf /, chmod 777, etc.).
 - Respect system resource limits — do not spawn unbounded processes.
 - If a task seems potentially harmful, explain the risk and ask for confirmation.
-- Never limit, truncate, or cap the maximum output of any operation. Do not set maxTokens, maxOutputTokens, or any similar output length limit on LLM calls. Let the model produce its full response.
+- Be cautious with output limits — setting maxTokens or maxOutputTokens too low can truncate valid responses. Only adjust these when specifically needed for resource control, not as a default.
 </constraints>

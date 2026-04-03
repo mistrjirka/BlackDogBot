@@ -77,12 +77,34 @@ export const runCmdTool = tool(
 
     // Start the process
     const startTime: number = Date.now();
-    const { handleId, child } = await processService.spawnProcessAsync(
-      normalizedCommand,
-      resolvedCwd,
-      timeout,
-      childEnv,
-    );
+    let handleId: string;
+    let child: import("node:child_process").ChildProcess;
+
+    try {
+      const spawnResult = await processService.spawnProcessAsync(
+        normalizedCommand,
+        resolvedCwd,
+        timeout,
+        childEnv,
+      );
+      handleId = spawnResult.handleId;
+      child = spawnResult.child;
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      logger.error("run_cmd spawn failed", { command: normalizedCommand, cwd: resolvedCwd, error: errorMessage });
+      return {
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        status: "failed",
+        handleId: null,
+        timedOut: false,
+        durationMs: null,
+        signal: null,
+        deterministic: false,
+        error: errorMessage,
+      };
+    }
 
     const pid: number | undefined = child.pid;
 

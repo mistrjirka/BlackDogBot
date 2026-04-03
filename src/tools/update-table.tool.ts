@@ -2,9 +2,11 @@ import { tool } from "langchain";
 import type { DynamicStructuredTool } from "langchain";
 import { z } from "zod";
 import * as litesql from "../helpers/litesql.js";
+import type { IColumnInfo } from "../helpers/litesql.js";
 import * as litesqlValidation from "../helpers/litesql-validation.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { SQLITE_TO_ZOD_TYPE } from "../utils/per-table-tools.js";
 
 export interface IUpdateTableResult {
   success: boolean;
@@ -17,21 +19,19 @@ export interface IUpdateTableResult {
 
 export function createUpdateTableTool(
   tableName: string,
-  columns: string[],
+  columns: IColumnInfo[],
   databaseName: string,
 ): DynamicStructuredTool {
   const logger = LoggerService.getInstance();
 
-  const settableColumns = columns.filter(col => col.toLowerCase() !== "id");
+  const settableColumns = columns.filter(col => col.name.toLowerCase() !== "id" && !col.primaryKey);
 
-  const columnSchemas: Record<string, z.ZodOptional<z.ZodType<string | number | boolean | null>>> = {};
+  const columnSchemas: Record<string, z.ZodType> = {};
   for (const col of settableColumns) {
-    columnSchemas[col] = z.union([
-      z.string(),
-      z.number(),
-      z.boolean(),
-      z.null(),
-    ]).optional().describe(`Value for column '${col}'`);
+    const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
+    const baseType = SQLITE_TO_ZOD_TYPE[normalizedType] ?? z.string();
+    const typeDescription = `${col.type}${col.defaultValue ? ` DEFAULT ${col.defaultValue}` : ""}${col.notNull ? " NOT NULL" : " NULLABLE"}`;
+    columnSchemas[col.name] = baseType.optional().describe(`Value for column '${col.name}' (${typeDescription})`);
   }
 
   const baseSchema = z.object({

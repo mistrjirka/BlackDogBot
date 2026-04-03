@@ -37,12 +37,12 @@ describe("CronMessageHistoryService structured output behavior", () => {
       },
     ]);
 
-    const mockInvoke = vi.fn().mockResolvedValue({
-      content: "not-json",
-      additional_kwargs: {},
-    });
+    const mockInvoke = vi.fn().mockRejectedValue(
+      new Error("Schema validation failed"),
+    );
+    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
     vi.mocked(createChatModel).mockReturnValue({
-      invoke: mockInvoke,
+      withStructuredOutput: mockWithStructuredOutput,
     } as any);
 
     await expect(service.checkMessageNoveltyAsync(
@@ -51,16 +51,16 @@ describe("CronMessageHistoryService structured output behavior", () => {
       "Only send when new",
       "Test task",
       "Task desc",
-    )).rejects.toThrow("returned invalid structured response");
+    )).rejects.toThrow("Schema validation failed");
   });
 
   it("throws when dispatch policy structured output parsing fails", async () => {
-    const mockInvoke = vi.fn().mockResolvedValue({
-      content: "still-not-json",
-      additional_kwargs: {},
-    });
+    const mockInvoke = vi.fn().mockRejectedValue(
+      new Error("Schema validation failed"),
+    );
+    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
     vi.mocked(createChatModel).mockReturnValue({
-      invoke: mockInvoke,
+      withStructuredOutput: mockWithStructuredOutput,
     } as any);
 
     await expect(service.checkMessageDispatchPolicyAsync(
@@ -68,10 +68,10 @@ describe("CronMessageHistoryService structured output behavior", () => {
       "Send only critical alerts",
       "Test task",
       "Task desc",
-    )).rejects.toThrow("returned invalid structured response");
+    )).rejects.toThrow("Schema validation failed");
   });
 
-  it("parses novelty decision from reasoning_content", async () => {
+  it("parses novelty decision correctly", async () => {
     vi.spyOn(service, "getSimilarMessagesAsync").mockResolvedValue([
       {
         content: "Similar old message",
@@ -82,14 +82,13 @@ describe("CronMessageHistoryService structured output behavior", () => {
     ]);
 
     const mockInvoke = vi.fn().mockResolvedValue({
-      content: "",
-      additional_kwargs: {
-        reasoning_content: '{"reasoning":"new details included","isNewInformation":true}',
-      },
+      isNewInformation: true,
+      reasoning: "new details included",
     });
+    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
 
     vi.mocked(createChatModel).mockReturnValue({
-      invoke: mockInvoke,
+      withStructuredOutput: mockWithStructuredOutput,
     } as any);
 
     const result = await service.checkMessageNoveltyAsync(
@@ -104,18 +103,15 @@ describe("CronMessageHistoryService structured output behavior", () => {
     expect(result.similarCount).toBe(1);
   });
 
-  it("does not rely on withStructuredOutput for dispatch policy", async () => {
-    const mockWithStructuredOutput = vi.fn(() => {
-      throw new Error("withStructuredOutput should not be used");
-    });
+  it("uses withStructuredOutput for dispatch policy", async () => {
     const mockInvoke = vi.fn().mockResolvedValue({
-      content: '{"reasoning":"matches policy","shouldDispatch":false}',
-      additional_kwargs: {},
+      shouldDispatch: false,
+      reasoning: "matches policy",
     });
+    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
 
     vi.mocked(createChatModel).mockReturnValue({
       withStructuredOutput: mockWithStructuredOutput,
-      invoke: mockInvoke,
     } as any);
 
     const result = await service.checkMessageDispatchPolicyAsync(
@@ -126,6 +122,7 @@ describe("CronMessageHistoryService structured output behavior", () => {
     );
 
     expect(result.shouldDispatch).toBe(false);
-    expect(mockWithStructuredOutput).not.toHaveBeenCalled();
+    expect(mockWithStructuredOutput).toHaveBeenCalledTimes(1);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 });

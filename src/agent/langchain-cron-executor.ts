@@ -47,7 +47,6 @@ import {
   createTableTool,
   dropTableTool,
   readFromDatabaseTool,
-  updateDatabaseTool,
   deleteFromDatabaseTool,
   FileReadTracker,
   type MessageSender,
@@ -266,7 +265,6 @@ export class LangchainCronExecutor {
       create_table: createTableTool,
       drop_table: dropTableTool,
       read_from_database: readFromDatabaseTool,
-      update_database: updateDatabaseTool,
       delete_from_database: deleteFromDatabaseTool,
     };
 

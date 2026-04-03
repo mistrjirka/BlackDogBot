@@ -70,123 +70,6 @@ export interface ICheckMessageDispatchResult {
 
 //#region Helper methods
 
-function _extractTextFromAiContent(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (Array.isArray(content)) {
-    const textParts: string[] = content
-      .filter((part: unknown): part is { type: string; text?: unknown } => typeof part === "object" && part !== null)
-      .filter((part: { type: string; text?: unknown }): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
-      .map((part: { type: "text"; text: string }) => part.text);
-
-    return textParts.join("\n").trim();
-  }
-
-  return "";
-}
-
-function _extractTextFromReasoningContent(additionalKwargs: unknown): string {
-  if (typeof additionalKwargs !== "object" || additionalKwargs === null) {
-    return "";
-  }
-
-  const rawReasoning: unknown = (additionalKwargs as { reasoning_content?: unknown }).reasoning_content;
-  if (typeof rawReasoning === "string") {
-    return rawReasoning;
-  }
-
-  return "";
-}
-
-function _extractTopLevelJsonObjectCandidates(rawText: string): string[] {
-  const candidates: string[] = [];
-  let depth: number = 0;
-  let inString: boolean = false;
-  let escape: boolean = false;
-  let objectStart: number = -1;
-
-  for (let i: number = 0; i < rawText.length; i++) {
-    const char: string = rawText[i];
-
-    if (inString) {
-      if (escape) {
-        escape = false;
-        continue;
-      }
-
-      if (char === "\\") {
-        escape = true;
-        continue;
-      }
-
-      if (char === "\"") {
-        inString = false;
-      }
-
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      if (depth === 0) {
-        objectStart = i;
-      }
-
-      depth++;
-      continue;
-    }
-
-    if (char === "}") {
-      if (depth === 0) {
-        continue;
-      }
-
-      depth--;
-      if (depth === 0 && objectStart >= 0) {
-        candidates.push(rawText.slice(objectStart, i + 1));
-        objectStart = -1;
-      }
-    }
-  }
-
-  return candidates;
-}
-
-function _parseStructuredDecisionOrThrow<TSchema extends z.ZodTypeAny>(
-  rawText: string,
-  schema: TSchema,
-  label: string,
-): z.infer<TSchema> {
-  const trimmed: string = rawText.trim();
-
-  const parseWithSchema = (candidate: string): z.infer<TSchema> | null => {
-    try {
-      const parsedJson: unknown = JSON.parse(candidate);
-      const parsed = schema.safeParse(parsedJson);
-      return parsed.success ? parsed.data : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const candidates: string[] = [trimmed, ..._extractTopLevelJsonObjectCandidates(trimmed)];
-
-  for (const candidate of candidates) {
-    const parsed: z.infer<TSchema> | null = parseWithSchema(candidate);
-    if (parsed !== null) {
-      return parsed;
-    }
-  }
-
-  throw new Error(`${label}: ${trimmed.slice(0, 200)}`);
-}
-
 async function _invokeStructuredDecisionAsync<TSchema extends z.ZodTypeAny>(
   prompt: string,
   schema: TSchema,
@@ -194,25 +77,17 @@ async function _invokeStructuredDecisionAsync<TSchema extends z.ZodTypeAny>(
   logLabel: string,
 ): Promise<z.infer<TSchema>> {
   const model = createChatModel(ConfigService.getInstance().getAiConfig());
-  const response = await model.invoke(prompt);
-
-  const rawText: string = _extractTextFromAiContent(response.content);
-  const rawReasoningText: string = _extractTextFromReasoningContent(
-    (response as { additional_kwargs?: unknown }).additional_kwargs,
-  );
-
-  logger.debug(`${logLabel} raw response`, {
-    contentPreview: rawText.slice(0, 200),
-    reasoningPreview: rawReasoningText.slice(0, 200),
-    contentLength: rawText.length,
-    reasoningLength: rawReasoningText.length,
+  const structuredModel = model.withStructuredOutput(schema, {
+    name: "structured_decision",
   });
 
-  const mergedRawText: string = [rawText, rawReasoningText]
-    .filter((value: string): boolean => value.trim().length > 0)
-    .join("\n");
+  const result = await structuredModel.invoke(prompt);
 
-  return _parseStructuredDecisionOrThrow(mergedRawText, schema, `${logLabel} returned invalid structured response`);
+  logger.debug(`${logLabel} structured response`, {
+    resultPreview: JSON.stringify(result).slice(0, 200),
+  });
+
+  return result;
 }
 
 //#endregion Helper methods

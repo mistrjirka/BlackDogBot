@@ -20,7 +20,6 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
   "create_database",
   "create_table",
   "drop_table",
-  "update_database",
   "delete_from_database",
   "modify_prompt",
 ]);
@@ -59,9 +58,7 @@ const CORE_TOOL_NAMES: string[] = [
   "list_tables",
   "get_table_schema",
   "read_from_database",
-  "update_database",
   "delete_from_database",
-  "write_to_database",
   "query_database",
   "list_prompts",
   "modify_prompt",
@@ -127,6 +124,11 @@ export function isToolAllowed(
 
   // Per-table write tools (write_table_<tableName>) are blocked in read_only
   if (permission === "read_only" && toolName.startsWith("write_table_")) {
+    return false;
+  }
+
+  // Per-table update tools (update_table_<tableName>) are blocked in read_only
+  if (permission === "read_only" && toolName.startsWith("update_table_")) {
     return false;
   }
 

@@ -280,7 +280,7 @@ export class ChannelRegistryService {
         }
       }
     } catch (error) {
-      this._logger.warn("Failed to load channels.yaml, starting fresh", {
+      this._logger.error("Failed to load channels.yaml — config file may be corrupted", {
         error: extractErrorMessage(error),
       });
       this._config = { version: 1, channels: [] };

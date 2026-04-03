@@ -34,7 +34,10 @@ export async function loadRssStateAsync(feedUrl: string): Promise<IRssState | nu
       return null;
     }
 
-    logger.warn("Failed to load RSS state", { feedUrl, error: String(error) });
+    logger.error("Failed to load RSS state — possible corruption or permission issue", {
+      feedUrl,
+      error: String(error),
+    });
 
     return null;
   }

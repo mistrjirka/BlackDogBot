@@ -152,13 +152,15 @@ export async function invokeAgentAsync(
   threadId: string,
   images?: IChatImageAttachment[],
   onStepAsync?: (stepNumber: number, toolCalls: IToolCallSummary[]) => Promise<void>,
-  onToolEndAsync?: (toolName: string) => Promise<boolean>,
+  onToolEndAsync?: (toolName: string, toolInput: unknown, toolOutput: unknown, isError: boolean) => Promise<boolean>,
+  stepOffset: number = 0,
 ): Promise<ILangchainAgentResult> {
   const logger: LoggerService = LoggerService.getInstance();
   let stepsCount: number = 0;
   let progressStepCount: number = 0;
   let sendMessageUsed: boolean = false;
   let toolsChanged: boolean = false;
+  const toolInputByCallId: Map<string, Record<string, unknown>> = new Map();
 
   let stream: AsyncIterable<unknown>;
   try {
@@ -197,31 +199,49 @@ export async function invokeAgentAsync(
         progressStepCount++;
 
         const parsedInput: Record<string, unknown> = _parseToolInput(event.input);
-
-        const toolCall: IToolCallSummary = {
-          name: event.name,
-          input: parsedInput,
-          toolCallId: event.toolCallId,
-        };
+        if (event.toolCallId) {
+          toolInputByCallId.set(event.toolCallId, parsedInput);
+        }
 
         if (event.name === "send_message") {
           sendMessageUsed = true;
         }
 
         logger.logStep(stepsCount, event.name, parsedInput, "(running...)");
-
-        if (onStepAsync) {
-          await onStepAsync(progressStepCount, [toolCall]);
-        }
       } else if (event.event === "on_tool_end" || event.event === "on_tool_error") {
+        let parsedInput: Record<string, unknown> = _parseToolInput(event.input);
+        if (event.input === undefined && event.toolCallId) {
+          const previousInput = toolInputByCallId.get(event.toolCallId);
+          if (previousInput) {
+            parsedInput = previousInput;
+          }
+        }
+
         logger.debug(`Tool ${event.event} for ${event.name}`, {
           toolCallId: event.toolCallId,
           hasOutput: event.output !== undefined,
           hasError: event.error !== undefined,
         });
 
-        if (event.event === "on_tool_end" && onToolEndAsync) {
-          toolsChanged = await onToolEndAsync(event.name);
+        const toolCall: IToolCallSummary = {
+          name: event.name,
+          input: parsedInput,
+          toolCallId: event.toolCallId,
+          result: event.output,
+          isError: event.error !== undefined,
+        };
+
+        if (onStepAsync) {
+          await onStepAsync(stepOffset + progressStepCount, [toolCall]);
+        }
+
+        if (onToolEndAsync) {
+          toolsChanged = await onToolEndAsync(
+            event.name,
+            parsedInput,
+            event.output,
+            event.event === "on_tool_error" || event.error !== undefined,
+          );
           if (toolsChanged) {
             logger.info("Tools changed mid-stream, stopping current invocation for rebuild", {
               threadId,
@@ -229,6 +249,10 @@ export async function invokeAgentAsync(
             });
             break;
           }
+        }
+
+        if (event.toolCallId) {
+          toolInputByCallId.delete(event.toolCallId);
         }
       }
     }

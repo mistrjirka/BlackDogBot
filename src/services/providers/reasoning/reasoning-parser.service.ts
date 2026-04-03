@@ -62,15 +62,20 @@ export class ReasoningParserService {
 
   public static parseThinkTags(content: string): IThinkParseResult {
     const thinkTagRegex: RegExp = /<think>([\s\S]*?)<\/think>/gi;
+    const thinkingTagRegex: RegExp = /<thinking>([\s\S]*?)<\/thinking>/gi;
     const matches: RegExpMatchArray[] = Array.from(content.matchAll(thinkTagRegex));
+    const thinkingMatches: RegExpMatchArray[] = Array.from(content.matchAll(thinkingTagRegex));
 
-    if (matches.length > 0) {
-      const reasoningParts: string[] = matches
+    const allMatches: RegExpMatchArray[] = [...matches, ...thinkingMatches];
+
+    if (allMatches.length > 0) {
+      const reasoningParts: string[] = allMatches
         .map((match: RegExpMatchArray): string => (match[1] ?? "").trim())
         .filter((part: string): boolean => part.length > 0);
 
       const cleanedContent: string = content
         .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
         .trim();
 
       return {
@@ -244,7 +249,7 @@ export class ReasoningParserService {
         const parameterValue: string = (parameterMatch[3] ?? "").trim();
 
         if (parameterName.length > 0) {
-          parsedParameters[parameterName] = parameterValue;
+          parsedParameters[parameterName] = this._coerceScalarLiteral(parameterValue);
         }
       }
 
@@ -263,5 +268,31 @@ export class ReasoningParserService {
     } catch {
       return null;
     }
+  }
+
+  private static _coerceScalarLiteral(rawValue: string): unknown {
+    const value: string = rawValue.trim();
+
+    if (value === "True") {
+      return true;
+    }
+
+    if (value === "False") {
+      return false;
+    }
+
+    if (value === "None" || value === "null") {
+      return null;
+    }
+
+    if (/^-?\d+$/.test(value)) {
+      return Number.parseInt(value, 10);
+    }
+
+    if (/^-?(?:\d+\.\d+|\d+\.\d*|\.\d+)$/.test(value)) {
+      return Number.parseFloat(value);
+    }
+
+    return value;
   }
 }

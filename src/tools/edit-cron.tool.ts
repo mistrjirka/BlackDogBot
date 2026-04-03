@@ -9,7 +9,22 @@ import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
 
-interface IEditCronResult {
+export interface IEditCronInput {
+  taskId: string;
+  name?: string;
+  description?: string;
+  tools?: string[];
+  scheduleType?: "once" | "interval" | "scheduled";
+  scheduleRunAt?: string;
+  scheduleIntervalMs?: number;
+  scheduleIntervalMinutes?: number;
+  scheduleStartHour?: number | null;
+  scheduleStartMinute?: number | null;
+  notifyUser?: boolean;
+  enabled?: boolean;
+}
+
+export interface IEditCronResult {
   success: boolean;
   task?: IScheduledTask;
   display?: string;
@@ -32,26 +47,12 @@ const TOOL_DESCRIPTION: string =
 
 //#region Tool
 
-const executeEditCron = async ({
-    taskId,
-    ...patch
-  }: {
-    taskId: string;
-    name?: string;
-    description?: string;
-    tools?: string[];
-    scheduleType?: "once" | "interval" | "cron";
-    scheduleRunAt?: string;
-    scheduleIntervalMs?: number;
-    scheduleCron?: string;
-    notifyUser?: boolean;
-    enabled?: boolean;
-  }): Promise<IEditCronResult> => {
+export async function executeEditCronAsync(input: IEditCronInput): Promise<IEditCronResult> {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
+  const { taskId, ...patch } = input;
 
   try {
-    // 0. Validate tool names at runtime (if provided)
     if (patch.tools !== undefined) {
       const invalidTools: string[] = validateCronToolNames(patch.tools);
       if (invalidTools.length > 0) {
@@ -66,12 +67,10 @@ const executeEditCron = async ({
     if (!existingTask) {
       return { success: false, error: `Cron task with ID '${taskId}' not found.` };
     }
-    // 1. Build update payload — reconstruct schedule object from flat params.
-    const { scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron, ...restPatch } = patch;
+    const { scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleIntervalMinutes, scheduleStartHour, scheduleStartMinute, ...restPatch } = patch;
     const updatePayload: Record<string, unknown> = { ...restPatch };
 
     if (scheduleType !== undefined) {
-      // Schedule type is immutable. Ignore requested type changes and preserve existing type.
       if (scheduleType !== existingTask.schedule.type) {
         logger.debug(`[${TOOL_NAME}] Ignoring scheduleType change request`, {
           taskId,
@@ -80,9 +79,9 @@ const executeEditCron = async ({
         });
       }
 
-      updatePayload.schedule = patchSchedule(existingTask.schedule, { scheduleRunAt, scheduleIntervalMs, scheduleCron });
-    } else if (scheduleRunAt !== undefined || scheduleIntervalMs !== undefined || scheduleCron !== undefined) {
-      updatePayload.schedule = patchSchedule(existingTask.schedule, { scheduleRunAt, scheduleIntervalMs, scheduleCron });
+      updatePayload.schedule = patchSchedule(existingTask.schedule, { scheduleRunAt, scheduleIntervalMs, scheduleIntervalMinutes, scheduleStartHour, scheduleStartMinute });
+    } else if (scheduleRunAt !== undefined || scheduleIntervalMs !== undefined || scheduleIntervalMinutes !== undefined || scheduleStartHour !== undefined || scheduleStartMinute !== undefined) {
+      updatePayload.schedule = patchSchedule(existingTask.schedule, { scheduleRunAt, scheduleIntervalMs, scheduleIntervalMinutes, scheduleStartHour, scheduleStartMinute });
     }
 
     if (Object.keys(updatePayload).length === 0) {
@@ -126,10 +125,10 @@ const executeEditCron = async ({
 
     return { success: false, error: errorMessage };
   }
-};
+}
 
 export const editCronTool = tool(
-  executeEditCron,
+  executeEditCronAsync,
   {
     name: "edit_cron",
     description: TOOL_DESCRIPTION,

@@ -17,8 +17,14 @@ export async function getSkillStateAsync(skillName: string): Promise<ISkillState
     const parsed: ISkillStateInfo = skillStateInfoSchema.parse(raw);
 
     return parsed;
-  } catch {
-    logger.debug(`No existing state found for skill "${skillName}", returning default state`);
+  } catch (error: unknown) {
+    const code: string | undefined = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      logger.debug(`No existing state found for skill "${skillName}", returning default state`);
+    } else {
+      const message: string = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to read skill state — returning default state`, { skillName, error: message });
+    }
 
     return {
       state: "never-touched",
