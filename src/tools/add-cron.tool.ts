@@ -5,7 +5,7 @@ import { validateCronToolNames, buildSchedule } from "../helpers/cron-validation
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { ConfigService } from "../services/config.service.js";
-import { createChatModel } from "../services/langchain-model.service.js";
+import { createStructuredOutputModel } from "../services/langchain-model.service.js";
 import { generateId } from "../utils/id.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
@@ -118,10 +118,11 @@ Output a JSON object with:
 - "missingContext": string (if invalid, describe exactly what information is missing and why it cannot be derived; if valid, use empty string)
 `;
 
-  const model = createChatModel(ConfigService.getInstance().getAiConfig());
-  const structuredModel = model.withStructuredOutput(instructionVerificationResultSchema, {
-    name: "instruction_verification",
-  });
+  const structuredModel = createStructuredOutputModel(
+    ConfigService.getInstance().getAiConfig(),
+    instructionVerificationResultSchema,
+    { name: "instruction_verification" },
+  );
 
   const result = await structuredModel.invoke(verifierPrompt);
 

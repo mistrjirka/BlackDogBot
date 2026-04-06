@@ -68,7 +68,7 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
   // 6. Clear all chat history
   await _safeStepAsync("Clear chat history", errors, async (): Promise<void> => {
     const mainAgent = LangchainMainAgent.getInstance();
-    mainAgent.clearAllChatHistory();
+    await mainAgent.clearAllChatHistory();
   });
 
   await _safeStepAsync("Reset checkpointer", errors, async (): Promise<void> => {

@@ -13,7 +13,8 @@ import type { IAgentResult } from "./types.js";
 import type { IScheduledTask, IExecutionContext } from "../shared/types/cron.types.js";
 import { PROMPT_CRON_AGENT } from "../shared/constants.js";
 import { getCurrentDateTime } from "../utils/time.js";
-import { isContextExceededApiError } from "../utils/context-error.js";
+import { isContextExceededApiError, isLlamaCppParseError } from "../utils/context-error.js";
+import { getDisableThinkingOnRetry } from "../services/langchain-model.service.js";
 
 import {
   thinkTool,
@@ -115,14 +116,29 @@ export class LangchainCronExecutor {
       aiConfig,
       systemPrompt: instructions,
       tools,
+    }).withConfig({
+      recursionLimit: 200,
     });
 
     const maxRetries: number = 2;
     let lastError: Error | null = null;
+    let parseRetryAttempt = false;
+    let useDisableThinking = false;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        const result = await agent.invoke(
+        const currentAgent = useDisableThinking
+          ? createLangchainAgent({
+              aiConfig,
+              systemPrompt: instructions,
+              tools,
+              disableThinking: true,
+            }).withConfig({
+              recursionLimit: 200,
+            })
+          : agent;
+
+        const result = await currentAgent.invoke(
           { messages: [{ role: "user", content: "Execute the scheduled task according to your instructions." }] },
           { configurable: { thread_id: `cron-${task.taskId}` } },
         );
@@ -219,6 +235,20 @@ export class LangchainCronExecutor {
             attempt: attempt + 1,
           });
           continue;
+        }
+
+        if (isLlamaCppParseError(error) && !parseRetryAttempt) {
+          const disableThinking = getDisableThinkingOnRetry(aiConfig);
+          if (disableThinking) {
+            parseRetryAttempt = true;
+            useDisableThinking = true;
+            this._logger.warn("llama.cpp parse error detected, retrying with thinking disabled", {
+              taskId: task.taskId,
+              taskName: task.name,
+              errorMessage: lastError.message,
+            });
+            continue;
+          }
         }
 
         throw lastError;

@@ -1,6 +1,5 @@
 import { createAgent, createMiddleware } from "langchain";
 import {
-  createSummarizationMiddleware,
   createSkillsMiddleware,
   createMemoryMiddleware,
   createPatchToolCallsMiddleware,
@@ -44,26 +43,9 @@ export interface ILangchainAgentResult {
 
 export function createLangchainAgent(config: ILangchainAgentConfig): ReturnType<typeof createAgent> {
   const model: ChatOpenAI = createChatModel(config.aiConfig, { disableThinking: config.disableThinking });
-  const logger: LoggerService = LoggerService.getInstance();
 
-  logger.info("Creating LangChain agent", {
-    toolCount: config.tools.length,
-    toolNames: config.tools.map((t) => t.name),
-    skillSources: config.skillSources?.length ?? 0,
-    memorySources: config.memorySources?.length ?? 0,
-  });
-
-  const backendFactory = (stateAndStore: { state: unknown }) => new StateBackend(stateAndStore);
-
-  const summarizationMiddleware = createSummarizationMiddleware({
-    model,
-    backend: backendFactory,
-    trigger: { type: "fraction", value: 0.75 },
-    keep: { type: "fraction", value: 0.40 },
-  });
-
+  // Build middleware stack (ordering matters)
   const middleware = [
-    summarizationMiddleware,
     createPatchToolCallsMiddleware(),
     createMiddleware({
       name: "RawResponseLogger",
@@ -72,7 +54,7 @@ export function createLangchainAgent(config: ILangchainAgentConfig): ReturnType<
         const lastMsg = messages?.[messages.length - 1];
         if (lastMsg && AIMessage.isInstance(lastMsg)) {
           const reasoningContent = lastMsg.additional_kwargs?.reasoning_content as string | undefined;
-          logger.info("[RAW LLM RESPONSE]", {
+          LoggerService.getInstance().info("[RAW LLM RESPONSE]", {
             type: lastMsg._getType(),
             contentType: typeof lastMsg.content,
             isArray: Array.isArray(lastMsg.content),
@@ -96,7 +78,7 @@ export function createLangchainAgent(config: ILangchainAgentConfig): ReturnType<
   if (config.skillSources && config.skillSources.length > 0) {
     middleware.push(
       createSkillsMiddleware({
-        backend: backendFactory,
+        backend: (runtime: unknown) => new StateBackend(runtime as never),
         sources: config.skillSources,
       })
     );
@@ -105,7 +87,7 @@ export function createLangchainAgent(config: ILangchainAgentConfig): ReturnType<
   if (config.memorySources && config.memorySources.length > 0) {
     middleware.push(
       createMemoryMiddleware({
-        backend: backendFactory,
+        backend: (runtime: unknown) => new StateBackend(runtime as never),
         sources: config.memorySources,
       })
     );

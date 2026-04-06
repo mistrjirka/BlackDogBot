@@ -119,7 +119,7 @@ export class CronScheduler {
       if (intervalMinutes >= 1440) {
         // Daily or multi-day: advance by full intervals
         const elapsed = now.getTime() - candidate.getTime();
-        const intervals = Math.ceil(elapsed / intervalMs);
+        const intervals = Math.max(1, Math.ceil(elapsed / intervalMs));
         candidate.setTime(candidate.getTime() + intervals * intervalMs);
       } else {
         // Sub-daily: advance by interval until we pass "now"

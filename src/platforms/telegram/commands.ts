@@ -67,7 +67,7 @@ export function setupTelegramCommands(bot: Bot): void {
   bot.command("clear", async (ctx: Context): Promise<void> => {
     const chatId: string = String(ctx.chat?.id);
 
-    mainAgent.clearChatHistory(chatId);
+    await mainAgent.clearChatHistory(chatId);
     await ctx.reply("Conversation history cleared.");
     logger.info("Chat history cleared via /clear command.", { chatId });
   });

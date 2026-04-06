@@ -38,9 +38,12 @@ describe("createChatModel profile request behavior", () => {
     const model = createChatModel(config, { disableThinking: true });
     const modelKwargs = (model as unknown as { modelKwargs?: Record<string, unknown> }).modelKwargs ?? {};
 
-    expect(modelKwargs.reasoning_format).toBe("none");
+    // reasoning_format is removed when disableThinking is true to avoid
+    // conflicts with llama.cpp grammar samplers (reasoning_effort:"none" suffices)
+    expect(modelKwargs.reasoning_format).toBe(undefined);
     expect(modelKwargs.parallel_tool_calls).toBe(true);
     expect(modelKwargs.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(modelKwargs.reasoning_effort).toBe("none");
   });
 });
 

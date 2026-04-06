@@ -3,6 +3,8 @@ description: >-
   Built-in profile for Qwen3.5 models on OpenAI-compatible endpoints (llama.cpp/LM Studio),
   with request-level thinking control via chat_template_kwargs.
 
+activePatches: []
+
 defaults:
   reasoningFormat: none
   parallelToolCalls: true

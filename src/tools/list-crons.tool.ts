@@ -19,6 +19,7 @@ interface IListCronsTaskSummary {
     runAt?: string;
   };
   enabled: boolean;
+  notifyUser: boolean;
   lastRunAt: string | null;
   lastRunStatus: string | null;
 }
@@ -63,6 +64,7 @@ function _mapTaskToSummary(task: IScheduledTask): IListCronsTaskSummary {
     tools: task.tools,
     schedule: scheduleSummary,
     enabled: task.enabled,
+    notifyUser: task.notifyUser,
     lastRunAt: task.lastRunAt,
     lastRunStatus: task.lastRunStatus,
   };

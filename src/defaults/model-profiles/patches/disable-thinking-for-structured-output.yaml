@@ -1,0 +1,6 @@
+name: disable-thinking-for-structured-output
+description: "Disable thinking for structured output calls to enable llama.cpp grammar enforcement"
+
+overrides:
+  chatTemplateKwargs:
+    enable_thinking: false

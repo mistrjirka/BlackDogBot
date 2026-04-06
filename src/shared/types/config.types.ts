@@ -47,6 +47,7 @@ export interface IAiConfig {
   openrouter?: IOpenRouterConfig;
   openaiCompatible?: IOpenAiCompatibleConfig;
   lmStudio?: ILmStudioConfig;
+  disableThinkingOnStructuredOutput?: boolean;
 }
 
 export interface ITelegramConfig {

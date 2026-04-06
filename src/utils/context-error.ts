@@ -50,7 +50,16 @@ function _isAPICallError(error: unknown): error is IAPICallErrorLike {
   if (error instanceof Error && "statusCode" in error) {
     return true;
   }
+  if (error instanceof Error && "status" in error) {
+    return true;
+  }
   return false;
+}
+
+function _getStatusCode(error: unknown): number | null | undefined {
+  const obj = error as Record<string, unknown>;
+  const code = obj.statusCode ?? obj.status ?? obj.code;
+  return typeof code === "number" ? code : undefined;
 }
 
 function _hasRetryableParseErrorName(error: unknown): boolean {
@@ -66,7 +75,8 @@ export function isContextExceededApiError(error: unknown): boolean {
     return false;
   }
 
-  if (!CONTEXT_ERROR_STATUS_CODES.includes(error.statusCode ?? 0)) {
+  const statusCode = _getStatusCode(error);
+  if (!CONTEXT_ERROR_STATUS_CODES.includes(statusCode ?? 0)) {
     return false;
   }
 
@@ -75,6 +85,11 @@ export function isContextExceededApiError(error: unknown): boolean {
     : JSON.stringify(error.responseBody ?? "");
   const errorMessage: string = error.message ?? "";
   const combined: string = `${responseBody} ${errorMessage}`.toLowerCase();
+
+  // Do not match if this is clearly a llama.cpp parse error, not a context error
+  if (combined.includes("failed to parse input")) {
+    return false;
+  }
 
   return CONTEXT_ERROR_KEYWORDS.some((keyword: string): boolean => combined.includes(keyword));
 }
@@ -85,7 +100,8 @@ export function isRetryableApiError(error: unknown): boolean {
   }
 
   if (_isAPICallError(error)) {
-    if (error.statusCode === 401 || error.statusCode === 403) {
+    const statusCode = _getStatusCode(error);
+    if (statusCode === 401 || statusCode === 403) {
       return false;
     }
 
@@ -93,7 +109,7 @@ export function isRetryableApiError(error: unknown): boolean {
       return true;
     }
 
-    if (error.statusCode === 200 || error.statusCode === null || error.statusCode === undefined) {
+    if (statusCode === 200 || statusCode === null || statusCode === undefined) {
       return true;
     }
 
@@ -114,21 +130,27 @@ export function isRetryableApiError(error: unknown): boolean {
 }
 
 export function isLlamaCppParseError(error: unknown): boolean {
-  if (!_isAPICallError(error)) {
-    return false;
+  // Direct API call error
+  if (_isAPICallError(error)) {
+    const statusCode = _getStatusCode(error);
+    if (statusCode === 500) {
+      const responseBody: string = typeof error.responseBody === "string"
+        ? error.responseBody
+        : JSON.stringify(error.responseBody ?? "");
+      const combined: string = `${error.message ?? ""} ${responseBody}`.toLowerCase();
+
+      if (combined.includes("failed to parse input") && !combined.includes("context size") && !combined.includes("context limit") && !combined.includes("context exceeded")) {
+        return true;
+      }
+    }
   }
 
-  if (error.statusCode !== 500) {
-    return false;
-  }
-
-  const responseBody: string = typeof error.responseBody === "string"
-    ? error.responseBody
-    : JSON.stringify(error.responseBody ?? "");
-  const combined: string = `${error.message ?? ""} ${responseBody}`.toLowerCase();
-
-  if (combined.includes("failed to parse input") && !combined.includes("context")) {
-    return true;
+  // Wrapped errors (e.g., InvalidToolInputError from deepagents wrapping an OpenAI 500)
+  if (error instanceof Error) {
+    const combined: string = `${error.name} ${error.message}`.toLowerCase();
+    if (combined.includes("failed to parse input") && combined.includes("500") && !combined.includes("context size") && !combined.includes("context limit") && !combined.includes("context exceeded")) {
+      return true;
+    }
   }
 
   return false;

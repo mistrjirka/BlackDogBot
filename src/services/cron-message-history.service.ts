@@ -1,6 +1,6 @@
 import { LoggerService } from "./logger.service.js";
 import { ConfigService } from "./config.service.js";
-import { createChatModel } from "./langchain-model.service.js";
+import { createChatModel, createStructuredOutputModel } from "./langchain-model.service.js";
 import { EmbeddingService } from "./embedding.service.js";
 import { VectorStoreService } from "./vector-store.service.js";
 import { generateId } from "../utils/id.js";
@@ -76,10 +76,11 @@ async function _invokeStructuredDecisionAsync<TSchema extends z.ZodTypeAny>(
   logger: LoggerService,
   logLabel: string,
 ): Promise<z.infer<TSchema>> {
-  const model = createChatModel(ConfigService.getInstance().getAiConfig());
-  const structuredModel = model.withStructuredOutput(schema, {
-    name: "structured_decision",
-  });
+  const structuredModel = createStructuredOutputModel(
+    ConfigService.getInstance().getAiConfig(),
+    schema,
+    { name: "structured_decision" },
+  );
 
   const result = await structuredModel.invoke(prompt);
 
@@ -388,7 +389,7 @@ ${historyText}
 Output a single concise summary paragraph.`;
 
     try {
-      const model = createChatModel(ConfigService.getInstance().getAiConfig());
+  const model = createChatModel(ConfigService.getInstance().getAiConfig(), { disableThinking: true });
 
       const result = await model.invoke(prompt);
 

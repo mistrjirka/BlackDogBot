@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { addCronTool } from "../../../src/tools/add-cron.tool.js";
 import { SchedulerService } from "../../../src/services/scheduler.service.js";
 import { ConfigService } from "../../../src/services/config.service.js";
-import { createChatModel } from "../../../src/services/langchain-model.service.js";
+import { createStructuredOutputModel } from "../../../src/services/langchain-model.service.js";
 
 vi.mock("../../../src/services/scheduler.service.js", () => ({
   SchedulerService: {
@@ -18,7 +18,7 @@ vi.mock("../../../src/services/config.service.js", () => ({
 }));
 
 vi.mock("../../../src/services/langchain-model.service.js", () => ({
-  createChatModel: vi.fn(),
+  createStructuredOutputModel: vi.fn(),
 }));
 
 vi.mock("../../../src/utils/cron-tool-context.js", () => ({
@@ -54,9 +54,8 @@ describe("add_cron tool", () => {
     const mockInvoke = vi.fn().mockRejectedValue(
       new Error("400 Failed to initialize samplers: std::exception"),
     );
-    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
-    vi.mocked(createChatModel).mockReturnValue({
-      withStructuredOutput: mockWithStructuredOutput,
+    vi.mocked(createStructuredOutputModel).mockReturnValue({
+      invoke: mockInvoke,
     } as any);
 
     const result = await (addCronTool as any).invoke({
@@ -79,9 +78,8 @@ describe("add_cron tool", () => {
       isClear: false,
       missingContext: "Missing explicit feed URL.",
     });
-    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
-    vi.mocked(createChatModel).mockReturnValue({
-      withStructuredOutput: mockWithStructuredOutput,
+    vi.mocked(createStructuredOutputModel).mockReturnValue({
+      invoke: mockInvoke,
     } as any);
 
     const result = await (addCronTool as any).invoke({
@@ -104,9 +102,8 @@ describe("add_cron tool", () => {
       isClear: true,
       missingContext: "",
     });
-    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
-    vi.mocked(createChatModel).mockReturnValue({
-      withStructuredOutput: mockWithStructuredOutput,
+    vi.mocked(createStructuredOutputModel).mockReturnValue({
+      invoke: mockInvoke,
     } as any);
 
     const result = await (addCronTool as any).invoke({
@@ -129,9 +126,8 @@ describe("add_cron tool", () => {
       isClear: true,
       missingContext: "",
     });
-    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
-    vi.mocked(createChatModel).mockReturnValue({
-      withStructuredOutput: mockWithStructuredOutput,
+    vi.mocked(createStructuredOutputModel).mockReturnValue({
+      invoke: mockInvoke,
     } as any);
 
     const result = await (addCronTool as any).invoke({
@@ -145,7 +141,6 @@ describe("add_cron tool", () => {
     }) as IAddCronResult;
 
     expect(result.success).toBe(true);
-    expect(mockWithStructuredOutput).toHaveBeenCalledTimes(1);
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 });

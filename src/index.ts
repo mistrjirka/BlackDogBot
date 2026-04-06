@@ -397,6 +397,12 @@ async function mainAsync(): Promise<void> {
   const shutdownAsync = async (): Promise<void> => {
     logger.info("Shutdown signal received. Stopping BlackDogBot...");
 
+    // Force exit after 5 seconds if graceful shutdown hangs
+    const forceExitTimeout = setTimeout((): void => {
+      logger.error("Graceful shutdown timed out after 5 seconds — forcing exit");
+      process.exit(1);
+    }, 5000);
+
     await LangchainMcpService.getInstance().closeAsync().catch(() => {});
     await telegramPlatform.stop();
     await discordPlatform.stop();
@@ -405,6 +411,8 @@ async function mainAsync(): Promise<void> {
       await schedulerService.stopAsync();
     }
 
+    clearTimeout(forceExitTimeout);
+    process.exit(0);
   };
 
   process.on("SIGTERM", (): void => {

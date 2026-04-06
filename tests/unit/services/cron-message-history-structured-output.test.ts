@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CronMessageHistoryService } from "../../../src/services/cron-message-history.service.js";
-import { createChatModel } from "../../../src/services/langchain-model.service.js";
+import { createStructuredOutputModel } from "../../../src/services/langchain-model.service.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 
 vi.mock("../../../src/services/langchain-model.service.js", () => ({
-  createChatModel: vi.fn(),
+  createStructuredOutputModel: vi.fn(),
 }));
 
 vi.mock("../../../src/services/config.service.js", () => ({
@@ -40,9 +40,8 @@ describe("CronMessageHistoryService structured output behavior", () => {
     const mockInvoke = vi.fn().mockRejectedValue(
       new Error("Schema validation failed"),
     );
-    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
-    vi.mocked(createChatModel).mockReturnValue({
-      withStructuredOutput: mockWithStructuredOutput,
+    vi.mocked(createStructuredOutputModel).mockReturnValue({
+      invoke: mockInvoke,
     } as any);
 
     await expect(service.checkMessageNoveltyAsync(
@@ -58,9 +57,8 @@ describe("CronMessageHistoryService structured output behavior", () => {
     const mockInvoke = vi.fn().mockRejectedValue(
       new Error("Schema validation failed"),
     );
-    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
-    vi.mocked(createChatModel).mockReturnValue({
-      withStructuredOutput: mockWithStructuredOutput,
+    vi.mocked(createStructuredOutputModel).mockReturnValue({
+      invoke: mockInvoke,
     } as any);
 
     await expect(service.checkMessageDispatchPolicyAsync(
@@ -85,10 +83,9 @@ describe("CronMessageHistoryService structured output behavior", () => {
       isNewInformation: true,
       reasoning: "new details included",
     });
-    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
 
-    vi.mocked(createChatModel).mockReturnValue({
-      withStructuredOutput: mockWithStructuredOutput,
+    vi.mocked(createStructuredOutputModel).mockReturnValue({
+      invoke: mockInvoke,
     } as any);
 
     const result = await service.checkMessageNoveltyAsync(
@@ -108,10 +105,9 @@ describe("CronMessageHistoryService structured output behavior", () => {
       shouldDispatch: false,
       reasoning: "matches policy",
     });
-    const mockWithStructuredOutput = vi.fn(() => ({ invoke: mockInvoke }));
 
-    vi.mocked(createChatModel).mockReturnValue({
-      withStructuredOutput: mockWithStructuredOutput,
+    vi.mocked(createStructuredOutputModel).mockReturnValue({
+      invoke: mockInvoke,
     } as any);
 
     const result = await service.checkMessageDispatchPolicyAsync(
@@ -122,7 +118,6 @@ describe("CronMessageHistoryService structured output behavior", () => {
     );
 
     expect(result.shouldDispatch).toBe(false);
-    expect(mockWithStructuredOutput).toHaveBeenCalledTimes(1);
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });
 });

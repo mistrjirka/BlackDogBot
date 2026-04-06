@@ -572,7 +572,11 @@ export class LangchainMainAgent {
           });
 
           if (this._checkpointer) {
-            this._checkpointer.deleteThread(chatId);
+            try {
+              await this._checkpointer.deleteThread(chatId);
+            } catch {
+              this._logger.debug("Checkpoint table not found during context retry, continuing", { chatId });
+            }
           }
 
           continue;
@@ -588,7 +592,11 @@ export class LangchainMainAgent {
             });
 
             if (this._checkpointer) {
-              this._checkpointer.deleteThread(chatId);
+              try {
+                await this._checkpointer.deleteThread(chatId);
+              } catch {
+                this._logger.debug("Checkpoint table not found during parse retry, continuing", { chatId });
+              }
             }
 
             continue;
@@ -615,35 +623,49 @@ export class LangchainMainAgent {
     return false;
   }
 
-  public compactSessionMessagesForChatAsync(chatId: string): Promise<boolean> {
+  public async compactSessionMessagesForChatAsync(chatId: string): Promise<boolean> {
     const session = this._sessions.get(chatId);
     if (!session) {
       return Promise.resolve(false);
     }
     this._logger.info("Compaction requested for chat (clearing LangGraph checkpoint)", { chatId });
     if (this._checkpointer) {
-      this._checkpointer.deleteThread(chatId);
+      try {
+        await this._checkpointer.deleteThread(chatId);
+      } catch (error: unknown) {
+        this._logger.debug("Checkpoint table not found during compaction, skipping delete", { chatId });
+      }
     }
     return Promise.resolve(true);
   }
 
-  public clearChatHistory(chatId: string): void {
+  public async clearChatHistory(chatId: string): Promise<void> {
     this._sessions.delete(chatId);
     this._abortControllers.delete(chatId);
     ToolHotReloadService.getInstance().unregisterRebuildCallback(chatId);
     if (this._checkpointer) {
-      this._checkpointer.deleteThread(chatId);
-      this._logger.info("LangGraph checkpoint cleared", { chatId });
+      try {
+        await this._checkpointer.deleteThread(chatId);
+        this._logger.info("LangGraph checkpoint cleared", { chatId });
+      } catch (error: unknown) {
+        // Table may not exist yet after DB recovery — nothing to delete
+        this._logger.debug("Checkpoint table not found (likely after recovery), skipping delete", { chatId });
+      }
     }
     this._logger.info("Chat history cleared", { chatId });
   }
 
-  public clearAllChatHistory(): void {
+  public async clearAllChatHistory(): Promise<void> {
     const chatIds = Array.from(this._sessions.keys());
     for (const chatId of chatIds) {
       ToolHotReloadService.getInstance().unregisterRebuildCallback(chatId);
       if (this._checkpointer) {
-        this._checkpointer.deleteThread(chatId);
+        try {
+          await this._checkpointer.deleteThread(chatId);
+        } catch (error: unknown) {
+          // Table may not exist yet if DB was just recovered; nothing to delete
+          this._logger.warn("Failed to clear checkpoint (table may not exist)", { chatId, error });
+        }
       }
     }
     this._sessions.clear();

@@ -225,6 +225,17 @@ describe("Cron/Scheduler Tools", () => {
 
         expect(result.stepsCount).toBeGreaterThanOrEqual(1);
         expect(result.text).toBeDefined();
+        // The agent must have successfully used add_cron, not just "responded"
+        const hasSuccessIndicators =
+          result.text.toLowerCase().includes("taskid") ||
+          result.text.toLowerCase().includes("scheduled task") ||
+          result.text.toLowerCase().includes("created");
+        const hasFailureIndicators =
+          result.text.toLowerCase().includes("failed to") ||
+          result.text.toLowerCase().includes("could not create") ||
+          result.text.toLowerCase().includes("error creating");
+        expect(hasSuccessIndicators).toBe(true);
+        expect(hasFailureIndicators).toBe(false);
       },
       600000
     );

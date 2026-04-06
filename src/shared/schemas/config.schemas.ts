@@ -137,6 +137,10 @@ const aiConfigSchema = z.object({
     .optional(),
   lmStudio: lmStudioSchema
     .optional(),
+  disableThinkingOnStructuredOutput: z.boolean()
+    .optional()
+    .default(false)
+    .describe("Disable thinking (enable_thinking: false) when using withStructuredOutput. Required for llama.cpp grammar enforcement."),
 });
 
 const telegramConfigSchema = z.object({

@@ -1,4 +1,5 @@
 import { ChatOpenAI } from "@langchain/openai";
+import type { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -60,6 +61,16 @@ export function getDisableThinkingOnRetry(config: IAiConfig): boolean {
   }
 
   return profileData.defaults.disableThinkingOnRetry === true;
+}
+
+export function createStructuredOutputModel<T extends z.ZodType>(
+  config: IAiConfig,
+  schema: T,
+  options?: { name?: string },
+) {
+  const disableThinking: boolean = config.disableThinkingOnStructuredOutput === true;
+  const model = createChatModel(config, { disableThinking });
+  return model.withStructuredOutput(schema, { name: options?.name });
 }
 
 //#endregion Public Functions
@@ -173,6 +184,12 @@ function _resolveModelKwargs(config: IAiConfig, options: ICreateChatModelOptions
       ...currentChatTemplateKwargs,
       enable_thinking: false,
     };
+
+    modelKwargs.reasoning_effort = "none";
+
+    // Remove reasoning_format - it conflicts with llama.cpp grammar samplers
+    // when combined with json_schema response_format
+    delete modelKwargs.reasoning_format;
   }
 
   return modelKwargs;
