@@ -17,17 +17,30 @@ export const scheduleIntervalSchema = z.object({
     .describe("Interval in milliseconds"),
 });
 
-export const scheduleCronSchema = z.object({
-  type: z.literal("cron"),
-  expression: z.string()
-    .min(1)
-    .describe("Cron expression (e.g. '0 9 * * *' for daily at 09:00)"),
+export const scheduleScheduledSchema = z.object({
+  type: z.literal("scheduled"),
+  intervalMinutes: z.number()
+    .int()
+    .positive()
+    .describe("Interval in minutes (e.g. 60 for hourly, 120 for every 2 hours, 1440 for daily)"),
+  startHour: z.number()
+    .int()
+    .min(0)
+    .max(23)
+    .nullable()
+    .describe("Hour of day (0-23) when the interval starts. Null means start from current time."),
+  startMinute: z.number()
+    .int()
+    .min(0)
+    .max(59)
+    .nullable()
+    .describe("Minute of hour (0-59) when the interval starts. Null means start from current time."),
 });
 
 export const scheduleSchema = z.discriminatedUnion("type", [
   scheduleOnceSchema,
   scheduleIntervalSchema,
-  scheduleCronSchema,
+  scheduleScheduledSchema,
 ]);
 
 export const cronMessageHistorySchema = z.object({

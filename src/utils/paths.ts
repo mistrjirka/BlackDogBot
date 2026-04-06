@@ -17,12 +17,16 @@ migrateLegacyBaseDirSync();
 
 //#region Public functions
 
+export function getHomeDir(): string {
+  return process.env.HOME ?? os.homedir();
+}
+
 export function getBaseDir(): string {
-  return path.join(os.homedir(), _BaseDirName);
+  return path.join(getHomeDir(), _BaseDirName);
 }
 
 export function getLegacyBaseDir(): string {
-  return path.join(os.homedir(), _LegacyBaseDirName);
+  return path.join(getHomeDir(), _LegacyBaseDirName);
 }
 
 export function getConfigPath(): string {
@@ -31,22 +35,6 @@ export function getConfigPath(): string {
 
 export function getSkillsDir(): string {
   return path.join(getBaseDir(), "skills");
-}
-
-export function getJobsDir(): string {
-  return path.join(getBaseDir(), "jobs");
-}
-
-export function getJobDir(jobId: string): string {
-  return path.join(getJobsDir(), jobId);
-}
-
-export function getJobNodesDir(jobId: string): string {
-  return path.join(getJobDir(jobId), "nodes");
-}
-
-export function getJobTestsDir(jobId: string): string {
-  return path.join(getJobDir(jobId), "tests");
 }
 
 export function getKnowledgeDir(): string {
@@ -67,10 +55,6 @@ export function getLogsDir(): string {
 
 export function getCacheDir(): string {
   return path.join(getBaseDir(), "cache");
-}
-
-export function getJobLogsDir(): string {
-  return path.join(getLogsDir(), "jobs");
 }
 
 export function getWorkspaceDir(): string {
@@ -113,14 +97,6 @@ export function getSkillStatePath(skillName: string): string {
   return path.join(getSkillDir(skillName), "state.json");
 }
 
-export function getNodeFilePath(jobId: string, nodeId: string): string {
-  return path.join(getJobNodesDir(jobId), `${nodeId}.json`);
-}
-
-export function getNodeTestFilePath(jobId: string, nodeId: string): string {
-  return path.join(getJobTestsDir(jobId), `${nodeId}.json`);
-}
-
 export function getCronFilePath(taskId: string): string {
   return path.join(getCronDir(), `${taskId}.json`);
 }
@@ -152,10 +128,6 @@ export function getDatabasesDir(): string {
 
 export function getTelegramChatsFilePath(): string {
   return path.join(getBaseDir(), "known-telegram-chats.json");
-}
-
-export function getBrainInterfaceTokenFilePath(): string {
-  return path.join(getBaseDir(), "brain-interface.token");
 }
 
 export function getModelsDir(): string {
@@ -215,13 +187,11 @@ export async function ensureAllDirectoriesAsync(): Promise<void> {
   const directories: string[] = [
     getBaseDir(),
     getSkillsDir(),
-    getJobsDir(),
     getKnowledgeDir(),
     getLanceDbDir(),
     getCronDir(),
     getLogsDir(),
     getCacheDir(),
-    getJobLogsDir(),
     getWorkspaceDir(),
     getUploadsDir(),
     getRssStateDir(),

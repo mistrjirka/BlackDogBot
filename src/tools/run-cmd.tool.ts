@@ -2,7 +2,7 @@ import os from "node:os";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { runCmdToolInputSchema, runCmdToolOutputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -29,10 +29,8 @@ const INTERACTIVE_PROMPT_PATTERNS: RegExp[] = [
 
 const IDLE_PROMPT_DETECTION_MS: number = 3000;
 
-export const runCmdTool = tool({
-  description: "Execute a shell command and return stdout, stderr, and exit code.",
-  inputSchema: runCmdToolInputSchema,
-  execute: async ({ command, cwd, timeout, mode, deterministicInputDetection }: IRunCmdInput): Promise<IRunCmdOutput> => {
+export const runCmdTool = tool(
+  async ({ command, cwd, timeout, mode, deterministicInputDetection }: IRunCmdInput): Promise<IRunCmdOutput> => {
     const logger: LoggerService = LoggerService.getInstance();
     const processService: CommandProcessService = CommandProcessService.getInstance();
     const detector: CommandDetectorLinuxService = CommandDetectorLinuxService.getInstance();
@@ -79,12 +77,34 @@ export const runCmdTool = tool({
 
     // Start the process
     const startTime: number = Date.now();
-    const { handleId, child } = await processService.spawnProcessAsync(
-      normalizedCommand,
-      resolvedCwd,
-      timeout,
-      childEnv,
-    );
+    let handleId: string;
+    let child: import("node:child_process").ChildProcess;
+
+    try {
+      const spawnResult = await processService.spawnProcessAsync(
+        normalizedCommand,
+        resolvedCwd,
+        timeout,
+        childEnv,
+      );
+      handleId = spawnResult.handleId;
+      child = spawnResult.child;
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      logger.error("run_cmd spawn failed", { command: normalizedCommand, cwd: resolvedCwd, error: errorMessage });
+      return {
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        status: "failed",
+        handleId: null,
+        timedOut: false,
+        durationMs: null,
+        signal: null,
+        deterministic: false,
+        error: errorMessage,
+      };
+    }
 
     const pid: number | undefined = child.pid;
 
@@ -273,7 +293,12 @@ export const runCmdTool = tool({
       error: null,
     };
   },
-});
+  {
+    name: "run_cmd",
+    description: "Execute a shell command and return stdout, stderr, and exit code.",
+    schema: runCmdToolInputSchema,
+  },
+);
 
 function _looksLikeInteractivePrompt(command: string, stderrOutput: string): boolean {
   if (!command.toLowerCase().includes("sudo")) {

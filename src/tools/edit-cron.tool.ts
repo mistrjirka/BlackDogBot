@@ -1,6 +1,6 @@
-import { tool } from "ai";
-import { editCronToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
-import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
+import { tool } from "langchain";
+import { editCronToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { validateCronToolNames, patchSchedule } from "../helpers/cron-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
@@ -9,7 +9,22 @@ import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
 
-interface IEditCronResult {
+export interface IEditCronInput {
+  taskId: string;
+  name?: string;
+  description?: string;
+  tools?: string[];
+  scheduleType?: "once" | "interval" | "scheduled";
+  scheduleRunAt?: string;
+  scheduleIntervalMs?: number;
+  scheduleIntervalMinutes?: number;
+  scheduleStartHour?: number | null;
+  scheduleStartMinute?: number | null;
+  notifyUser?: boolean;
+  enabled?: boolean;
+}
+
+export interface IEditCronResult {
   success: boolean;
   task?: IScheduledTask;
   display?: string;
@@ -32,35 +47,14 @@ const TOOL_DESCRIPTION: string =
 
 //#region Tool
 
-const executeEditCron = async (
-  {
-    taskId,
-    ...patch
-  }: {
-    taskId: string;
-    name?: string;
-    description?: string;
-    tools?: string[];
-    scheduleType?: "once" | "interval" | "cron";
-    scheduleRunAt?: string;
-    scheduleIntervalMs?: number;
-    scheduleCron?: string;
-    notifyUser?: boolean;
-    enabled?: boolean;
-  },
-  _context: ToolExecuteContext,
-): Promise<IEditCronResult> => {
+export async function executeEditCronAsync(input: IEditCronInput): Promise<IEditCronResult> {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
+  const { taskId, ...patch } = input;
 
   try {
-    // 0. Validate tool names at runtime (if provided)
     if (patch.tools !== undefined) {
-      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = patch.tools.filter(
-        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
-      );
+      const invalidTools: string[] = validateCronToolNames(patch.tools);
       if (invalidTools.length > 0) {
         return {
           success: false,
@@ -73,12 +67,10 @@ const executeEditCron = async (
     if (!existingTask) {
       return { success: false, error: `Cron task with ID '${taskId}' not found.` };
     }
-    // 1. Build update payload — reconstruct schedule object from flat params.
-    const { scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron, ...restPatch } = patch;
+    const { scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleIntervalMinutes, scheduleStartHour, scheduleStartMinute, ...restPatch } = patch;
     const updatePayload: Record<string, unknown> = { ...restPatch };
 
     if (scheduleType !== undefined) {
-      // Schedule type is immutable. Ignore requested type changes and preserve existing type.
       if (scheduleType !== existingTask.schedule.type) {
         logger.debug(`[${TOOL_NAME}] Ignoring scheduleType change request`, {
           taskId,
@@ -87,30 +79,9 @@ const executeEditCron = async (
         });
       }
 
-      const schedule: Record<string, unknown> = { type: existingTask.schedule.type };
-
-      if (existingTask.schedule.type === "once") {
-        schedule.runAt = scheduleRunAt !== undefined ? scheduleRunAt : existingTask.schedule.runAt;
-      } else if (existingTask.schedule.type === "interval") {
-        schedule.intervalMs = scheduleIntervalMs !== undefined ? scheduleIntervalMs : existingTask.schedule.intervalMs;
-      } else {
-        schedule.expression = scheduleCron !== undefined ? scheduleCron : existingTask.schedule.expression;
-      }
-
-      updatePayload.schedule = schedule;
-    } else if (scheduleRunAt !== undefined || scheduleIntervalMs !== undefined || scheduleCron !== undefined) {
-      // Allow schedule value-only edits without requiring scheduleType.
-      const schedule: Record<string, unknown> = { type: existingTask.schedule.type };
-
-      if (existingTask.schedule.type === "once") {
-        schedule.runAt = scheduleRunAt !== undefined ? scheduleRunAt : existingTask.schedule.runAt;
-      } else if (existingTask.schedule.type === "interval") {
-        schedule.intervalMs = scheduleIntervalMs !== undefined ? scheduleIntervalMs : existingTask.schedule.intervalMs;
-      } else {
-        schedule.expression = scheduleCron !== undefined ? scheduleCron : existingTask.schedule.expression;
-      }
-
-      updatePayload.schedule = schedule;
+      updatePayload.schedule = patchSchedule(existingTask.schedule, { scheduleRunAt, scheduleIntervalMs, scheduleIntervalMinutes, scheduleStartHour, scheduleStartMinute });
+    } else if (scheduleRunAt !== undefined || scheduleIntervalMs !== undefined || scheduleIntervalMinutes !== undefined || scheduleStartHour !== undefined || scheduleStartMinute !== undefined) {
+      updatePayload.schedule = patchSchedule(existingTask.schedule, { scheduleRunAt, scheduleIntervalMs, scheduleIntervalMinutes, scheduleStartHour, scheduleStartMinute });
     }
 
     if (Object.keys(updatePayload).length === 0) {
@@ -122,7 +93,7 @@ const executeEditCron = async (
       };
     }
 
-    const updatedTask = await scheduler.updateTaskAsync(taskId, updatePayload as any);
+    const updatedTask = await scheduler.updateTaskAsync(taskId, updatePayload as Partial<IScheduledTask>);
 
     if (updatedTask) {
       logger.info("[edit-cron] Updated task details", {
@@ -154,16 +125,15 @@ const executeEditCron = async (
 
     return { success: false, error: errorMessage };
   }
-};
+}
 
-export const editCronTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: editCronToolInputSchema,
-  execute: createToolWithPrerequisites(
-    "edit_cron",
-    TOOL_PREREQUISITES["edit_cron"] || [],
-    executeEditCron,
-  ) as any,
-});
+export const editCronTool = tool(
+  executeEditCronAsync,
+  {
+    name: "edit_cron",
+    description: TOOL_DESCRIPTION,
+    schema: editCronToolInputSchema,
+  },
+);
 
 //#endregion Tool

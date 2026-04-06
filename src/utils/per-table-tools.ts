@@ -1,9 +1,11 @@
-import { dynamicTool, type ToolSet } from "ai";
+import { tool } from "langchain";
+import type { DynamicStructuredTool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import type { IColumnInfo, ITableInfo } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
+import { createUpdateTableTool } from "../tools/update-table.tool.js";
 
 //#region Constants
 
@@ -14,31 +16,25 @@ const WRITE_TO_TABLE_DESCRIPTION: string =
   "Auto-fills created_at, updated_at, and similar timestamp columns if missing. " +
   "Omit auto-increment primary key columns (they are assigned automatically).";
 
-const SQLITE_TO_ZOD_TYPE: Record<string, z.ZodType> = {
-  // Text types
+export const SQLITE_TO_ZOD_TYPE: Record<string, z.ZodType> = {
   TEXT: z.string(),
   VARCHAR: z.string(),
   CHAR: z.string(),
   CLOB: z.string(),
   STRING: z.string(),
-  // Integer types
   INTEGER: z.number().int(),
   INT: z.number().int(),
   SMALLINT: z.number().int(),
   TINYINT: z.number().int(),
   BIGINT: z.number().int(),
-  // Floating point types
   REAL: z.number(),
   FLOAT: z.number(),
   DOUBLE: z.number(),
   NUMERIC: z.number(),
   DECIMAL: z.number(),
-  // Binary
   BLOB: z.string(),
-  // Boolean
   BOOLEAN: z.union([z.literal(0), z.literal(1), z.boolean()]),
   BOOL: z.union([z.literal(0), z.literal(1), z.boolean()]),
-  // Date/time types
   DATE: z.string(),
   DATETIME: z.string(),
   TIMESTAMP: z.string(),
@@ -63,9 +59,9 @@ const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
  * Zod schema derived from the table's column definitions. This prevents the
  * model from inserting data with wrong column names or missing required columns.
  */
-export async function buildPerTableToolsAsync(): Promise<ToolSet> {
+export async function buildPerTableToolsAsync(): Promise<Record<string, DynamicStructuredTool>> {
   const logger: LoggerService = LoggerService.getInstance();
-  const tools: ToolSet = {};
+  const tools: Record<string, DynamicStructuredTool> = {};
 
   const databases: litesql.IDatabaseInfo[] = await litesql.listDatabasesAsync();
 
@@ -99,21 +95,18 @@ export async function buildPerTableToolsAsync(): Promise<ToolSet> {
       const perTableTool = _buildWriteToolForTable(db.name, tableName, schema.columns);
       const toolName = `write_table_${tableName}`;
 
-      if (tools[toolName]) {
-        // Name collision — prefix with database name
+      if (toolName in tools) {
         let prefixedName = `write_table_${db.name}_${tableName}`;
 
-        // If prefixed name also collides (e.g., db1 has table "db2_items"), append suffix
-        if (tools[prefixedName]) {
+        if (prefixedName in tools) {
           let suffix = 2;
-
-          while (tools[`${prefixedName}_${suffix}`]) {
+          while (`${prefixedName}_${suffix}` in tools) {
             suffix++;
           }
-
           prefixedName = `${prefixedName}_${suffix}`;
         }
 
+        perTableTool.name = prefixedName;
         tools[prefixedName] = perTableTool;
         logger.debug("Per-table tool name collision, using prefixed name", {
           original: toolName,
@@ -123,10 +116,35 @@ export async function buildPerTableToolsAsync(): Promise<ToolSet> {
       } else {
         tools[toolName] = perTableTool;
       }
+
+      const updateTool = createUpdateTableTool(tableName, schema.columns, db.name);
+      const updateToolName = `update_table_${tableName}`;
+
+      if (updateToolName in tools) {
+        let prefixedName = `update_table_${db.name}_${tableName}`;
+
+        if (prefixedName in tools) {
+          let suffix = 2;
+          while (`${prefixedName}_${suffix}` in tools) {
+            suffix++;
+          }
+          prefixedName = `${prefixedName}_${suffix}`;
+        }
+
+        updateTool.name = prefixedName;
+        tools[prefixedName] = updateTool;
+        logger.debug("Per-table update tool name collision, using prefixed name", {
+          original: updateToolName,
+          prefixed: prefixedName,
+          database: db.name,
+        });
+      } else {
+        tools[updateToolName] = updateTool;
+      }
     }
   }
 
-  logger.info("Per-table write tools built", {
+  logger.info("Per-table write and update tools built", {
     toolCount: Object.keys(tools).length,
     toolNames: Object.keys(tools),
   });
@@ -142,11 +160,27 @@ export function buildSingleTableTool(
   databaseName: string,
   tableName: string,
   columns: IColumnInfo[],
-): { name: string; toolInstance: ReturnType<typeof dynamicTool> } {
+): { name: string; toolInstance: DynamicStructuredTool } {
   const perTableTool = _buildWriteToolForTable(databaseName, tableName, columns);
   return {
     name: `write_table_${tableName}`,
     toolInstance: perTableTool,
+  };
+}
+
+/**
+ * Build a single per-table update tool for a specific table.
+ * Useful for hot-reload after creating a new table.
+ */
+export function buildSingleUpdateTableTool(
+  databaseName: string,
+  tableName: string,
+  columns: IColumnInfo[],
+): { name: string; toolInstance: DynamicStructuredTool } {
+  const toolInstance = createUpdateTableTool(tableName, columns, databaseName);
+  return {
+    name: `update_table_${tableName}`,
+    toolInstance,
   };
 }
 
@@ -158,19 +192,15 @@ function _buildWriteToolForTable(
   databaseName: string,
   tableName: string,
   columns: IColumnInfo[],
-) {
+): DynamicStructuredTool {
   const description: string = WRITE_TO_TABLE_DESCRIPTION
     .replace("{tableName}", tableName)
     .replace("{databaseName}", databaseName);
 
   const dataSchema = _buildZodSchemaForColumns(columns);
 
-  return dynamicTool({
-    description,
-    inputSchema: z.object({
-      data: dataSchema,
-    }),
-    execute: async (input: unknown): Promise<{
+  return tool(
+    async (input: { data: Record<string, unknown>[] }): Promise<{
       success: boolean;
       databaseName: string;
       tableName: string;
@@ -178,10 +208,9 @@ function _buildWriteToolForTable(
       lastRowId: number;
       message: string;
     }> => {
-      const { data } = input as { data: Record<string, unknown>[] };
+      const { data } = input;
       const timestampColumns: Record<string, string> = {};
 
-      // Auto-fill timestamp columns if missing
       for (const col of columns) {
         if (COMMON_TIMESTAMP_COLUMNS.has(col.name) && col.notNull && !col.primaryKey) {
           timestampColumns[col.name] = new Date().toISOString();
@@ -218,7 +247,14 @@ function _buildWriteToolForTable(
         message: `Inserted ${result.insertedCount} row(s) into "${tableName}" (columns: ${usedColumns}). Last Row ID: ${result.lastRowId}`,
       };
     },
-  });
+    {
+      name: `write_table_${tableName}`,
+      description,
+      schema: z.object({
+        data: dataSchema,
+      }),
+    },
+  );
 }
 
 /**
@@ -232,7 +268,6 @@ function _buildZodSchemaForColumns(columns: IColumnInfo[]): z.ZodArray<z.ZodObje
   const shape: Record<string, z.ZodType> = {};
 
   for (const col of columns) {
-    // Skip auto-increment primary keys
     const isIntegerPk: boolean = col.primaryKey &&
       (col.type.toUpperCase() === "INTEGER" || col.type.toUpperCase() === "INT");
 
@@ -242,12 +277,12 @@ function _buildZodSchemaForColumns(columns: IColumnInfo[]): z.ZodArray<z.ZodObje
 
     const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
     const baseType = SQLITE_TO_ZOD_TYPE[normalizedType] ?? z.string();
+    const isAutoFillTimestampColumn: boolean =
+      COMMON_TIMESTAMP_COLUMNS.has(col.name) && col.notNull && !col.primaryKey;
 
-    if (col.notNull && !col.defaultValue) {
-      // Required column — no default, NOT NULL
+    if (col.notNull && !col.defaultValue && !isAutoFillTimestampColumn) {
       shape[col.name] = baseType.describe(`${col.type}${col.notNull ? " NOT NULL" : ""}`);
     } else {
-      // Optional column — has default or is nullable
       shape[col.name] = baseType.optional().describe(
         `${col.type}${col.defaultValue ? ` DEFAULT ${col.defaultValue}` : ""}${col.notNull ? " NOT NULL" : " NULLABLE"}`,
       );

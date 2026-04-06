@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { listCronsToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import type { IScheduledTask } from "../shared/types/index.js";
@@ -12,11 +12,14 @@ interface IListCronsTaskSummary {
   tools: string[];
   schedule: {
     type: string;
-    expression?: string;
+    intervalMinutes?: number;
+    startHour?: number | null;
+    startMinute?: number | null;
     intervalMs?: number;
     runAt?: string;
   };
   enabled: boolean;
+  notifyUser: boolean;
   lastRunAt: string | null;
   lastRunStatus: string | null;
 }
@@ -41,8 +44,10 @@ function _mapTaskToSummary(task: IScheduledTask): IListCronsTaskSummary {
   };
 
   switch (task.schedule.type) {
-    case "cron":
-      scheduleSummary.expression = task.schedule.expression;
+    case "scheduled":
+      scheduleSummary.intervalMinutes = task.schedule.intervalMinutes;
+      scheduleSummary.startHour = task.schedule.startHour;
+      scheduleSummary.startMinute = task.schedule.startMinute;
       break;
     case "interval":
       scheduleSummary.intervalMs = task.schedule.intervalMs;
@@ -59,6 +64,7 @@ function _mapTaskToSummary(task: IScheduledTask): IListCronsTaskSummary {
     tools: task.tools,
     schedule: scheduleSummary,
     enabled: task.enabled,
+    notifyUser: task.notifyUser,
     lastRunAt: task.lastRunAt,
     lastRunStatus: task.lastRunStatus,
   };
@@ -68,10 +74,8 @@ function _mapTaskToSummary(task: IScheduledTask): IListCronsTaskSummary {
 
 //#region Tool
 
-export const listCronsTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: listCronsToolInputSchema,
-  execute: async ({ enabledOnly }: { enabledOnly: boolean }): Promise<IListCronsResult> => {
+export const listCronsTool = tool(
+  async ({ enabledOnly }: { enabledOnly: boolean }): Promise<IListCronsResult> => {
     const scheduler: SchedulerService = SchedulerService.getInstance();
 
     const tasks: IScheduledTask[] = enabledOnly
@@ -82,6 +86,11 @@ export const listCronsTool = tool({
 
     return { tasks: mappedTasks };
   },
-});
+  {
+    name: "list_crons",
+    description: TOOL_DESCRIPTION,
+    schema: listCronsToolInputSchema,
+  },
+);
 
 //#endregion Tool

@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { removeCronToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -22,10 +22,8 @@ const TOOL_DESCRIPTION: string = "Remove an existing scheduled task (cron job) f
 
 //#region Tool
 
-export const removeCronTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: removeCronToolInputSchema,
-  execute: async ({ taskId }: { taskId: string }): Promise<IRemoveCronResult> => {
+export const removeCronTool = tool(
+  async ({ taskId }: { taskId: string }): Promise<IRemoveCronResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
@@ -39,6 +37,11 @@ export const removeCronTool = tool({
       return { success: false, message: errorMessage };
     }
   },
-});
+  {
+    name: "remove_cron",
+    description: TOOL_DESCRIPTION,
+    schema: removeCronToolInputSchema,
+  },
+);
 
 //#endregion Tool

@@ -184,7 +184,7 @@ export async function createTableAsync(
         def += " NOT NULL";
       }
 
-      if (col.defaultValue !== undefined) {
+      if (col.defaultValue !== undefined && col.defaultValue.trim().length > 0) {
         def += ` DEFAULT ${col.defaultValue}`;
       }
 

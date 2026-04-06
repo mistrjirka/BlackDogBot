@@ -1,21 +1,41 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 import { addCronToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { validateCronToolNames, buildSchedule } from "../helpers/cron-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
+import { ConfigService } from "../services/config.service.js";
+import { createStructuredOutputModel } from "../services/langchain-model.service.js";
 import { generateId } from "../utils/id.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 
 //#region Interfaces
 
-interface IAddCronResult {
+export interface IAddCronInput {
+  name: string;
+  description: string;
+  instructions: string;
+  tools: string[];
+  scheduleType: "once" | "interval" | "scheduled";
+  scheduleRunAt?: string;
+  scheduleIntervalMs?: number;
+  scheduleIntervalMinutes?: number;
+  scheduleStartHour?: number | null;
+  scheduleStartMinute?: number | null;
+  notifyUser: boolean;
+}
+
+export interface IAddCronResult {
   taskId: string;
   success: boolean;
   error?: string;
+}
+
+interface IInstructionVerificationResult {
+  isClear: boolean;
+  missingContext: string;
 }
 
 //#endregion Interfaces
@@ -27,105 +47,31 @@ const TOOL_DESCRIPTION: string =
   "Add a new scheduled task (cron job) to the scheduler. " +
   "Required inputs: name, description, instructions, tools, scheduleType, notifyUser. " +
   "send_message performs internal deduplication against previous cron messages. " +
-  "Schedule-specific required input: scheduleRunAt for scheduleType='once', scheduleIntervalMs for scheduleType='interval', scheduleCron for scheduleType='cron'. " +
-  "Examples: once => scheduleRunAt='2026-03-20T08:00:00Z'; interval => scheduleIntervalMs=7200000; cron => scheduleCron='0 */2 * * *'. " +
+  "Schedule-specific required input: scheduleRunAt for scheduleType='once', scheduleIntervalMs for scheduleType='interval', scheduleIntervalMinutes for scheduleType='scheduled'. " +
+  "For scheduled tasks: scheduleIntervalMinutes is required. Common values: 2=every 2min, 5=every 5min, 10=every 10min, 15=every 15min, 30=every 30min, 60=hourly, 120=every 2h, 180=every 3h, 240=every 4h, 360=every 6h, 720=every 12h, 1440=daily, 2880=every 2 days, 10080=weekly. " +
+  "Optional: scheduleStartHour (0-23) and scheduleStartMinute (0-59) to anchor the interval to a specific time of day. " +
+  "When scheduleStartHour and scheduleStartMinute are both omitted (null), the task starts from the current time and repeats at the specified interval. " +
+  "scheduleStartMinute is an offset within the hour (0-59), NOT converted to hours. E.g., startMinute=2 means ':02 of each hour', startMinute=30 means ':30 of each hour'. " +
+  "Examples: once => scheduleRunAt='2026-03-20T08:00:00Z'; interval => scheduleIntervalMs=7200000; " +
+  "scheduled (daily at 9 AM) => scheduleIntervalMinutes=1440, scheduleStartHour=9, scheduleStartMinute=0; " +
+  "scheduled (every 2h at :30) => scheduleIntervalMinutes=120, scheduleStartMinute=30; " +
+  "scheduled (every 2min) => scheduleIntervalMinutes=2 (no startHour/startMinute); " +
+  "scheduled (hourly from now) => scheduleIntervalMinutes=60 (no startHour/startMinute). " +
   "If the task's instructions reference a database, ensure the database and table(s) have been created first using create_database and create_table, then reference them by name (without .db extension) in the instructions.";
+
+const instructionVerificationResultSchema = z.object({
+  isClear: z.boolean(),
+  missingContext: z.string(),
+});
 
 //#endregion Const
 
 //#region Private methods
 
-function _buildSchedule(input: {
-  scheduleType: "once" | "interval" | "cron";
-  scheduleRunAt?: string;
-  scheduleIntervalMs?: number;
-  scheduleCron?: string;
-}): Schedule {
-  switch (input.scheduleType) {
-    case "once": {
-      if (!input.scheduleRunAt || input.scheduleRunAt.trim().length === 0) {
-        throw new Error("scheduleRunAt is required for scheduleType='once'");
-      }
-      return {
-        type: "once",
-        runAt: input.scheduleRunAt,
-      };
-    }
-    case "interval": {
-      if (input.scheduleIntervalMs === undefined || !Number.isFinite(input.scheduleIntervalMs) || input.scheduleIntervalMs <= 0) {
-        throw new Error("scheduleIntervalMs is required and must be > 0 for scheduleType='interval'");
-      }
-      return {
-        type: "interval",
-        intervalMs: input.scheduleIntervalMs,
-      };
-    }
-    case "cron": {
-      if (!input.scheduleCron || input.scheduleCron.trim().length === 0) {
-        throw new Error("scheduleCron is required for scheduleType='cron'");
-      }
-      return {
-        type: "cron",
-        expression: input.scheduleCron,
-      };
-    }
-  }
-}
+async function _verifyInstructionsAsync(instructions: string, tools: string[], logger: LoggerService): Promise<IInstructionVerificationResult> {
+  const toolContextBlock: string = await buildCronToolContextBlockAsync(tools);
 
-//#endregion Private methods
-
-//#region Tool
-
-export const addCronTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: addCronToolInputSchema,
-  execute: async ({
-    name,
-    description,
-    instructions,
-    tools,
-    scheduleType,
-    scheduleRunAt,
-    scheduleIntervalMs,
-    scheduleCron,
-    notifyUser,
-  }: {
-    name: string;
-    description: string;
-    instructions: string;
-    tools: string[];
-    scheduleType: "once" | "interval" | "cron";
-    scheduleRunAt?: string;
-    scheduleIntervalMs?: number;
-    scheduleCron?: string;
-    notifyUser: boolean;
-  }): Promise<IAddCronResult> => {
-    const logger: LoggerService = LoggerService.getInstance();
-
-    try {
-      // 0. Validate tool names at runtime
-      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = tools.filter(
-        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
-      );
-      if (invalidTools.length > 0) {
-        return {
-          taskId: "",
-          success: false,
-          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}`,
-        };
-      }
-
-      // 1. Verify instructions using LLM
-      logger.debug(`[${TOOL_NAME}] Verifying cron instructions for: ${name}`);
-
-      // Build a human-readable tool list so the verifier knows what each tool does.
-      // This prevents it from flagging well-known tools (e.g. send_message) as
-      // "unresolved destinations" simply because it has no context about them.
-      const toolContextBlock: string = await buildCronToolContextBlockAsync(tools);
-
-      const verifierPrompt = `
+  const verifierPrompt = `
 You are a task instruction verifier for an autonomous AI agent.
 The agent runs periodically on a fixed schedule and has NO memory of past conversations when it wakes up.
 The agent executing these instructions is an intelligent AI (an LLM). It can read tool descriptions, reason about conventions, compose arguments, and derive values — it is NOT a dumb script that needs every value pre-computed.
@@ -138,7 +84,7 @@ ${toolContextBlock}
 
 RULES:
 
-1. Schedule/timing is already encoded in the cron expression — do NOT require the instructions to re-state when or how often the task runs.
+1. Schedule/timing is already encoded in the schedule configuration — do NOT require the instructions to re-state when or how often the task runs.
 
 2. Tools that handle routing or delivery implicitly do NOT need extra config in the instructions.
    Example: "send_message" always reaches the correct user — instructions that say "send the results" or "notify the user" are VALID without specifying a chat ID or destination.
@@ -172,59 +118,91 @@ Output a JSON object with:
 - "missingContext": string (if invalid, describe exactly what information is missing and why it cannot be derived; if valid, use empty string)
 `;
 
-      const aiService = AiProviderService.getInstance();
-      const model = aiService.getModel();
+  const structuredModel = createStructuredOutputModel(
+    ConfigService.getInstance().getAiConfig(),
+    instructionVerificationResultSchema,
+    { name: "instruction_verification" },
+  );
 
-      const verificationResult = await generateObjectWithRetryAsync({
-        model,
-        schema: z.object({
-          isClear: z.boolean(),
-          missingContext: z.string(),
-        }),
-        prompt: verifierPrompt,
-        retryOptions: { callType: "schema_extraction" },
-      });
+  const result = await structuredModel.invoke(verifierPrompt);
 
-      if (!verificationResult.object.isClear) {
-        const errorMsg = `CRON REJECTED. The instructions are ambiguous or missing context: ${verificationResult.object.missingContext}. Please provide complete, self-contained instructions.`;
-        logger.warn(`[${TOOL_NAME}] Cron rejected: ${errorMsg}`);
-        return { taskId: "", success: false, error: errorMsg };
-      }
+  logger.debug(`[${TOOL_NAME}] Verifier structured response`, {
+    isClear: result.isClear,
+    missingContextPreview: result.missingContext.slice(0, 200),
+  });
 
-      // 2. Schedule the task
-      const taskId: string = generateId();
-      const now: string = new Date().toISOString();
-      const builtSchedule: Schedule = _buildSchedule({ scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron });
+  return result;
+}
 
-      const task: IScheduledTask = {
-        taskId,
-        name,
-        description,
-        instructions,
-        tools,
-        schedule: builtSchedule,
-        notifyUser,
-        enabled: true,
-        createdAt: now,
-        updatedAt: now,
-        lastRunAt: null,
-        lastRunStatus: null,
-        lastRunError: null,
-        messageHistory: [],
-        messageSummary: null,
-        summaryGeneratedAt: null,
+//#endregion Private methods
+
+//#region Tool
+
+export async function executeAddCronAsync(input: IAddCronInput): Promise<IAddCronResult> {
+  const logger: LoggerService = LoggerService.getInstance();
+  const { name, description, instructions, tools, scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleIntervalMinutes, scheduleStartHour, scheduleStartMinute, notifyUser } = input;
+
+  try {
+    const invalidTools: string[] = validateCronToolNames(tools);
+    if (invalidTools.length > 0) {
+      return {
+        taskId: "",
+        success: false,
+        error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}`,
       };
-
-      await SchedulerService.getInstance().addTaskAsync(task);
-
-      return { taskId, success: true };
-    } catch (error: unknown) {
-      const errorMessage: string = extractErrorMessage(error);
-      logger.error(`[${TOOL_NAME}] Failed to add cron task: ${errorMessage}`);
-
-      return { taskId: "", success: false, error: errorMessage };
     }
+
+    logger.debug(`[${TOOL_NAME}] Verifying cron instructions for: ${name}`);
+
+    const verificationResult: IInstructionVerificationResult = await _verifyInstructionsAsync(instructions, tools, logger);
+
+    if (!verificationResult.isClear) {
+      const errorMsg = `CRON REJECTED. The instructions are ambiguous or missing context: ${verificationResult.missingContext}. Please provide complete, self-contained instructions.`;
+      logger.warn(`[${TOOL_NAME}] Cron rejected: ${errorMsg}`);
+      return { taskId: "", success: false, error: errorMsg };
+    }
+
+    const taskId: string = generateId();
+    const now: string = new Date().toISOString();
+    const builtSchedule: Schedule = buildSchedule({ scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleIntervalMinutes, scheduleStartHour, scheduleStartMinute });
+
+    const task: IScheduledTask = {
+      taskId,
+      name,
+      description,
+      instructions,
+      tools,
+      schedule: builtSchedule,
+      notifyUser,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      lastRunAt: null,
+      lastRunStatus: null,
+      lastRunError: null,
+      messageHistory: [],
+      messageSummary: null,
+      summaryGeneratedAt: null,
+    };
+
+    await SchedulerService.getInstance().addTaskAsync(task);
+
+    return { taskId, success: true };
+  } catch (error: unknown) {
+    const errorMessage: string = extractErrorMessage(error);
+    logger.error(`[${TOOL_NAME}] Failed to add cron task: ${errorMessage}`);
+
+    return { taskId: "", success: false, error: errorMessage };
+  }
+}
+
+export const addCronTool = tool(
+  executeAddCronAsync,
+  {
+    name: "add_cron",
+    description: TOOL_DESCRIPTION,
+    schema: addCronToolInputSchema,
   },
-});
+);
 
 //#endregion Tool

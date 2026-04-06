@@ -187,7 +187,7 @@ this means chaining each new node to the previously created node.
 | Every input record should be inserted as-is, no logic needed | `litesql` node |
 | Simple deterministic read (e.g. last N hours, all rows) | `litesql_reader` node |
 | Need to read from the DB before deciding what to write | `agent` node with `read_from_database` + `write_table_<tableName>` |
-| Need to update or delete existing rows conditionally | `agent` node with `update_database` / `delete_from_database` (+ explicit WHERE) |
+| Need to update or delete existing rows conditionally | `agent` node with `update_table_<tableName>` / `delete_from_database` (+ explicit WHERE) |
 | Need conditional writes (e.g. skip duplicates, filter by rule) | `agent` node with DB tools |
 | Need to query data for summaries / reports | `agent` node with `read_from_database` |
 | Simple end-of-pipeline persistence (insert and done) | `litesql` node |
@@ -218,7 +218,7 @@ these tools directly to set up the schema:
 At **pipeline runtime**, `agent` nodes can use these tools via `selectedTools`:
 - `write_table_<tableName>` — inserts rows using the table-specific validated tool
 - `read_from_database` — queries rows
-- `update_database` — updates existing rows (requires WHERE)
+- `update_table_<tableName>` — updates existing rows using the table-specific validated tool (requires WHERE)
 - `delete_from_database` — deletes rows (requires WHERE)
 - `create_table` — creates a table if needed
 - `list_databases` / `list_tables` / `get_table_schema` — introspection
@@ -278,7 +278,7 @@ checks existing records before deciding what to store), add these tools to its
 `selectedTools`:
 - `write_table_<tableName>` — inserts rows using the table-specific validated tool
 - `read_from_database` — queries rows
-- `update_database` / `delete_from_database` — optional for modifying existing rows (always with WHERE)
+- `update_table_<tableName>` / `delete_from_database` — optional for modifying existing rows (always with WHERE)
 - `create_table` — creates a table if needed
 - `list_databases` / `list_tables` / `get_table_schema` — introspection
 
@@ -674,7 +674,7 @@ After creating a job, you can attach a schedule so it runs automatically:
 1. **Set a schedule** — call `set_job_schedule` with the `jobId` and a `schedule`
    object. This creates a ScheduledTask that will run the job automatically.
    The schedule format is the same as `add_cron`:
-   - `{ type: "cron", expression: "0 9 * * *" }` — daily at 09:00
+   - `{ type: "scheduled", intervalMinutes: 1440, startHour: 9, startMinute: 0 }` — daily at 09:00
    - `{ type: "interval", intervalMs: 3600000 }` — every hour
    - `{ type: "once", runAt: "2026-03-01T00:00:00Z" }` — one-time
 
@@ -690,7 +690,7 @@ start_job_creation(name="Daily RSS Digest", ...)
 add_rss_fetcher_node(...)
 add_output_to_ai_node(...)
 finish_job_creation(jobId)
-set_job_schedule(jobId, { type: "cron", expression: "0 8 * * *" })
+set_job_schedule(jobId, { type: "scheduled", intervalMinutes: 1440, startHour: 8, startMinute: 0 })
 ```
 
 **Note:** `set_job_schedule` is preferred over `add_cron` for job scheduling

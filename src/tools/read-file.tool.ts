@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 
-import { tool } from "ai";
+import { tool } from "langchain";
 
 import { readFileToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -20,13 +20,8 @@ interface IReadFileResult {
 //#region Factory
 
 export function createReadFileTool(readTracker: IFileReadTracker) {
-  return tool({
-    description:
-      "Read the contents of a file. The default location is the workspace directory (~/.blackdogbot/workspace/). " +
-      "For most tasks, just provide a filename (e.g. 'notes.txt') without a full path. " +
-      "Only specify an absolute path when accessing files outside the workspace.",
-    inputSchema: readFileToolInputSchema,
-    execute: async ({ filePath }: { filePath: string }): Promise<IReadFileResult> => {
+  return tool(
+    async ({ filePath }: { filePath: string }): Promise<IReadFileResult> => {
       const logger: LoggerService = LoggerService.getInstance();
 
       const operationResult = await runFileOperationAsync<string>({
@@ -55,7 +50,15 @@ export function createReadFileTool(readTracker: IFileReadTracker) {
         message: `File read successfully (${operationResult.value.length} characters).`,
       };
     },
-  });
+    {
+      name: "read_file",
+      description:
+        "Read the contents of a file. The default location is the workspace directory (~/.blackdogbot/workspace/). " +
+        "For most tasks, just provide a filename (e.g. 'notes.txt') without a full path. " +
+        "Only specify an absolute path when accessing files outside the workspace.",
+      schema: readFileToolInputSchema,
+    },
+  );
 }
 
 //#endregion Factory

@@ -18,10 +18,7 @@ async function execTool(
   tool: ReturnType<typeof createSendMessageToolWithHistory>,
   message: string,
 ): Promise<ISendMessageResult> {
-  return (tool as any).execute(
-    { message },
-    { toolCallId: "test", messages: [], abortSignal: new AbortController().signal },
-  ) as Promise<ISendMessageResult>;
+  return (tool as any).invoke({ message }) as Promise<ISendMessageResult>;
 }
 
 describe("send_message tool with validation", () => {
@@ -132,6 +129,30 @@ describe("send_message tool with validation", () => {
     expect(mockHistoryService.recordMessageAsync).not.toHaveBeenCalled();
     expect(mockHistoryService.recordToVectorStoreAsync).not.toHaveBeenCalled();
     expect(context.toolCallHistory).toContain("send_message");
+  });
+
+  it("allows send when dispatch policy check throws", async () => {
+    mockHistoryService.checkMessageDispatchPolicyAsync.mockRejectedValue(new Error("policy failed"));
+
+    const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
+
+    const result = await execTool(tool, "Fallback send on policy failure");
+
+    expect(result.sent).toBe(true);
+    expect(result.messageId).toBe("msg-123");
+    expect(mockSender).toHaveBeenCalledWith("Fallback send on policy failure");
+  });
+
+  it("allows send when novelty check throws", async () => {
+    mockHistoryService.checkMessageNoveltyAsync.mockRejectedValue(new Error("novelty failed"));
+
+    const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
+
+    const result = await execTool(tool, "Fallback send on novelty failure");
+
+    expect(result.sent).toBe(true);
+    expect(result.messageId).toBe("msg-123");
+    expect(mockSender).toHaveBeenCalledWith("Fallback send on novelty failure");
   });
 
   it("skips novelty check when task id is unavailable", async () => {

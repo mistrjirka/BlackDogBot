@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { sendMessageToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { CronMessageHistoryService } from "../services/cron-message-history.service.js";
@@ -8,11 +8,8 @@ export type MessageSender = (message: string) => Promise<string | null>;
 export type TaskIdProvider = () => string | null;
 
 export function createSendMessageTool(sender: MessageSender) {
-  return tool({
-    description:
-      "Send a message to the user. Use this to communicate progress, ask clarifying questions, or deliver results.",
-    inputSchema: sendMessageToolInputSchema,
-    execute: async ({
+  return tool(
+    async ({
       message,
     }: {
       message: string;
@@ -25,7 +22,13 @@ export function createSendMessageTool(sender: MessageSender) {
         return { sent: false, messageId: null, error: errorMessage };
       }
     },
-  });
+    {
+      name: "send_message",
+      description:
+        "Send a message to the user. Use this to communicate progress, ask clarifying questions, or deliver results.",
+      schema: sendMessageToolInputSchema,
+    },
+  );
 }
 
 export function createSendMessageToolWithHistory(
@@ -33,12 +36,8 @@ export function createSendMessageToolWithHistory(
   taskIdProvider: TaskIdProvider,
   context: IExecutionContext,
 ) {
-  return tool({
-    description:
-      "Send a message to the user. Use this to communicate progress, ask clarifying questions, or deliver results. " +
-      "This tool performs automatic deduplication against previous cron messages and silently skips sending when the message does not add new information.",
-    inputSchema: sendMessageToolInputSchema,
-    execute: async ({
+  return tool(
+    async ({
       message,
     }: {
       message: string;
@@ -47,32 +46,37 @@ export function createSendMessageToolWithHistory(
         const taskId: string | null = taskIdProvider();
         const historyService: CronMessageHistoryService = CronMessageHistoryService.getInstance();
 
-        const dispatchPolicy = await historyService.checkMessageDispatchPolicyAsync(
-          message,
-          context.taskInstructions,
-          context.taskName,
-          context.taskDescription,
-        );
-
-        if (!dispatchPolicy.shouldDispatch) {
-          context.toolCallHistory.push("send_message");
-          return { sent: true, messageId: null };
-        }
-
-        if (taskId) {
-          const novelty = await historyService.checkMessageNoveltyAsync(
-            taskId,
+        try {
+          const dispatchPolicy = await historyService.checkMessageDispatchPolicyAsync(
             message,
             context.taskInstructions,
             context.taskName,
             context.taskDescription,
           );
 
-          if (!novelty.isNewInformation) {
+          if (!dispatchPolicy.shouldDispatch) {
             context.toolCallHistory.push("send_message");
-
             return { sent: true, messageId: null };
           }
+
+          if (taskId) {
+            const novelty = await historyService.checkMessageNoveltyAsync(
+              taskId,
+              message,
+              context.taskInstructions,
+              context.taskName,
+              context.taskDescription,
+            );
+
+            if (!novelty.isNewInformation) {
+              context.toolCallHistory.push("send_message");
+
+              return { sent: true, messageId: null };
+            }
+          }
+        } catch {
+          // If novelty/policy checks fail, still attempt send_message.
+          // Failing closed here can create retry loops in cron agents.
         }
 
         const messageId: string | null = await sender(message);
@@ -92,5 +96,12 @@ export function createSendMessageToolWithHistory(
         return { sent: false, messageId: null, error: errorMessage };
       }
     },
-  });
+    {
+      name: "send_message",
+      description:
+        "Send a message to the user. Use this to communicate progress, ask clarifying questions, or deliver results. " +
+        "This tool performs automatic deduplication against previous cron messages and silently skips sending when the message does not add new information.",
+      schema: sendMessageToolInputSchema,
+    },
+  );
 }

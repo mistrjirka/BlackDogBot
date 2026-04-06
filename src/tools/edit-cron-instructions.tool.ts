@@ -1,12 +1,11 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
-import { editCronInstructionsToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
-import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
+import { editCronInstructionsToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
+import { ConfigService } from "../services/config.service.js";
+import { createStructuredOutputModel } from "../services/langchain-model.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
@@ -14,11 +13,23 @@ import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
 
-interface IEditCronInstructionsResult {
+export interface IEditCronInstructionsInput {
+  taskId: string;
+  instructions: string;
+  intention: string;
+  tools?: string[];
+}
+
+export interface IEditCronInstructionsResult {
   success: boolean;
   task?: IScheduledTask;
   display?: string;
   error?: string;
+}
+
+interface IInstructionVerificationResult {
+  isClear: boolean;
+  missingContext: string;
 }
 
 //#endregion Interfaces
@@ -33,26 +44,19 @@ const TOOL_DESCRIPTION: string =
   "IMPORTANT: 'intention' is metadata only and does NOT change instructions by itself. " +
   "IMPORTANT: You MUST call 'get_cron' first to retrieve the current task configuration before using this tool.";
 
+const instructionVerificationResultSchema = z.object({
+  isClear: z.boolean(),
+  missingContext: z.string(),
+});
+
 //#endregion Constants
 
 //#region Tool
 
-const executeEditCronInstructions = async (
-  {
-    taskId,
-    instructions,
-    intention,
-    tools,
-  }: {
-    taskId: string;
-    instructions: string;
-    intention: string;
-    tools?: string[];
-  },
-  _context: ToolExecuteContext,
-): Promise<IEditCronInstructionsResult> => {
+export async function executeEditCronInstructionsAsync(input: IEditCronInstructionsInput): Promise<IEditCronInstructionsResult> {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
+  const { taskId, instructions, intention, tools } = input;
 
   try {
     const existingTask: IScheduledTask | undefined = await scheduler.getTaskAsync(taskId);
@@ -78,8 +82,9 @@ const executeEditCronInstructions = async (
 
     if (tools !== undefined) {
       const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = tools.filter((t: string) => !validToolSet.has(t) && !isDynamicWriteTableTool(t));
+      const isDynamicTableTool = (toolName: string): boolean =>
+        toolName.startsWith("write_table_") || toolName.startsWith("update_table_");
+      const invalidTools: string[] = tools.filter((t: string) => !validToolSet.has(t) && !isDynamicTableTool(t));
       if (invalidTools.length > 0) {
         return {
           success: false,
@@ -109,8 +114,8 @@ const executeEditCronInstructions = async (
     if (mentionsRunCmd && mentionsSqlite) {
       const recommendedWriter: string | undefined = toolsToVerify.find((toolName: string) => toolName.startsWith("write_table_"));
       const guidance: string = recommendedWriter
-        ? `Use ${recommendedWriter} for inserts and database tools (read_from_database/update_database/delete_from_database) for mutations instead of run_cmd/sqlite3.`
-        : "Use write_table_<tableName> for inserts and database tools (read_from_database/update_database/delete_from_database) instead of run_cmd/sqlite3.";
+        ? `Use ${recommendedWriter} for inserts, update_table_<tableName> for updates, and read_from_database/delete_from_database for queries and deletes instead of run_cmd/sqlite3.`
+        : "Use write_table_<tableName> for inserts, update_table_<tableName> for updates, and read_from_database/delete_from_database for queries and deletes instead of run_cmd/sqlite3.";
 
       return {
         success: false,
@@ -131,7 +136,7 @@ ${toolContextBlock}
 
 RULES:
 
-1. Schedule/timing is already encoded in the cron expression — do NOT require the instructions to re-state when or how often the task runs.
+1. Schedule/timing is already encoded in the schedule configuration — do NOT require the instructions to re-state when or how often the task runs.
 
 2. Tools that handle routing or delivery implicitly do NOT need extra config in the instructions.
    Example: "send_message" always reaches the correct user — instructions that say "send the results" or "notify the user" are VALID without specifying a chat ID or destination.
@@ -155,11 +160,12 @@ RULES:
    - Set notifyUser=false for background tasks where only explicit send_message tool calls should reach Telegram (e.g. cleanup, archival, internal data processing).
    - The send_message tool ALWAYS sends to Telegram regardless of notifyUser — notifyUser only gates the automatic forwarding of the agent's final text output.
 
-7. Database rules are strict:
-   - NEVER use run_cmd with sqlite/sqlite3 for internal database work.
-   - For inserts, prefer write_table_<tableName> tools when available.
-   - Use read_from_database/update_database/delete_from_database for database access and mutation.
-   - Use just database names without .db extension.
+ 7. Database rules are strict:
+    - NEVER use run_cmd with sqlite/sqlite3 or any other database CLI for internal database work.
+    - ALWAYS use write_table_<tableName> for inserts and update_table_<tableName> for updates when available.
+    - Use read_from_database for queries and delete_from_database for deletes.
+    - Use just database names without .db extension.
+    - If write_table_<tableName> or update_table_<tableName> tools are available, instructions MUST use them — never run_cmd for database operations.
 
 8. If instructions mention tools not present in the tool list, they are invalid unless those tools are being added in this same update.
 
@@ -177,7 +183,7 @@ Current Instructions:
 ${existingTask.instructions}
 """
 
-=== PROPOSED NEW INSTRUCTIONS ===
+=== PROPOSED NEW INSTRUCTIONS
 """
 ${normalizedInstructions}
 """
@@ -193,30 +199,30 @@ Output a JSON object with:
 - "missingContext": string (if invalid, describe exactly what information is missing and why it cannot be derived; if valid, use empty string)
 `;
 
-    const aiService: AiProviderService = AiProviderService.getInstance();
-    const model = aiService.getModel();
+    const structuredModel = createStructuredOutputModel(
+      ConfigService.getInstance().getAiConfig(),
+      instructionVerificationResultSchema,
+      { name: "instruction_verification" },
+    );
 
-    const verificationResult = await generateObjectWithRetryAsync({
-      model,
-      schema: z.object({
-        isClear: z.boolean(),
-        missingContext: z.string(),
-      }),
-      prompt: verifierPrompt,
-      retryOptions: { callType: "schema_extraction" },
+    const verificationResult: IInstructionVerificationResult = await structuredModel.invoke(verifierPrompt);
+
+    logger.debug(`[${TOOL_NAME}] Verifier structured response`, {
+      isClear: verificationResult.isClear,
+      missingContextPreview: verificationResult.missingContext.slice(0, 200),
     });
 
-    if (!verificationResult.object.isClear) {
+    if (!verificationResult.isClear) {
       const errorMsg =
         `EDIT REJECTED. The updated instructions were not approved by the verifier.\n\n` +
-        `Verifier reason: ${verificationResult.object.missingContext}\n\n` +
+        `Verifier reason: ${verificationResult.missingContext}\n\n` +
         `Current instructions:\n${existingTask.instructions}\n\n` +
         `Proposed instructions:\n${normalizedInstructions}\n\n` +
         `Intention: ${normalizedIntention}`;
 
       logger.warn(`[${TOOL_NAME}] Edit rejected`, {
         taskId,
-        reason: verificationResult.object.missingContext,
+        reason: verificationResult.missingContext,
       });
 
       return { success: false, error: errorMsg };
@@ -253,16 +259,15 @@ Output a JSON object with:
 
     return { success: false, error: errorMessage };
   }
-};
+}
 
-export const editCronInstructionsTool = tool({
-  description: TOOL_DESCRIPTION,
-  inputSchema: editCronInstructionsToolInputSchema,
-  execute: createToolWithPrerequisites(
-    "edit_cron_instructions",
-    TOOL_PREREQUISITES["edit_cron_instructions"] || [],
-    executeEditCronInstructions,
-  ) as any,
-});
+export const editCronInstructionsTool = tool(
+  executeEditCronInstructionsAsync,
+  {
+    name: "edit_cron_instructions",
+    description: TOOL_DESCRIPTION,
+    schema: editCronInstructionsToolInputSchema,
+  },
+);
 
 //#endregion Tool

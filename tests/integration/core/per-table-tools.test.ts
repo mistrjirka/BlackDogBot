@@ -7,7 +7,6 @@ import * as litesql from "../../../src/helpers/litesql.js";
 import { buildPerTableToolsAsync, buildSingleTableTool, buildZodSchemaForColumns } from "../../../src/utils/per-table-tools.js";
 import type { IColumnInfo } from "../../../src/helpers/litesql.js";
 import { isToolAllowed } from "../../../src/helpers/tool-registry.js";
-import { writeToDatabaseTool } from "../../../src/tools/write-to-database.tool.js";
 import { ToolHotReloadService } from "../../../src/services/tool-hot-reload.service.js";
 
 describe("Per-Table Write Tools", () => {
@@ -44,7 +43,7 @@ describe("Per-Table Write Tools", () => {
 
       expect(tools).toHaveProperty("write_table_users");
       expect(tools.write_table_users).toBeDefined();
-      expect(typeof tools.write_table_users.execute).toBe("function");
+      expect(typeof tools.write_table_users.invoke).toBe("function");
     });
 
     it("should return empty object when no databases exist", async () => {
@@ -86,9 +85,9 @@ describe("Per-Table Write Tools", () => {
 
       const tools = await buildPerTableToolsAsync();
 
-      // One should be "write_table_items", the other should be prefixed
+      // Should have 4 tools: write + update for each of the 2 tables
       const toolNames = Object.keys(tools);
-      expect(toolNames.length).toBe(2);
+      expect(toolNames.length).toBe(4);
       expect(toolNames.some((n) => n === "write_table_items")).toBe(true);
       expect(toolNames.some((n) => n.startsWith("write_table_") && n.includes("items"))).toBe(true);
     });
@@ -125,7 +124,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "logs");
       const { toolInstance } = buildSingleTableTool("testdb", "logs", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ message: "Hello", level: "info" }],
       });
 
@@ -149,7 +148,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "events");
       const { toolInstance } = buildSingleTableTool("testdb", "events", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ title: "Test Event" }],
       });
 
@@ -173,14 +172,14 @@ describe("Per-Table Write Tools", () => {
         { name: "created_at", type: "TEXT", notNull: true },
       ]);
 
-      const result = await (writeToDatabaseTool as any).execute({
-        databaseName: "testdb",
-        tableName: "articles",
+      const schema = await litesql.getTableSchemaAsync("testdb", "articles");
+      const { toolInstance } = buildSingleTableTool("testdb", "articles", schema.columns);
+
+      const result = await toolInstance.invoke({
         data: [{
           title: "Breaking News",
           source: "https://example.com",
           pub_date: "2026-03-20T12:00:00Z",
-          // created_at is missing but should be auto-filled
         }],
       });
 
@@ -192,65 +191,58 @@ describe("Per-Table Write Tools", () => {
       expect(queryResult.rows[0].created_at).toBeTruthy();
     });
 
-    it("should return structured error for non-existent columns", async () => {
+    it("should strip unknown columns via Zod", async () => {
       await litesql.createDatabaseAsync("testdb");
       await litesql.createTableAsync("testdb", "items", [
         { name: "id", type: "INTEGER", primaryKey: true },
         { name: "name", type: "TEXT", notNull: true },
       ]);
 
-      const result = await (writeToDatabaseTool as any).execute({
-        databaseName: "testdb",
-        tableName: "items",
+      const schema = await litesql.getTableSchemaAsync("testdb", "items");
+      const { toolInstance } = buildSingleTableTool("testdb", "items", schema.columns);
+
+      const result = await toolInstance.invoke({
         data: [{ name: "Widget", nonexistent_column: "value" }],
       });
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("nonexistent_column");
-      expect(result.error).toContain("does not exist");
-      expect(result.error).toContain("name"); // Should list available columns
+      expect(result.success).toBe(true);
+      const queryResult = await litesql.queryTableAsync("testdb", "items", { where: "name = 'Widget'" });
+      expect(queryResult.rows[0]).not.toHaveProperty("nonexistent_column");
     });
 
-    it("should return structured error for missing NOT NULL columns", async () => {
+    it("should reject missing NOT NULL columns via schema validation", async () => {
       await litesql.createDatabaseAsync("testdb");
       await litesql.createTableAsync("testdb", "records", [
         { name: "id", type: "INTEGER", primaryKey: true },
         { name: "required_field", type: "TEXT", notNull: true },
       ]);
 
-      const result = await (writeToDatabaseTool as any).execute({
-        databaseName: "testdb",
-        tableName: "records",
-        data: [{ id: 1 }], // missing required_field
-      });
+      const schema = await litesql.getTableSchemaAsync("testdb", "records");
+      const { toolInstance } = buildSingleTableTool("testdb", "records", schema.columns);
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("required_field");
-      expect(result.error).toContain("required");
+      await expect(toolInstance.invoke({
+        data: [{}],
+      })).rejects.toThrow("Received tool input did not match expected schema");
     });
 
     it("should return structured error for non-existent database", async () => {
-      const result = await (writeToDatabaseTool as any).execute({
-        databaseName: "nonexistent_db",
-        tableName: "items",
-        data: [{ name: "test" }],
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("does not exist");
+      try {
+        await litesql.insertIntoTableAsync("nonexistent_db", "items", [{ name: "test" }]);
+        expect.fail("Should have thrown");
+      } catch (err: unknown) {
+        expect(err).toBeDefined();
+      }
     });
 
     it("should return structured error for non-existent table", async () => {
       await litesql.createDatabaseAsync("testdb");
 
-      const result = await (writeToDatabaseTool as any).execute({
-        databaseName: "testdb",
-        tableName: "nonexistent_table",
-        data: [{ name: "test" }],
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("does not exist");
+      try {
+        await litesql.insertIntoTableAsync("testdb", "nonexistent_table", [{ name: "test" }]);
+        expect.fail("Should have thrown");
+      } catch (err: unknown) {
+        expect(err).toBeDefined();
+      }
     });
   });
 
@@ -279,7 +271,7 @@ describe("Per-Table Write Tools", () => {
       const { toolInstance } = buildSingleTableTool("testdb", "texts", schema.columns);
 
       // Should accept string value
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ content: "hello world" }],
       });
       expect(result.success).toBe(true);
@@ -295,7 +287,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "counts");
       const { toolInstance } = buildSingleTableTool("testdb", "counts", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ amount: 42 }],
       });
       expect(result.success).toBe(true);
@@ -312,7 +304,7 @@ describe("Per-Table Write Tools", () => {
       const { toolInstance } = buildSingleTableTool("testdb", "auto", schema.columns);
 
       // Should NOT require "id" column
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ value: "test" }],
       });
       expect(result.success).toBe(true);
@@ -330,7 +322,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "varchar_table");
       const { toolInstance } = buildSingleTableTool("testdb", "varchar_table", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ label: "hello" }],
       });
       expect(result.success).toBe(true);
@@ -346,7 +338,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "int_table");
       const { toolInstance } = buildSingleTableTool("testdb", "int_table", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ count: 42 }],
       });
       expect(result.success).toBe(true);
@@ -362,7 +354,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "float_table");
       const { toolInstance } = buildSingleTableTool("testdb", "float_table", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ score: 3.14 }],
       });
       expect(result.success).toBe(true);
@@ -378,7 +370,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "numeric_table");
       const { toolInstance } = buildSingleTableTool("testdb", "numeric_table", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ amount: 99.99 }],
       });
       expect(result.success).toBe(true);
@@ -394,7 +386,7 @@ describe("Per-Table Write Tools", () => {
       const schema = await litesql.getTableSchemaAsync("testdb", "date_table");
       const { toolInstance } = buildSingleTableTool("testdb", "date_table", schema.columns);
 
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{ event_date: "2026-03-20" }],
       });
       expect(result.success).toBe(true);
@@ -420,16 +412,14 @@ describe("Per-Table Write Tools", () => {
       const tools = await buildPerTableToolsAsync();
       const toolNames = Object.keys(tools);
 
-      // Should have 2 unique tools
-      expect(toolNames.length).toBe(2);
+      // Should have 4 tools: write + update for each table
+      expect(toolNames.length).toBe(4);
 
-      // One should be write_table_db2_items (from db1.db2_items)
+      // Should include write_table_db2_items (from db1.db2_items)
       expect(toolNames).toContain("write_table_db2_items");
 
-      // The other should have a unique name (prefixed or suffixed)
-      const otherTool = toolNames.find((n) => n !== "write_table_db2_items");
-      expect(otherTool).toBeDefined();
-      expect(otherTool!.startsWith("write_table_")).toBe(true);
+      // Should have update_table_db2_items as well
+      expect(toolNames.some((n) => n === "update_table_db2_items" || n.startsWith("update_table_") && n.includes("items"))).toBe(true);
     });
   });
 
@@ -439,9 +429,9 @@ describe("Per-Table Write Tools", () => {
       let callbackInvoked = false;
       let receivedTools: any = null;
 
-      hotReload.registerRebuildCallback("test-chat", (perTableTools) => {
+      hotReload.registerRebuildCallback("test-chat", (result: any) => {
         callbackInvoked = true;
-        receivedTools = perTableTools;
+        receivedTools = result.perTableTools;
       });
 
       // Create a table so there's something to rebuild
@@ -464,7 +454,7 @@ describe("Per-Table Write Tools", () => {
       const hotReload = ToolHotReloadService.getInstance();
 
       const result = await hotReload.triggerRebuildAsync("nonexistent-chat");
-      expect(result).toBe(false);
+      expect(result).toHaveProperty("success", false);
     });
 
     it("should unregister callbacks correctly", async () => {
@@ -478,7 +468,7 @@ describe("Per-Table Write Tools", () => {
       hotReload.unregisterRebuildCallback("temp-chat");
       const result = await hotReload.triggerRebuildAsync("temp-chat");
 
-      expect(result).toBe(false);
+      expect(result).toHaveProperty("success", false);
       expect(callbackInvoked).toBe(false);
     });
 
@@ -495,30 +485,26 @@ describe("Per-Table Write Tools", () => {
       ]);
 
       const result = await hotReload.triggerRebuildAsync("throwing-chat");
-      expect(result).toBe(false);
+      expect(result).toHaveProperty("success", false);
 
       hotReload.unregisterRebuildCallback("throwing-chat");
     });
   });
 
   describe("write table NOT NULL bug fix", () => {
-    it("should flag column as required when notNull=true and defaultValue is empty string", async () => {
-      // Simulate a column where defaultValue might be empty string
+    it("should reject missing required column via schema validation", async () => {
       await litesql.createDatabaseAsync("testdb");
       await litesql.createTableAsync("testdb", "required_test", [
         { name: "id", type: "INTEGER", primaryKey: true },
         { name: "must_have", type: "TEXT", notNull: true },
       ]);
 
-      const result = await (writeToDatabaseTool as any).execute({
-        databaseName: "testdb",
-        tableName: "required_test",
-        data: [{ id: 1 }], // missing must_have
-      });
+      const schema = await litesql.getTableSchemaAsync("testdb", "required_test");
+      const { toolInstance } = buildSingleTableTool("testdb", "required_test", schema.columns);
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("must_have");
-      expect(result.error).toContain("required");
+      await expect(toolInstance.invoke({
+        data: [{ id: 1 }],
+      })).rejects.toThrow("Received tool input did not match expected schema");
     });
   });
 
@@ -808,13 +794,13 @@ describe("Per-Table Write Tools", () => {
       }]);
       expect(bad1.success).toBe(false);
 
-      // Missing required created_at should fail
+      // Missing created_at should pass (auto-filled by write tool runtime)
       const bad2 = schema.safeParse([{
         title: "Breaking News",
         source: "https://example.com",
         pub_date: "2026-03-20T12:00:00Z",
       }]);
-      expect(bad2.success).toBe(false);
+      expect(bad2.success).toBe(true);
 
       // Optional fields omitted should pass
       const minimal = schema.safeParse([{
@@ -853,7 +839,7 @@ describe("Per-Table Write Tools", () => {
       const { toolInstance } = buildSingleTableTool("news_monitor", "news_items", schema.columns);
 
       // Model calls tool with required fields + created_at auto-filled
-      const result = await (toolInstance as any).execute({
+      const result = await (toolInstance as any).invoke({
         data: [{
           title: "Missile strike on Kharkiv",
           source: "https://example.com/article",

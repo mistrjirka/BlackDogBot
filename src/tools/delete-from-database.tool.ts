@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
@@ -20,21 +20,8 @@ interface IDeleteFromDatabaseResult {
 
 //#region Tool
 
-export const deleteFromDatabaseTool = tool({
-  description:
-    "Delete rows from a database table. Requires a WHERE clause to prevent accidental full-table deletes.",
-  inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Database name (without .db extension)"),
-    tableName: z.string()
-      .min(1)
-      .describe("Table to delete from"),
-    where: z.string()
-      .min(1)
-      .describe("SQL WHERE clause (required for safety, e.g. \"id < 10\")"),
-  }),
-  execute: async ({
+export const deleteFromDatabaseTool = tool(
+  async ({
     databaseName,
     tableName,
     where,
@@ -87,6 +74,22 @@ export const deleteFromDatabaseTool = tool({
       };
     }
   },
-});
+  {
+    name: "delete_from_database",
+    description:
+      "Delete rows from a database table. Requires a WHERE clause to prevent accidental full-table deletes.",
+    schema: z.object({
+      databaseName: z.string()
+        .min(1)
+        .describe("Database name (without .db extension)"),
+      tableName: z.string()
+        .min(1)
+        .describe("Table to delete from"),
+      where: z.string()
+        .min(1)
+        .describe("SQL WHERE clause (required for safety, e.g. \"id < 10\")"),
+    }),
+  },
+);
 
 //#endregion Tool

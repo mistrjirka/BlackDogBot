@@ -82,6 +82,73 @@ const TOOLS = [
       required: ["x"],
     },
   },
+  {
+    name: "add",
+    description: "Adds two numbers and returns the result",
+    inputSchema: {
+      type: "object",
+      properties: {
+        a: {
+          type: "number",
+          description: "First number",
+        },
+        b: {
+          type: "number",
+          description: "Second number",
+        },
+      },
+      required: ["a", "b"],
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        result: {
+          type: "number",
+        },
+      },
+      required: ["result"],
+    },
+  },
+  {
+    name: "uppercase",
+    description: "Converts text to uppercase",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "Text to convert",
+        },
+      },
+      required: ["text"],
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        result: {
+          type: "string",
+        },
+      },
+      required: ["result"],
+    },
+  },
+  {
+    name: "get_timestamp",
+    description: "Returns the current ISO timestamp",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        timestamp: {
+          type: "string",
+        },
+      },
+      required: ["timestamp"],
+    },
+  },
 ];
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -150,6 +217,32 @@ function handleToolsCall(params: Record<string, unknown>): unknown {
       const input = args as { x: number };
       return {
         content: [{ type: "text", text: String(input.x * 2) }],
+      };
+    }
+
+    case "add": {
+      const input = args as { a: number; b: number };
+      const result = input.a + input.b;
+      return {
+        content: [{ type: "text", text: String(result) }],
+        structuredContent: { result },
+      };
+    }
+
+    case "uppercase": {
+      const input = args as { text: string };
+      const result = input.text.toUpperCase();
+      return {
+        content: [{ type: "text", text: result }],
+        structuredContent: { result },
+      };
+    }
+
+    case "get_timestamp": {
+      const timestamp = new Date().toISOString();
+      return {
+        content: [{ type: "text", text: timestamp }],
+        structuredContent: { timestamp },
       };
     }
 

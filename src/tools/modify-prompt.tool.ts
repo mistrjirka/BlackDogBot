@@ -1,13 +1,11 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { modifyPromptToolInputSchema, EDITABLE_PROMPT_NAMES } from "../shared/schemas/tool-schemas.js";
 import { PromptService } from "../services/prompt.service.js";
 
 const _EditablePromptSet: ReadonlySet<string> = new Set(EDITABLE_PROMPT_NAMES);
 
-export const modifyPromptTool = tool({
-  description: "Read, write, or append to a prompt file. Use prompt names without .md extension (e.g. 'main-agent', 'prompt-fragments/xml-tag-guide').",
-  inputSchema: modifyPromptToolInputSchema,
-  execute: async ({ promptName, action, content }: { promptName: string; action: "read" | "write" | "append"; content?: string }): Promise<{ success: boolean; content: string | undefined; message: string }> => {
+export const modifyPromptTool = tool(
+  async ({ promptName, action, content }: { promptName: string; action: "read" | "write" | "append"; content?: string }): Promise<{ success: boolean; content: string | undefined; message: string }> => {
     if (!_EditablePromptSet.has(promptName)) {
       return {
         success: false,
@@ -48,4 +46,9 @@ export const modifyPromptTool = tool({
       return { success: false, content: undefined, message: (error as Error).message };
     }
   },
-});
+  {
+    name: "modify_prompt",
+    description: "Read, write, or append to a prompt file. Use prompt names without .md extension (e.g. 'main-agent', 'prompt-fragments/xml-tag-guide').",
+    schema: modifyPromptToolInputSchema,
+  },
+);

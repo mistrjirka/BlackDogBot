@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { crawl4aiToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { crawlUrlAsync } from "../utils/crawl4ai-client.js";
 import { extractErrorMessage } from "../utils/error.js";
@@ -28,12 +28,8 @@ function formatCrawlResultAsMarkdown(
   return md;
 }
 
-export const crawl4aiTool = tool({
-  description:
-    "Fetch and parse a web page using Crawl4AI. Returns the page content in markdown format for easy reading. " +
-    "Use selector to extract specific content with CSS selectors.",
-  inputSchema: crawl4aiToolInputSchema,
-  execute: async ({
+export const crawl4aiTool = tool(
+  async ({
     url,
     selector,
   }: {
@@ -58,4 +54,11 @@ export const crawl4aiTool = tool({
       return { content: "", error: `Crawl4AI crawl failed: ${errorMessage}` };
     }
   },
-});
+  {
+    name: "crawl4ai",
+    description:
+      "Fetch and parse a web page using Crawl4AI. Returns the page content in markdown format for easy reading. " +
+      "Use selector to extract specific content with CSS selectors.",
+    schema: crawl4aiToolInputSchema,
+  },
+);

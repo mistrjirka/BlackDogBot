@@ -137,6 +137,10 @@ const aiConfigSchema = z.object({
     .optional(),
   lmStudio: lmStudioSchema
     .optional(),
+  disableThinkingOnStructuredOutput: z.boolean()
+    .optional()
+    .default(false)
+    .describe("Disable thinking (enable_thinking: false) when using withStructuredOutput. Required for llama.cpp grammar enforcement."),
 });
 
 const telegramConfigSchema = z.object({
@@ -154,7 +158,7 @@ const schedulerConfigSchema = z.object({
     .describe("Whether the scheduler is active"),
   timezone: z.string()
     .optional()
-    .describe("Timezone for cron expressions (e.g., 'Europe/Prague', 'UTC', 'America/New_York'). Defaults to server local time."),
+    .describe("Timezone for scheduled task intervals (e.g., 'Europe/Prague', 'UTC', 'America/New_York'). Defaults to server local time."),
   maxParallelCrons: z.number()
     .int()
     .positive()
@@ -165,18 +169,6 @@ const schedulerConfigSchema = z.object({
     .nonnegative()
     .optional()
     .describe("Maximum tasks queued when concurrency limit is reached. Tasks arriving when queue is full are skipped. Default: 3."),
-});
-
-const jobCreationConfigSchema = z.object({
-  enabled: z.boolean()
-    .default(true)
-    .describe("Whether the job creation feature is enabled"),
-  requirePassingNodeTests: z.boolean()
-    .default(true)
-    .describe("Whether all node tests must pass before finish_job_creation"),
-  requireSuccessfulRunBeforeFinish: z.boolean()
-    .default(true)
-    .describe("Whether finish_job_creation must execute the job successfully before marking it ready"),
 });
 
 const knowledgeConfigSchema = z.object({
@@ -245,29 +237,12 @@ const servicesConfigSchema = z.object({
     .describe("Crawl4AI instance URL"),
 });
 
-const brainInterfaceConfigSchema = z.object({
-  jwtSecret: z.string()
-    .min(1)
-    .default("replace-with-generated-secret")
-    .describe("JWT signing secret for BrainInterface WebSocket authentication"),
-  jwtIssuer: z.string()
-    .min(1)
-    .default("blackdogbot")
-    .describe("JWT issuer for BrainInterface tokens"),
-  jwtAudience: z.string()
-    .min(1)
-    .default("brain-interface")
-    .describe("JWT audience for BrainInterface tokens"),
-});
-
 export const configSchema = z.object({
   ai: aiConfigSchema,
   telegram: telegramConfigSchema
     .optional(),
   scheduler: schedulerConfigSchema
     .default({ enabled: true }),
-  jobCreation: jobCreationConfigSchema
-    .default({}),
   knowledge: knowledgeConfigSchema
     .default({}),
   skills: skillsConfigSchema
@@ -275,8 +250,6 @@ export const configSchema = z.object({
   logging: loggingConfigSchema
     .default({}),
   services: servicesConfigSchema
-    .default({}),
-  brainInterface: brainInterfaceConfigSchema
     .default({}),
 });
 

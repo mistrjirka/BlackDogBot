@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { spawn, ChildProcess } from "node:child_process";
 
 import { LoggerService } from "./logger.service.js";
@@ -107,12 +108,26 @@ export class CommandProcessService {
 
     this._logger.debug("Spawning process", { handleId, command, cwd, timeout });
 
-    const child: ChildProcess = spawn(command, [], {
-      shell: true,
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env,
-    });
+    // Validate cwd exists before attempting to spawn (prevents ENOENT crash)
+    if (!fs.existsSync(cwd)) {
+      const error = new Error(`Working directory does not exist: ${cwd}`);
+      this._logger.error("Spawn rejected: invalid cwd", { handleId, cwd });
+      throw error;
+    }
+
+    let child: ChildProcess;
+    try {
+      child = spawn(command, [], {
+        shell: true,
+        cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        env,
+      });
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      this._logger.error("Spawn failed", { handleId, command, cwd, error: errorMessage });
+      throw new Error(`Failed to spawn process: ${errorMessage}`);
+    }
 
     const stdout: Buffer = Buffer.alloc(0);
     const stderr: Buffer = Buffer.alloc(0);

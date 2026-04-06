@@ -2,8 +2,17 @@ import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 
 function formatSchedule(schedule: Schedule): string {
   switch (schedule.type) {
-    case "cron":
-      return `cron: ${schedule.expression}`;
+    case "scheduled": {
+      const parts: string[] = [`every ${schedule.intervalMinutes}min`];
+      if (schedule.startHour !== null && schedule.startMinute !== null) {
+        const hh = String(schedule.startHour).padStart(2, "0");
+        const mm = String(schedule.startMinute).padStart(2, "0");
+        parts.push(`at ${hh}:${mm}`);
+      } else if (schedule.startMinute !== null) {
+        parts.push(`at :${String(schedule.startMinute).padStart(2, "0")}`);
+      }
+      return parts.join(" ");
+    }
     case "interval":
       return `interval: ${schedule.intervalMs}ms`;
     case "once":

@@ -1,17 +1,11 @@
-import { tool } from "ai";
+import { tool } from "langchain";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 
-export const createDatabaseTool = tool({
-  description: "Create a new empty SQLite database",
-  inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Name of the database to create (without .db extension)"),
-  }),
-  execute: async ({ databaseName }: { databaseName: string }): Promise<{
+export const createDatabaseTool = tool(
+  async ({ databaseName }: { databaseName: string }): Promise<{
     success: boolean;
     databaseName: string;
     message: string;
@@ -48,4 +42,13 @@ export const createDatabaseTool = tool({
       };
     }
   },
-});
+  {
+    name: "create_database",
+    description: "Create a new empty SQLite database",
+    schema: z.object({
+      databaseName: z.string()
+        .min(1)
+        .describe("Name of the database to create (without .db extension)"),
+    }),
+  },
+);

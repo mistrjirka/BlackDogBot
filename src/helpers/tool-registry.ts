@@ -17,54 +17,11 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
   "edit_cron",
   "edit_cron_instructions",
   "remove_cron",
-  "add_job",
-  "edit_job",
-  "remove_job",
   "create_database",
   "create_table",
   "drop_table",
-  "update_database",
   "delete_from_database",
   "modify_prompt",
-  "start_job_creation",
-  "finish_job_creation",
-  "create_output_schema",
-  "add_node_test",
-  "add_agent_node",
-  "add_python_code_node",
-  "add_litesql_node",
-  "add_litesql_reader_node",
-  "add_curl_fetcher_node",
-  "add_rss_fetcher_node",
-  "add_searxng_node",
-  "add_crawl4ai_node",
-  "add_output_to_ai_node",
-  "edit_node",
-  "remove_node",
-  "connect_nodes",
-  "disconnect_nodes",
-  "set_entrypoint",
-  "clear_job_graph",
-  "set_job_schedule",
-  "remove_job_schedule",
-  "finish_job",
-]);
-
-const JOB_CREATION_TOOLS: Set<string> = new Set([
-  "start_job_creation",
-  "finish_job_creation",
-  "create_output_schema",
-  "add_node_test",
-  "run_node_test",
-  "add_agent_node",
-  "add_python_code_node",
-  "add_litesql_node",
-  "add_litesql_reader_node",
-  "add_curl_fetcher_node",
-  "add_rss_fetcher_node",
-  "add_searxng_node",
-  "add_crawl4ai_node",
-  "add_output_to_ai_node",
 ]);
 
 const CORE_TOOL_NAMES: string[] = [
@@ -91,8 +48,7 @@ const CORE_TOOL_NAMES: string[] = [
   "get_cron",
   "edit_cron",
   "edit_cron_instructions",
-  "set_job_schedule",
-  "remove_job_schedule",
+  "run_cron",
   "searxng",
   "crawl4ai",
   "create_database",
@@ -102,25 +58,11 @@ const CORE_TOOL_NAMES: string[] = [
   "list_tables",
   "get_table_schema",
   "read_from_database",
-  "update_database",
   "delete_from_database",
+  "query_database",
   "list_prompts",
   "modify_prompt",
   "get_skill_file",
-  "add_job",
-  "edit_job",
-  "remove_job",
-  "get_jobs",
-  "run_job",
-  "finish_job",
-  "get_nodes",
-  "edit_node",
-  "remove_node",
-  "connect_nodes",
-  "disconnect_nodes",
-  "set_entrypoint",
-  "clear_job_graph",
-  "render_graph",
 ];
 
 //#endregion Constants
@@ -128,7 +70,6 @@ const CORE_TOOL_NAMES: string[] = [
 //#region Types
 
 export interface IToolFilterOptions {
-  jobCreationEnabled?: boolean;
   skillNames?: string[];
 }
 
@@ -144,11 +85,6 @@ export function getAllowedToolNames(
     return [];
   }
 
-  // MCP tools are blocked in read_only by default
-  if (permission === "read_only") {
-    // Filtered below per-tool
-  }
-
   const allowed: string[] = [];
 
   if (options?.skillNames) {
@@ -160,7 +96,7 @@ export function getAllowedToolNames(
     }
   }
 
-  const coreTools: string[] = getCoreToolNames(options?.jobCreationEnabled ?? false);
+  const coreTools: string[] = getCoreToolNames();
 
   for (const toolName of coreTools) {
     if (permission === "read_only" && READ_ONLY_BLOCKED_TOOLS.has(toolName)) {
@@ -191,15 +127,16 @@ export function isToolAllowed(
     return false;
   }
 
+  // Per-table update tools (update_table_<tableName>) are blocked in read_only
+  if (permission === "read_only" && toolName.startsWith("update_table_")) {
+    return false;
+  }
+
   if (options?.skillNames?.includes(toolName)) {
     if (permission === "read_only" && READ_ONLY_BLOCKED_TOOLS.has(toolName)) {
       return false;
     }
     return true;
-  }
-
-  if (JOB_CREATION_TOOLS.has(toolName) && !options?.jobCreationEnabled) {
-    return false;
   }
 
   if (permission === "read_only" && READ_ONLY_BLOCKED_TOOLS.has(toolName)) {
@@ -217,37 +154,12 @@ export function isToolBlockedInReadOnly(toolName: string): boolean {
   return READ_ONLY_BLOCKED_TOOLS.has(toolName);
 }
 
-export function getJobCreationToolNames(): string[] {
-  return Array.from(JOB_CREATION_TOOLS).sort();
-}
-
 //#endregion Public Functions
 
 //#region Private Functions
 
-function getCoreToolNames(jobCreationEnabled: boolean): string[] {
-  const tools: string[] = [...CORE_TOOL_NAMES];
-
-  if (jobCreationEnabled) {
-    tools.push(
-      "start_job_creation",
-      "finish_job_creation",
-      "create_output_schema",
-      "add_node_test",
-      "run_node_test",
-      "add_agent_node",
-      "add_python_code_node",
-      "add_litesql_node",
-      "add_litesql_reader_node",
-      "add_curl_fetcher_node",
-      "add_rss_fetcher_node",
-      "add_searxng_node",
-      "add_crawl4ai_node",
-      "add_output_to_ai_node"
-    );
-  }
-
-  return tools;
+function getCoreToolNames(): string[] {
+  return [...CORE_TOOL_NAMES];
 }
 
 //#endregion Private Functions

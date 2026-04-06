@@ -162,8 +162,8 @@ describe("countRequestBodyTokens", () => {
     // Act
     const breakdown: IRequestTokenBreakdown = countRequestBodyTokens(invalidBody);
 
-    // Assert - should return all zeros on parse error
-    expect(breakdown.total).toBe(0);
+    // Assert - should return -1 total to signal failure, zeros for breakdown
+    expect(breakdown.total).toBe(-1);
     expect(breakdown.messages).toBe(0);
     expect(breakdown.tools).toBe(0);
     expect(breakdown.system).toBe(0);
