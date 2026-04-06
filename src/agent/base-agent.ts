@@ -15,8 +15,10 @@ import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
 import {
   getConnectionRetryDelayMs,
+  getDisableThinkingOnRetry,
   isConnectionError,
   isContextExceededApiError,
+  isLlamaCppParseError,
   isRetryableApiError,
   MAX_CONNECTION_RETRIES,
 } from "../utils/context-error.js";
@@ -127,6 +129,7 @@ export abstract class BaseAgentBase {
   //#region Data members
 
   protected _agent: ToolLoopAgent | null;
+  protected _agentWithThinkingDisabled: ToolLoopAgent | null;
   protected _logger: LoggerService;
   protected _initialized: boolean;
   protected _maxSteps: number;
@@ -144,6 +147,7 @@ export abstract class BaseAgentBase {
 
   protected constructor(options?: IBaseAgentOptions) {
     this._agent = null;
+    this._agentWithThinkingDisabled = null;
     this._logger = LoggerService.getInstance();
     this._initialized = false;
     this._maxSteps = options?.maxSteps ?? DEFAULT_AGENT_MAX_STEPS;
@@ -187,6 +191,8 @@ export abstract class BaseAgentBase {
       let _genericRetries: number = 0;
       let contextRetries: number = 0;
       let aggressiveContextRecoveryUsed: boolean = false;
+      let parseRetryAttempt: boolean = false;
+      let useDisableThinking: boolean = false;
 
       for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
         // Reset token count so prepareStep doesn't use stale values from a failed attempt
@@ -195,8 +201,20 @@ export abstract class BaseAgentBase {
 
         let result;
 
+        const currentAgent: ToolLoopAgent | null = useDisableThinking
+          ? this._agentWithThinkingDisabled
+          : this._agent;
+
+        if (!currentAgent) {
+          this._logger.error("No agent available for generation", {
+            useDisableThinking,
+            parseRetryAttempt,
+          });
+          throw new Error("Agent not available for generation");
+        }
+
         try {
-          result = await this._agent!.generate({ prompt: userMessage });
+          result = await currentAgent.generate({ prompt: userMessage });
         } catch (error: unknown) {
           const currentAgentAttempt: number = attempt;
           const totalAgentAttempts: number = AGENT_EMPTY_RESPONSE_RETRIES + 1;
@@ -249,6 +267,21 @@ export abstract class BaseAgentBase {
             this._forceCompactionOnNextStep = true;
             attempt--; // Give compaction one final chance before terminal failure
             continue;
+          }
+
+          if (isLlamaCppParseError(error) && !parseRetryAttempt) {
+            const disableThinking: boolean = getDisableThinkingOnRetry();
+            if (disableThinking && this._agentWithThinkingDisabled) {
+              parseRetryAttempt = true;
+              useDisableThinking = true;
+              this._logger.warn("llama.cpp parse error detected, retrying with thinking disabled", {
+                attempt,
+                agentAttempt: currentAgentAttempt,
+                agentAttemptTotal: totalAgentAttempts,
+                errorMessage: error instanceof Error ? error.message : String(error),
+              });
+              continue;
+            }
           }
 
           // Handle 429 rate limit errors with Retry-After wait
@@ -721,6 +754,13 @@ export abstract class BaseAgentBase {
     if (!this._initialized || !this._agent) {
       throw new Error(`${this.constructor.name} not initialized. Call initializeAsync() first.`);
     }
+  }
+
+  public setAgentWithThinkingDisabled(agent: ToolLoopAgent): void {
+    if (this._agentWithThinkingDisabled) {
+      this._logger.warn("Agent with thinking disabled already set, overwriting");
+    }
+    this._agentWithThinkingDisabled = agent;
   }
 
   //#endregion Protected methods

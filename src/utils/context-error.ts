@@ -1,4 +1,9 @@
 import { APICallError, InvalidToolInputError, JSONParseError } from "ai";
+import { parse as parseYaml } from "yaml";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { extractAiErrorDetails, type IAiErrorDetails } from "./ai-error.js";
 
 const CONTEXT_ERROR_STATUS_CODES: number[] = [400, 413, 422, 500];
 const CONTEXT_ERROR_KEYWORDS: string[] = [
@@ -109,6 +114,30 @@ export function isConnectionError(error: unknown): boolean {
   return _hasConnectionErrorKeyword(combinedMessage);
 }
 
+export function isLlamaCppParseError(error: unknown): boolean {
+  if (APICallError.isInstance(error)) {
+    if (error.statusCode === 500) {
+      const responseBody: string = typeof error.responseBody === "string"
+        ? error.responseBody
+        : JSON.stringify(error.responseBody ?? "");
+      const combined: string = `${error.message ?? ""} ${responseBody}`.toLowerCase();
+
+      if (combined.includes("failed to parse input") && !combined.includes("context size") && !combined.includes("context limit") && !combined.includes("context exceeded")) {
+        return true;
+      }
+    }
+  }
+
+  if (error instanceof Error) {
+    const combined: string = `${error.name} ${error.message}`.toLowerCase();
+    if (combined.includes("failed to parse input") && combined.includes("500") && !combined.includes("context size") && !combined.includes("context limit") && !combined.includes("context exceeded")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function getConnectionRetryDelayMs(retryAttempt: number): number {
   const normalizedAttempt: number = Math.max(1, retryAttempt);
   return CONNECTION_RETRY_INITIAL_DELAY_MS * Math.pow(CONNECTION_RETRY_MULTIPLIER, normalizedAttempt - 1);
@@ -120,4 +149,62 @@ function _hasRetryableParseErrorKeyword(input: string): boolean {
 
 function _hasConnectionErrorKeyword(input: string): boolean {
   return CONNECTION_ERROR_KEYWORDS.some((keyword: string): boolean => input.includes(keyword));
+}
+
+export function getDisableThinkingOnRetry(): boolean {
+  try {
+    let profilesDir: string;
+    try {
+      profilesDir = path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "..",
+        "defaults",
+        "model-profiles",
+      );
+    } catch {
+      return false;
+    }
+
+    const qwenProfilePath: string = path.join(profilesDir, "qwen3_5.yaml");
+
+    let profileContent: string;
+    try {
+      profileContent = fs.readFileSync(qwenProfilePath, "utf-8");
+    } catch {
+      return false;
+    }
+
+    const profileData: unknown = parseYaml(profileContent);
+    if (typeof profileData !== "object" || profileData === null) {
+      return false;
+    }
+
+    const profileObj: Record<string, unknown> = profileData as Record<string, unknown>;
+    const defaults: unknown = profileObj["defaults"];
+
+    if (typeof defaults !== "object" || defaults === null) {
+      return false;
+    }
+
+    const defaultsObj: Record<string, unknown> = defaults as Record<string, unknown>;
+    return defaultsObj["disableThinkingOnRetry"] === true;
+  } catch {
+    return false;
+  }
+}
+
+export function isContextExceededTelegramError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const details: IAiErrorDetails = extractAiErrorDetails(error);
+  const combined: string = `${details.message ?? ""} ${details.providerMessage ?? ""} ${details.responseBody ?? ""}`.toLowerCase();
+
+  if (details.statusCode === 400 && combined.includes("context") && combined.includes("exceeded")) {
+    return true;
+  }
+
+  return combined.includes("context_length_exceeded") ||
+    (combined.includes("context") && combined.includes("token") && combined.includes("limit"));
 }
