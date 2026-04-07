@@ -6,6 +6,7 @@ import { TelegramAdapter } from "./adapter.js";
 import { TelegramHandler } from "./handler.js";
 import { setupTelegramCommands } from "./commands.js";
 import type { ITelegramConfig } from "./types.js";
+import { extractErrorMessage } from "../../utils/error.js";
 
 interface ITelegramPlatformState {
   _bot?: Bot;
@@ -54,7 +55,7 @@ export const telegramPlatform: IPlatform<ITelegramConfig> = {
       handler.handleMessageAsync(ctx).catch((err: unknown): void => {
         deps.logger.error("Unhandled error in Telegram message handler", {
           chatId: String(ctx.chat?.id),
-          error: err instanceof Error ? err.message : String(err),
+          error: extractErrorMessage(err),
         });
       });
     });
@@ -63,7 +64,7 @@ export const telegramPlatform: IPlatform<ITelegramConfig> = {
       handler.handleImageMessageAsync(ctx).catch((err: unknown): void => {
         deps.logger.error("Unhandled error in Telegram image handler", {
           chatId: String(ctx.chat?.id),
-          error: err instanceof Error ? err.message : String(err),
+          error: extractErrorMessage(err),
         });
       });
     });

@@ -3,14 +3,7 @@ import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import type { IInsertResult, ITableInfo, IColumnInfo } from "../helpers/litesql.js";
-
-const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
-  "created_at",
-  "updated_at",
-  "timestamp",
-  "created",
-  "updated",
-]);
+import { COMMON_TIMESTAMP_COLUMNS } from "../utils/per-table-tools.js";
 
 export const writeToDatabaseTool = tool({
   description: "Write a row of data into a table in a database. Prefer per-table tools (write_table_<tableName>) when available — they enforce exact column schemas.",

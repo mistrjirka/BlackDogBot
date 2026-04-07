@@ -278,9 +278,12 @@ export class ChannelRegistryService {
         }
       }
     } catch (error) {
-      this._logger.warn("Failed to load channels.yaml, starting fresh", {
-        error: extractErrorMessage(error),
-      });
+      const errorDetails: string = extractErrorMessage(error);
+      this._logger.error(
+        "Failed to parse channels.yaml - configuration is corrupted. Starting fresh. " +
+          "Please fix the YAML syntax in your config file.",
+        { error: errorDetails },
+      );
       this._config = { version: 1, channels: [] };
     }
   }

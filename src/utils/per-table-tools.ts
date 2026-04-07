@@ -4,6 +4,7 @@ import { z } from "zod";
 import * as litesql from "../helpers/litesql.js";
 import type { IColumnInfo, ITableInfo } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "./error.js";
 
 //#region Constants
 
@@ -44,7 +45,7 @@ const SQLITE_TO_ZOD_TYPE: Record<string, z.ZodType> = {
   TIMESTAMP: z.string(),
 };
 
-const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
+export const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
   "created_at",
   "updated_at",
   "timestamp",
@@ -77,7 +78,7 @@ export async function buildPerTableToolsAsync(): Promise<ToolSet> {
     } catch (err: unknown) {
       logger.warn("Failed to list tables for per-table tool generation", {
         database: db.name,
-        error: err instanceof Error ? err.message : String(err),
+        error: extractErrorMessage(err),
       });
       continue;
     }
@@ -91,7 +92,7 @@ export async function buildPerTableToolsAsync(): Promise<ToolSet> {
         logger.warn("Failed to get table schema for per-table tool generation", {
           database: db.name,
           table: tableName,
-          error: err instanceof Error ? err.message : String(err),
+          error: extractErrorMessage(err),
         });
         continue;
       }

@@ -1,5 +1,6 @@
 import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "./error.js";
 
 //#region Constants
 
@@ -29,7 +30,7 @@ export async function probeUrlAsync(url: string, method: string = "HEAD"): Promi
     return { reachable: true, error: "" };
   } catch (err: unknown) {
     clearTimeout(timeoutId);
-    const message: string = err instanceof Error ? err.message : String(err);
+    const message: string = extractErrorMessage(err);
 
     if (message.includes("abort")) {
       return { reachable: false, error: `Request timed out after ${PROBE_TIMEOUT_MS}ms` };

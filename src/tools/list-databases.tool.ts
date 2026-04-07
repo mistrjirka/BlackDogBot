@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 export const listDatabasesTool = tool({
   description: "List all available databases.",
@@ -30,7 +31,7 @@ export const listDatabasesTool = tool({
         })),
       };
     } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = extractErrorMessage(err);
       logger.error("list_databases tool error", { error: errorMsg });
       return {
         databases: [],

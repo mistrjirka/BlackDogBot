@@ -4,6 +4,7 @@ import { callSkillToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { thinkTool } from "./think.tool.js";
@@ -91,7 +92,7 @@ export function createCallSkillTool(availableSkillNames: string[]) {
 
         return { success: true, output: result.text, error: null };
       } catch (err: unknown) {
-        const errorMessage: string = err instanceof Error ? err.message : String(err);
+        const errorMessage: string = extractErrorMessage(err);
 
         logger.error(`Skill "${skillName}" execution failed: ${errorMessage}`);
 

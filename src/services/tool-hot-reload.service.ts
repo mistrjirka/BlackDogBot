@@ -1,5 +1,6 @@
 import { type ToolSet } from "ai";
 import { LoggerService } from "./logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 type RebuildCallback = (perTableTools: ToolSet) => void;
 
@@ -79,7 +80,7 @@ export class ToolHotReloadService {
     } catch (err: unknown) {
       this._logger.error("Tool hot-reload failed", {
         chatId,
-        error: err instanceof Error ? err.message : String(err),
+        error: extractErrorMessage(err),
       });
       return false;
     }

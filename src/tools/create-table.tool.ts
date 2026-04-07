@@ -4,6 +4,7 @@ import { z } from "zod";
 import * as litesql from "../helpers/litesql.js";
 import type { IColumnInfo } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 import { columnsToJsonSchema, IJsonSchema } from "../utils/litesql-schema-helper.js";
 
 const columnDefinitionSchema = z.object({
@@ -113,7 +114,7 @@ export const createTableTool = tool({
           schemaJson,
       };
     } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = extractErrorMessage(err);
       logger.error("create-table tool error", { error: errorMsg });
       return {
         success: false,

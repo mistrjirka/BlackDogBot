@@ -346,7 +346,7 @@ function _convertMcpToolToAiSdk(
   const inputSchema = jsonSchemaToZod(mcpTool.inputSchema);
   const outputSchema = mcpTool.outputSchema;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- MCP schema conversion produces a type incompatible with AI SDK's strict inputSchema type - dynamic tool definitions require flexible typing
   return tool({
     description,
     inputSchema: inputSchema as any,
@@ -367,6 +367,7 @@ function _convertMcpToolToAiSdk(
     toModelOutput: ({ output }: { output: unknown }) => {
       return _convertMcpResultToModelOutput(output, outputSchema);
     },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- toModelOutput is an MCP-specific extension not in the standard AI SDK tool interface
   } as any);
 }
 
@@ -406,7 +407,7 @@ function _convertMcpResultToModelOutput(
     };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- MCP content items are dynamically typed (text/image/audio) - modelParts must accommodate all possible content types
   const modelParts: any[] = [];
 
   for (const item of content) {

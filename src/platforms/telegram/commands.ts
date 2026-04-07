@@ -12,7 +12,7 @@ import { ConfigService } from "../../services/config.service.js";
 import { TelegramHandler } from "./handler.js";
 import { factoryResetAsync, type IFactoryResetResult } from "../../services/factory-reset.service.js";
 import { extractErrorMessage } from "../../utils/error.js";
-import type { IMcpServerConfig, IMcpServersFile } from "../../shared/types/mcp.types.js";
+import type { IMcpServerConfig } from "../../shared/types/mcp.types.js";
 import { mcpServerConfigSchema } from "../../shared/schemas/mcp.schemas.js";
 import type {
   AiProvider,
@@ -489,10 +489,11 @@ export function setupTelegramCommands(bot: Bot): void {
 
       if (parsed.mcpServers && typeof parsed.mcpServers === "object") {
         // Shape A: full VS Code config
-        const file = parsed as unknown as IMcpServersFile;
-        for (const [id, config] of Object.entries(file.mcpServers)) {
+        const file = parsed as Record<string, unknown>;
+        const mcpServers = file.mcpServers as Record<string, unknown>;
+        for (const [id, config] of Object.entries(mcpServers)) {
           mcpServerConfigSchema.parse(config);
-          await mcpRegistry.addServerAsync(id, config);
+          await mcpRegistry.addServerAsync(id, config as IMcpServerConfig);
           addedIds.push(id);
         }
       } else if (typeof parsed.name === "string") {

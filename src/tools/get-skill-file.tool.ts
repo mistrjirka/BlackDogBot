@@ -6,6 +6,7 @@ import { tool } from "ai";
 import { getSkillFileToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { getSkillDir } from "../utils/paths.js";
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
 
@@ -30,7 +31,7 @@ export const getSkillFileTool = tool({
 
       return { content, exists: true };
     } catch (err: unknown) {
-      const errorMessage: string = err instanceof Error ? err.message : String(err);
+      const errorMessage: string = extractErrorMessage(err);
 
       logger.debug(`Skill file not found: "${filePath}" in skill "${skillName}" — ${errorMessage}`);
 

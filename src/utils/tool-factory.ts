@@ -35,7 +35,12 @@ export const TASK_ID_PLACEHOLDER = "TASK_ID_PLACEHOLDER";
  * @param executeFn - The original execute function that takes (input, context)
  * @returns Wrapped execute function that checks prerequisites
  */
-export function createToolWithPrerequisites<TInput, TOutput>(
+interface IToolOutput {
+  success: boolean;
+  error?: string;
+}
+
+export function createToolWithPrerequisites<TInput, TOutput extends IToolOutput>(
   toolName: string,
   prerequisites: ToolPrerequisite[],
   executeFn: (input: TInput, context: ToolExecuteContext) => Promise<TOutput>,
@@ -59,10 +64,11 @@ export function createToolWithPrerequisites<TInput, TOutput>(
       );
 
       if (!met) {
-        return {
+        const errorOutput: TOutput = {
           success: false,
           error: `MISSING PREREQUISITE: You must call '${prereq.tool}' with ${JSON.stringify(resolvedArgs)} before using '${toolName}'.`,
-        } as unknown as TOutput;
+        } as TOutput;
+        return errorOutput;
       }
     }
 

@@ -9,6 +9,7 @@ import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
 import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { ConfigService } from "../services/config.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 import { getCurrentDateTime } from "../utils/time.js";
 import {
   thinkTool,
@@ -325,7 +326,7 @@ export class CronAgent extends BaseAgentBase {
       }
     } catch (err: unknown) {
       this._logger.warn("Failed to build per-table tools for cron agent", {
-        error: err instanceof Error ? err.message : String(err),
+        error: extractErrorMessage(err),
       });
     }
 

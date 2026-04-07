@@ -1034,7 +1034,7 @@ function _replaceToolMessageContentWithSummary(
   return {
     ...originalMsg,
     content: newContent as ModelMessage["content"],
-  } as unknown as ModelMessage;
+  } as ModelMessage;
 }
 
 function _isEarlierContextSummaryMessage(message: ModelMessage): boolean {

@@ -4,6 +4,7 @@ import { ToolSet, LanguageModel, type ModelMessage } from "ai";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 import { buildMainAgentPromptAsync } from "./system-prompt.js";
 import { BaseAgentBase, AGENT_EMPTY_RESPONSE_RETRIES, CONTEXT_EXCEEDED_RETRIES, type IAgentResult, type OnStepCallback } from "./base-agent.js";
 import { McpService } from "../services/mcp.service.js";
@@ -52,6 +53,7 @@ import {
   crawl4aiTool,
 } from "../tools/index.js";
 import { BrainInterfaceService } from "../brain-interface/service.js";
+import type { IBrainInterfaceEmitter } from "../brain-interface/types.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
@@ -103,29 +105,7 @@ interface IPersistedSession {
   lastActivityAt: number;
 }
 
-//#endregion Constants
-
-//#region Interfaces
-
-interface IChatSession {
-  messages: ModelMessage[];
-  lastActivityAt: number;
-  messageSender: MessageSender;
-  photoSender: (imageBuffer: Buffer, caption: string | null) => Promise<string | null>;
-  onStepAsync?: OnStepCallback;
-  platform: MessagePlatform;
-  paused: boolean;
-  resumeResolve: (() => void) | null;
-  abortController: AbortController | null;
-  pendingToolRebuild: { toolName: string; tableName: string } | null;
-  toolRebuildCount: number;
-  terminateCurrentRun: boolean;
-}
-
-interface IPersistedSession {
-  messages: ModelMessage[];
-  lastActivityAt: number;
-}
+//#endregion Interfaces
 
 export interface IChatImageAttachment {
   imageBuffer: Buffer;
@@ -234,7 +214,7 @@ export class MainAgent extends BaseAgentBase {
     const instructions: string = await buildMainAgentPromptAsync();
 
     const readTracker: FileReadTracker = new FileReadTracker();
-    const brainInterface: BrainInterfaceService = BrainInterfaceService.getInstance();
+    const brainInterface: IBrainInterfaceEmitter = BrainInterfaceService.getInstance();
     ConfigService.getInstance();
 
     const session: IChatSession = this._sessions.get(chatId)!;
@@ -309,7 +289,7 @@ export class MainAgent extends BaseAgentBase {
       }
     } catch (err: unknown) {
       this._logger.warn("Failed to build per-table tools at startup", {
-        error: err instanceof Error ? err.message : String(err),
+        error: extractErrorMessage(err),
       });
     }
 
@@ -547,10 +527,11 @@ export class MainAgent extends BaseAgentBase {
         );
       }
     } catch (error: unknown) {
-      this._logger.warn("Failed to reset runtime provider to primary before processing chat", {
+      this._logger.error("Failed to reset runtime provider to primary before processing chat", {
         chatId,
         error: error instanceof Error ? error.message : String(error),
       });
+      throw error;
     }
 
     let currentUserMessage: string = userMessage;
@@ -624,7 +605,7 @@ export class MainAgent extends BaseAgentBase {
               this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
             }
 
-            const brainInterfaceForOutput: BrainInterfaceService = BrainInterfaceService.getInstance();
+            const brainInterfaceForOutput: IBrainInterfaceEmitter = BrainInterfaceService.getInstance();
 
             if (generateResult.text) {
               try {
@@ -1271,7 +1252,7 @@ function _wrapCreateTableWithHotReload(
         } catch (err: unknown) {
           LoggerService.getInstance().warn("Tool hot-reload failed after create_table", {
             chatId,
-            error: err instanceof Error ? err.message : String(err),
+            error: extractErrorMessage(err),
           });
         }
       }

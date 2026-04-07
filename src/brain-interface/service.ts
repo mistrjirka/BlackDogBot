@@ -1,6 +1,7 @@
 import { Server as SocketIOServer, type Socket } from "socket.io";
 
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 import { MainAgent } from "../agent/main-agent.js";
 import type {
   BrainCommand,
@@ -12,7 +13,6 @@ import type {
 } from "./types.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { StatusService, type IStatusState } from "../services/status.service.js";
-import { extractErrorMessage } from "../utils/error.js";
 import { verifyJwtToken } from "../utils/jwt.js";
 import * as litesql from "../helpers/litesql.js";
 import type { IQueryResult } from "../helpers/litesql.js";
@@ -96,8 +96,9 @@ export class BrainInterfaceService {
               entrypointNodeId: job.entrypointNodeId,
             });
           }
-        } catch (err) {
-          // Ignore errors if the chat disconnected or job doesn't exist
+        } catch (err: unknown) {
+          const errorMessage: string = extractErrorMessage(err);
+          this._logger.debug("Graph changed event skipped for chat", { chatId, jobId, error: errorMessage });
         }
       }
     });
@@ -512,7 +513,7 @@ export class BrainInterfaceService {
             response.success = true;
             response.data = result;
           } catch (err: unknown) {
-            const errorMessage: string = err instanceof Error ? err.message : String(err);
+            const errorMessage: string = extractErrorMessage(err);
             response.error = errorMessage;
           }
           break;
@@ -672,8 +673,8 @@ export class BrainInterfaceService {
             response.success = true;
             response.data = result;
           } catch (err: unknown) {
-            const errorMessage: string = err instanceof Error ? err.message : String(err);
-            response.success = true;
+            const errorMessage: string = extractErrorMessage(err);
+            response.success = false;
             response.data = {
               success: false,
               action: dbCommand.action,
@@ -756,7 +757,7 @@ export class BrainInterfaceService {
         nodeResults: (result.nodeResults ?? []) as { nodeId: string; nodeName: string; duration: number }[],
       });
     } catch (err: unknown) {
-      const errorMessage: string = err instanceof Error ? err.message : String(err);
+      const errorMessage: string = extractErrorMessage(err);
       this._emit({ 
         type: "job_execution_failed", 
         jobId, 

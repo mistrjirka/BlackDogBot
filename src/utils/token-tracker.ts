@@ -180,7 +180,8 @@ function toRequestMessageForTokenCounting(message: ModelMessage): Record<string,
     }
 
     if ("type" in part && part.type === "image") {
-      imageTokenEstimateTotal += _estimateImagePartTokens(part as unknown as Record<string, unknown>);
+      const imagePart: Record<string, unknown> = part as unknown as Record<string, unknown>;
+      imageTokenEstimateTotal += _estimateImagePartTokens(imagePart);
       continue;
     }
 

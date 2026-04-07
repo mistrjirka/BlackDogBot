@@ -251,3 +251,10 @@ export interface FullJobData {
 
 // Re-export test types for frontend convenience
 export type { INodeTestCase, INodeTestResult };
+
+export interface IBrainInterfaceEmitter {
+  emitStepStartedAsync(chatId: string, stepNumber: number): Promise<void>;
+  emitToolCalledAsync(chatId: string, stepNumber: number, toolName: string, input: Record<string, unknown>): Promise<void>;
+  emitToolResultAsync(chatId: string, stepNumber: number, toolName: string, output: unknown, error?: string): Promise<void>;
+  emitModelOutputAsync(chatId: string, stepNumber: number, text: string): Promise<void>;
+}

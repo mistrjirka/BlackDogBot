@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 
 import type { ISkillInstallStep } from "../shared/types/index.js";
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 import { clearDependencyCache, checkBinaryAsync } from "./dependency-checker.js";
 
 //#region Types
@@ -78,7 +79,7 @@ export async function executeSkillInstallStepsAsync(
       }
     } catch (err) {
       result.success = false;
-      result.error = `Step "${step.id}" threw error: ${err instanceof Error ? err.message : String(err)}`;
+      result.error = `Step "${step.id}" threw error: ${extractErrorMessage(err)}`;
 
       break;
     }
@@ -184,7 +185,7 @@ async function installBrewAsync(step: ISkillInstallStep, timeout: number): Promi
   } catch (err) {
     return {
       success: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: extractErrorMessage(err),
       installedBins: [],
     };
   }
@@ -205,7 +206,7 @@ async function installNodeAsync(step: ISkillInstallStep, timeout: number): Promi
   } catch (err) {
     return {
       success: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: extractErrorMessage(err),
       installedBins: [],
     };
   }
@@ -226,7 +227,7 @@ async function installGoAsync(step: ISkillInstallStep, timeout: number): Promise
   } catch (err) {
     return {
       success: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: extractErrorMessage(err),
       installedBins: [],
     };
   }
@@ -247,7 +248,7 @@ async function installUvAsync(step: ISkillInstallStep, timeout: number): Promise
   } catch (err) {
     return {
       success: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: extractErrorMessage(err),
       installedBins: [],
     };
   }

@@ -2113,7 +2113,7 @@ export class AiProviderService {
   }
 
   private _wrapModelWithRateLimiter(model: LanguageModel, providerKey: string): LanguageModel {
-    const originalModel: LanguageModelV3 = model as unknown as LanguageModelV3;
+    const originalModel = model as LanguageModelV3;
 
     const wrappedModel: LanguageModelV3 = {
       ...originalModel,
@@ -2129,7 +2129,7 @@ export class AiProviderService {
       },
     };
 
-    return wrappedModel as unknown as LanguageModel;
+    return wrappedModel as LanguageModel;
   }
 
   /**

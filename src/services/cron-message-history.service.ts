@@ -49,10 +49,12 @@ export interface ISimilarMessage {
 export interface ICheckMessageNoveltyResult {
   isNewInformation: boolean;
   similarCount: number;
+  error?: string;
 }
 
 export interface ICheckMessageDispatchResult {
   shouldDispatch: boolean;
+  error?: string;
 }
 
 interface ISearchResultMetadata {
@@ -343,14 +345,15 @@ export class CronMessageHistoryService {
     } catch (error: unknown) {
       const details: string = error instanceof Error ? error.message : String(error);
 
-      this._logger.warn("Cron message novelty check failed, allowing send", {
+      this._logger.warn("Cron message novelty check failed", {
         taskId,
         error: details,
       });
 
       return {
-        isNewInformation: true,
+        isNewInformation: false,
         similarCount: 0,
+        error: details,
       };
     }
   }
@@ -429,12 +432,13 @@ ${candidateMessage}`;
     } catch (error: unknown) {
       const details: string = error instanceof Error ? error.message : String(error);
 
-      this._logger.warn("Cron message dispatch policy check failed, allowing send", {
+      this._logger.warn("Cron message dispatch policy check failed", {
         error: details,
       });
 
       return {
-        shouldDispatch: true,
+        shouldDispatch: false,
+        error: details,
       };
     }
   }

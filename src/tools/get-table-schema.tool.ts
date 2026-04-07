@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 const columnSchema = z.object({
   name: z.string(),
@@ -65,7 +66,7 @@ export const getTableSchemaTool = tool({
         columns: schema.columns,
       };
     } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = extractErrorMessage(err);
       logger.error("get-table-schema tool error", { error: errorMsg });
       return {
         databaseName,

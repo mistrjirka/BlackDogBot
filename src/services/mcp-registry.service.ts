@@ -206,9 +206,12 @@ export class McpRegistryService {
         }
       }
     } catch (error) {
-      this._logger.warn("Failed to load mcp-servers.json, starting fresh", {
-        error: extractErrorMessage(error),
-      });
+      const errorDetails: string = extractErrorMessage(error);
+      this._logger.error(
+        "Failed to parse mcp-servers.json - configuration is corrupted. Starting fresh. " +
+          "Please fix the JSON syntax in your config file.",
+        { error: errorDetails },
+      );
       this._servers = new Map();
     }
   }

@@ -5,6 +5,7 @@ import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import * as skillState from "../helpers/skill-state.js";
 import { LoggerService } from "../services/logger.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { thinkTool, runCmdTool } from "../tools/index.js";
@@ -66,7 +67,7 @@ export async function runSkillSetupAsync(skill: ISkill): Promise<ISetupResult> {
       error: null,
     };
   } catch (err: unknown) {
-    const errorMessage: string = err instanceof Error ? err.message : String(err);
+    const errorMessage: string = extractErrorMessage(err);
 
     logger.error(`Skill setup failed for "${skill.name}": ${errorMessage}`);
 
