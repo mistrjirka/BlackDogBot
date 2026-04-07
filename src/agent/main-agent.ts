@@ -26,12 +26,9 @@ import {
   type MessageSender,
   createCallSkillTool,
   getSkillFileTool,
-  addCronTool,
   removeCronTool,
   listCronsTool,
   getCronTool,
-  editCronTool,
-  editCronInstructionsTool,
   runCronTool,
   createReadFileTool,
   createReadImageTool,
@@ -39,19 +36,17 @@ import {
   appendFileTool,
   editFileTool,
   fetchRssTool,
-  listDatabasesTool,
   listTablesTool,
   getTableSchemaTool,
-  createDatabaseTool,
   createTableTool,
   dropTableTool,
   readFromDatabaseTool,
-  updateDatabaseTool,
   deleteFromDatabaseTool,
   FileReadTracker,
   searxngTool,
   crawl4aiTool,
 } from "../tools/index.js";
+import { buildCronToolsAsync } from "../tools/build-cron-tools.js";
 import { BrainInterfaceService } from "../brain-interface/service.js";
 import type { IBrainInterfaceEmitter } from "../brain-interface/types.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
@@ -66,7 +61,7 @@ import {
 import { ensureDirectoryExistsAsync, getSessionsDir, getSessionFilePath } from "../utils/paths.js";
 import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
 import { extractAiErrorDetails } from "../utils/ai-error.js";
-import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
+import { buildPerTableToolsAsync, buildPerTableToolsWithUpdatesAsync } from "../utils/per-table-tools.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
 import { countTokens } from "../utils/token-tracker.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
@@ -241,26 +236,25 @@ export class MainAgent extends BaseAgentBase {
       write_file: createWriteFileTool(readTracker),
       append_file: appendFileTool,
       edit_file: editFileTool,
-      add_cron: addCronTool,
       remove_cron: removeCronTool,
       list_crons: listCronsTool,
       get_cron: getCronTool,
-      edit_cron: editCronTool,
-      edit_cron_instructions: editCronInstructionsTool,
       run_cron: runCronTool,
       fetch_rss: fetchRssTool,
-      list_databases: listDatabasesTool,
       list_tables: listTablesTool,
       get_table_schema: getTableSchemaTool,
-      create_database: createDatabaseTool,
       create_table: _wrapCreateTableWithHotReload(createTableTool, chatId, session),
       drop_table: dropTableTool,
       read_from_database: readFromDatabaseTool,
-      update_database: updateDatabaseTool,
       delete_from_database: deleteFromDatabaseTool,
       searxng: searxngTool,
       crawl4ai: crawl4aiTool,
     };
+
+    const cronTools = await buildCronToolsAsync();
+    tools.add_cron = cronTools.add_cron;
+    tools.edit_cron = cronTools.edit_cron;
+    tools.edit_cron_instructions = cronTools.edit_cron_instructions;
 
     if (aiProviderService.getSupportsVision()) {
       tools.read_image = createReadImageTool(readTracker);
@@ -403,7 +397,9 @@ export class MainAgent extends BaseAgentBase {
 
     // Register hot-reload callback for per-table tools
     const currentFilteredTools: ToolSet = filteredTools;
-    ToolHotReloadService.getInstance().registerRebuildCallback(chatId, (perTableTools: ToolSet) => {
+    ToolHotReloadService.getInstance().registerRebuildCallback(chatId, async () => {
+      const { write, update } = await buildPerTableToolsWithUpdatesAsync();
+      const perTableTools: ToolSet = { ...write, ...update };
       const mergedTools: ToolSet = { ...currentFilteredTools, ...perTableTools };
 
       // Re-filter based on permission

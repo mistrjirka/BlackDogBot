@@ -557,7 +557,7 @@ export const renderGraphToolOutputSchema = z.object({
 
 /** Maps deprecated tool names to their replacement(s). */
 export const CRON_TOOL_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  query_database: ["read_from_database", "update_database", "delete_from_database"],
+  query_database: ["read_from_database", "delete_from_database"],
 };
 
 export const CRON_VALID_TOOL_NAMES = [
@@ -584,14 +584,11 @@ export const CRON_VALID_TOOL_NAMES = [
   "fetch_rss",
   "searxng",
   "crawl4ai",
-  "list_databases",
   "list_tables",
   "get_table_schema",
-  "create_database",
   "create_table",
   "drop_table",
   "read_from_database",
-  "update_database",
   "delete_from_database",
   "call_skill",
   "get_skill_file",

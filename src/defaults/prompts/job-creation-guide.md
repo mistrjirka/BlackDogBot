@@ -14,11 +14,10 @@ When creating a job, follow this structured process:
    activates job creation mode which unlocks typed node-creation tools.
 
 3. **Set up database tables** — if the pipeline will persist data (via
-   `litesql` nodes or agent DB tools), create the necessary databases and
-   tables **now**, before adding any pipeline nodes. Use `list_databases`,
-   `list_tables`, `create_table`, etc. Having the table schema defined
-   first ensures that downstream node schemas can be designed to match
-   the table columns exactly.
+   `litesql` nodes or agent DB tools), create the necessary tables
+   **now**, before adding any pipeline nodes. Use `create_table`, etc.
+   Having the table schema defined first ensures that downstream node
+   schemas can be designed to match the table columns exactly.
 
 4. **Add nodes** — for each node in the planned graph, call the appropriate
    `add_<type>_node` tool (e.g. `add_curl_fetcher_node`, `add_rss_fetcher_node`,
@@ -187,7 +186,7 @@ this means chaining each new node to the previously created node.
 | Every input record should be inserted as-is, no logic needed | `litesql` node |
 | Simple deterministic read (e.g. last N hours, all rows) | `litesql_reader` node |
 | Need to read from the DB before deciding what to write | `agent` node with `read_from_database` + `write_table_<tableName>` |
-| Need to update or delete existing rows conditionally | `agent` node with `update_database` / `delete_from_database` (+ explicit WHERE) |
+| Need to update or delete existing rows conditionally | `agent` node with `update_table_<tableName>` / `delete_from_database` (+ explicit WHERE) |
 | Need conditional writes (e.g. skip duplicates, filter by rule) | `agent` node with DB tools |
 | Need to query data for summaries / reports | `agent` node with `read_from_database` |
 | Simple end-of-pipeline persistence (insert and done) | `litesql` node |
@@ -209,30 +208,22 @@ or doing conditional inserts.
 
 During **job creation** (before `finish_job_creation`), the main agent can call
 these tools directly to set up the schema:
-- `create_database` — creates a new database file
 - `create_table` — creates a table (also creates the database if needed)
-- `list_databases` — lists existing databases
-- `list_tables` — lists tables in a database
 - `get_table_schema` — inspects a table's columns
 
 At **pipeline runtime**, `agent` nodes can use these tools via `selectedTools`:
 - `write_table_<tableName>` — inserts rows using the table-specific validated tool
 - `read_from_database` — queries rows
-- `update_database` — updates existing rows (requires WHERE)
+- `update_table_<tableName>` — updates existing rows (requires WHERE)
 - `delete_from_database` — deletes rows (requires WHERE)
 - `create_table` — creates a table if needed
-- `list_databases` / `list_tables` / `get_table_schema` — introspection
+- `get_table_schema` — introspection
 
 ### Step-by-step: adding a litesql node to a pipeline
 
 **Before adding the node, set up the schema (tool calls, not pipeline nodes):**
 
-1. **Call `list_databases`** — check what databases already exist.
-
-2. **Call `list_tables`** (if a relevant database exists) — check what tables
-   it has.
-
-3. **If the table doesn't exist, call `create_table`** — specify the database
+1. **If the table doesn't exist, call `create_table`** — specify the database
    name, table name, and columns. This creates both the database file and the
    table. Do this **before** calling `add_litesql_node`. Example columns:
    - `id INTEGER PRIMARY KEY AUTOINCREMENT`
@@ -278,9 +269,9 @@ checks existing records before deciding what to store), add these tools to its
 `selectedTools`:
 - `write_table_<tableName>` — inserts rows using the table-specific validated tool
 - `read_from_database` — queries rows
-- `update_database` / `delete_from_database` — optional for modifying existing rows (always with WHERE)
+- `update_table_<tableName>` / `delete_from_database` — optional for modifying existing rows (always with WHERE)
 - `create_table` — creates a table if needed
-- `list_databases` / `list_tables` / `get_table_schema` — introspection
+- `get_table_schema` — introspection
 
 The agent calls these tools itself at runtime; you do not need a `litesql` node
 when the agent handles storage directly.
@@ -312,7 +303,7 @@ add_rss_fetcher_node(parentNodeId = "s1", mode = "unseen") → nodeId "n1"
 add_agent_node(                                             → nodeId "n2"
   parentNodeId  = "n1",
   selectedTools = ["write_table_interesting_items", "read_from_database",
-                   "create_table", "get_table_schema", "list_databases", "list_tables"],
+                   "create_table", "get_table_schema"],
   systemPrompt  = "You receive RSS feed items. For each item, decide if it is
                    interesting. Store interesting items using write_table_interesting_items
                    (database=news, table=interesting_items). Include title,
@@ -544,10 +535,8 @@ This is typically used at the **end of a pipeline** to persist data.
 > including table-specific `write_table_<tableName>` tools and `read_from_database` instead.**
 
 **Important:** Before using this node, you MUST:
-1. Use `list_databases` to see existing databases
-2. Use `list_tables` to see tables in a database
-3. If the table doesn't exist, use `create_table` to create it
-4. Use `get_table_schema` to understand the table's column structure
+1. If the table doesn't exist, use `create_table` to create it
+2. Use `get_table_schema` to understand the table's column structure
 
 **Config (`ILiteSqlConfig`):**
 | Property | Type | Description |
@@ -592,7 +581,7 @@ the last N hours for further processing.
 > `derivedOutputSchema` so you can see exactly what shape the output will have.
 
 **Important:** Before using this node, the table MUST already exist. Use
-`list_databases`, `list_tables`, and `get_table_schema` to verify.
+`get_table_schema` to verify.
 
 **Config (`ILiteSqlReaderConfig`):**
 | Property | Type | Description |

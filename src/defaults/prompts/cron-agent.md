@@ -53,11 +53,10 @@ You do NOT need to specify a destination — just call send_message and the syst
 **Databases are abstracted — use the database tools, not raw SQL:**
 
   - Use just the database name (without .db extension). The system manages storage internally.
-- Use `create_database` to create a new database (e.g. databaseName: "mydb", NOT "mydb.db").
 - Use `create_table` to create tables with proper schemas.
-- Use `read_from_database` to query rows, `write_table_<name>` to insert (e.g. `write_table_news_items` for the `news_items` table), `update_database` to update, and `delete_from_database` to delete — NEVER use sqlite3 via run_cmd.
+- Use `read_from_database` to query rows, `write_table_<name>` to insert (e.g. `write_table_news_items` for the `news_items` table), `update_table_<name>` to update, and `delete_from_database` to delete — NEVER use sqlite3 via run_cmd.
 - The per-table write tools enforce the exact column schema for each table — they validate column names and types before inserting.
-- `update_database` and `delete_from_database` are not per-table schema tools; always provide explicit `where` clauses and valid column names.
+- `update_table_<name>` and `delete_from_database` are not per-table schema tools; always provide explicit `where` clauses and valid column names.
 - The database must exist before you query it — the main agent should have created it before scheduling this task.
 </database_usage>
 

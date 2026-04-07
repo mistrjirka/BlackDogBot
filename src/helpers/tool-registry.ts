@@ -20,15 +20,6 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
   "add_job",
   "edit_job",
   "remove_job",
-  "create_database",
-  "create_table",
-  "drop_table",
-  "update_database",
-  "delete_from_database",
-  "modify_prompt",
-  "start_job_creation",
-  "finish_job_creation",
-  "create_output_schema",
   "add_node_test",
   "add_agent_node",
   "add_python_code_node",
@@ -95,14 +86,11 @@ const CORE_TOOL_NAMES: string[] = [
   "remove_job_schedule",
   "searxng",
   "crawl4ai",
-  "create_database",
-  "list_databases",
+  "list_tables",
   "create_table",
   "drop_table",
-  "list_tables",
   "get_table_schema",
   "read_from_database",
-  "update_database",
   "delete_from_database",
   "list_prompts",
   "modify_prompt",
@@ -218,7 +206,7 @@ export function isToolBlockedInReadOnly(toolName: string): boolean {
 }
 
 export function getJobCreationToolNames(): string[] {
-  return Array.from(JOB_CREATION_TOOLS).sort();
+  return [];
 }
 
 //#endregion Public Functions

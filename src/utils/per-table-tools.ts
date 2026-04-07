@@ -5,17 +5,20 @@ import * as litesql from "../helpers/litesql.js";
 import type { IColumnInfo, ITableInfo } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "./error.js";
+import { createUpdateTableTool } from "../tools/update-table.tool.js";
 
 //#region Constants
 
+const DEFAULT_DATABASE = "blackdog";
+
 const WRITE_TO_TABLE_DESCRIPTION: string =
-  "Insert rows into the \"{tableName}\" table in database \"{databaseName}\". " +
+  "Insert rows into the \"{tableName}\" table. " +
   "USE THIS TOOL whenever you need to write data to the {tableName} table — do NOT use any other tool for database inserts. " +
   "Column names and types are enforced by the schema — only valid columns are accepted. " +
   "Auto-fills created_at, updated_at, and similar timestamp columns if missing. " +
   "Omit auto-increment primary key columns (they are assigned automatically).";
 
-const SQLITE_TO_ZOD_TYPE: Record<string, z.ZodType> = {
+export const SQLITE_TO_ZOD_TYPE: Record<string, z.ZodType> = {
   // Text types
   TEXT: z.string(),
   VARCHAR: z.string(),
@@ -58,7 +61,7 @@ export const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
 //#region Public Functions
 
 /**
- * Scans all databases and creates per-table write tools with exact Zod schemas.
+ * Scans the single default database and creates per-table write tools with exact Zod schemas.
  *
  * For each table found, creates a tool named `write_table_<tableName>` with a
  * Zod schema derived from the table's column definitions. This prevents the
@@ -68,66 +71,36 @@ export async function buildPerTableToolsAsync(): Promise<ToolSet> {
   const logger: LoggerService = LoggerService.getInstance();
   const tools: ToolSet = {};
 
-  const databases: litesql.IDatabaseInfo[] = await litesql.listDatabasesAsync();
+  let tableNames: string[];
+  try {
+    tableNames = await litesql.listTablesAsync(DEFAULT_DATABASE);
+  } catch (err: unknown) {
+    logger.warn("Failed to list tables for per-table tool generation", {
+      database: DEFAULT_DATABASE,
+      error: extractErrorMessage(err),
+    });
+    return tools;
+  }
 
-  for (const db of databases) {
-    let tableNames: string[];
-
+  for (const tableName of tableNames) {
+    let schema: ITableInfo;
     try {
-      tableNames = await litesql.listTablesAsync(db.name);
+      schema = await litesql.getTableSchemaAsync(DEFAULT_DATABASE, tableName);
     } catch (err: unknown) {
-      logger.warn("Failed to list tables for per-table tool generation", {
-        database: db.name,
+      logger.warn("Failed to get table schema for per-table tool generation", {
+        database: DEFAULT_DATABASE,
+        table: tableName,
         error: extractErrorMessage(err),
       });
       continue;
     }
 
-    for (const tableName of tableNames) {
-      let schema: ITableInfo;
-
-      try {
-        schema = await litesql.getTableSchemaAsync(db.name, tableName);
-      } catch (err: unknown) {
-        logger.warn("Failed to get table schema for per-table tool generation", {
-          database: db.name,
-          table: tableName,
-          error: extractErrorMessage(err),
-        });
-        continue;
-      }
-
-      const perTableTool = _buildWriteToolForTable(db.name, tableName, schema.columns);
-      const toolName = `write_table_${tableName}`;
-
-      if (tools[toolName]) {
-        // Name collision — prefix with database name
-        let prefixedName = `write_table_${db.name}_${tableName}`;
-
-        // If prefixed name also collides (e.g., db1 has table "db2_items"), append suffix
-        if (tools[prefixedName]) {
-          let suffix = 2;
-
-          while (tools[`${prefixedName}_${suffix}`]) {
-            suffix++;
-          }
-
-          prefixedName = `${prefixedName}_${suffix}`;
-        }
-
-        tools[prefixedName] = perTableTool;
-        logger.debug("Per-table tool name collision, using prefixed name", {
-          original: toolName,
-          prefixed: prefixedName,
-          database: db.name,
-        });
-      } else {
-        tools[toolName] = perTableTool;
-      }
-    }
+    const perTableTool = _buildWriteToolForTable(DEFAULT_DATABASE, tableName, schema.columns);
+    tools[`write_table_${tableName}`] = perTableTool;
   }
 
   logger.info("Per-table write tools built", {
+    database: DEFAULT_DATABASE,
     toolCount: Object.keys(tools).length,
     toolNames: Object.keys(tools),
   });
@@ -136,18 +109,90 @@ export async function buildPerTableToolsAsync(): Promise<ToolSet> {
 }
 
 /**
+ * Scans the single default database and creates per-table update tools.
+ * For each table found, creates a tool named `update_table_<tableName>`.
+ */
+export async function buildUpdateTableToolsAsync(): Promise<ToolSet> {
+  const logger: LoggerService = LoggerService.getInstance();
+  const tools: ToolSet = {};
+
+  let tableNames: string[];
+  try {
+    tableNames = await litesql.listTablesAsync(DEFAULT_DATABASE);
+  } catch (err: unknown) {
+    logger.warn("Failed to list tables for per-table update tool generation", {
+      database: DEFAULT_DATABASE,
+      error: extractErrorMessage(err),
+    });
+    return tools;
+  }
+
+  for (const tableName of tableNames) {
+    let schema: ITableInfo;
+    try {
+      schema = await litesql.getTableSchemaAsync(DEFAULT_DATABASE, tableName);
+    } catch (err: unknown) {
+      logger.warn("Failed to get table schema for per-table update tool generation", {
+        database: DEFAULT_DATABASE,
+        table: tableName,
+        error: extractErrorMessage(err),
+      });
+      continue;
+    }
+
+    tools[`update_table_${tableName}`] = createUpdateTableTool(tableName, schema.columns);
+  }
+
+  logger.info("Per-table update tools built", {
+    database: DEFAULT_DATABASE,
+    toolCount: Object.keys(tools).length,
+    toolNames: Object.keys(tools),
+  });
+
+  return tools;
+}
+
+/**
+ * Build both write and update per-table tools for the single database.
+ */
+export async function buildPerTableToolsWithUpdatesAsync(): Promise<{
+  write: ToolSet;
+  update: ToolSet;
+}> {
+  const [writeTools, updateTools] = await Promise.all([
+    buildPerTableToolsAsync(),
+    buildUpdateTableToolsAsync(),
+  ]);
+
+  return { write: writeTools, update: updateTools };
+}
+
+/**
  * Build a single per-table write tool for a specific table.
  * Useful for hot-reload after creating a new table.
  */
 export function buildSingleTableTool(
-  databaseName: string,
   tableName: string,
   columns: IColumnInfo[],
 ): { name: string; toolInstance: ReturnType<typeof dynamicTool> } {
-  const perTableTool = _buildWriteToolForTable(databaseName, tableName, columns);
+  const perTableTool = _buildWriteToolForTable(DEFAULT_DATABASE, tableName, columns);
   return {
     name: `write_table_${tableName}`,
     toolInstance: perTableTool,
+  };
+}
+
+/**
+ * Build a single per-table update tool for a specific table.
+ * Useful for hot-reload after creating a new table.
+ */
+export function buildSingleUpdateTableTool(
+  tableName: string,
+  columns: IColumnInfo[],
+): { name: string; toolInstance: ToolSet[string] } {
+  return {
+    name: `update_table_${tableName}`,
+    toolInstance: createUpdateTableTool(tableName, columns),
   };
 }
 
@@ -156,13 +201,11 @@ export function buildSingleTableTool(
 //#region Private Functions
 
 function _buildWriteToolForTable(
-  databaseName: string,
+  _databaseName: string,
   tableName: string,
   columns: IColumnInfo[],
 ) {
-  const description: string = WRITE_TO_TABLE_DESCRIPTION
-    .replace("{tableName}", tableName)
-    .replace("{databaseName}", databaseName);
+  const description: string = WRITE_TO_TABLE_DESCRIPTION.replace("{tableName}", tableName);
 
   const dataSchema = _buildZodSchemaForColumns(columns);
 
@@ -202,7 +245,7 @@ function _buildWriteToolForTable(
       });
 
       const result: litesql.IInsertResult = await litesql.insertIntoTableAsync(
-        databaseName,
+        DEFAULT_DATABASE,
         tableName,
         enrichedData,
       );
@@ -212,7 +255,7 @@ function _buildWriteToolForTable(
 
       return {
         success: true,
-        databaseName,
+        databaseName: DEFAULT_DATABASE,
         tableName,
         insertedCount: result.insertedCount,
         lastRowId: result.lastRowId,

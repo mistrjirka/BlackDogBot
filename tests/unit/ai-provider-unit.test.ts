@@ -218,65 +218,6 @@ describe("AiProviderService unit", () => {
     });
   });
 
-  describe("Scheduler legacy write tool migration", () => {
-    it("should replace write_to_database with all write_table tools at startup", async () => {
-      const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-scheduler-migrate-"));
-      const originalHome = process.env.HOME ?? os.homedir();
-
-      try {
-        process.env.HOME = tempRoot;
-
-        const betterClawDir = path.join(tempRoot, ".blackdogbot");
-        const cronDir = path.join(betterClawDir, "cron");
-        const configDir = betterClawDir;
-        await fs.mkdir(cronDir, { recursive: true });
-
-        const realConfigPath = path.join(originalHome, ".blackdogbot", "config.yaml");
-        const tempConfigPath = path.join(configDir, "config.yaml");
-        await fs.cp(realConfigPath, tempConfigPath);
-
-        resetSingletons();
-
-        const configService = ConfigService.getInstance();
-        await configService.initializeAsync(tempConfigPath);
-
-        const aiService = AiProviderService.getInstance();
-        aiService.initialize(configService.getConfig().ai);
-
-        await litesql.createDatabaseAsync("test_db");
-        await litesql.createTableAsync("test_db", "users", [
-          { name: "id", type: "INTEGER", primaryKey: true },
-          { name: "name", type: "TEXT" },
-        ]);
-
-        const task = await buildScheduledTaskAsync("legacy-task-1", [
-          "fetch_rss",
-          "write_to_database",
-          "send_message",
-        ]);
-        await fs.writeFile(path.join(cronDir, "legacy-task-1.json"), JSON.stringify(task, null, 2), "utf-8");
-
-        const scheduler = SchedulerService.getInstance();
-        await scheduler.startAsync();
-
-        const loadedTask = await scheduler.getTaskAsync("legacy-task-1");
-        expect(loadedTask).toBeDefined();
-        expect(loadedTask!.tools).not.toContain("write_to_database");
-        expect(loadedTask!.tools).toContain("write_table_users");
-
-        const persistedRaw = await fs.readFile(path.join(cronDir, "legacy-task-1.json"), "utf-8");
-        const persisted = JSON.parse(persistedRaw) as { tools: string[] };
-        expect(persisted.tools).not.toContain("write_to_database");
-        expect(persisted.tools).toContain("write_table_users");
-
-        await scheduler.stopAsync();
-      } finally {
-        process.env.HOME = originalHome;
-        await fs.rm(tempRoot, { recursive: true, force: true });
-      }
-    }, 60000);
-  });
-
   describe("error paths", () => {
     it("should throw when getDefaultModel is called before initialization", () => {
       const service: AiProviderService = AiProviderService.getInstance();

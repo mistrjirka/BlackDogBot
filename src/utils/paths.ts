@@ -4,10 +4,13 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import crypto from "node:crypto";
 
+import * as litesql from "../helpers/litesql.js";
+
 //#region Constants
 
 const _BaseDirName: string = ".blackdogbot";
 const _LegacyBaseDirName: string = ".betterclaw";
+const DEFAULT_DATABASE = "blackdog";
 
 //#endregion Constants
 
@@ -236,6 +239,23 @@ export async function ensureAllDirectoriesAsync(): Promise<void> {
   for (const dir of directories) {
     await ensureDirectoryExistsAsync(dir);
   }
+}
+
+export async function ensureDefaultDatabaseAsync(): Promise<void> {
+  await ensureDirectoryExistsAsync(getDatabasesDir());
+  const existingDatabases = await litesql.listDatabasesAsync();
+  const dbExists = existingDatabases.some((db) => db.name === DEFAULT_DATABASE);
+  if (!dbExists) {
+    await litesql.createDatabaseAsync(DEFAULT_DATABASE);
+  }
+}
+
+export function getOldDatumBackupDir(): string {
+  return path.join(process.cwd(), ".old.datumofthesave");
+}
+
+export function getCommitHashPath(): string {
+  return path.join(getBaseDir(), ".commit-hash");
 }
 
 //#endregion Public functions

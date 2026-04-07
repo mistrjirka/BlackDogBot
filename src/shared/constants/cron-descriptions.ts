@@ -100,22 +100,9 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Fetch and parse a web page using Crawl4AI. Returns the page content in markdown format. " +
     "Args: url (string, required); selector (string, optional, CSS selector to extract specific content).",
 
-  list_databases:
-    "List all available databases. " +
-    "Args: none.",
-
-  list_tables:
-    "List all tables in a specific SQLite database. Use just the database name, not a file path. " +
-    "Args: databaseName (string, required).",
-
   get_table_schema:
     "Get the schema (columns and types) of a specific table. Use just the database name, not a file path. " +
     "Args: databaseName (string, required); tableName (string, required).",
-
-  create_database:
-    "Create a new empty database. " +
-    "Use just the name — never add .db extension. " +
-    "Args: databaseName (string, required).",
 
   create_table:
     "Create a new table in a database. Use just the database name, not a file path. " +
@@ -137,11 +124,10 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Use just the database name, not a file path. Args: databaseName (string, required); tableName (string, required); " +
     "data (array of row objects, required, e.g. [{title: 'Hello', score: 5}]).",
 
-  update_database:
-    "Update rows in a database table. Requires a WHERE clause for safety. " +
+  "update_table_<tableName>":
+    "Update rows in a specific database table using the table-specific tool. " +
     "Use just the database name, not a file path. " +
-    "Args: databaseName (string, required); tableName (string, required); " +
-    "set (object of column-value pairs, required); where (string, required).",
+    "Args: databaseName (string, required); set (object of column-value pairs, required); where (string, required).",
 
   delete_from_database:
     "Delete rows from a database table. Requires a WHERE clause for safety. " +

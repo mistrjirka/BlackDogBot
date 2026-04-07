@@ -3,6 +3,7 @@ import { Dirent } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
+import { execSync } from "node:child_process";
 
 import { INCLUDE_DIRECTIVE_REGEX } from "../shared/constants.js";
 import {
@@ -10,8 +11,11 @@ import {
   getPromptFragmentsDir,
   getPromptFilePath,
   getCacheDir,
+  getOldDatumBackupDir,
+  getCommitHashPath,
   ensureDirectoryExistsAsync,
 } from "../utils/paths.js";
+import { LoggerService } from "./logger.service.js";
 
 //#region Interfaces
 
@@ -24,6 +28,7 @@ export interface IPromptInfo {
 interface IPromptSyncState {
   lastAppliedDefaultsFingerprint: string;
   updatedAt: string;
+  commitHash: string | null;
 }
 
 //#endregion Interfaces
@@ -32,6 +37,8 @@ interface IPromptSyncState {
 
 const MAX_INCLUDE_DEPTH: number = 5;
 const PROMPT_SYNC_STATE_FILE_NAME: string = "prompt-sync-state.json";
+const MAX_BACKUP_VERSIONS: number = 2;
+const BACKUP_FILENAME_PREFIX: string = "._saved_at_";
 
 //#endregion Constants
 
@@ -81,6 +88,7 @@ export class PromptService {
     await ensureDirectoryExistsAsync(getCacheDir());
     await this._copyDefaultsIfNeededAsync();
     await this._initializePromptSyncStateIfMissingAsync();
+    await this._backupUserPromptsIfGitHashChangedAsync();
 
     this._initialized = true;
   }
@@ -321,9 +329,11 @@ export class PromptService {
 
   private async _markPromptsSyncedToCurrentDefaultsAsync(): Promise<void> {
     const fingerprint: string = await this._computeDefaultsFingerprintAsync();
+    const commitHash: string = await this._getCurrentGitCommitHashAsync();
     const state: IPromptSyncState = {
       lastAppliedDefaultsFingerprint: fingerprint,
       updatedAt: new Date().toISOString(),
+      commitHash: commitHash.length > 0 ? commitHash : null,
     };
 
     const statePath: string = this._getPromptSyncStatePath();
@@ -348,6 +358,7 @@ export class PromptService {
       const stateObject: Record<string, unknown> = parsedState as Record<string, unknown>;
       const fingerprint: unknown = stateObject.lastAppliedDefaultsFingerprint;
       const updatedAt: unknown = stateObject.updatedAt;
+      const commitHash: unknown = stateObject.commitHash;
 
       if (typeof fingerprint !== "string" || fingerprint.length === 0) {
         return null;
@@ -360,6 +371,7 @@ export class PromptService {
       return {
         lastAppliedDefaultsFingerprint: fingerprint,
         updatedAt,
+        commitHash: typeof commitHash === "string" && commitHash.length > 0 ? commitHash : null,
       };
     } catch {
       return null;
@@ -433,6 +445,131 @@ export class PromptService {
     }
 
     return files;
+  }
+
+  private async _getCurrentGitCommitHashAsync(): Promise<string> {
+    try {
+      const hash: string = execSync("git rev-parse HEAD", { cwd: process.cwd() })
+        .toString()
+        .trim();
+      return hash;
+    } catch (error) {
+      LoggerService.getInstance().warn("Failed to get git commit hash", { error });
+      return "";
+    }
+  }
+
+  private async _readStoredCommitHashAsync(): Promise<string | null> {
+    const hashPath: string = getCommitHashPath();
+    if (!(await this._fileExistsAsync(hashPath))) {
+      return null;
+    }
+
+    try {
+      const hash: string = (await fs.readFile(hashPath, "utf-8")).trim();
+      return hash.length > 0 ? hash : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async _writeStoredCommitHashAsync(hash: string): Promise<void> {
+    const hashPath: string = getCommitHashPath();
+    const parentDir: string = path.dirname(hashPath);
+    await ensureDirectoryExistsAsync(parentDir);
+    await fs.writeFile(hashPath, hash, "utf-8");
+  }
+
+  private async _backupUserPromptsIfGitHashChangedAsync(): Promise<void> {
+    const currentHash: string = await this._getCurrentGitCommitHashAsync();
+    if (currentHash.length === 0) {
+      return;
+    }
+
+    const storedHash: string | null = await this._readStoredCommitHashAsync();
+    if (storedHash === currentHash) {
+      return;
+    }
+
+    const backupDir: string = getOldDatumBackupDir();
+    await ensureDirectoryExistsAsync(backupDir);
+
+    const defaultFiles: string[] = await this._listFilesRecursiveAsync(this._defaultsDir);
+    const defaultMdFiles: string[] = defaultFiles.filter((file: string) => file.endsWith(".md"));
+    const timestamp: string = new Date().toISOString().replace(/[:.]/g, "-");
+
+    for (const defaultFile of defaultMdFiles) {
+      const relativePath: string = path.relative(this._defaultsDir, defaultFile);
+      const userPromptPath: string = path.join(this._promptsDir, relativePath);
+
+      if (!(await this._fileExistsAsync(userPromptPath))) {
+        continue;
+      }
+
+      const userContent: string = await fs.readFile(userPromptPath, "utf-8");
+      const defaultContent: string = await fs.readFile(defaultFile, "utf-8");
+
+      if (userContent === defaultContent) {
+        continue;
+      }
+
+      const backupFilename: string = this._getBackupFilename(relativePath, timestamp);
+      const backupPath: string = path.join(backupDir, backupFilename);
+
+      await fs.writeFile(backupPath, userContent, "utf-8");
+      LoggerService.getInstance().info("Backed up user prompt", { path: backupPath });
+    }
+
+    await this._writeStoredCommitHashAsync(currentHash);
+    await this._pruneOldBackupsAsync();
+  }
+
+  private _getBackupFilename(originalPath: string, timestamp: string): string {
+    const basename: string = path.basename(originalPath);
+    return `${BACKUP_FILENAME_PREFIX}${timestamp}_${basename}`;
+  }
+
+  private async _pruneOldBackupsAsync(): Promise<void> {
+    const backupDir: string = getOldDatumBackupDir();
+    if (!(await this._fileExistsAsync(backupDir))) {
+      return;
+    }
+
+    const files: string[] = await this._listFilesRecursiveAsync(backupDir);
+    const backupFiles: string[] = files.filter((f: string) => path.basename(f).startsWith(BACKUP_FILENAME_PREFIX));
+
+    const fileGroups: Map<string, string[]> = new Map();
+    for (const filePath of backupFiles) {
+      const basename: string = path.basename(filePath);
+      const match: RegExpMatchArray | null = basename.match(/^_\.saved_at_[^_]+_(.+)$/);
+      if (!match) {
+        continue;
+      }
+      const originalName: string = match[1];
+      if (!fileGroups.has(originalName)) {
+        fileGroups.set(originalName, []);
+      }
+      fileGroups.get(originalName)!.push(filePath);
+    }
+
+    for (const [, groupFiles] of fileGroups) {
+      if (groupFiles.length <= MAX_BACKUP_VERSIONS) {
+        continue;
+      }
+
+      const sortedFiles: string[] = groupFiles.sort((a: string, b: string) => {
+        const aMatch: RegExpMatchArray | null = path.basename(a).match(/^_\.saved_at_(.+)_/);
+        const bMatch: RegExpMatchArray | null = path.basename(b).match(/^_\.saved_at_(.+)_/);
+        if (!aMatch || !bMatch) return 0;
+        return bMatch[1].localeCompare(aMatch[1]);
+      });
+
+      const filesToDelete: string[] = sortedFiles.slice(MAX_BACKUP_VERSIONS);
+      for (const filePath of filesToDelete) {
+        await fs.unlink(filePath);
+        LoggerService.getInstance().info("Pruned old backup", { path: filePath });
+      }
+    }
   }
 
   //#endregion Private methods

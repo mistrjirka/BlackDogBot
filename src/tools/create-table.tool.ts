@@ -7,6 +7,8 @@ import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { columnsToJsonSchema, IJsonSchema } from "../utils/litesql-schema-helper.js";
 
+const DEFAULT_DATABASE = "blackdog";
+
 const columnDefinitionSchema = z.object({
   name: z.string()
     .min(1)
@@ -25,11 +27,8 @@ const columnDefinitionSchema = z.object({
 });
 
 export const createTableTool = tool({
-  description: "Create a new table in a database. Call this after prerequisite checks/tool calls are complete for the current run.",
+  description: "Create a new table in the default database (blackdog). Call this after prerequisite checks/tool calls are complete for the current run.",
   inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Name of the database"),
     tableName: z.string()
       .min(1)
       .describe("Name of the table to create"),
@@ -39,11 +38,9 @@ export const createTableTool = tool({
       .describe("Array of column definitions"),
   }),
   execute: async ({
-    databaseName,
     tableName,
     columns,
   }: {
-    databaseName: string;
     tableName: string;
     columns: z.infer<typeof columnDefinitionSchema>[];
   }): Promise<{
@@ -58,36 +55,36 @@ export const createTableTool = tool({
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const exists: boolean = await litesql.databaseExistsAsync(databaseName);
+      const exists: boolean = await litesql.databaseExistsAsync(DEFAULT_DATABASE);
       if (!exists) {
         const allDbs = await litesql.listDatabasesAsync();
         const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
         return {
           success: false,
-          databaseName,
+          databaseName: DEFAULT_DATABASE,
           tableName,
           columns: [],
           inputSchema: { type: "object", properties: {}, required: [] },
           message: "",
-          error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
+          error: `Database "${DEFAULT_DATABASE}" does not exist.\nAvailable databases: ${available}`,
         };
       }
 
-      const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
+      const tableExists: boolean = await litesql.tableExistsAsync(DEFAULT_DATABASE, tableName);
       if (tableExists) {
         return {
           success: false,
-          databaseName,
+          databaseName: DEFAULT_DATABASE,
           tableName,
           columns: [],
           inputSchema: { type: "object", properties: {}, required: [] },
           message: "",
-          error: `Table "${tableName}" already exists in database "${databaseName}".\nUse drop_table first if you want to recreate it.`,
+          error: `Table "${tableName}" already exists in database "${DEFAULT_DATABASE}".\nUse drop_table first if you want to recreate it.`,
         };
       }
 
-      await litesql.createTableAsync(databaseName, tableName, columns);
+      await litesql.createTableAsync(DEFAULT_DATABASE, tableName, columns);
 
       // Build IColumnInfo from the input columns so we can derive the JSON Schema
       const columnInfos: IColumnInfo[] = columns.map((c) => ({
@@ -103,7 +100,7 @@ export const createTableTool = tool({
 
       return {
         success: true,
-        databaseName,
+        databaseName: DEFAULT_DATABASE,
         tableName,
         columns: columnInfos,
         inputSchema,
@@ -118,7 +115,7 @@ export const createTableTool = tool({
       logger.error("create-table tool error", { error: errorMsg });
       return {
         success: false,
-        databaseName,
+        databaseName: DEFAULT_DATABASE,
         tableName,
         columns: [],
         inputSchema: { type: "object", properties: {}, required: [] },

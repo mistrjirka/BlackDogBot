@@ -27,7 +27,7 @@ import { telegramPlatform } from "./platforms/telegram/index.js";
 import { discordPlatform } from "./platforms/discord/index.js";
 import type { IPlatformDeps } from "./platforms/types.js";
 import type { IConfig, IScheduledTask, IExecutionContext } from "./shared/types/index.js";
-import { getJobLogsDir, getBrainInterfaceTokenFilePath, ensureAllDirectoriesAsync, ensureDirectoryExistsAsync } from "./utils/paths.js";
+import { getJobLogsDir, getBrainInterfaceTokenFilePath, ensureAllDirectoriesAsync, ensureDirectoryExistsAsync, ensureDefaultDatabaseAsync } from "./utils/paths.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
 import { extractErrorMessage } from "./utils/error.js";
 import { TelegramHandler } from "./platforms/telegram/handler.js";
@@ -96,6 +96,11 @@ async function mainAsync(): Promise<void> {
   // Enable CLI status output (spinner/status line)
   const statusService: StatusService = StatusService.getInstance();
   statusService.enableCliOutput(true);
+
+  // 2.5. Ensure default database exists (single database architecture)
+  await ensureDefaultDatabaseAsync();
+
+  logger.info("Default database ensured.");
 
   logger.info("BlackDogBot daemon starting...");
   logger.info("BrainInterface JWT token is ready for UI login", {

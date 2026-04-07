@@ -4,12 +4,11 @@ import { z } from "zod";
 import * as litesql from "../helpers/litesql.js";
 import type { IQueryResult } from "../helpers/litesql.js";
 
+const DEFAULT_DATABASE = "blackdog";
+
 export const readFromDatabaseTool = tool({
-  description: "Read rows from a table in a database with optional filtering, ordering, and column selection",
+  description: "Read rows from a table in the default database (blackdog) with optional filtering, ordering, and column selection",
   inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Name of the database to read from"),
     tableName: z.string()
       .min(1)
       .describe("Name of the table to read from"),
@@ -30,14 +29,12 @@ export const readFromDatabaseTool = tool({
       .optional(),
   }),
   execute: async ({
-    databaseName,
     tableName,
     where,
     orderBy,
     limit,
     columns,
   }: {
-    databaseName: string;
     tableName: string;
     where?: string;
     orderBy?: string;
@@ -50,29 +47,29 @@ export const readFromDatabaseTool = tool({
     totalCount: number;
     returnedCount: number;
   }> => {
-    const dbExists: boolean = await litesql.databaseExistsAsync(databaseName);
+    const dbExists: boolean = await litesql.databaseExistsAsync(DEFAULT_DATABASE);
     if (!dbExists) {
       const allDbs = await litesql.listDatabasesAsync();
       const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
 
       throw new Error(
-        `Database "${databaseName}" does not exist.\n` +
+        `Database "${DEFAULT_DATABASE}" does not exist.\n` +
           `Available databases: ${available}`,
       );
     }
 
-    const tableExists: boolean = await litesql.tableExistsAsync(databaseName, tableName);
+    const tableExists: boolean = await litesql.tableExistsAsync(DEFAULT_DATABASE, tableName);
     if (!tableExists) {
-      const allTables: string[] = await litesql.listTablesAsync(databaseName);
+      const allTables: string[] = await litesql.listTablesAsync(DEFAULT_DATABASE);
       const available: string = allTables.join(", ") || "(none)";
 
       throw new Error(
-        `Table "${tableName}" does not exist in database "${databaseName}".\n` +
+        `Table "${tableName}" does not exist in database "${DEFAULT_DATABASE}".\n` +
           `Available tables: ${available}`,
       );
     }
 
-    const result: IQueryResult = await litesql.queryTableAsync(databaseName, tableName, {
+    const result: IQueryResult = await litesql.queryTableAsync(DEFAULT_DATABASE, tableName, {
       where,
       orderBy,
       limit: limit ?? 100,
@@ -80,7 +77,7 @@ export const readFromDatabaseTool = tool({
     });
 
     return {
-      databaseName,
+      databaseName: DEFAULT_DATABASE,
       tableName,
       rows: result.rows,
       totalCount: result.totalCount,

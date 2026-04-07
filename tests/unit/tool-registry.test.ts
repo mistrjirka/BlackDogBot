@@ -23,7 +23,6 @@ describe("tool-registry", () => {
       expect(toolRegistry.isToolAllowed("read_image", "read_only", {})).toBe(false);
       expect(toolRegistry.isToolAllowed("add_cron", "read_only", {})).toBe(false);
       expect(toolRegistry.isToolAllowed("remove_cron", "read_only", {})).toBe(false);
-      expect(toolRegistry.isToolAllowed("create_database", "read_only", {})).toBe(false);
     });
 
     it("should allow safe tools for 'read_only' permission", () => {
@@ -132,19 +131,14 @@ describe("tool-registry", () => {
       expect(blocked).toContain("write_file");
       expect(blocked).toContain("add_cron");
       expect(blocked).toContain("remove_cron");
-      expect(blocked).toContain("create_database");
       expect(blocked.length).toBeGreaterThan(30);
     });
   });
 
   describe("getJobCreationToolNames", () => {
-    it("should return job creation tools", () => {
+    it("should return empty list - job creation system deprecated", () => {
       const tools = toolRegistry.getJobCreationToolNames();
-      expect(tools).toContain("start_job_creation");
-      expect(tools).toContain("finish_job_creation");
-      expect(tools).toContain("add_agent_node");
-      expect(tools).toContain("add_python_code_node");
-      expect(tools).toContain("run_node_test");
+      expect(tools).toHaveLength(0);
     });
   });
 });

@@ -36,20 +36,17 @@ import {
   appendFileTool,
   editFileTool,
   fetchRssTool,
-  listDatabasesTool,
   listTablesTool,
   getTableSchemaTool,
-  createDatabaseTool,
   createTableTool,
   dropTableTool,
   readFromDatabaseTool,
-  updateDatabaseTool,
   deleteFromDatabaseTool,
   FileReadTracker,
 } from "../tools/index.js";
 import type { MessageSender, TaskIdProvider } from "../tools/index.js";
 import { StatusService } from "../services/status.service.js";
-import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
+import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/per-table-tools.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 
 //#region Interfaces
@@ -303,14 +300,11 @@ export class CronAgent extends BaseAgentBase {
       fetch_rss: fetchRssTool,
       searxng: searxngTool,
       crawl4ai: crawl4aiTool,
-      list_databases: listDatabasesTool,
       list_tables: listTablesTool,
       get_table_schema: getTableSchemaTool,
-      create_database: createDatabaseTool,
       create_table: _wrapCronCreateTableTool(createTableTool, onCreateTableRebuild),
       drop_table: dropTableTool,
       read_from_database: readFromDatabaseTool,
-      update_database: updateDatabaseTool,
       delete_from_database: deleteFromDatabaseTool,
     };
 
@@ -320,8 +314,14 @@ export class CronAgent extends BaseAgentBase {
 
     // Merge per-table write tools
     try {
-      const perTableTools: ToolSet = await buildPerTableToolsAsync();
-      for (const [name, toolDef] of Object.entries(perTableTools)) {
+      const [writeTools, updateTools] = await Promise.all([
+        buildPerTableToolsAsync(),
+        buildUpdateTableToolsAsync(),
+      ]);
+      for (const [name, toolDef] of Object.entries(writeTools)) {
+        availableTools[name] = toolDef;
+      }
+      for (const [name, toolDef] of Object.entries(updateTools)) {
         availableTools[name] = toolDef;
       }
     } catch (err: unknown) {
