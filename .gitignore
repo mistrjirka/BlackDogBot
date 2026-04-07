@@ -51,6 +51,9 @@ thoughts/ledgers/
 # Local logs
 *.log
 
+# Worktrees (isolated workspaces)
+.worktrees/
+
 # Accidental local home mirror folder
 ~/
 
