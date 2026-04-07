@@ -1,34 +1,13 @@
 import { z } from "zod";
+import type { IScheduleScheduled } from "../types/cron.types.js";
 
-//#region Cron Schemas
-
-export const scheduleOnceSchema = z.object({
-  type: z.literal("once"),
-  runAt: z.string()
-    .datetime()
-    .describe("ISO 8601 datetime to run at"),
+export const scheduleScheduledSchema: z.ZodType<IScheduleScheduled> = z.object({
+  type: z.literal("scheduled"),
+  intervalMinutes: z.number().positive(),
+  startHour: z.number().min(0).max(23).nullable(),
+  startMinute: z.number().min(0).max(59).nullable(),
+  runOnce: z.boolean(),
 });
-
-export const scheduleIntervalSchema = z.object({
-  type: z.literal("interval"),
-  intervalMs: z.number()
-    .int()
-    .positive()
-    .describe("Interval in milliseconds"),
-});
-
-export const scheduleCronSchema = z.object({
-  type: z.literal("cron"),
-  expression: z.string()
-    .min(1)
-    .describe("Cron expression (e.g. '0 9 * * *' for daily at 09:00)"),
-});
-
-export const scheduleSchema = z.discriminatedUnion("type", [
-  scheduleOnceSchema,
-  scheduleIntervalSchema,
-  scheduleCronSchema,
-]);
 
 export const cronMessageHistorySchema = z.object({
   messageId: z.string()
@@ -55,7 +34,7 @@ export const scheduledTaskSchema = z.object({
     .array()
     .min(1)
     .describe("Tool names available to the task agent"),
-  schedule: scheduleSchema,
+  schedule: scheduleScheduledSchema,
   notifyUser: z.boolean()
     .describe("Whether to send a Telegram notification when this task completes"),
   enabled: z.boolean()
@@ -73,7 +52,7 @@ export const scheduledTaskSchema = z.object({
     .datetime(),
   updatedAt: z.string()
     .datetime(),
-  messageHistory: cronMessageHistorySchema.array()
+  messageHistory: z.array(z.unknown())
     .default([]),
   messageSummary: z.string()
     .nullable()
@@ -83,5 +62,3 @@ export const scheduledTaskSchema = z.object({
     .nullable()
     .default(null),
 });
-
-//#endregion Cron Schemas

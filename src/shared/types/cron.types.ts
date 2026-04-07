@@ -1,29 +1,12 @@
-//#region Cron Types
+export type ScheduleType = "scheduled";
 
-export type ScheduleType = "once" | "interval" | "cron";
-
-export interface ICronMessageHistory {
-  messageId: string;
-  content: string;
-  sentAt: string;
+export interface IScheduleScheduled {
+  type: "scheduled";
+  intervalMinutes: number;
+  startHour: number | null;
+  startMinute: number | null;
+  runOnce: boolean;
 }
-
-export interface IScheduleOnce {
-  type: "once";
-  runAt: string;
-}
-
-export interface IScheduleInterval {
-  type: "interval";
-  intervalMs: number;
-}
-
-export interface IScheduleCron {
-  type: "cron";
-  expression: string;
-}
-
-export type Schedule = IScheduleOnce | IScheduleInterval | IScheduleCron;
 
 export interface IScheduledTask {
   taskId: string;
@@ -31,18 +14,20 @@ export interface IScheduledTask {
   description: string;
   instructions: string;
   tools: string[];
-  schedule: Schedule;
-  enabled: boolean;
+  schedule: IScheduleScheduled;
   notifyUser: boolean;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
   lastRunAt: string | null;
   lastRunStatus: "success" | "failure" | null;
   lastRunError: string | null;
-  createdAt: string;
-  updatedAt: string;
-  messageHistory: ICronMessageHistory[];
+  messageHistory: unknown[];
   messageSummary: string | null;
   summaryGeneratedAt: string | null;
 }
+
+export type Schedule = IScheduleScheduled;
 
 export interface IExecutionContext {
   toolCallHistory: string[];
@@ -51,4 +36,8 @@ export interface IExecutionContext {
   taskInstructions?: string;
 }
 
-//#endregion Cron Types
+export interface ICronMessageHistory {
+  messageId: string;
+  content: string;
+  sentAt: string;
+}
