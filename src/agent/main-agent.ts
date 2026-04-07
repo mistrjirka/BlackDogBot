@@ -166,6 +166,10 @@ export class MainAgent extends BaseAgentBase {
     return this._initialized && this._sessions.has(chatId);
   }
 
+  public getActiveChatIds(): string[] {
+    return Array.from(this._sessions.keys());
+  }
+
   public async initializeForChatAsync(
     chatId: string,
     messageSender: MessageSender,

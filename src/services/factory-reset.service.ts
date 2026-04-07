@@ -64,7 +64,17 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
     promptService.clearCache();
   });
 
-  // 6. Clear all chat history
+  // 5b. Abort running agents and refresh all sessions with new prompts
+  await _safeStepAsync("Refresh all sessions with new prompts", errors, async (): Promise<void> => {
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    const chatIds: string[] = mainAgent.getActiveChatIds();
+    for (const chatId of chatIds) {
+      mainAgent.stopChat(chatId);
+    }
+    await mainAgent.refreshAllSessionsAsync();
+  });
+
+  // 6. Clear all chat history (sessions now fresh, wipe their data)
   await _safeStepAsync("Clear chat history", errors, async (): Promise<void> => {
     const mainAgent: MainAgent = MainAgent.getInstance();
     mainAgent.clearAllChatHistory();
