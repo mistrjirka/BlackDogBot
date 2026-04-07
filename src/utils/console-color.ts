@@ -11,7 +11,7 @@ const RESET = `${ESC}0m`;
 
 function isColorEnabled(): boolean {
   // BLACKDOGBOT_COLOR=0 forces off, =1 forces on
-  const colorFlag: string | undefined = process.env.BLACKDOGBOT_COLOR ?? process.env.BETTERCLAW_COLOR;
+  const colorFlag: string | undefined = process.env.BLACKDOGBOT_COLOR;
 
   if (colorFlag === "0") return false;
   if (colorFlag === "1") return true;

@@ -137,7 +137,7 @@ export class MainAgent extends BaseAgentBase {
 
   private constructor() {
     const rawSteps: number = parseInt(
-      process.env.BLACKDOGBOT_MAIN_AGENT_MAX_STEPS ?? process.env.BETTERCLAW_MAIN_AGENT_MAX_STEPS ?? "",
+      process.env.BLACKDOGBOT_MAIN_AGENT_MAX_STEPS ?? "",
       10,
     );
 

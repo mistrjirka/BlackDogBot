@@ -7,7 +7,6 @@ import {
   editCronInstructionsToolInputSchema,
   CRON_VALID_TOOL_NAMES,
 } from "../shared/schemas/tool-schemas.js";
-import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/per-table-tools.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { SchedulerService } from "../services/scheduler.service.js";
@@ -113,58 +112,36 @@ function buildSchedule(input: {
   }
 }
 
-async function buildCronSchemasAsync(): Promise<{
+export async function buildCronSchemasAsync(): Promise<{
   addCronInputSchema: z.ZodObject<any>;
   editCronInputSchema: z.ZodObject<any>;
   editCronInstructionsInputSchema: z.ZodObject<any>;
 }> {
-  const perTableTools = await buildPerTableToolsAsync();
-  const updateTableTools = await buildUpdateTableToolsAsync();
+  const staticToolSchema = z.enum(CRON_VALID_TOOL_NAMES);
 
-  const writeTableToolNames: string[] = Object.keys(perTableTools).filter((name: string): boolean =>
-    name.startsWith("write_table_"),
-  );
-  const updateTableToolNames: string[] = Object.keys(updateTableTools).filter((name: string): boolean =>
-    name.startsWith("update_table_"),
-  );
+  const dynamicToolNameSchema: z.ZodUnion<any> = z.union([
+    staticToolSchema,
+    z.string().regex(/^write_table_.+$/),
+    z.string().regex(/^update_table_.+$/),
+  ]);
 
-  const allToolNames: [string, ...string[]] = [
-    CRON_VALID_TOOL_NAMES[0],
-    ...CRON_VALID_TOOL_NAMES.slice(1),
-    ...writeTableToolNames,
-    ...updateTableToolNames,
-  ] as [string, ...string[]];
-
-  const toolsEnum: z.ZodEnum<[string, ...string[]]> = z.enum(allToolNames);
+  const toolsArraySchema: z.ZodArray<any> = dynamicToolNameSchema.array().min(1);
 
   const logger: LoggerService = LoggerService.getInstance();
-  logger.debug("[buildCronTools] Built dynamic tools enum", {
-    staticToolCount: CRON_VALID_TOOL_NAMES.length,
-    writeTableToolCount: writeTableToolNames.length,
-    updateTableToolCount: updateTableToolNames.length,
-    totalToolCount: allToolNames.length,
-  });
+  logger.debug("[buildCronTools] Built dynamic tools schema for cron tools");
 
-  const toolsFieldDescription: string = `Valid tools: ${allToolNames.join(", ")}. send_message performs internal deduplication against previous cron messages.`;
+  const toolsFieldDescription: string = `Valid tools include: ${CRON_VALID_TOOL_NAMES.join(", ")}, write_table_<tableName>, update_table_<tableName>. send_message performs internal deduplication against previous cron messages.`;
 
   const addCronInputSchema: z.ZodObject<any> = (addCronToolInputSchema._def as any).schema.extend({
-    tools: z.array(toolsEnum)
-      .min(1)
-      .describe(`Tool names available to the task agent (required, at least one). ${toolsFieldDescription}`),
+    tools: toolsArraySchema.describe(`Tool names available to the task agent (required, at least one). ${toolsFieldDescription}`),
   });
 
   const editCronInputSchema: z.ZodObject<any> = editCronToolInputSchema.extend({
-    tools: z.array(toolsEnum)
-      .min(1)
-      .optional()
-      .describe(`Updated list of available tool names. ${toolsFieldDescription}`),
+    tools: toolsArraySchema.optional().describe(`Updated list of available tool names. ${toolsFieldDescription}`),
   });
 
   const editCronInstructionsInputSchema: z.ZodObject<any> = editCronInstructionsToolInputSchema.extend({
-    tools: z.array(toolsEnum)
-      .min(1)
-      .optional()
-      .describe(`Optional replacement tool list to apply together with the instruction update. ${toolsFieldDescription}`),
+    tools: toolsArraySchema.optional().describe(`Optional replacement tool list to apply together with the instruction update. ${toolsFieldDescription}`),
   });
 
   return {

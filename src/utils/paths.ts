@@ -1,7 +1,6 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
-import fsSync from "node:fs";
 import crypto from "node:crypto";
 
 import * as litesql from "../helpers/litesql.js";
@@ -9,23 +8,14 @@ import * as litesql from "../helpers/litesql.js";
 //#region Constants
 
 const _BaseDirName: string = ".blackdogbot";
-const _LegacyBaseDirName: string = ".betterclaw";
 const DEFAULT_DATABASE = "blackdog";
 
 //#endregion Constants
-
-// Run migration as early as possible when paths module is loaded.
-// Safe no-op when .blackdogbot already exists.
-migrateLegacyBaseDirSync();
 
 //#region Public functions
 
 export function getBaseDir(): string {
   return path.join(os.homedir(), _BaseDirName);
-}
-
-export function getLegacyBaseDir(): string {
-  return path.join(os.homedir(), _LegacyBaseDirName);
 }
 
 export function getConfigPath(): string {
@@ -162,8 +152,7 @@ export function getBrainInterfaceTokenFilePath(): string {
 }
 
 export function getModelsDir(): string {
-  const envModelsDir: string | undefined =
-    process.env.BLACKDOGBOT_MODELS_DIR ?? process.env.BETTERCLAW_MODELS_DIR;
+  const envModelsDir: string | undefined = process.env.BLACKDOGBOT_MODELS_DIR;
 
   if (envModelsDir && envModelsDir.trim().length > 0) {
     return envModelsDir;
@@ -180,41 +169,7 @@ export async function ensureDirectoryExistsAsync(dirPath: string): Promise<void>
   await fs.mkdir(dirPath, { recursive: true });
 }
 
-export function migrateLegacyBaseDirSync(): void {
-  const baseDir: string = getBaseDir();
-  const legacyBaseDir: string = getLegacyBaseDir();
-
-  if (fsSync.existsSync(baseDir)) {
-    return;
-  }
-
-  if (fsSync.existsSync(legacyBaseDir)) {
-    fsSync.renameSync(legacyBaseDir, baseDir);
-  }
-}
-
-export async function migrateLegacyBaseDirAsync(): Promise<void> {
-  const baseDir: string = getBaseDir();
-  const legacyBaseDir: string = getLegacyBaseDir();
-
-  try {
-    await fs.access(baseDir);
-    return;
-  } catch {
-    // Base dir does not exist yet.
-  }
-
-  try {
-    await fs.access(legacyBaseDir);
-    await fs.rename(legacyBaseDir, baseDir);
-  } catch {
-    // Legacy dir does not exist or rename failed; fallback directory creation happens below.
-  }
-}
-
 export async function ensureAllDirectoriesAsync(): Promise<void> {
-  await migrateLegacyBaseDirAsync();
-
   const directories: string[] = [
     getBaseDir(),
     getSkillsDir(),

@@ -10,6 +10,7 @@ import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
+import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/per-table-tools.js";
 import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
@@ -101,7 +102,18 @@ const executeEditCronInstructions = async (
     logger.debug(`[${TOOL_NAME}] Re-verifying cron instructions for task: ${taskId}`);
 
     const toolsToVerify: string[] = tools ?? existingTask.tools;
-    const toolContextBlock: string = await buildCronToolContextBlockAsync(toolsToVerify);
+
+    const [allWriteTableTools, allUpdateTableTools] = await Promise.all([
+      buildPerTableToolsAsync(),
+      buildUpdateTableToolsAsync(),
+    ]);
+    const allDynamicTableTools: string[] = [
+      ...Object.keys(allWriteTableTools),
+      ...Object.keys(allUpdateTableTools),
+    ];
+    const expandedToolsToVerify: string[] = [...new Set([...toolsToVerify, ...allDynamicTableTools])];
+
+    const toolContextBlock: string = await buildCronToolContextBlockAsync(expandedToolsToVerify);
 
     const lowerInstructions: string = normalizedInstructions.toLowerCase();
     const mentionsRunCmd: boolean = lowerInstructions.includes("run_cmd");

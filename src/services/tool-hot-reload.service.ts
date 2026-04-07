@@ -67,8 +67,9 @@ export class ToolHotReloadService {
     }
 
     try {
-      const { buildPerTableToolsAsync } = await import("../utils/per-table-tools.js");
-      const perTableTools: ToolSet = await buildPerTableToolsAsync();
+      const { buildPerTableToolsWithUpdatesAsync } = await import("../utils/per-table-tools.js");
+      const { write, update } = await buildPerTableToolsWithUpdatesAsync();
+      const perTableTools: ToolSet = { ...write, ...update };
 
       this._logger.info("Triggering tool hot-reload", {
         chatId,
