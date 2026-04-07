@@ -55,20 +55,10 @@ export const createTableTool = tool({
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const exists: boolean = await litesql.databaseExistsAsync(DEFAULT_DATABASE);
-      if (!exists) {
-        const allDbs = await litesql.listDatabasesAsync();
-        const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
-        return {
-          success: false,
-          databaseName: DEFAULT_DATABASE,
-          tableName,
-          columns: [],
-          inputSchema: { type: "object", properties: {}, required: [] },
-          message: "",
-          error: `Database "${DEFAULT_DATABASE}" does not exist.\nAvailable databases: ${available}`,
-        };
+      let dbExists: boolean = await litesql.databaseExistsAsync(DEFAULT_DATABASE);
+      if (!dbExists) {
+        await litesql.createDatabaseAsync(DEFAULT_DATABASE);
+        dbExists = true;
       }
 
       const tableExists: boolean = await litesql.tableExistsAsync(DEFAULT_DATABASE, tableName);
