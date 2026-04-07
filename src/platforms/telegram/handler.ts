@@ -394,7 +394,7 @@ export class TelegramHandler {
             });
           }
 
-          const htmlText: string = markdownToTelegramHtml(result.text);
+          const htmlText: string = markdownToTelegramHtml(_truncateResponse(result.text));
           const chunks: string[] = splitTelegramMessage(htmlText);
           for (let i: number = 0; i < chunks.length; i++) {
             const options: Record<string, unknown> = {
@@ -1095,20 +1095,42 @@ export class TelegramHandler {
 
 //#region Private Functions
 
+const RESPONSE_TRUNCATE_LENGTH: number = 5000;
+
 function _formatToolCall(name: string, input: Record<string, unknown>): string {
   const key: string | undefined = TOOL_PRIMARY_KEY[name];
   const reasoningSuffix: string = _formatReasoningSuffix(input);
 
+  const escapedName: string = _escapeTelegramHtml(name);
+
   if (!key || !(key in input)) {
-    return reasoningSuffix.length > 0 ? `${name} ${reasoningSuffix}` : name;
+    return reasoningSuffix.length > 0 ? `<b>${escapedName}</b> ${reasoningSuffix}` : `<b>${escapedName}</b>`;
   }
 
-  const val: string = String(input[key] ?? "");
-  const truncated: string = val.length > 60 ? val.slice(0, 60) + "…" : val;
+  const val: unknown = input[key];
+  let formattedArgs: string;
+
+  if (typeof val === "object" && val !== null) {
+    const argsStr: string = JSON.stringify(val, null, 2);
+    const truncatedArgs: string = argsStr.length > 200 ? argsStr.slice(0, 200) + "…" : argsStr;
+    formattedArgs = `<code>${_escapeTelegramHtml(truncatedArgs)}</code>`;
+  } else {
+    const valStr: string = String(val ?? "");
+    formattedArgs = `<code>${_escapeTelegramHtml(valStr)}</code>`;
+  }
 
   return reasoningSuffix.length > 0
-    ? `${name}(${truncated}) ${reasoningSuffix}`
-    : `${name}(${truncated})`;
+    ? `<b>${escapedName}</b>${formattedArgs} ${reasoningSuffix}`
+    : `<b>${escapedName}</b>${formattedArgs}`;
+}
+
+function _truncateResponse(text: string): string {
+  if (text.length <= RESPONSE_TRUNCATE_LENGTH) {
+    return text;
+  }
+  const truncated: string = text.slice(0, RESPONSE_TRUNCATE_LENGTH);
+  const notice: string = `\n\n<i>⚠️ Response truncated (${text.length} → ${RESPONSE_TRUNCATE_LENGTH} chars)</i>`;
+  return truncated + notice;
 }
 
 function _buildCancelResponseText(
