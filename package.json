@@ -1,7 +1,7 @@
 {
   "name": "blackdogbot",
   "version": "0.1.0",
-  "description": "Proactive AI assistant with jobs, skills, and scheduled tasks",
+  "description": "Proactive AI assistant with skills and scheduled tasks",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
@@ -13,11 +13,11 @@
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",
     "test:core": "vitest run tests/integration/core",
-    "test:jobs": "vitest run tests/integration/jobs",
     "test:fast": "vitest run tests/unit tests/integration/core",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc",
+    "test:build": "tsc && vitest run --config vitest.integration.config.ts"
   },
   "engines": {
     "node": ">=22.0.0"

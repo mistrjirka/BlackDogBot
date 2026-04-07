@@ -28,8 +28,6 @@ import {
   createGetPreviousMessageTool,
   createCallSkillTool,
   getSkillFileTool,
-  createRunJobTool,
-  getJobsTool,
   listCronsTool,
   createReadFileTool,
   createReadImageTool,
@@ -47,7 +45,6 @@ import {
   updateDatabaseTool,
   deleteFromDatabaseTool,
   FileReadTracker,
-  JobActivityTracker,
 } from "../tools/index.js";
 import type { MessageSender, TaskIdProvider } from "../tools/index.js";
 import { StatusService } from "../services/status.service.js";
@@ -282,7 +279,6 @@ export class CronAgent extends BaseAgentBase {
     onCreateTableRebuild?: (info: ICronRebuildInfo) => void,
   ): Promise<ToolSet> {
     const readTracker: FileReadTracker = new FileReadTracker();
-    const jobTracker: JobActivityTracker = new JobActivityTracker();
     const supportsVision: boolean = AiProviderService.getInstance().getSupportsVision();
 
     const availableTools: Record<string, Tool> = {
@@ -302,8 +298,6 @@ export class CronAgent extends BaseAgentBase {
       write_file: createWriteFileTool(readTracker),
       append_file: appendFileTool,
       edit_file: editFileTool,
-      run_job: createRunJobTool(jobTracker, undefined, messageSender),
-      get_jobs: getJobsTool,
       list_crons: listCronsTool,
       fetch_rss: fetchRssTool,
       searxng: searxngTool,

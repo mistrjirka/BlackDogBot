@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 
 import { LoggerService } from "./logger.service.js";
-import { JobStorageService } from "./job-storage.service.js";
 import { SchedulerService } from "./scheduler.service.js";
 import { PromptService } from "./prompt.service.js";
 import { MainAgent } from "../agent/main-agent.js";
@@ -26,58 +25,52 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
 
   logger.info("Factory reset started");
 
-  // 1. Delete all jobs
-  await _safeStepAsync("Delete all jobs", errors, async (): Promise<void> => {
-    const jobStorage: JobStorageService = JobStorageService.getInstance();
-    await jobStorage.deleteAllJobsAsync();
-  });
-
-  // 2. Wipe knowledge / LanceDB
+  // 1. Wipe knowledge / LanceDB
   await _safeStepAsync("Wipe knowledge store", errors, async (): Promise<void> => {
     await _wipeDirAsync(getKnowledgeDir());
   });
 
-  // 3. Remove all scheduled tasks
+  // 2. Remove all scheduled tasks
   await _safeStepAsync("Remove all scheduled tasks", errors, async (): Promise<void> => {
     const scheduler: SchedulerService = SchedulerService.getInstance();
     await scheduler.removeAllTasksAsync();
   });
 
-  // 3b. Wipe cron directory directly (safety net for unparseable files)
+  // 2b. Wipe cron directory directly (safety net for unparseable files)
   await _safeStepAsync("Wipe cron directory", errors, async (): Promise<void> => {
     await _wipeDirAsync(getCronDir());
   });
 
-  // 3c. Delete known Telegram chats (authorized users)
+  // 2c. Delete known Telegram chats (authorized users)
   await _safeStepAsync("Delete known Telegram chats", errors, async (): Promise<void> => {
     const filePath: string = getTelegramChatsFilePath();
     await fs.rm(filePath, { recursive: true, force: true });
   });
 
-  // 4. Clear RSS state
+  // 3. Clear RSS state
   await _safeStepAsync("Clear RSS state", errors, async (): Promise<void> => {
     await _wipeDirAsync(getRssStateDir());
   });
 
-  // 5. Clear skill state files (state.json inside each skill dir)
+  // 4. Clear skill state files (state.json inside each skill dir)
   await _safeStepAsync("Clear skill state", errors, async (): Promise<void> => {
     await _deleteFilesInDirAsync(getSkillsDir(), "state.json");
   });
 
-  // 6. Reset all prompts to factory defaults
+  // 5. Reset all prompts to factory defaults
   await _safeStepAsync("Reset prompts", errors, async (): Promise<void> => {
     const promptService: PromptService = PromptService.getInstance();
     await promptService.resetAllPromptsAsync();
     promptService.clearCache();
   });
 
-  // 7. Clear all chat history
+  // 6. Clear all chat history
   await _safeStepAsync("Clear chat history", errors, async (): Promise<void> => {
     const mainAgent: MainAgent = MainAgent.getInstance();
     mainAgent.clearAllChatHistory();
   });
 
-  // 7b. Close MCP connections and wipe config
+  // 6b. Close MCP connections and wipe config
   await _safeStepAsync("Close MCP connections", errors, async (): Promise<void> => {
     const mcpService: McpService = McpService.getInstance();
     await mcpService.closeAsync();
@@ -88,22 +81,22 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
     await fs.rm(mcpConfigPath, { recursive: true, force: true });
   });
 
-  // 8. Wipe workspace
+  // 7. Wipe workspace
   await _safeStepAsync("Wipe workspace", errors, async (): Promise<void> => {
     await _wipeDirAsync(getWorkspaceDir());
   });
 
-  // 9. Wipe logs
+  // 8. Wipe logs
   await _safeStepAsync("Wipe logs", errors, async (): Promise<void> => {
     await _wipeDirAsync(getLogsDir());
   });
 
-  // 9b. Wipe chat sessions
+  // 8b. Wipe chat sessions
   await _safeStepAsync("Wipe chat sessions", errors, async (): Promise<void> => {
     await _wipeDirAsync(getSessionsDir());
   });
 
-  // 10. Wipe user databases
+  // 9. Wipe user databases
   await _safeStepAsync("Wipe databases", errors, async (): Promise<void> => {
     await _wipeDirAsync(getDatabasesDir());
   });

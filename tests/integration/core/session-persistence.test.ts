@@ -137,7 +137,7 @@ describe("Session persistence", () => {
       await fs.mkdir(sessionsDir, { recursive: true });
       await fs.writeFile(
         getSessionFilePath("invalid-chat"),
-        JSON.stringify({ messages: "not-an-array", lastActivityAt: Date.now(), jobCreationMode: null }),
+        JSON.stringify({ messages: "not-an-array", lastActivityAt: Date.now() }),
         "utf-8",
       );
 
@@ -169,7 +169,6 @@ describe("Session persistence", () => {
           { role: "user", content: [{ type: "text" as const, text: "hello" }] },
         ],
         lastActivityAt: 1700000000000,
-        jobCreationMode: null,
         paused: false,
         resumeResolve: null,
         abortController: null,
@@ -188,44 +187,6 @@ describe("Session persistence", () => {
           { role: "user", content: [{ type: "text", text: "hello" }] },
         ],
         lastActivityAt: 1700000000000,
-        jobCreationMode: null,
-      });
-    });
-
-    it("should save jobCreationMode when active", async () => {
-      await initializeServicesAsync();
-
-      const agent: MainAgent = MainAgent.getInstance();
-      const priv: ReturnType<typeof getAgentPrivate> = getAgentPrivate(agent);
-
-      const sessionsDir: string = getSessionsDir();
-      await fs.mkdir(sessionsDir, { recursive: true });
-
-      const sessions: Map<string, unknown> = (
-        agent as unknown as { _sessions: Map<string, unknown> }
-      )._sessions;
-
-      sessions.set("job-chat", {
-        messages: [],
-        lastActivityAt: 1700000000000,
-        jobCreationMode: { jobId: "job-123", startNodeId: "node-abc", auditAttempted: false },
-        paused: false,
-        resumeResolve: null,
-        abortController: null,
-        pendingToolRebuild: null,
-        toolRebuildCount: 0,
-        terminateCurrentRun: false,
-      });
-
-      await priv._saveSessionAsync("job-chat");
-
-      const content: string = await fs.readFile(getSessionFilePath("job-chat"), "utf-8");
-      const parsed: unknown = JSON.parse(content);
-
-      expect((parsed as Record<string, unknown>).jobCreationMode).toEqual({
-        jobId: "job-123",
-        startNodeId: "node-abc",
-        auditAttempted: false,
       });
     });
 
@@ -242,7 +203,6 @@ describe("Session persistence", () => {
       sessions.set("auto-dir-chat", {
         messages: [],
         lastActivityAt: 1700000000000,
-        jobCreationMode: null,
         paused: false,
         resumeResolve: null,
         abortController: null,
@@ -284,7 +244,6 @@ describe("Session persistence", () => {
       sessions.set("roundtrip-chat", {
         messages: originalMessages,
         lastActivityAt: 1700000000000,
-        jobCreationMode: null,
         paused: false,
         resumeResolve: null,
         abortController: null,
@@ -300,7 +259,6 @@ describe("Session persistence", () => {
       expect(loaded).toEqual({
         messages: originalMessages,
         lastActivityAt: 1700000000000,
-        jobCreationMode: null,
       });
     });
 
@@ -331,7 +289,6 @@ describe("Session persistence", () => {
       sessions.set("image-roundtrip-chat", {
         messages: messagesWithImage,
         lastActivityAt: 1700000000000,
-        jobCreationMode: null,
         paused: false,
         resumeResolve: null,
         abortController: null,
@@ -377,7 +334,6 @@ describe("Session persistence", () => {
             },
           ],
           lastActivityAt: 1700000000000,
-          jobCreationMode: null,
         }, null, 2),
         "utf-8",
       );
@@ -412,7 +368,6 @@ describe("Session persistence", () => {
         JSON.stringify({
           messages: savedMessages,
           lastActivityAt: 1700000000000,
-          jobCreationMode: null,
         }, null, 2),
         "utf-8",
       );
@@ -457,7 +412,7 @@ describe("Session persistence", () => {
 
       await fs.writeFile(
         getSessionFilePath("cleared-chat"),
-        JSON.stringify({ messages: [], lastActivityAt: Date.now(), jobCreationMode: null }, null, 2),
+        JSON.stringify({ messages: [], lastActivityAt: Date.now() }, null, 2),
         "utf-8",
       );
 
@@ -481,7 +436,7 @@ describe("Session persistence", () => {
       await fs.mkdir(sessionsDir, { recursive: true });
       await fs.writeFile(
         path.join(sessionsDir, "session-1.json"),
-        JSON.stringify({ messages: [], lastActivityAt: Date.now(), jobCreationMode: null }),
+        JSON.stringify({ messages: [], lastActivityAt: Date.now() }),
         "utf-8",
       );
 

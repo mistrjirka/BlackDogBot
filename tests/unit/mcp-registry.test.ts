@@ -285,55 +285,29 @@ describe("McpRegistryService", () => {
   });
 
   describe("server ID validation", () => {
-    it("should accept alphanumeric IDs", async () => {
+    it.each([
+      "playwright123",
+      "my-server",
+      "my_server",
+    ])("should accept ID '%s'", async (id: string) => {
       const registry: McpRegistryService = McpRegistryService.getInstance();
       await registry.initializeAsync();
 
-      const server = await registry.addServerAsync("playwright123", { command: "echo" });
-      expect(server.id).toBe("playwright123");
+      const server = await registry.addServerAsync(id, { command: "echo" });
+      expect(server.id).toBe(id);
     });
 
-    it("should accept IDs with dashes", async () => {
-      const registry: McpRegistryService = McpRegistryService.getInstance();
-      await registry.initializeAsync();
-
-      const server = await registry.addServerAsync("my-server", { command: "echo" });
-      expect(server.id).toBe("my-server");
-    });
-
-    it("should accept IDs with underscores", async () => {
-      const registry: McpRegistryService = McpRegistryService.getInstance();
-      await registry.initializeAsync();
-
-      const server = await registry.addServerAsync("my_server", { command: "echo" });
-      expect(server.id).toBe("my_server");
-    });
-
-    it("should reject IDs with dots", async () => {
+    it.each([
+      ["has.dots", "Invalid server id"],
+      ["has/slash", "Invalid server id"],
+      ["has space", "Invalid server id"],
+    ])("should reject ID '%s'", async (id: string, expectedError: string) => {
       const registry: McpRegistryService = McpRegistryService.getInstance();
       await registry.initializeAsync();
 
       await expect(
-        registry.addServerAsync("has.dots", { command: "echo" }),
-      ).rejects.toThrow("Invalid server id");
-    });
-
-    it("should reject IDs with slashes", async () => {
-      const registry: McpRegistryService = McpRegistryService.getInstance();
-      await registry.initializeAsync();
-
-      await expect(
-        registry.addServerAsync("has/slash", { command: "echo" }),
-      ).rejects.toThrow("Invalid server id");
-    });
-
-    it("should reject IDs with spaces", async () => {
-      const registry: McpRegistryService = McpRegistryService.getInstance();
-      await registry.initializeAsync();
-
-      await expect(
-        registry.addServerAsync("has space", { command: "echo" }),
-      ).rejects.toThrow("Invalid server id");
+        registry.addServerAsync(id, { command: "echo" }),
+      ).rejects.toThrow(expectedError);
     });
   });
 });

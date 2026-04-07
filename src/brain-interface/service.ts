@@ -10,8 +10,6 @@ import type {
   StoredJobInfo,
   FullJobData,
 } from "./types.js";
-import { JobStorageService } from "../services/job-storage.service.js";
-import { JobExecutorService } from "../services/job-executor.service.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { StatusService, type IStatusState } from "../services/status.service.js";
 import { extractErrorMessage } from "../utils/error.js";
@@ -21,6 +19,8 @@ import type { IQueryResult } from "../helpers/litesql.js";
 import type { IJob, INode } from "../shared/types/index.js";
 import type { INodeProgressEvent, INodeTestCase, INodeTestResult } from "../shared/types/job.types.js";
 import type { IQueryDatabaseCommand } from "./types.js";
+import { JobStorageService } from "../services/job-storage.service.js";
+import { JobExecutorService } from "../services/job-executor.service.js";
 
 export class BrainInterfaceService {
   private static _instance: BrainInterfaceService | null = null;
@@ -752,8 +752,8 @@ export class BrainInterfaceService {
           completedAt: Date.now(),
           durationMs: Date.now() - startedAt,
         },
-        nodesExecuted: result.nodesExecuted,
-        nodeResults: result.nodeResults ?? [],
+        nodesExecuted: result.nodesExecuted ?? 0,
+        nodeResults: (result.nodeResults ?? []) as { nodeId: string; nodeName: string; duration: number }[],
       });
     } catch (err: unknown) {
       const errorMessage: string = err instanceof Error ? err.message : String(err);

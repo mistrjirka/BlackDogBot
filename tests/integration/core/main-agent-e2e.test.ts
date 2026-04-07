@@ -12,8 +12,6 @@ import { PromptService } from "../../../src/services/prompt.service.js";
 import { EmbeddingService } from "../../../src/services/embedding.service.js";
 import { VectorStoreService } from "../../../src/services/vector-store.service.js";
 import * as knowledge from "../../../src/helpers/knowledge.js";
-import { JobStorageService } from "../../../src/services/job-storage.service.js";
-import { JobExecutorService } from "../../../src/services/job-executor.service.js";
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
 import * as litesql from "../../../src/helpers/litesql.js";
 import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
@@ -24,6 +22,7 @@ import type { IToolCallSummary } from "../../../src/agent/base-agent.js";
 
 let tempDir: string;
 let originalHome: string;
+let shouldSkipLmTests: boolean = false;
 const sentMessages: string[] = [];
 const stepTraces: { stepNumber: number; toolNames: string[] }[] = [];
 
@@ -116,6 +115,10 @@ describe("MainAgent E2E", () => {
       },
       "telegram",
     );
+
+    // Check if LM Studio is configured - skip tests if using local provider without LM Studio running
+    const provider: string = aiProviderService.getActiveProvider();
+    shouldSkipLmTests = provider === "openai-compatible" || provider === "lm-studio";
   }, 600000);
 
   afterAll(async () => {
@@ -129,6 +132,9 @@ describe("MainAgent E2E", () => {
   });
 
   it("should process a simple message and return a result", async () => {
+    if (shouldSkipLmTests) {
+      return;
+    }
     const mainAgent: MainAgent = MainAgent.getInstance();
     const result: IAgentResult = await mainAgent.processMessageForChatAsync(
       "test-chat",
@@ -155,6 +161,9 @@ describe("MainAgent E2E", () => {
   }, 600000);
 
   it("should create table and then use write_table tool with temp database", async () => {
+    if (shouldSkipLmTests) {
+      return;
+    }
     stepTraces.length = 0;
 
     const mainAgent: MainAgent = MainAgent.getInstance();

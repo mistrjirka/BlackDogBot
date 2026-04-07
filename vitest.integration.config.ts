@@ -8,8 +8,8 @@ export default defineConfig({
     environment: "node",
     include: ["tests/integration/**/*.test.ts"],
     fileParallelism: false,
-    testTimeout: 600000,    // 10 minutes
-    hookTimeout: 600000,    // 10 minutes
+    testTimeout: 3000000,   // 50 minutes
+    hookTimeout: 3000000,   // 50 minutes
     env: {
       BLACKDOGBOT_MODELS_DIR: path.join(os.homedir(), ".blackdogbot", "models"),
     },

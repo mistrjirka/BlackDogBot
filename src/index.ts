@@ -13,7 +13,6 @@ import { VectorStoreService } from "./services/vector-store.service.js";
 import { SkillLoaderService } from "./services/skill-loader.service.js";
 import { SchedulerService } from "./services/scheduler.service.js";
 import { MessagingService } from "./services/messaging.service.js";
-import { JobStorageService } from "./services/job-storage.service.js";
 import { ChannelRegistryService } from "./services/channel-registry.service.js";
 import { McpRegistryService } from "./services/mcp-registry.service.js";
 import { McpService } from "./services/mcp.service.js";
@@ -110,14 +109,6 @@ async function mainAsync(): Promise<void> {
       reason: reason instanceof Error ? reason.message : String(reason),
     });
   });
-
-  // 2.6. Clean up orphaned jobs in "creating" status (from interrupted job creation)
-  const jobStorageService: JobStorageService = JobStorageService.getInstance();
-  const orphanedCount: number = await jobStorageService.cleanupOrphanedCreatingJobsAsync();
-
-  if (orphanedCount > 0) {
-    logger.info("Cleaned up orphaned jobs in 'creating' status", { count: orphanedCount });
-  }
 
   // 3. Initialize prompt service
   const promptService: PromptService = PromptService.getInstance();

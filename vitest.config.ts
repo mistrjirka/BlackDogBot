@@ -8,7 +8,6 @@ export default defineConfig({
     include: [
       "tests/unit/**/*.test.ts",
       "tests/integration/core/**/*.test.ts",
-      "tests/integration/jobs/**/*.test.ts",
       "tests/integration/mcp/**/*.test.ts",
     ],
     coverage: {

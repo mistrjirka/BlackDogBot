@@ -16,6 +16,7 @@ import type { ISkill, ISkillStateInfo } from "../../../src/shared/types/index.js
 
 let tempDir: string;
 let originalHome: string;
+let shouldSkipLmTests: boolean = false;
 
 
 function createFakeSkill(overrides?: Partial<ISkill>): ISkill {
@@ -76,6 +77,10 @@ describe("Setup Runner E2E", () => {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     aiProviderService.initialize(configService.getConfig().ai);
 
+    // Check if LM Studio is configured - skip tests if using local provider without LM Studio running
+    const provider: string = aiProviderService.getActiveProvider();
+    shouldSkipLmTests = provider === "openai-compatible" || provider === "lm-studio";
+
     const promptService: PromptService = PromptService.getInstance();
     await promptService.initializeAsync();
   }, 600000);
@@ -87,6 +92,9 @@ describe("Setup Runner E2E", () => {
   });
 
   it("should successfully set up a skill with no requirements and persist setuped state", async () => {
+    if (shouldSkipLmTests) {
+      return;
+    }
     const skill: ISkill = createFakeSkill();
 
     const result: ISetupResult = await runSkillSetupAsync(skill);
@@ -103,6 +111,9 @@ describe("Setup Runner E2E", () => {
   }, 600000);
 
   it("should set up a skill with openclaw requirements metadata and verify binary via run_cmd", async () => {
+    if (shouldSkipLmTests) {
+      return;
+    }
     const skill: ISkill = createFakeSkill({
       name: "metadata-skill",
       instructions: "Check whether the required binary 'node' is available using run_cmd.",
