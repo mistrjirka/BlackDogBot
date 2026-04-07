@@ -1,5 +1,5 @@
 import { tool } from "ai";
-import { editCronToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { editScheduledTaskToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -9,7 +9,7 @@ import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
 
-interface IEditCronResult {
+interface IEditScheduledTaskResult {
   success: boolean;
   task?: IScheduledTask;
   display?: string;
@@ -20,19 +20,19 @@ interface IEditCronResult {
 
 //#region Const
 
-const TOOL_NAME: string = "edit_cron";
+const TOOL_NAME: string = "edit_scheduled_task";
 const TOOL_DESCRIPTION: string =
-  "Modify an existing scheduled task (cron job). " +
+  "Modify an existing scheduled task. " +
   "You can patch non-instruction fields (name, description, tools, schedule values, notifyUser, enabled). " +
-  "To change instructions, use edit_cron_instructions with the COMPLETE new instructions text. " +
+  "To change instructions, use edit_scheduled_task_instructions with the COMPLETE new instructions text. " +
   "send_message performs internal deduplication against previous cron messages. " +
-  "IMPORTANT: You MUST call 'get_cron' first to retrieve the current task configuration before using this tool.";
+  "IMPORTANT: You MUST call 'get_scheduled_task' first to retrieve the current task configuration before using this tool.";
 
 //#endregion Const
 
 //#region Tool
 
-const executeEditCron = async (
+const executeEditScheduledTask = async (
   {
     taskId,
     ...patch
@@ -41,15 +41,15 @@ const executeEditCron = async (
     name?: string;
     description?: string;
     tools?: string[];
-    scheduleType?: "once" | "interval" | "cron";
-    scheduleRunAt?: string;
-    scheduleIntervalMs?: number;
-    scheduleCron?: string;
+    scheduleIntervalMinutes?: number;
+    scheduleStartHour?: number | null;
+    scheduleStartMinute?: number | null;
+    runOnce?: boolean;
     notifyUser?: boolean;
     enabled?: boolean;
   },
   _context: ToolExecuteContext,
-): Promise<IEditCronResult> => {
+): Promise<IEditScheduledTaskResult> => {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
 
@@ -71,43 +71,38 @@ const executeEditCron = async (
 
     const existingTask = await scheduler.getTaskAsync(taskId);
     if (!existingTask) {
-      return { success: false, error: `Cron task with ID '${taskId}' not found.` };
+      return { success: false, error: `Scheduled task with ID '${taskId}' not found.` };
     }
+
     // 1. Build update payload — reconstruct schedule object from flat params.
-    const { scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron, ...restPatch } = patch;
+    const { scheduleIntervalMinutes, scheduleStartHour, scheduleStartMinute, runOnce, ...restPatch } = patch;
     const updatePayload: Record<string, unknown> = { ...restPatch };
 
-    if (scheduleType !== undefined) {
-      // Schedule type is immutable. Ignore requested type changes and preserve existing type.
-      if (scheduleType !== existingTask.schedule.type) {
-        logger.debug(`[${TOOL_NAME}] Ignoring scheduleType change request`, {
-          taskId,
-          requestedType: scheduleType,
-          existingType: existingTask.schedule.type,
-        });
+    if (scheduleIntervalMinutes !== undefined || scheduleStartHour !== undefined || scheduleStartMinute !== undefined || runOnce !== undefined) {
+      const schedule: Record<string, unknown> = { type: "scheduled" };
+
+      if (scheduleIntervalMinutes !== undefined) {
+        schedule.intervalMinutes = scheduleIntervalMinutes;
+      } else if ("intervalMinutes" in existingTask.schedule) {
+        schedule.intervalMinutes = (existingTask.schedule as any).intervalMinutes;
       }
 
-      const schedule: Record<string, unknown> = { type: existingTask.schedule.type };
-
-      if (existingTask.schedule.type === "once") {
-        schedule.runAt = scheduleRunAt !== undefined ? scheduleRunAt : existingTask.schedule.runAt;
-      } else if (existingTask.schedule.type === "interval") {
-        schedule.intervalMs = scheduleIntervalMs !== undefined ? scheduleIntervalMs : existingTask.schedule.intervalMs;
-      } else {
-        schedule.expression = scheduleCron !== undefined ? scheduleCron : existingTask.schedule.expression;
+      if (scheduleStartHour !== undefined) {
+        schedule.startHour = scheduleStartHour;
+      } else if ("startHour" in existingTask.schedule) {
+        schedule.startHour = (existingTask.schedule as any).startHour;
       }
 
-      updatePayload.schedule = schedule;
-    } else if (scheduleRunAt !== undefined || scheduleIntervalMs !== undefined || scheduleCron !== undefined) {
-      // Allow schedule value-only edits without requiring scheduleType.
-      const schedule: Record<string, unknown> = { type: existingTask.schedule.type };
+      if (scheduleStartMinute !== undefined) {
+        schedule.startMinute = scheduleStartMinute;
+      } else if ("startMinute" in existingTask.schedule) {
+        schedule.startMinute = (existingTask.schedule as any).startMinute;
+      }
 
-      if (existingTask.schedule.type === "once") {
-        schedule.runAt = scheduleRunAt !== undefined ? scheduleRunAt : existingTask.schedule.runAt;
-      } else if (existingTask.schedule.type === "interval") {
-        schedule.intervalMs = scheduleIntervalMs !== undefined ? scheduleIntervalMs : existingTask.schedule.intervalMs;
-      } else {
-        schedule.expression = scheduleCron !== undefined ? scheduleCron : existingTask.schedule.expression;
+      if (runOnce !== undefined) {
+        schedule.runOnce = runOnce;
+      } else if ("runOnce" in existingTask.schedule) {
+        schedule.runOnce = (existingTask.schedule as any).runOnce;
       }
 
       updatePayload.schedule = schedule;
@@ -117,15 +112,15 @@ const executeEditCron = async (
       return {
         success: false,
         error:
-          "No editable fields were provided. Use edit_cron for name/description/tools/schedule/notifyUser/enabled. " +
-          "To change instructions, use edit_cron_instructions with the COMPLETE new instructions text and intention.",
+          "No editable fields were provided. Use edit_scheduled_task for name/description/tools/schedule/notifyUser/enabled. " +
+          "To change instructions, use edit_scheduled_task_instructions with the COMPLETE new instructions text and intention.",
       };
     }
 
     const updatedTask = await scheduler.updateTaskAsync(taskId, updatePayload as any);
 
     if (updatedTask) {
-      logger.info("[edit-cron] Updated task details", {
+      logger.info("[edit-scheduled-task] Updated task details", {
         taskId: updatedTask.taskId,
         name: updatedTask.name,
         description: updatedTask.description,
@@ -146,7 +141,7 @@ const executeEditCron = async (
     };
   } catch (error: unknown) {
     const errorMessage: string = extractErrorMessage(error);
-    logger.error(`[${TOOL_NAME}] Failed to edit cron task: ${errorMessage}`, {
+    logger.error(`[${TOOL_NAME}] Failed to edit scheduled task: ${errorMessage}`, {
       taskId,
       patch,
       error: errorMessage,
@@ -156,13 +151,13 @@ const executeEditCron = async (
   }
 };
 
-export const editCronTool = tool({
+export const editScheduledTaskTool = tool({
   description: TOOL_DESCRIPTION,
-  inputSchema: editCronToolInputSchema,
+  inputSchema: editScheduledTaskToolInputSchema,
   execute: createToolWithPrerequisites(
-    "edit_cron",
-    TOOL_PREREQUISITES["edit_cron"] || [],
-    executeEditCron,
+    "edit_scheduled_task",
+    TOOL_PREREQUISITES["edit_scheduled_task"] || [],
+    executeEditScheduledTask,
   ) as any,
 });
 

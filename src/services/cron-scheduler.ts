@@ -1,8 +1,8 @@
-import { Cron } from "croner";
-
-interface ICronJob {
+interface IScheduledJob {
   id: string;
-  expression: string;
+  intervalMinutes: number;
+  startHour: number | null;
+  startMinute: number | null;
   timezone: string | undefined;
   callback: () => void;
   nextRunTime: Date | null;
@@ -22,7 +22,7 @@ interface ICronJob {
  * Croner is kept only as a cron expression parser (new Cron(expr).nextRun()).
  */
 export class CronScheduler {
-  private _jobs: Map<string, ICronJob> = new Map();
+  private _jobs: Map<string, IScheduledJob> = new Map();
   private _tickInterval: NodeJS.Timeout | null = null;
 
   start(tickMs = 1000): void {
@@ -38,14 +38,24 @@ export class CronScheduler {
     this._jobs.clear();
   }
 
-  addJob(
+  addScheduledJob(
     id: string,
-    expression: string,
+    intervalMinutes: number,
+    startHour: number | null,
+    startMinute: number | null,
     timezone: string | undefined,
     callback: () => void,
   ): Date | null {
-    const nextRunTime = this._calculateNextRun(expression, timezone);
-    const job: ICronJob = { id, expression, timezone, callback, nextRunTime };
+    const nextRunTime = this._calculateNextRun(intervalMinutes, startHour, startMinute, undefined);
+    const job: IScheduledJob = {
+      id,
+      intervalMinutes,
+      startHour,
+      startMinute,
+      timezone,
+      callback,
+      nextRunTime,
+    };
     this._jobs.set(id, job);
     return nextRunTime;
   }
@@ -71,8 +81,9 @@ export class CronScheduler {
         job.callback();
         // Advance from the scheduled time (not "now") so drift doesn't accumulate
         job.nextRunTime = this._calculateNextRun(
-          job.expression,
-          job.timezone,
+          job.intervalMinutes,
+          job.startHour,
+          job.startMinute,
           job.nextRunTime,
         );
       }
@@ -80,16 +91,24 @@ export class CronScheduler {
   }
 
   private _calculateNextRun(
-    expression: string,
-    timezone: string | undefined,
+    intervalMinutes: number,
+    startHour: number | null,
+    startMinute: number | null,
     after?: Date,
   ): Date | null {
-    try {
-      // Use croner as a pure expression parser only — no callback means no scheduling
-      const parser = new Cron(expression, { timezone });
-      return parser.nextRun(after) ?? null;
-    } catch {
-      return null;
+    const now = after ?? new Date();
+
+    if (startHour === null && startMinute === null) {
+      return new Date(now.getTime() + intervalMinutes * 60_000);
     }
+
+    const candidate = new Date(now);
+    candidate.setHours(startHour!, startMinute!, 0, 0);
+
+    if (candidate <= now) {
+      candidate.setDate(candidate.getDate() + 1);
+    }
+
+    return candidate;
   }
 }

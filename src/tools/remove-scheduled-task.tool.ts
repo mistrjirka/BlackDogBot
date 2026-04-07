@@ -6,7 +6,7 @@ import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
 
-interface IRemoveCronResult {
+interface IRemoveScheduledTaskResult {
   success: boolean;
   message: string;
 }
@@ -15,17 +15,17 @@ interface IRemoveCronResult {
 
 //#region Const
 
-const TOOL_NAME: string = "remove-cron";
-const TOOL_DESCRIPTION: string = "Remove an existing scheduled task (cron job) from the scheduler";
+const TOOL_NAME: string = "remove_scheduled_task";
+const TOOL_DESCRIPTION: string = "Remove an existing scheduled task from the scheduler";
 
 //#endregion Const
 
 //#region Tool
 
-export const removeCronTool = tool({
+export const removeScheduledTaskTool = tool({
   description: TOOL_DESCRIPTION,
   inputSchema: removeCronToolInputSchema,
-  execute: async ({ taskId }: { taskId: string }): Promise<IRemoveCronResult> => {
+  execute: async ({ taskId }: { taskId: string }): Promise<IRemoveScheduledTaskResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
@@ -34,7 +34,7 @@ export const removeCronTool = tool({
       return { success: true, message: "Task removed successfully" };
     } catch (error: unknown) {
       const errorMessage: string = extractErrorMessage(error);
-      logger.error(`[${TOOL_NAME}] Failed to remove cron task: ${errorMessage}`);
+      logger.error(`[${TOOL_NAME}] Failed to remove scheduled task: ${errorMessage}`);
 
       return { success: false, message: errorMessage };
     }

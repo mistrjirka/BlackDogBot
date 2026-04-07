@@ -1,8 +1,8 @@
 /**
- * Tool descriptions for the scheduled task (cron) agent.
+ * Tool descriptions for the scheduled task agent.
  * Injected into the verifier prompt so the LLM knows what each tool does.
  */
-export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
+export const SCHEDULED_TASK_TOOL_DESCRIPTIONS: Record<string, string> = {
   think:
     "Think through a problem step by step before acting. " +
     "Args: thought (string, required).",
@@ -46,7 +46,7 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
   send_message:
     "Send a Telegram message directly to the user who owns this agent. " +
     "No chat ID, token, or destination config is needed — it always reaches the correct user automatically. " +
-    "The tool automatically checks previous cron messages and silently skips sending when the message does not add new information. " +
+    "The tool automatically checks previous scheduled task messages and silently skips sending when the message does not add new information. " +
     "Args: message (string, required).",
 
   get_previous_message:
@@ -84,8 +84,8 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "List all jobs, optionally filtered by status (creating | ready | running | completed | failed). " +
     "Args: status (enum, optional).",
 
-  list_crons:
-    "List all scheduled cron tasks managed by the scheduler. " +
+  list_scheduled_tasks:
+    "List all scheduled tasks managed by the scheduler. " +
     "Args: enabledOnly (boolean, default false).",
 
   fetch_rss:

@@ -12,9 +12,10 @@ interface IListCronsTaskSummary {
   tools: string[];
   schedule: {
     type: string;
-    expression?: string;
-    intervalMs?: number;
-    runAt?: string;
+    intervalMinutes?: number;
+    startHour?: number | null;
+    startMinute?: number | null;
+    runOnce?: boolean;
   };
   enabled: boolean;
   lastRunAt: string | null;
@@ -29,7 +30,7 @@ interface IListCronsResult {
 
 //#region Const
 
-const TOOL_DESCRIPTION: string = "List all scheduled tasks (cron jobs) managed by the scheduler";
+const TOOL_DESCRIPTION: string = "List all scheduled tasks managed by the scheduler";
 
 //#endregion Const
 
@@ -40,16 +41,11 @@ function _mapTaskToSummary(task: IScheduledTask): IListCronsTaskSummary {
     type: task.schedule.type,
   };
 
-  switch (task.schedule.type) {
-    case "cron":
-      scheduleSummary.expression = task.schedule.expression;
-      break;
-    case "interval":
-      scheduleSummary.intervalMs = task.schedule.intervalMs;
-      break;
-    case "once":
-      scheduleSummary.runAt = task.schedule.runAt;
-      break;
+  if (task.schedule.type === "scheduled") {
+    scheduleSummary.intervalMinutes = task.schedule.intervalMinutes;
+    scheduleSummary.startHour = task.schedule.startHour;
+    scheduleSummary.startMinute = task.schedule.startMinute;
+    scheduleSummary.runOnce = task.schedule.runOnce;
   }
 
   return {
@@ -68,7 +64,7 @@ function _mapTaskToSummary(task: IScheduledTask): IListCronsTaskSummary {
 
 //#region Tool
 
-export const listCronsTool = tool({
+export const listScheduledTasksTool = tool({
   description: TOOL_DESCRIPTION,
   inputSchema: listCronsToolInputSchema,
   execute: async ({ enabledOnly }: { enabledOnly: boolean }): Promise<IListCronsResult> => {

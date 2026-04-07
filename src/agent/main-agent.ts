@@ -25,13 +25,8 @@ import {
   type MessageSender,
   createCallSkillTool,
   getSkillFileTool,
-  addCronTool,
-  removeCronTool,
-  listCronsTool,
-  getCronTool,
-  editCronTool,
-  editCronInstructionsTool,
-  runCronTool,
+  listScheduledTasksTool,
+  runScheduledTaskTool,
   createReadFileTool,
   createReadImageTool,
   createWriteFileTool,
@@ -51,6 +46,11 @@ import {
   searxngTool,
   crawl4aiTool,
 } from "../tools/index.js";
+import { addScheduledTaskTool } from "../tools/add-scheduled-task.tool.js";
+import { editScheduledTaskTool } from "../tools/edit-scheduled-task.tool.js";
+import { editScheduledTaskInstructionsTool } from "../tools/edit-scheduled-task-instructions.tool.js";
+import { getScheduledTaskTool } from "../tools/get-scheduled-task.tool.js";
+import { removeScheduledTaskTool } from "../tools/remove-scheduled-task.tool.js";
 import { BrainInterfaceService } from "../brain-interface/service.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { ConfigService } from "../services/config.service.js";
@@ -261,13 +261,13 @@ export class MainAgent extends BaseAgentBase {
       write_file: createWriteFileTool(readTracker),
       append_file: appendFileTool,
       edit_file: editFileTool,
-      add_cron: addCronTool,
-      remove_cron: removeCronTool,
-      list_crons: listCronsTool,
-      get_cron: getCronTool,
-      edit_cron: editCronTool,
-      edit_cron_instructions: editCronInstructionsTool,
-      run_cron: runCronTool,
+      add_scheduled_task: addScheduledTaskTool,
+      remove_scheduled_task: removeScheduledTaskTool,
+      list_scheduled_tasks: listScheduledTasksTool,
+      get_scheduled_task: getScheduledTaskTool,
+      edit_scheduled_task: editScheduledTaskTool,
+      edit_scheduled_task_instructions: editScheduledTaskInstructionsTool,
+      run_scheduled_task: runScheduledTaskTool,
       fetch_rss: fetchRssTool,
       list_databases: listDatabasesTool,
       list_tables: listTablesTool,

@@ -20,8 +20,8 @@ interface IGetCronResult {
 
 //#region Tool
 
-export const getCronTool = tool({
-  description: "Get the full configuration of a scheduled (cron) task by its ID.",
+export const getScheduledTaskTool = tool({
+  description: "Get the full configuration of a scheduled task by its ID.",
   inputSchema: getCronToolInputSchema,
   execute: async (
     { taskId }: { taskId: string },
@@ -34,7 +34,7 @@ export const getCronTool = tool({
     if (!task) {
       return {
         success: false,
-        error: `Cron task with ID '${taskId}' not found.`,
+        error: `Scheduled task with ID '${taskId}' not found.`,
       };
     }
 

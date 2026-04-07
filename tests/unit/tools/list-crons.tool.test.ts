@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { listCronsTool } from "../../../src/tools/list-crons.tool.js";
+import { listScheduledTasksTool } from "../../../src/tools/list-scheduled-tasks.tool.js";
 import { SchedulerService } from "../../../src/services/scheduler.service.js";
 import type { IScheduledTask } from "../../../src/shared/types/index.js";
 
@@ -13,13 +13,16 @@ vi.mock("../../../src/services/scheduler.service.js", () => ({
 function createScheduledTask(overrides: Partial<IScheduledTask> = {}): IScheduledTask {
   return {
     taskId: "task-1",
-    name: "test_cron",
-    description: "Test cron task",
+    name: "test_task",
+    description: "Test scheduled task",
     instructions: "Do test work",
     tools: ["read_from_database", "send_message"],
     schedule: {
-      type: "cron",
-      expression: "0 * * * *",
+      type: "scheduled",
+      intervalMinutes: 60,
+      startHour: null,
+      startMinute: null,
+      runOnce: false,
     },
     enabled: true,
     notifyUser: false,
@@ -35,7 +38,7 @@ function createScheduledTask(overrides: Partial<IScheduledTask> = {}): ISchedule
   };
 }
 
-describe("list_crons tool", () => {
+describe("list_scheduled_tasks tool", () => {
   let mockScheduler: {
     getAllTasks: ReturnType<typeof vi.fn>;
     getTasksByEnabled: ReturnType<typeof vi.fn>;
@@ -62,7 +65,7 @@ describe("list_crons tool", () => {
       }),
     ]);
 
-    const result = await (listCronsTool as any).execute({ enabledOnly: false });
+    const result = await (listScheduledTasksTool as any).execute({ enabledOnly: false });
 
     expect(result.tasks).toHaveLength(1);
     expect(result.tasks[0].taskId).toBe("cron-1");
@@ -79,7 +82,7 @@ describe("list_crons tool", () => {
       }),
     ]);
 
-    const result = await (listCronsTool as any).execute({ enabledOnly: true });
+    const result = await (listScheduledTasksTool as any).execute({ enabledOnly: true });
 
     expect(result.tasks).toHaveLength(1);
     expect(result.tasks[0].taskId).toBe("cron-enabled");

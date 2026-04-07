@@ -56,7 +56,7 @@ describe("AiProviderService unit", () => {
       description: "Legacy cron task",
       instructions: "Test migration",
       tools,
-      schedule: { type: "cron", expression: "0 */6 * * *" },
+      schedule: { type: "scheduled", intervalMinutes: 360, startHour: null, startMinute: null, runOnce: false },
       notifyUser: false,
       enabled: false,
       createdAt: nowIso,

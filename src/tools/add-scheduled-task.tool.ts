@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { addCronToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { addScheduledTaskToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
@@ -8,11 +8,11 @@ import { generateId } from "../utils/id.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
-import type { IScheduledTask, Schedule } from "../shared/types/index.js";
+import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
 
-interface IAddCronResult {
+interface IAddScheduledTaskResult {
   taskId: string;
   success: boolean;
   error?: string;
@@ -22,13 +22,13 @@ interface IAddCronResult {
 
 //#region Const
 
-const TOOL_NAME: string = "add-cron";
+const TOOL_NAME: string = "add_scheduled_task";
 const TOOL_DESCRIPTION: string =
-  "Add a new scheduled task (cron job) to the scheduler. " +
-  "Required inputs: name, description, instructions, tools, scheduleType, notifyUser. " +
-  "send_message performs internal deduplication against previous cron messages. " +
-  "Schedule-specific required input: scheduleRunAt for scheduleType='once', scheduleIntervalMs for scheduleType='interval', scheduleCron for scheduleType='cron'. " +
-  "Examples: once => scheduleRunAt='2026-03-20T08:00:00Z'; interval => scheduleIntervalMs=7200000; cron => scheduleCron='0 */2 * * *'. " +
+  "Add a new scheduled task to the scheduler. " +
+  "Required inputs: name, description, instructions, tools, scheduleIntervalMinutes, notifyUser. " +
+  "send_message performs internal deduplication against previous scheduled task messages. " +
+  "Schedule inputs: scheduleIntervalMinutes (required, minutes between runs), scheduleStartHour (optional, 0-23), scheduleStartMinute (optional, 0-59), runOnce (optional, default false). " +
+  "Examples: every 2 hours => scheduleIntervalMinutes=120; daily at 8am => scheduleIntervalMinutes=1440, scheduleStartHour=8, scheduleStartMinute=0; one-time => scheduleIntervalMinutes=1440, runOnce=true. " +
   "If the task's instructions reference a database, ensure the database and table(s) have been created first using create_database and create_table, then reference them by name (without .db extension) in the instructions.";
 
 //#endregion Const
@@ -36,70 +36,48 @@ const TOOL_DESCRIPTION: string =
 //#region Private methods
 
 function _buildSchedule(input: {
-  scheduleType: "once" | "interval" | "cron";
-  scheduleRunAt?: string;
-  scheduleIntervalMs?: number;
-  scheduleCron?: string;
-}): Schedule {
-  switch (input.scheduleType) {
-    case "once": {
-      if (!input.scheduleRunAt || input.scheduleRunAt.trim().length === 0) {
-        throw new Error("scheduleRunAt is required for scheduleType='once'");
-      }
-      return {
-        type: "once",
-        runAt: input.scheduleRunAt,
-      };
-    }
-    case "interval": {
-      if (input.scheduleIntervalMs === undefined || !Number.isFinite(input.scheduleIntervalMs) || input.scheduleIntervalMs <= 0) {
-        throw new Error("scheduleIntervalMs is required and must be > 0 for scheduleType='interval'");
-      }
-      return {
-        type: "interval",
-        intervalMs: input.scheduleIntervalMs,
-      };
-    }
-    case "cron": {
-      if (!input.scheduleCron || input.scheduleCron.trim().length === 0) {
-        throw new Error("scheduleCron is required for scheduleType='cron'");
-      }
-      return {
-        type: "cron",
-        expression: input.scheduleCron,
-      };
-    }
-  }
+  scheduleIntervalMinutes: number;
+  scheduleStartHour?: number;
+  scheduleStartMinute?: number;
+  runOnce?: boolean;
+}): IScheduledTask["schedule"] {
+  return {
+    type: "scheduled" as const,
+    intervalMinutes: input.scheduleIntervalMinutes,
+    startHour: input.scheduleStartHour ?? null,
+    startMinute: input.scheduleStartMinute ?? null,
+    runOnce: input.runOnce ?? false,
+  };
 }
 
 //#endregion Private methods
 
 //#region Tool
 
-export const addCronTool = tool({
+export const addScheduledTaskTool = tool({
   description: TOOL_DESCRIPTION,
-  inputSchema: addCronToolInputSchema,
+  inputSchema: addScheduledTaskToolInputSchema,
   execute: async ({
     name,
     description,
     instructions,
     tools,
-    scheduleType,
-    scheduleRunAt,
-    scheduleIntervalMs,
-    scheduleCron,
+    scheduleIntervalMinutes,
+    scheduleStartHour,
+    scheduleStartMinute,
+    runOnce,
     notifyUser,
   }: {
     name: string;
     description: string;
     instructions: string;
     tools: string[];
-    scheduleType: "once" | "interval" | "cron";
-    scheduleRunAt?: string;
-    scheduleIntervalMs?: number;
-    scheduleCron?: string;
+    scheduleIntervalMinutes: number;
+    scheduleStartHour?: number;
+    scheduleStartMinute?: number;
+    runOnce?: boolean;
     notifyUser: boolean;
-  }): Promise<IAddCronResult> => {
+  }): Promise<IAddScheduledTaskResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
@@ -118,7 +96,7 @@ export const addCronTool = tool({
       }
 
       // 1. Verify instructions using LLM
-      logger.debug(`[${TOOL_NAME}] Verifying cron instructions for: ${name}`);
+      logger.debug(`[${TOOL_NAME}] Verifying scheduled task instructions for: ${name}`);
 
       // Build a human-readable tool list so the verifier knows what each tool does.
       // This prevents it from flagging well-known tools (e.g. send_message) as
@@ -138,7 +116,7 @@ ${toolContextBlock}
 
 RULES:
 
-1. Schedule/timing is already encoded in the cron expression — do NOT require the instructions to re-state when or how often the task runs.
+1. Schedule/timing is already encoded in the schedule — do NOT require the instructions to re-state when or how often the task runs.
 
 2. Tools that handle routing or delivery implicitly do NOT need extra config in the instructions.
    Example: "send_message" always reaches the correct user — instructions that say "send the results" or "notify the user" are VALID without specifying a chat ID or destination.
@@ -186,15 +164,20 @@ Output a JSON object with:
       });
 
       if (!verificationResult.object.isClear) {
-        const errorMsg = `CRON REJECTED. The instructions are ambiguous or missing context: ${verificationResult.object.missingContext}. Please provide complete, self-contained instructions.`;
-        logger.warn(`[${TOOL_NAME}] Cron rejected: ${errorMsg}`);
+        const errorMsg = `SCHEDULED TASK REJECTED. The instructions are ambiguous or missing context: ${verificationResult.object.missingContext}. Please provide complete, self-contained instructions.`;
+        logger.warn(`[${TOOL_NAME}] Scheduled task rejected: ${errorMsg}`);
         return { taskId: "", success: false, error: errorMsg };
       }
 
       // 2. Schedule the task
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
-      const builtSchedule: Schedule = _buildSchedule({ scheduleType, scheduleRunAt, scheduleIntervalMs, scheduleCron });
+      const builtSchedule: IScheduledTask["schedule"] = _buildSchedule({
+        scheduleIntervalMinutes,
+        scheduleStartHour,
+        scheduleStartMinute,
+        runOnce,
+      });
 
       const task: IScheduledTask = {
         taskId,
@@ -220,7 +203,7 @@ Output a JSON object with:
       return { taskId, success: true };
     } catch (error: unknown) {
       const errorMessage: string = extractErrorMessage(error);
-      logger.error(`[${TOOL_NAME}] Failed to add cron task: ${errorMessage}`);
+      logger.error(`[${TOOL_NAME}] Failed to add scheduled task: ${errorMessage}`);
 
       return { taskId: "", success: false, error: errorMessage };
     }

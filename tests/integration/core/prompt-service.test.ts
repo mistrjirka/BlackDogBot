@@ -120,16 +120,16 @@ describe("PromptService", () => {
 
     await service.initializeAsync();
 
-    const originalRaw: string = await service.getPromptRawAsync("cron-agent");
+    const originalRaw: string = await service.getPromptRawAsync("scheduled-task-agent");
 
-    await service.writePromptAsync("cron-agent", "temporary override content");
-    const overridden: string = await service.getPromptAsync("cron-agent");
+    await service.writePromptAsync("scheduled-task-agent", "temporary override content");
+    const overridden: string = await service.getPromptAsync("scheduled-task-agent");
     expect(overridden).toContain("temporary override content");
 
     await service.resetAllPromptsAsync();
 
-    const afterResetRaw: string = await service.getPromptRawAsync("cron-agent");
-    const afterResetResolved: string = await service.getPromptAsync("cron-agent");
+    const afterResetRaw: string = await service.getPromptRawAsync("scheduled-task-agent");
+    const afterResetResolved: string = await service.getPromptAsync("scheduled-task-agent");
 
     expect(afterResetRaw).toBe(originalRaw);
     expect(afterResetResolved).not.toContain("temporary override content");

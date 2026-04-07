@@ -597,7 +597,7 @@ export const CRON_VALID_TOOL_NAMES = [
   "get_skill_file",
 ] as const;
 
-export const addCronToolInputSchema = z.object({
+export const addScheduledTaskToolInputSchema = z.object({
   name: z.string()
     .min(1)
     .describe("Scheduled task name (required)"),
@@ -613,50 +613,26 @@ export const addCronToolInputSchema = z.object({
     .min(1)
     .array()
     .min(1)
-    .describe("Tool names available to the task agent (required, at least one). send_message performs internal deduplication against previous cron messages."),
-  scheduleType: z.enum(["once", "interval", "cron"])
-    .describe("Schedule type (required): once, interval, or cron"),
-  scheduleRunAt: z.string()
+    .describe("Tool names available to the task agent (required, at least one). send_message performs internal deduplication against previous scheduled task messages."),
+  scheduleIntervalMinutes: z.number()
+    .positive()
+    .describe("Interval in minutes between runs (required, must be > 0)"),
+  scheduleStartHour: z.number()
+    .min(0)
+    .max(23)
     .optional()
-    .describe("Required when scheduleType='once'. ISO 8601 datetime, e.g. '2025-06-01T10:00:00Z'"),
-  scheduleIntervalMs: z.number()
+    .describe("Hour of day to start (0-23). If set with startMinute, task runs daily at this time."),
+  scheduleStartMinute: z.number()
+    .min(0)
+    .max(59)
     .optional()
-    .describe("Required when scheduleType='interval'. Interval in milliseconds"),
-  scheduleCron: z.string()
+    .describe("Minute of hour to start (0-59)."),
+  runOnce: z.boolean()
     .optional()
-    .describe("Required when scheduleType='cron'. Cron expression, e.g. '0 */6 * * *'"),
+    .default(false)
+    .describe("If true, task runs once and then is disabled"),
   notifyUser: z.boolean()
     .describe("Whether to send a Telegram notification when this task completes (required)"),
-}).superRefine((data, ctx) => {
-  if (data.scheduleType === "once") {
-    if (!data.scheduleRunAt || data.scheduleRunAt.trim().length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["scheduleRunAt"],
-        message: "scheduleRunAt is required when scheduleType is 'once'",
-      });
-    }
-  }
-
-  if (data.scheduleType === "interval") {
-    if (data.scheduleIntervalMs === undefined || !Number.isFinite(data.scheduleIntervalMs) || data.scheduleIntervalMs <= 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["scheduleIntervalMs"],
-        message: "scheduleIntervalMs is required and must be > 0 when scheduleType is 'interval'",
-      });
-    }
-  }
-
-  if (data.scheduleType === "cron") {
-    if (!data.scheduleCron || data.scheduleCron.trim().length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["scheduleCron"],
-        message: "scheduleCron is required when scheduleType is 'cron'",
-      });
-    }
-  }
 });
 
 export const addCronToolOutputSchema = z.object({
@@ -729,6 +705,51 @@ export const editCronToolInputSchema = z.object({
 
 export const editCronToolOutputSchema = getCronToolOutputSchema;
 
+export const editScheduledTaskToolInputSchema = z.object({
+  taskId: z.string()
+    .min(1),
+  name: z.string()
+    .min(1)
+    .optional()
+    .describe("Updated task name"),
+  description: z.string()
+    .optional()
+    .describe("Updated description"),
+  tools: z.string()
+    .min(1)
+    .array()
+    .min(1)
+    .optional()
+    .describe("Updated list of available tool names. send_message performs internal deduplication against previous cron messages."),
+  scheduleIntervalMinutes: z.number()
+    .positive()
+    .optional()
+    .describe("Interval in minutes for 'scheduled' type"),
+  scheduleStartHour: z.number()
+    .min(0)
+    .max(23)
+    .nullable()
+    .optional()
+    .describe("Hour of day to start (0-23)"),
+  scheduleStartMinute: z.number()
+    .min(0)
+    .max(59)
+    .nullable()
+    .optional()
+    .describe("Minute of hour to start (0-59)"),
+  runOnce: z.boolean()
+    .optional()
+    .describe("Whether the task should run only once"),
+  notifyUser: z.boolean()
+    .optional()
+    .describe("Whether to send a Telegram notification"),
+  enabled: z.boolean()
+    .optional()
+    .describe("Whether the task is enabled"),
+});
+
+export const editScheduledTaskToolOutputSchema = getCronToolOutputSchema;
+
 export const editCronInstructionsToolInputSchema = z.object({
   taskId: z.string()
     .min(1)
@@ -764,11 +785,15 @@ export const listCronsToolOutputSchema = z.object({
       .array(),
     schedule: z.object({
       type: z.string(),
-      expression: z.string()
+      intervalMinutes: z.number()
         .optional(),
-      intervalMs: z.number()
+      startHour: z.number()
+        .nullable()
         .optional(),
-      runAt: z.string()
+      startMinute: z.number()
+        .nullable()
+        .optional(),
+      runOnce: z.boolean()
         .optional(),
     }),
     enabled: z.boolean(),
@@ -1365,5 +1390,11 @@ export const TOOL_PREREQUISITES: Record<string, { tool: string; args: Record<str
   ],
   edit_cron_instructions: [
     { tool: "get_cron", args: { taskId: TASK_ID_PLACEHOLDER } },
+  ],
+  edit_scheduled_task: [
+    { tool: "get_scheduled_task", args: { taskId: TASK_ID_PLACEHOLDER } },
+  ],
+  edit_scheduled_task_instructions: [
+    { tool: "get_scheduled_task", args: { taskId: TASK_ID_PLACEHOLDER } },
   ],
 };

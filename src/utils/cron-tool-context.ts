@@ -1,4 +1,4 @@
-import { CRON_TOOL_DESCRIPTIONS } from "../shared/constants/cron-descriptions.js";
+import { SCHEDULED_TASK_TOOL_DESCRIPTIONS } from "../shared/constants/scheduled-task-descriptions.js";
 import { buildPerTableToolsAsync } from "./per-table-tools.js";
 
 export async function buildCronToolContextBlockAsync(tools: string[]): Promise<string> {
@@ -16,7 +16,7 @@ export async function buildCronToolContextBlockAsync(tools: string[]): Promise<s
   }
 
   const toolContextLines: string[] = tools.map((toolName: string) => {
-    const staticDescription: string | undefined = CRON_TOOL_DESCRIPTIONS[toolName];
+    const staticDescription: string | undefined = SCHEDULED_TASK_TOOL_DESCRIPTIONS[toolName];
     if (staticDescription) {
       return `  - ${toolName}: ${staticDescription}`;
     }

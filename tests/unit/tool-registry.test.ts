@@ -12,7 +12,7 @@ describe("tool-registry", () => {
     it("should allow all non-blocked tools for 'full' permission", () => {
       expect(toolRegistry.isToolAllowed("think", "full", {})).toBe(true);
       expect(toolRegistry.isToolAllowed("send_message", "full", {})).toBe(true);
-      expect(toolRegistry.isToolAllowed("get_cron", "full", {})).toBe(true);
+      expect(toolRegistry.isToolAllowed("get_scheduled_task", "full", {})).toBe(true);
     });
 
     it("should block destructive tools for 'read_only' permission", () => {
@@ -21,15 +21,15 @@ describe("tool-registry", () => {
       expect(toolRegistry.isToolAllowed("edit_file", "read_only", {})).toBe(false);
       expect(toolRegistry.isToolAllowed("wait_for_cmd", "read_only", {})).toBe(false);
       expect(toolRegistry.isToolAllowed("read_image", "read_only", {})).toBe(false);
-      expect(toolRegistry.isToolAllowed("add_cron", "read_only", {})).toBe(false);
-      expect(toolRegistry.isToolAllowed("remove_cron", "read_only", {})).toBe(false);
+      expect(toolRegistry.isToolAllowed("add_scheduled_task", "read_only", {})).toBe(false);
+      expect(toolRegistry.isToolAllowed("remove_scheduled_task", "read_only", {})).toBe(false);
       expect(toolRegistry.isToolAllowed("create_database", "read_only", {})).toBe(false);
     });
 
     it("should allow safe tools for 'read_only' permission", () => {
       expect(toolRegistry.isToolAllowed("think", "read_only", {})).toBe(true);
       expect(toolRegistry.isToolAllowed("send_message", "read_only", {})).toBe(true);
-      expect(toolRegistry.isToolAllowed("get_cron", "read_only", {})).toBe(true);
+      expect(toolRegistry.isToolAllowed("get_scheduled_task", "read_only", {})).toBe(true);
       expect(toolRegistry.isToolAllowed("read_file", "read_only", {})).toBe(true);
       expect(toolRegistry.isToolAllowed("list_files", "read_only", {})).toBe(true);
     });
@@ -93,7 +93,7 @@ describe("tool-registry", () => {
       const allowed = toolRegistry.getAllowedToolNames("full", { jobCreationEnabled: false });
       expect(allowed).toContain("think");
       expect(allowed).toContain("send_message");
-      expect(allowed).toContain("get_cron");
+      expect(allowed).toContain("get_scheduled_task");
       expect(allowed).toContain("wait_for_cmd");
       expect(allowed).toContain("read_image");
       expect(allowed).not.toContain("start_job_creation");
@@ -108,12 +108,12 @@ describe("tool-registry", () => {
     it("should exclude destructive tools for 'read_only' permission", () => {
       const allowed = toolRegistry.getAllowedToolNames("read_only", {});
       expect(allowed).toContain("think");
-      expect(allowed).toContain("get_cron");
+      expect(allowed).toContain("get_scheduled_task");
       expect(allowed).not.toContain("run_cmd");
       expect(allowed).not.toContain("wait_for_cmd");
       expect(allowed).not.toContain("read_image");
       expect(allowed).not.toContain("write_file");
-      expect(allowed).not.toContain("add_cron");
+      expect(allowed).not.toContain("add_scheduled_task");
     });
 
     it("should include skills when provided", () => {
@@ -130,8 +130,8 @@ describe("tool-registry", () => {
       expect(blocked).toContain("wait_for_cmd");
       expect(blocked).toContain("read_image");
       expect(blocked).toContain("write_file");
-      expect(blocked).toContain("add_cron");
-      expect(blocked).toContain("remove_cron");
+      expect(blocked).toContain("add_scheduled_task");
+      expect(blocked).toContain("remove_scheduled_task");
       expect(blocked).toContain("create_database");
       expect(blocked.length).toBeGreaterThan(30);
     });

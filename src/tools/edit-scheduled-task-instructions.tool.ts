@@ -14,7 +14,7 @@ import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
 
-interface IEditCronInstructionsResult {
+interface IEditScheduledTaskInstructionsResult {
   success: boolean;
   task?: IScheduledTask;
   display?: string;
@@ -25,19 +25,19 @@ interface IEditCronInstructionsResult {
 
 //#region Constants
 
-const TOOL_NAME: string = "edit-cron-instructions";
+const TOOL_NAME: string = "edit-scheduled-task-instructions";
 const TOOL_DESCRIPTION: string =
-  "Update ONLY the instructions text of an existing cron task. " +
+  "Update ONLY the instructions text of an existing scheduled task. " +
   "You MUST provide the COMPLETE new instructions text in the 'instructions' field (full replacement), plus 'intention' explaining why the change is needed. " +
   "Optionally provide 'tools' to replace the task tool list in the same call when instruction changes require different tools. " +
   "IMPORTANT: 'intention' is metadata only and does NOT change instructions by itself. " +
-  "IMPORTANT: You MUST call 'get_cron' first to retrieve the current task configuration before using this tool.";
+  "IMPORTANT: You MUST call 'get_scheduled_task' first to retrieve the current task configuration before using this tool.";
 
 //#endregion Constants
 
 //#region Tool
 
-const executeEditCronInstructions = async (
+const executeEditScheduledTaskInstructions = async (
   {
     taskId,
     instructions,
@@ -50,14 +50,14 @@ const executeEditCronInstructions = async (
     tools?: string[];
   },
   _context: ToolExecuteContext,
-): Promise<IEditCronInstructionsResult> => {
+): Promise<IEditScheduledTaskInstructionsResult> => {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
 
   try {
     const existingTask: IScheduledTask | undefined = await scheduler.getTaskAsync(taskId);
     if (!existingTask) {
-      return { success: false, error: `Cron task with ID '${taskId}' not found.` };
+      return { success: false, error: `Scheduled task with ID '${taskId}' not found.` };
     }
 
     const normalizedInstructions: string = (instructions ?? "").trim();
@@ -98,7 +98,7 @@ const executeEditCronInstructions = async (
       };
     }
 
-    logger.debug(`[${TOOL_NAME}] Re-verifying cron instructions for task: ${taskId}`);
+    logger.debug(`[${TOOL_NAME}] Re-verifying scheduled task instructions for task: ${taskId}`);
 
     const toolsToVerify: string[] = tools ?? existingTask.tools;
     const toolContextBlock: string = await buildCronToolContextBlockAsync(toolsToVerify);
@@ -123,7 +123,7 @@ You are a task instruction verifier for an autonomous AI agent.
 The agent runs periodically on a fixed schedule and has NO memory of past conversations when it wakes up.
 The agent executing these instructions is an intelligent AI (an LLM). It can read tool descriptions, reason about conventions, compose arguments, and derive values — it is NOT a dumb script that needs every value pre-computed.
 
-Your job: determine whether the instructions contain enough context for the agent to act independently WITHOUT guessing things that were only ever said in a prior conversation.
+Your job: determine whether the instructions contain enough context for the agent to act independently WITHOUT guessing things that were only said in a prior conversation.
 
 DEFAULT TO VALID. Only mark instructions invalid if there is a genuine, unresolvable ambiguity that would cause the agent to fail or act incorrectly.
 
@@ -131,7 +131,7 @@ ${toolContextBlock}
 
 RULES:
 
-1. Schedule/timing is already encoded in the cron expression — do NOT require the instructions to re-state when or how often the task runs.
+1. Schedule/timing is already encoded in the schedule expression — do NOT require the instructions to re-state when or how often the task runs.
 
 2. Tools that handle routing or delivery implicitly do NOT need extra config in the instructions.
    Example: "send_message" always reaches the correct user — instructions that say "send the results" or "notify the user" are VALID without specifying a chat ID or destination.
@@ -163,7 +163,7 @@ RULES:
 
 8. If instructions mention tools not present in the tool list, they are invalid unless those tools are being added in this same update.
 
-=== CURRENT CRON TASK ===
+=== CURRENT SCHEDULED TASK ===
 Task ID: ${existingTask.taskId}
 Name: ${existingTask.name}
 Description: ${existingTask.description}
@@ -232,7 +232,7 @@ Output a JSON object with:
     const updatedTask: IScheduledTask | undefined = await scheduler.updateTaskAsync(taskId, updatePatch);
 
     if (updatedTask) {
-      logger.info("[edit-cron-instructions] Updated task instructions", {
+      logger.info("[edit-scheduled-task-instructions] Updated task instructions", {
         taskId: updatedTask.taskId,
         name: updatedTask.name,
         updatedAt: updatedTask.updatedAt,
@@ -246,7 +246,7 @@ Output a JSON object with:
     };
   } catch (error: unknown) {
     const errorMessage: string = extractErrorMessage(error);
-    logger.error(`[${TOOL_NAME}] Failed to edit cron instructions: ${errorMessage}`, {
+    logger.error(`[${TOOL_NAME}] Failed to edit scheduled task instructions: ${errorMessage}`, {
       taskId,
       error: errorMessage,
     });
@@ -255,13 +255,13 @@ Output a JSON object with:
   }
 };
 
-export const editCronInstructionsTool = tool({
+export const editScheduledTaskInstructionsTool = tool({
   description: TOOL_DESCRIPTION,
   inputSchema: editCronInstructionsToolInputSchema,
   execute: createToolWithPrerequisites(
-    "edit_cron_instructions",
+    "edit_scheduled_task_instructions",
     TOOL_PREREQUISITES["edit_cron_instructions"] || [],
-    executeEditCronInstructions,
+    executeEditScheduledTaskInstructions,
   ) as any,
 });
 

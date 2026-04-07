@@ -92,12 +92,19 @@
                   <td>{{ task.name }}</td>
                   <td><span class="badge badge-type">{{ task.schedule.type }}</span></td>
                   <td class="cell-mono">
-                    @if (task.schedule.type === 'cron') {
-                      {{ task.schedule.expression }}
-                    } @else if (task.schedule.type === 'interval') {
-                      {{ task.schedule.intervalMs }}ms
-                    } @else {
+                    @if (task.schedule.type === 'scheduled') {
+                      @if (task.schedule.startHour !== null && task.schedule.startMinute !== null) {
+                        Every {{ task.schedule.intervalMinutes }} minutes at {{ task.schedule.startHour.toString().padStart(2, '0') }}:{{ task.schedule.startMinute.toString().padStart(2, '0') }}
+                      } @else {
+                        Every {{ task.schedule.intervalMinutes }} minutes
+                      }
+                      @if (task.schedule.runOnce) {
+                        (one-time)
+                      }
+                    } @else if (task.schedule.type === 'once') {
                       {{ task.schedule.runAt }}
+                    } @else {
+                      {{ task.schedule.intervalMs }}ms
                     }
                   </td>
                   <td>

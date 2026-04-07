@@ -1,16 +1,25 @@
-import type { IScheduledTask, Schedule } from "../shared/types/index.js";
+import type { IScheduledTask, IScheduleScheduled } from "../shared/types/index.js";
 
-function formatSchedule(schedule: Schedule): string {
-  switch (schedule.type) {
-    case "cron":
-      return `cron: ${schedule.expression}`;
-    case "interval":
-      return `interval: ${schedule.intervalMs}ms`;
-    case "once":
-      return `once: ${schedule.runAt}`;
-    default:
-      return JSON.stringify(schedule);
+function formatSchedule(schedule: IScheduleScheduled): string {
+  const parts: string[] = [];
+  
+  if (schedule.startHour !== null && schedule.startMinute !== null) {
+    parts.push(`daily at ${schedule.startHour.toString().padStart(2, "0")}:${schedule.startMinute.toString().padStart(2, "0")}`);
   }
+  
+  if (schedule.intervalMinutes === 60) {
+    parts.push("every hour");
+  } else if (schedule.intervalMinutes === 1440) {
+    parts.push("every day");
+  } else {
+    parts.push(`every ${schedule.intervalMinutes} minutes`);
+  }
+  
+  if (schedule.runOnce) {
+    parts.push("(one-time)");
+  }
+  
+  return parts.join(" ");
 }
 
 export function formatScheduledTask(task: IScheduledTask): string {

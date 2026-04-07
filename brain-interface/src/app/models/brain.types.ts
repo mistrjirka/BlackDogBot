@@ -370,12 +370,15 @@ export interface IScheduleInterval {
   intervalMs: number;
 }
 
-export interface IScheduleCron {
-  type: "cron";
-  expression: string;
+export interface IScheduleScheduled {
+  type: "scheduled";
+  intervalMinutes: number;
+  startHour: number | null;
+  startMinute: number | null;
+  runOnce: boolean;
 }
 
-export type Schedule = IScheduleOnce | IScheduleInterval | IScheduleCron;
+export type Schedule = IScheduleOnce | IScheduleInterval | IScheduleScheduled;
 
 export interface IScheduleTask {
   taskId: string;

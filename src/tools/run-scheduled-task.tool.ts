@@ -45,7 +45,7 @@ class SimpleTraceCollector implements ITraceCollector {
 
 //#region Tool
 
-export const runCronTool = tool({
+export const runScheduledTaskTool = tool({
   description:
     "Execute a scheduled task immediately. " +
     "**Call ONCE per task** - it runs to completion. " +
@@ -157,7 +157,7 @@ export const runCronTool = tool({
       };
     } catch (error: unknown) {
       const errorMessage = extractErrorMessage(error);
-      logger.error(`[run-cron] Failed to execute task`, { error: errorMessage });
+      logger.error(`[run-scheduled-task] Failed to execute task`, { error: errorMessage });
 
       return {
         success: false,

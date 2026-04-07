@@ -12,6 +12,7 @@ import {
   ensureDirectoryExistsAsync,
 } from "../utils/paths.js";
 import { LoggerService } from "./logger.service.js";
+import { IScheduleScheduled } from "../shared/types/cron.types.js";
 import { ConfigService } from "./config.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
@@ -310,6 +311,10 @@ export class SchedulerService {
       entry.endsWith(".json"),
     );
 
+    // Migrate all schedule formats (cron, interval, once) to scheduled format
+    // before schema validation since old formats won't pass the new schema
+    await this._migrateAllSchedulesAsync(cronDir, jsonFiles);
+
     // Build per-table write tool names once to migrate legacy generic write tools
     // in existing persisted cron tasks.
     let perTableWriteToolNames: string[] = [];
@@ -422,6 +427,202 @@ export class SchedulerService {
       replacedTools,
       addedWriteTableTools: perTableWriteToolNames.length,
     };
+  }
+
+  private async _migrateAllSchedulesAsync(
+    cronDir: string,
+    jsonFiles: string[],
+  ): Promise<void> {
+    await this._migrateCronExpressionSchedulesAsync(cronDir, jsonFiles);
+    await this._migrateIntervalSchedulesAsync(cronDir, jsonFiles);
+    await this._migrateOnceSchedulesAsync(cronDir, jsonFiles);
+  }
+
+  private async _migrateCronExpressionSchedulesAsync(
+    cronDir: string,
+    jsonFiles: string[],
+  ): Promise<void> {
+    const cronExpressionRegex = /^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)$/;
+
+    for (const fileName of jsonFiles) {
+      const filePath: string = path.join(cronDir, fileName);
+
+      try {
+        const content: string = await fs.readFile(filePath, "utf-8");
+        const parsed: unknown = JSON.parse(content);
+
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          "schedule" in parsed &&
+          typeof (parsed as Record<string, unknown>).schedule === "object" &&
+          (parsed as Record<string, unknown>).schedule !== null
+        ) {
+          const schedule = (parsed as Record<string, unknown>).schedule as Record<string, unknown>;
+          if (
+            schedule !== null &&
+            schedule["type"] === "cron" &&
+            typeof schedule["expression"] === "string"
+          ) {
+            const expression = schedule["expression"] as string;
+            const match = expression.match(cronExpressionRegex);
+
+            if (match) {
+              const [, minute, hour] = match;
+              const scheduleScheduled: IScheduleScheduled = {
+                type: "scheduled",
+                intervalMinutes: 1440,
+                startHour: parseInt(hour, 10),
+                startMinute: parseInt(minute, 10),
+                runOnce: false,
+              };
+
+              const migratedTask: IScheduledTask = {
+                ...(parsed as IScheduledTask),
+                schedule: scheduleScheduled,
+                updatedAt: new Date().toISOString(),
+              };
+
+              await fs.writeFile(filePath, JSON.stringify(migratedTask, null, 2), "utf-8");
+
+              this._logger.info("Migrated cron expression to scheduled format", {
+                taskId: migratedTask.taskId,
+                expression,
+                startHour: scheduleScheduled.startHour,
+                startMinute: scheduleScheduled.startMinute,
+              });
+            }
+          }
+        }
+      } catch (error: unknown) {
+        this._logger.warn("Failed to migrate cron expression schedule", {
+          filePath,
+          error: extractErrorMessage(error),
+        });
+      }
+    }
+  }
+
+  private async _migrateIntervalSchedulesAsync(
+    cronDir: string,
+    jsonFiles: string[],
+  ): Promise<void> {
+    for (const fileName of jsonFiles) {
+      const filePath: string = path.join(cronDir, fileName);
+
+      try {
+        const content: string = await fs.readFile(filePath, "utf-8");
+        const parsed: unknown = JSON.parse(content);
+
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          "schedule" in parsed &&
+          typeof (parsed as Record<string, unknown>).schedule === "object" &&
+          (parsed as Record<string, unknown>).schedule !== null
+        ) {
+          const schedule = (parsed as Record<string, unknown>).schedule as Record<string, unknown>;
+          if (
+            schedule !== null &&
+            schedule["type"] === "interval" &&
+            typeof schedule["intervalMs"] === "number"
+          ) {
+            const intervalMs = schedule["intervalMs"] as number;
+            const intervalMinutes = Math.round(intervalMs / 60_000);
+
+            if (intervalMinutes > 0) {
+              const scheduleScheduled: IScheduleScheduled = {
+                type: "scheduled",
+                intervalMinutes,
+                startHour: null,
+                startMinute: null,
+                runOnce: false,
+              };
+
+              const migratedTask: IScheduledTask = {
+                ...(parsed as IScheduledTask),
+                schedule: scheduleScheduled,
+                updatedAt: new Date().toISOString(),
+              };
+
+              await fs.writeFile(filePath, JSON.stringify(migratedTask, null, 2), "utf-8");
+
+              this._logger.info("Migrated interval schedule to scheduled format", {
+                taskId: migratedTask.taskId,
+                intervalMs,
+                intervalMinutes,
+              });
+            }
+          }
+        }
+      } catch (error: unknown) {
+        this._logger.warn("Failed to migrate interval schedule", {
+          filePath,
+          error: extractErrorMessage(error),
+        });
+      }
+    }
+  }
+
+  private async _migrateOnceSchedulesAsync(
+    cronDir: string,
+    jsonFiles: string[],
+  ): Promise<void> {
+    for (const fileName of jsonFiles) {
+      const filePath: string = path.join(cronDir, fileName);
+
+      try {
+        const content: string = await fs.readFile(filePath, "utf-8");
+        const parsed: unknown = JSON.parse(content);
+
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          "schedule" in parsed &&
+          typeof (parsed as Record<string, unknown>).schedule === "object" &&
+          (parsed as Record<string, unknown>).schedule !== null
+        ) {
+          const schedule = (parsed as Record<string, unknown>).schedule as Record<string, unknown>;
+          if (
+            schedule !== null &&
+            schedule["type"] === "once" &&
+            "runAt" in schedule
+          ) {
+            const runAt = schedule["runAt"] as string;
+            const runAtDate = new Date(runAt);
+            const runAtHour = runAtDate.getHours();
+            const runAtMinute = runAtDate.getMinutes();
+
+            const scheduleScheduled: IScheduleScheduled = {
+              type: "scheduled",
+              intervalMinutes: 1440,
+              startHour: runAtHour,
+              startMinute: runAtMinute,
+              runOnce: true,
+            };
+
+            const migratedTask: IScheduledTask = {
+              ...(parsed as IScheduledTask),
+              schedule: scheduleScheduled,
+              updatedAt: new Date().toISOString(),
+            };
+
+            await fs.writeFile(filePath, JSON.stringify(migratedTask, null, 2), "utf-8");
+
+            this._logger.info("Migrated once schedule to scheduled format", {
+              taskId: migratedTask.taskId,
+              runAt,
+              runOnce: true,
+            });
+          }
+        }
+      } catch (error: unknown) {
+        this._logger.warn("Failed to migrate once schedule", {
+          filePath,
+          error: extractErrorMessage(error),
+        });
+      }
+    }
   }
 
   private async _saveTaskAsync(task: IScheduledTask): Promise<void> {
@@ -546,6 +747,14 @@ export class SchedulerService {
         task.lastRunError = null;
         this._tasks.set(task.taskId, task);
         await this._saveTaskAsync(task);
+
+        if (schedule.runOnce) {
+          task.enabled = false;
+          task.updatedAt = new Date().toISOString();
+          this._tasks.set(task.taskId, task);
+          await this._saveTaskAsync(task);
+          this._logger.info("One-time task completed and disabled", { taskId: task.taskId });
+        }
       } catch (error: unknown) {
         const errorMessage: string =
           extractErrorMessage(error);
@@ -577,61 +786,28 @@ export class SchedulerService {
     const schedule = task.schedule;
 
     switch (schedule.type) {
-      case "cron": {
+      case "scheduled": {
         const config = ConfigService.getInstance().getConfig();
         const timezone = config.scheduler.timezone;
-        const nextRun: Date | null = this._cronScheduler.addJob(
+        const nextRun: Date | null = this._cronScheduler.addScheduledJob(
           task.taskId,
-          schedule.expression,
+          schedule.intervalMinutes,
+          schedule.startHour,
+          schedule.startMinute,
           timezone,
           () => {
             this._dispatchOrEnqueue(task, executeCallback);
           },
         );
 
-        this._logger.debug("Scheduled cron task", {
+        this._logger.debug("Scheduled task", {
           taskId: task.taskId,
-          expression: schedule.expression,
+          intervalMinutes: schedule.intervalMinutes,
+          startHour: schedule.startHour,
+          startMinute: schedule.startMinute,
+          runOnce: schedule.runOnce,
           timezone: timezone ?? "server local",
           nextRun: nextRun ? nextRun.toISOString() : "none",
-        });
-        break;
-      }
-
-      case "interval": {
-        const intervalId: NodeJS.Timeout = setInterval(() => {
-          this._dispatchOrEnqueue(task, executeCallback);
-        }, schedule.intervalMs);
-
-        this._intervals.set(task.taskId, intervalId);
-        this._logger.debug("Scheduled interval task", {
-          taskId: task.taskId,
-          intervalMs: schedule.intervalMs,
-        });
-        break;
-      }
-
-      case "once": {
-        const runAtDate: Date = new Date(schedule.runAt);
-        const delayMs: number = runAtDate.getTime() - Date.now();
-
-        if (delayMs <= 0) {
-          this._logger.warn("Scheduled time has already passed, skipping", {
-            taskId: task.taskId,
-            runAt: schedule.runAt,
-          });
-          return;
-        }
-
-        const timeoutId: NodeJS.Timeout = setTimeout(() => {
-          this._dispatchOrEnqueue(task, executeCallback);
-          this._timeouts.delete(task.taskId);
-        }, delayMs);
-
-        this._timeouts.set(task.taskId, timeoutId);
-        this._logger.debug("Scheduled one-time task", {
-          taskId: task.taskId,
-          runAt: schedule.runAt,
         });
         break;
       }
