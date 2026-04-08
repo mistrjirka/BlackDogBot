@@ -2,8 +2,6 @@ import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 
 function formatSchedule(schedule: Schedule): string {
   switch (schedule.type) {
-    case "cron":
-      return `cron: ${schedule.expression}`;
     case "interval":
       return `interval: ${schedule.intervalMs}ms`;
     case "once":

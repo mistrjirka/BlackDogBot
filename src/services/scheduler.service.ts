@@ -577,27 +577,6 @@ export class SchedulerService {
     const schedule = task.schedule;
 
     switch (schedule.type) {
-      case "cron": {
-        const config = ConfigService.getInstance().getConfig();
-        const timezone = config.scheduler.timezone;
-        const nextRun: Date | null = this._cronScheduler.addJob(
-          task.taskId,
-          schedule.expression,
-          timezone,
-          () => {
-            this._dispatchOrEnqueue(task, executeCallback);
-          },
-        );
-
-        this._logger.debug("Scheduled cron task", {
-          taskId: task.taskId,
-          expression: schedule.expression,
-          timezone: timezone ?? "server local",
-          nextRun: nextRun ? nextRun.toISOString() : "none",
-        });
-        break;
-      }
-
       case "interval": {
         const intervalId: NodeJS.Timeout = setInterval(() => {
           this._dispatchOrEnqueue(task, executeCallback);

@@ -41,9 +41,6 @@ function _mapTaskToSummary(task: IScheduledTask): IListTimedTaskSummary {
   };
 
   switch (task.schedule.type) {
-    case "cron":
-      scheduleSummary.expression = task.schedule.expression;
-      break;
     case "interval":
       scheduleSummary.intervalMs = task.schedule.intervalMs;
       break;
