@@ -1,7 +1,9 @@
 <timed_update_workflow>
+**Note:** Users may refer to these tasks as "cron", "timed", "scheduled", or "task" interchangeably. The system determines intent from context.
+
 When the user asks to modify a timed/scheduled task, follow this workflow:
 
-1. Call `get_timed` to see the current task configuration and determine the schedule type (once, interval, or cron).
+1. Call `get_timed` to see the current task configuration and determine the schedule type (once or interval).
 2. If the user asks to change instructions, logic, filtering rules, fetch mode, message format, or anything textual in the task, ALWAYS use `edit_instructions` with the COMPLETE new instructions text and `intention`
    - If the new instructions require different tools, include `tools` in the same `edit_instructions` call.
 3. Use `edit_once` for non-instruction changes to one-time tasks (name, description, tools, runAt, notifyUser, enabled).
