@@ -15,6 +15,7 @@ import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 interface IAddOnceResult {
   taskId: string;
   success: boolean;
+  displaySummary?: string;
   error?: string;
 }
 
@@ -174,7 +175,9 @@ Output a JSON object with:
 
       await SchedulerService.getInstance().addTaskAsync(task);
 
-      return { taskId, success: true };
+      const displaySummary = `Created one-time task "${name}" (ID: ${taskId})\nSchedule: ${runAt}\nTools: [${tools.join(", ")}]`;
+
+      return { taskId, success: true, displaySummary };
     } catch (error: unknown) {
       const errorMessage: string = extractErrorMessage(error);
       logger.error(`[${TOOL_NAME}] Failed to add task: ${errorMessage}`);
