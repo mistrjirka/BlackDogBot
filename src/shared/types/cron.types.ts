@@ -1,7 +1,5 @@
 //#region Cron Types
 
-export type ScheduleType = "once" | "interval" | "cron";
-
 export interface ICronMessageHistory {
   messageId: string;
   content: string;
@@ -18,12 +16,7 @@ export interface IScheduleInterval {
   intervalMs: number;
 }
 
-export interface IScheduleCron {
-  type: "cron";
-  expression: string;
-}
-
-export type Schedule = IScheduleOnce | IScheduleInterval | IScheduleCron;
+export type Schedule = IScheduleOnce | IScheduleInterval;
 
 export interface IScheduledTask {
   taskId: string;

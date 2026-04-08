@@ -594,6 +594,140 @@ export const CRON_VALID_TOOL_NAMES = [
   "get_skill_file",
 ] as const;
 
+export const addOnceToolInputSchema = z.object({
+  name: z.string()
+    .min(1)
+    .describe("Scheduled task name (required)"),
+  description: z.string()
+    .min(1)
+    .trim()
+    .describe("Task description (required, non-empty)"),
+  instructions: z.string()
+    .min(1)
+    .trim()
+    .describe("Detailed task instructions for the agent (required)"),
+  tools: z.string()
+    .min(1)
+    .array()
+    .min(1)
+    .describe("Tool names available to the task agent (required, at least one). send_message performs internal deduplication against previous cron messages."),
+  runAt: z.string()
+    .datetime()
+    .describe("ISO 8601 datetime to run the task (required)"),
+  notifyUser: z.boolean()
+    .describe("Whether to send a Telegram notification when this task completes (required)"),
+});
+
+export const addIntervalToolInputSchema = z.object({
+  name: z.string()
+    .min(1)
+    .describe("Scheduled task name (required)"),
+  description: z.string()
+    .min(1)
+    .trim()
+    .describe("Task description (required, non-empty)"),
+  instructions: z.string()
+    .min(1)
+    .trim()
+    .describe("Detailed task instructions for the agent (required)"),
+  tools: z.string()
+    .min(1)
+    .array()
+    .min(1)
+    .describe("Tool names available to the task agent (required, at least one). send_message performs internal deduplication against previous cron messages."),
+  intervalMs: z.number()
+    .int()
+    .positive()
+    .describe("Interval in milliseconds (required, must be > 0)"),
+  notifyUser: z.boolean()
+    .describe("Whether to send a Telegram notification when this task completes (required)"),
+});
+
+export const editOnceToolInputSchema = z.object({
+  taskId: z.string()
+    .min(1),
+  name: z.string()
+    .min(1)
+    .optional()
+    .describe("Updated task name"),
+  description: z.string()
+    .optional()
+    .describe("Updated description"),
+  tools: z.string()
+    .min(1)
+    .array()
+    .min(1)
+    .optional()
+    .describe("Updated list of available tool names"),
+  runAt: z.string()
+    .datetime()
+    .optional()
+    .describe("ISO 8601 datetime for 'once' schedule"),
+  notifyUser: z.boolean()
+    .optional()
+    .describe("Whether to send a Telegram notification"),
+  enabled: z.boolean()
+    .optional()
+    .describe("Whether the task is enabled"),
+});
+
+export const editIntervalToolInputSchema = z.object({
+  taskId: z.string()
+    .min(1),
+  name: z.string()
+    .min(1)
+    .optional()
+    .describe("Updated task name"),
+  description: z.string()
+    .optional()
+    .describe("Updated description"),
+  tools: z.string()
+    .min(1)
+    .array()
+    .min(1)
+    .optional()
+    .describe("Updated list of available tool names"),
+  intervalMs: z.number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Interval in milliseconds for 'interval' schedule"),
+  notifyUser: z.boolean()
+    .optional()
+    .describe("Whether to send a Telegram notification"),
+  enabled: z.boolean()
+    .optional()
+    .describe("Whether the task is enabled"),
+});
+
+export const editInstructionsToolInputSchema = z.object({
+  taskId: z.string()
+    .min(1)
+    .describe("ID of the cron task to update"),
+  instructions: z.string()
+    .min(1)
+    .describe("Complete NEW instructions text for the cron task (full replacement)."),
+  intention: z.string()
+    .min(1)
+    .describe("Why this instruction update is needed. Metadata only; does not modify instructions by itself."),
+  tools: z.string()
+    .min(1)
+    .array()
+    .min(1)
+    .optional()
+    .describe("Optional replacement tool list to apply together with the instruction update."),
+});
+
+export const removeTimedToolInputSchema = z.object({
+  taskId: z.string()
+    .min(1),
+});
+
+export const removeTimedToolOutputSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+});
+
 export const addCronToolInputSchema = z.object({
   name: z.string()
     .min(1)
