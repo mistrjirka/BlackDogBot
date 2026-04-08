@@ -12,7 +12,7 @@ export const JOB_FILE_NAME: string = "job.json";
 
 export const KNOWLEDGE_DIR: string = "knowledge";
 export const LANCEDB_DIR: string = "lancedb";
-export const CRON_DIR: string = "cron";
+export const TIMED_DIR: string = "timed";
 
 //#endregion Directory Names
 

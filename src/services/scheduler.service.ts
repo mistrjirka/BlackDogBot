@@ -5,8 +5,8 @@ import { IScheduledTask } from "../shared/types/index.js";
 import { scheduledTaskSchema } from "../shared/schemas/index.js";
 import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
 import {
-  getCronDir,
-  getCronFilePath,
+  getTimedDir,
+  getTimedFilePath,
   ensureDirectoryExistsAsync,
 } from "../utils/paths.js";
 import { LoggerService } from "./logger.service.js";
@@ -117,7 +117,7 @@ export class SchedulerService {
   }
 
   public async startAsync(): Promise<void> {
-    await ensureDirectoryExistsAsync(getCronDir());
+    await ensureDirectoryExistsAsync(getTimedDir());
     await this._loadAllTasksAsync();
 
     // Read concurrency settings from config
@@ -181,7 +181,7 @@ export class SchedulerService {
       (queued: IQueuedTask) => queued.task.taskId !== taskId,
     );
 
-    const filePath: string = getCronFilePath(taskId);
+    const filePath: string = getTimedFilePath(taskId);
 
     try {
       await fs.unlink(filePath);
@@ -284,15 +284,15 @@ export class SchedulerService {
   //#region Private methods
 
   private async _loadAllTasksAsync(): Promise<void> {
-    const cronDir: string = getCronDir();
+    const timedDir: string = getTimedDir();
 
     let entries: string[];
 
     try {
-      entries = await fs.readdir(cronDir);
+      entries = await fs.readdir(timedDir);
     } catch (error: unknown) {
-      this._logger.warn("Failed to read cron directory", {
-        cronDir,
+      this._logger.warn("Failed to read timed directory", {
+        timedDir,
         error: extractErrorMessage(error),
       });
       return;
@@ -303,7 +303,7 @@ export class SchedulerService {
     );
 
     // Build per-table write tool names once to migrate legacy generic write tools
-    // in existing persisted cron tasks.
+    // in existing persisted timed tasks.
     let perTableWriteToolNames: string[] = [];
     try {
       const perTableTools = await buildPerTableToolsAsync();
@@ -311,7 +311,7 @@ export class SchedulerService {
         .filter((name: string): boolean => name.startsWith("write_table_"))
         .sort();
     } catch (error: unknown) {
-      this._logger.warn("Failed to build per-table tools for cron migration", {
+      this._logger.warn("Failed to build per-table tools for timed migration", {
         error: extractErrorMessage(error),
       });
     }
@@ -319,7 +319,7 @@ export class SchedulerService {
     const migratedTasks: string[] = [];
 
     for (const fileName of jsonFiles) {
-      const filePath: string = path.join(cronDir, fileName);
+      const filePath: string = path.join(timedDir, fileName);
 
       try {
         const content: string = await fs.readFile(filePath, "utf-8");
@@ -330,7 +330,7 @@ export class SchedulerService {
         if (migration.changed) {
           await fs.writeFile(filePath, JSON.stringify(migration.task, null, 2), "utf-8");
 
-          this._logger.info("Migrated legacy write cron tools to per-table tools", {
+          this._logger.info("Migrated legacy write timed tools to per-table tools", {
             taskId: migration.task.taskId,
             name: migration.task.name,
             replacedTools: migration.replacedTools,
@@ -359,7 +359,7 @@ export class SchedulerService {
 
     if (migratedTasks.length > 0) {
       this._logger.warn(
-        `${migratedTasks.length} cron task(s) use deprecated tool names that will be auto-expanded at runtime:`,
+        `${migratedTasks.length} timed task(s) use deprecated tool names that will be auto-expanded at runtime:`,
         { tasks: migratedTasks },
       );
     }
@@ -383,7 +383,7 @@ export class SchedulerService {
     }
 
     if (perTableWriteToolNames.length === 0) {
-      this._logger.warn("Legacy write cron tools detected but no write_table_* tools exist yet", {
+      this._logger.warn("Legacy write timed tools detected but no write_table_* tools exist yet", {
         taskId: task.taskId,
         name: task.name,
         replacedTools,
@@ -417,9 +417,9 @@ export class SchedulerService {
   }
 
   private async _saveTaskAsync(task: IScheduledTask): Promise<void> {
-    const filePath: string = getCronFilePath(task.taskId);
+    const filePath: string = getTimedFilePath(task.taskId);
 
-    await ensureDirectoryExistsAsync(getCronDir());
+    await ensureDirectoryExistsAsync(getTimedDir());
     await fs.writeFile(filePath, JSON.stringify(task, null, 2), "utf-8");
   }
 

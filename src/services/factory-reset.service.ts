@@ -5,7 +5,7 @@ import { SchedulerService } from "./scheduler.service.js";
 import { PromptService } from "./prompt.service.js";
 import { MainAgent } from "../agent/main-agent.js";
 import { McpService } from "./mcp.service.js";
-import { getRssStateDir, getCronDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, getSessionsDir, getMcpServersFilePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
+import { getRssStateDir, getTimedDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, getSessionsDir, getMcpServersFilePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
 import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
@@ -36,9 +36,9 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
     await scheduler.removeAllTasksAsync();
   });
 
-  // 2b. Wipe cron directory directly (safety net for unparseable files)
-  await _safeStepAsync("Wipe cron directory", errors, async (): Promise<void> => {
-    await _wipeDirAsync(getCronDir());
+  // 2b. Wipe timed directory directly (safety net for unparseable files)
+  await _safeStepAsync("Wipe timed directory", errors, async (): Promise<void> => {
+    await _wipeDirAsync(getTimedDir());
   });
 
   // 2c. Delete known Telegram chats (authorized users)
