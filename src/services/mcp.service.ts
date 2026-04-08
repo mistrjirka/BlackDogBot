@@ -58,7 +58,7 @@ export class McpService {
   private _connections: Map<string, IMcpServerConnection>;
   private _combinedTools: ToolSet;
   private _serverResults: Map<string, IMcpServerToolsResult>;
-  private _refreshing: boolean;
+  private _refreshPromise: Promise<void> | null;
 
   //#endregion Data Members
 
@@ -70,7 +70,7 @@ export class McpService {
     this._connections = new Map();
     this._combinedTools = {};
     this._serverResults = new Map();
-    this._refreshing = false;
+    this._refreshPromise = null;
   }
 
   //#endregion Constructor
@@ -83,70 +83,74 @@ export class McpService {
    * Existing connections with the same config are reused.
    */
   public async refreshAsync(): Promise<void> {
-    if (this._refreshing) {
-      this._logger.warn("MCP refresh already in progress, skipping");
-      return;
+    if (this._refreshPromise) {
+      this._logger.warn("MCP refresh already in progress, waiting for it to complete");
+      return this._refreshPromise;
     }
 
-    this._refreshing = true;
+    this._refreshPromise = this._doRefreshAsync();
 
     try {
-      const registryServers = this._registry.getAllServers();
-      const enabledIds = new Set<string>();
-
-      // Phase 1: Close connections for removed or disabled servers
-      for (const [id] of this._connections) {
-        const entry = this._registry.getServer(id);
-
-        if (!entry || !entry.enabled) {
-          this._logger.info("Closing MCP server connection", {
-            serverId: id,
-            reason: !entry ? "removed" : "disabled",
-          });
-          await this._closeConnectionAsync(id);
-        }
-      }
-
-      // Phase 2: Connect or reconnect enabled servers
-      this._serverResults = new Map();
-
-      for (const entry of registryServers) {
-        if (!entry.enabled) {
-          continue;
-        }
-
-        enabledIds.add(entry.id);
-
-        // Check if already connected — reuse if config matches
-        const existing = this._connections.get(entry.id);
-        if (existing) {
-          // Connection already exists, keep it
-          const tools = this._collectToolsForServer(entry.id);
-          this._serverResults.set(entry.id, {
-            serverId: entry.id,
-            loadedToolNames: tools,
-            warnings: [],
-            error: null,
-          });
-          continue;
-        }
-
-        // New or changed server — connect
-        const result = await this._connectServerAsync(entry);
-        this._serverResults.set(entry.id, result);
-      }
-
-      // Phase 3: Rebuild combined tool set from all active connections
-      this._rebuildCombinedTools();
-
-      this._logger.info("MCP service refreshed", {
-        totalEnabled: enabledIds.size,
-        connectedServers: this._connections.size,
-        totalTools: Object.keys(this._combinedTools).length,
-      });
+      await this._refreshPromise;
     } finally {
-      this._refreshing = false;
+      this._refreshPromise = null;
     }
+  }
+
+  private async _doRefreshAsync(): Promise<void> {
+    const registryServers = this._registry.getAllServers();
+    const enabledIds = new Set<string>();
+
+    // Phase 1: Close connections for removed or disabled servers
+    for (const [id] of this._connections) {
+      const entry = this._registry.getServer(id);
+
+      if (!entry || !entry.enabled) {
+        this._logger.info("Closing MCP server connection", {
+          serverId: id,
+          reason: !entry ? "removed" : "disabled",
+        });
+        await this._closeConnectionAsync(id);
+      }
+    }
+
+    // Phase 2: Connect or reconnect enabled servers
+    this._serverResults = new Map();
+
+    for (const entry of registryServers) {
+      if (!entry.enabled) {
+        continue;
+      }
+
+      enabledIds.add(entry.id);
+
+      // Check if already connected — reuse if config matches
+      const existing = this._connections.get(entry.id);
+      if (existing) {
+        // Connection already exists, keep it
+        const tools = this._collectToolsForServer(entry.id);
+        this._serverResults.set(entry.id, {
+          serverId: entry.id,
+          loadedToolNames: tools,
+          warnings: [],
+          error: null,
+        });
+        continue;
+      }
+
+      // New or changed server — connect
+      const result = await this._connectServerAsync(entry);
+      this._serverResults.set(entry.id, result);
+    }
+
+    // Phase 3: Rebuild combined tool set from all active connections
+    this._rebuildCombinedTools();
+
+    this._logger.info("MCP service refreshed", {
+      totalEnabled: enabledIds.size,
+      connectedServers: this._connections.size,
+      totalTools: Object.keys(this._combinedTools).length,
+    });
   }
 
   /**

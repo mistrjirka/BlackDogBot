@@ -25,17 +25,19 @@ interface IAddOnceResult {
 
 const TOOL_NAME: string = "add_once";
 const TOOL_DESCRIPTION: string =
-  "Add a new one-time scheduled task to the scheduler. " +
-  "Required inputs: name, description, instructions, tools, runAt, notifyUser. " +
+  "Add a new ONE-TIME scheduled task that runs once at a specific date/time and then stops. " +
+  "Use for: reminders, one-off alerts, single notifications. " +
+  "Required inputs: name, description, instructions, tools, year/month/day/hour/minute, notifyUser. " +
+  "For RECURRING tasks (e.g., every hour, daily), use add_interval instead. " +
   "send_message performs internal deduplication against previous cron messages. " +
-  "**Note:** Users may refer to these as 'cron', 'timed', 'scheduled', or 'task'. The system determines intent from context. " +
-  "If the task's instructions reference a database, ensure the database and table(s) have been created first using create_database and create_table, then reference them by name (without .db extension) in the instructions.";
+  "If the task's instructions reference a database, ensure the table(s) have been created first using create_table, then reference them by table name in the instructions.";
 
 //#endregion Const
 
 //#region Private methods
 
-function _buildSchedule(runAt: string): Schedule {
+function _buildSchedule(params: { year: number; month: number; day: number; hour: number; minute: number }): Schedule {
+  const runAt: string = new Date(params.year, params.month - 1, params.day, params.hour, params.minute, 0, 0).toISOString();
   return {
     type: "once",
     runAt,
@@ -54,14 +56,22 @@ export const addOnceTool = tool({
     description,
     instructions,
     tools,
-    runAt,
+    year,
+    month,
+    day,
+    hour,
+    minute,
     notifyUser,
   }: {
     name: string;
     description: string;
     instructions: string;
     tools: string[];
-    runAt: string;
+    year: number;
+    month: number;
+    day: number;
+    hour: number;
+    minute: number;
     notifyUser: boolean;
   }): Promise<IAddOnceResult> => {
     const logger: LoggerService = LoggerService.getInstance();
@@ -152,7 +162,7 @@ Output a JSON object with:
 
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
-      const builtSchedule: Schedule = _buildSchedule(runAt);
+      const builtSchedule: Schedule = _buildSchedule({ year, month, day, hour, minute });
 
       const task: IScheduledTask = {
         taskId,
@@ -175,7 +185,9 @@ Output a JSON object with:
 
       await SchedulerService.getInstance().addTaskAsync(task);
 
-      const displaySummary = `Created one-time task "${name}" (ID: ${taskId})\nSchedule: ${runAt}\nTools: [${tools.join(", ")}]`;
+      const formattedTime: string = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+
+      const displaySummary = `Created one-time task "${name}" (ID: ${taskId})\nSchedule: ${formattedTime}\nTools: [${tools.join(", ")}]`;
 
       return { taskId, success: true, displaySummary };
     } catch (error: unknown) {

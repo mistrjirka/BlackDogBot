@@ -594,29 +594,100 @@ export const CRON_VALID_TOOL_NAMES = [
   "get_skill_file",
 ] as const;
 
-export const addOnceToolInputSchema = z.object({
-  name: z.string()
+function _validateDate(params: { year: number; month: number; day: number }): boolean {
+  const daysInMonth = new Date(params.year, params.month, 0).getDate();
+  return params.day >= 1 && params.day <= daysInMonth;
+}
+
+const optionalDatetimeFields = {
+  year: z.number()
+    .int()
+    .min(2024)
+    .max(2100)
+    .optional()
+    .describe("Year (e.g., 2026)"),
+  month: z.number()
+    .int()
     .min(1)
-    .describe("Scheduled task name (required)"),
-  description: z.string()
+    .max(12)
+    .optional()
+    .describe("Month (1-12)"),
+  day: z.number()
+    .int()
     .min(1)
-    .trim()
-    .describe("Task description (required, non-empty)"),
-  instructions: z.string()
+    .max(31)
+    .optional()
+    .describe("Day of month (1-31)"),
+  hour: z.number()
+    .int()
+    .min(0)
+    .max(23)
+    .optional()
+    .describe("Hour in 24-hour format (0-23)"),
+  minute: z.number()
+    .int()
+    .min(0)
+    .max(59)
+    .optional()
+    .describe("Minute (0-59)"),
+};
+
+const CURRENT_YEAR: number = new Date().getFullYear();
+
+const requiredDatetimeFields = {
+  year: z.number()
+    .int()
+    .min(CURRENT_YEAR)
+    .max(2100)
+    .describe("Year (current year or later, e.g., " + CURRENT_YEAR + ")"),
+  month: z.number()
+    .int()
     .min(1)
-    .trim()
-    .describe("Detailed task instructions for the agent (required)"),
-  tools: z.string()
+    .max(12)
+    .describe("Month (1-12)"),
+  day: z.number()
+    .int()
     .min(1)
-    .array()
-    .min(1)
-    .describe("Tool names available to the task agent (required, at least one). send_message performs internal deduplication against previous cron messages."),
-  runAt: z.string()
-    .datetime()
-    .describe("ISO 8601 datetime to run the task (required)"),
-  notifyUser: z.boolean()
-    .describe("Whether to send a Telegram notification when this task completes (required)"),
-});
+    .max(31)
+    .describe("Day of month (1-31)"),
+  hour: z.number()
+    .int()
+    .min(0)
+    .max(23)
+    .describe("Hour in 24-hour format (0-23)"),
+  minute: z.number()
+    .int()
+    .min(0)
+    .max(59)
+    .describe("Minute (0-59)"),
+};
+
+export const addOnceToolInputSchema = z
+  .object({
+    name: z.string()
+      .min(1)
+      .describe("Scheduled task name (required)"),
+    description: z.string()
+      .min(1)
+      .trim()
+      .describe("Task description (required, non-empty)"),
+    instructions: z.string()
+      .min(1)
+      .trim()
+      .describe("Detailed task instructions for the agent (required)"),
+    tools: z.string()
+      .min(1)
+      .array()
+      .min(1)
+      .describe("Tool names available to the task agent (required, at least one). send_message performs internal deduplication against previous cron messages."),
+    ...requiredDatetimeFields,
+    notifyUser: z.boolean()
+      .describe("Whether to send a Telegram notification when this task completes (required)"),
+  })
+  .refine(
+    (data) => _validateDate({ year: data.year, month: data.month, day: data.day }),
+    { message: "Invalid day for the given month" }
+  );
 
 export const addIntervalToolInputSchema = z.object({
   name: z.string()
@@ -643,33 +714,42 @@ export const addIntervalToolInputSchema = z.object({
     .describe("Whether to send a Telegram notification when this task completes (required)"),
 });
 
-export const editOnceToolInputSchema = z.object({
-  taskId: z.string()
-    .min(1),
-  name: z.string()
-    .min(1)
-    .optional()
-    .describe("Updated task name"),
-  description: z.string()
-    .optional()
-    .describe("Updated description"),
-  tools: z.string()
-    .min(1)
-    .array()
-    .min(1)
-    .optional()
-    .describe("Updated list of available tool names"),
-  runAt: z.string()
-    .datetime()
-    .optional()
-    .describe("ISO 8601 datetime for 'once' schedule"),
-  notifyUser: z.boolean()
-    .optional()
-    .describe("Whether to send a Telegram notification"),
-  enabled: z.boolean()
-    .optional()
-    .describe("Whether the task is enabled"),
-});
+export const editOnceToolInputSchema = z
+  .object({
+    taskId: z.string()
+      .min(1),
+    name: z.string()
+      .min(1)
+      .optional()
+      .describe("Updated task name"),
+    description: z.string()
+      .optional()
+      .describe("Updated description"),
+    tools: z.string()
+      .min(1)
+      .array()
+      .min(1)
+      .optional()
+      .describe("Updated list of available tool names"),
+    ...optionalDatetimeFields,
+    notifyUser: z.boolean()
+      .optional()
+      .describe("Whether to send a Telegram notification"),
+    enabled: z.boolean()
+      .optional()
+      .describe("Whether the task is enabled"),
+  })
+  .refine(
+    (data) => {
+      const hasAnyDatetime = data.year !== undefined || data.month !== undefined || data.day !== undefined || data.hour !== undefined || data.minute !== undefined;
+      if (!hasAnyDatetime) return true;
+      const year = data.year ?? new Date().getFullYear();
+      const month = data.month ?? 1;
+      const day = data.day ?? 1;
+      return _validateDate({ year, month, day });
+    },
+    { message: "Invalid day for the given month" }
+  );
 
 export const editIntervalToolInputSchema = z.object({
   taskId: z.string()

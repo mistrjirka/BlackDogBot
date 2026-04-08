@@ -8,7 +8,7 @@ import { extractErrorMessage } from "../utils/error.js";
 const DEFAULT_DATABASE = "blackdog";
 
 export const dropTableTool = tool({
-  description: "Drop (delete) a table from the default database (blackdog)",
+  description: "Drop (delete) a table from the default database",
   inputSchema: z.object({
     tableName: z.string()
       .min(1)

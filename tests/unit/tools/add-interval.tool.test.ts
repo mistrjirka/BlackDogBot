@@ -11,7 +11,7 @@ describe("addIntervalTool", () => {
     expect((addIntervalTool as any).inputSchema).toBeDefined();
   });
 
-  it("should have description about interval tasks", () => {
-    expect((addIntervalTool as any).description).toContain("interval");
+  it("should have description about recurring tasks", () => {
+    expect((addIntervalTool as any).description.toLowerCase()).toContain("recurring");
   });
 });

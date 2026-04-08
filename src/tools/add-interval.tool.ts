@@ -25,11 +25,13 @@ interface IAddIntervalResult {
 
 const TOOL_NAME: string = "add_interval";
 const TOOL_DESCRIPTION: string =
-  "Add a new interval-based scheduled task to the scheduler. " +
+  "Add a new RECURRING scheduled task that runs repeatedly at fixed intervals until deleted. " +
+  "Use for: periodic monitoring, recurring reports, ongoing data collection. " +
   "Required inputs: name, description, instructions, tools, intervalMs, notifyUser. " +
+  "Common intervals: 3600000 (1 hour), 7200000 (2 hours), 86400000 (1 day). " +
+  "For ONE-TIME tasks (runs once), use add_once instead. " +
   "send_message performs internal deduplication against previous cron messages. " +
-  "**Note:** Users may refer to these as 'cron', 'timed', 'scheduled', or 'task'. The system determines intent from context. " +
-  "If the task's instructions reference a database, ensure the database and table(s) have been created first using create_database and create_table, then reference them by name (without .db extension) in the instructions.";
+  "If the task's instructions reference a database, ensure the table(s) have been created first using create_table, then reference them by table name in the instructions.";
 
 //#endregion Const
 

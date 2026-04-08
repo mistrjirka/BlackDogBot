@@ -226,11 +226,14 @@ export class TelegramHandler {
       if (stepLogs.length === 0) {
         return status;
       }
-      const escapedStepLogs: string = stepLogs
-        .map((line: string): string => _escapeTelegramHtml(line))
+      
+      const compactLogs: string[] = _compactStepLogs(stepLogs, MAX_BLOCKQUOTE_LENGTH);
+      
+      const blockquotes: string = compactLogs
+        .map((block: string): string => `<blockquote expandable>${_escapeTelegramHtml(block)}</blockquote>`)
         .join("\n");
 
-      return `${status}\n\n<blockquote expandable>${escapedStepLogs}</blockquote>`;
+      return `${status}\n\n${blockquotes}`;
     };
 
     try {
@@ -284,18 +287,24 @@ export class TelegramHandler {
               });
 
               if (toolCalls.length > 0) {
-                const formatted: string = toolCalls
-                  .map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input))
-                  .join(", ");
-                stepLogs.push(`Step ${stepNumber}: ${formatted}`);
+                const filteredToolCalls: IToolCallSummary[] = toolCalls.filter(
+                  (tc: IToolCallSummary): boolean => tc.name !== "think",
+                );
 
-                this._logger.debug("Telegram tool step appended to progress trace", {
-                  chatId,
-                  stepNumber,
-                  formattedLength: formatted.length,
-                  stepLogsCountAfter: stepLogs.length,
-                  formattedPreview: formatted.slice(0, 180),
-                });
+                if (filteredToolCalls.length > 0) {
+                  const formatted: string = filteredToolCalls
+                    .map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input))
+                    .join(", ");
+                  stepLogs.push(`Step ${stepNumber}: ${formatted}`);
+
+                  this._logger.debug("Telegram tool step appended to progress trace", {
+                    chatId,
+                    stepNumber,
+                    formattedLength: formatted.length,
+                    stepLogsCountAfter: stepLogs.length,
+                    formattedPreview: formatted.slice(0, 180),
+                  });
+                }
               } else {
                 this._logger.debug("Telegram onStep received empty toolCalls", {
                   chatId,
@@ -789,11 +798,13 @@ export class TelegramHandler {
         return status;
       }
 
-      const escapedStepLogs: string = stepLogs
-        .map((line: string): string => _escapeTelegramHtml(line))
+      const compactLogs: string[] = _compactStepLogs(stepLogs, MAX_BLOCKQUOTE_LENGTH);
+
+      const blockquotes: string = compactLogs
+        .map((block: string): string => `<blockquote expandable>${_escapeTelegramHtml(block)}</blockquote>`)
         .join("\n");
 
-      return `${status}\n\n<blockquote expandable>${escapedStepLogs}</blockquote>`;
+      return `${status}\n\n${blockquotes}`;
     };
 
     const hasAnyImageAttachment: boolean = queuedMessages.some(
@@ -828,8 +839,12 @@ export class TelegramHandler {
       const onStepAsync: OnStepCallback | undefined =
         progressMsgId !== null
           ? async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
-              if (toolCalls.length > 0) {
-                const formatted: string = toolCalls
+              const filteredToolCalls: IToolCallSummary[] = toolCalls.filter(
+                (tc: IToolCallSummary): boolean => tc.name !== "think",
+              );
+
+              if (filteredToolCalls.length > 0) {
+                const formatted: string = filteredToolCalls
                   .map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input))
                   .join(", ");
                 stepLogs.push(`Step ${stepNumber}: ${formatted}`);
@@ -1098,6 +1113,35 @@ export class TelegramHandler {
 //#region Private Functions
 
 const RESPONSE_TRUNCATE_LENGTH: number = 5000;
+const TOOL_ARG_TRUNCATE_STEPS: number[] = [500, 250, 125];
+const MAX_BLOCKQUOTE_LENGTH: number = 3000;
+
+function _truncateArg(arg: string, maxLength: number): string {
+  if (arg.length <= maxLength) return arg;
+  return arg.slice(0, maxLength) + "…";
+}
+
+function _compactStepLogs(stepLogs: string[], maxLength: number): string[] {
+  if (stepLogs.length === 0) return [];
+  
+  const result: string[] = [];
+  let currentBlock = "";
+  
+  for (const log of stepLogs) {
+    if (currentBlock.length + log.length + 1 > maxLength && currentBlock.length > 0) {
+      result.push(currentBlock);
+      currentBlock = log;
+    } else {
+      currentBlock = currentBlock.length === 0 ? log : currentBlock + "\n" + log;
+    }
+  }
+  
+  if (currentBlock.length > 0) {
+    result.push(currentBlock);
+  }
+  
+  return result;
+}
 
 function _formatToolCall(name: string, input: Record<string, unknown>): string {
   const key: string | undefined = TOOL_PRIMARY_KEY[name];
@@ -1106,24 +1150,35 @@ function _formatToolCall(name: string, input: Record<string, unknown>): string {
   const escapedName: string = _escapeTelegramHtml(name);
 
   if (!key || !(key in input)) {
-    return reasoningSuffix.length > 0 ? `<b>${escapedName}</b> ${reasoningSuffix}` : `<b>${escapedName}</b>`;
+    return reasoningSuffix.length > 0 ? `${escapedName} ${reasoningSuffix}` : escapedName;
   }
 
   const val: unknown = input[key];
   let formattedArgs: string;
 
   if (typeof val === "object" && val !== null) {
-    const argsStr: string = JSON.stringify(val, null, 2);
-    const truncatedArgs: string = argsStr.length > 200 ? argsStr.slice(0, 200) + "…" : argsStr;
-    formattedArgs = `<code>${_escapeTelegramHtml(truncatedArgs)}</code>`;
+    let argsStr: string = JSON.stringify(val, null, 2);
+    
+    for (const maxLen of TOOL_ARG_TRUNCATE_STEPS) {
+      if (argsStr.length <= maxLen) break;
+      argsStr = _truncateArg(argsStr, maxLen);
+    }
+    
+    formattedArgs = ` ${argsStr}`;
   } else {
-    const valStr: string = String(val ?? "");
-    formattedArgs = `<code>${_escapeTelegramHtml(valStr)}</code>`;
+    let valStr: string = String(val ?? "");
+    
+    for (const maxLen of TOOL_ARG_TRUNCATE_STEPS) {
+      if (valStr.length <= maxLen) break;
+      valStr = _truncateArg(valStr, maxLen);
+    }
+    
+    formattedArgs = ` ${valStr}`;
   }
 
   return reasoningSuffix.length > 0
-    ? `<b>${escapedName}</b>${formattedArgs} ${reasoningSuffix}`
-    : `<b>${escapedName}</b>${formattedArgs}`;
+    ? `${escapedName}${formattedArgs} ${reasoningSuffix}`
+    : `${escapedName}${formattedArgs}`;
 }
 
 function _truncateResponse(text: string): string {

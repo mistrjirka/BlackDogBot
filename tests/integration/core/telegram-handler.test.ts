@@ -398,8 +398,8 @@ describe("TelegramHandler", () => {
     expect(editMessageTextSpy).toHaveBeenCalled();
 
     const serializedCalls: string = JSON.stringify(editMessageTextSpy.mock.calls);
-    expect(serializedCalls).toContain("&lt;unsafe&gt;");
-    expect(serializedCalls).toContain("&amp;");
+    expect(serializedCalls).toContain("&amp;lt;unsafe&amp;gt;");
+    expect(serializedCalls).toContain("&amp;amp;");
     expect(serializedCalls).not.toContain("<unsafe>");
   }, 600000);
 

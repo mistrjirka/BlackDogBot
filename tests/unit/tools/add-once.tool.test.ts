@@ -12,6 +12,6 @@ describe("addOnceTool", () => {
   });
 
   it("should have description about one-time tasks", () => {
-    expect((addOnceTool as any).description).toContain("one-time");
+    expect((addOnceTool as any).description.toLowerCase()).toContain("one-time");
   });
 });

@@ -24,7 +24,7 @@ interface IDeleteFromDatabaseResult {
 
 export const deleteFromDatabaseTool = tool({
   description:
-    "Delete rows from a database table in the default database (blackdog). Requires a WHERE clause to prevent accidental full-table deletes.",
+    "Delete rows from a database table in the default database. Requires a WHERE clause to prevent accidental full-table deletes.",
   inputSchema: z.object({
     tableName: z.string()
       .min(1)

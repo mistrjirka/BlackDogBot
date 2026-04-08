@@ -16,7 +16,7 @@ const columnSchema = z.object({
 });
 
 export const getTableSchemaTool = tool({
-  description: "Get the schema (columns and types) of a specific table in the default database (blackdog)",
+  description: "Get the schema (columns and types) of a specific table in the default database",
   inputSchema: z.object({
     tableName: z.string()
       .min(1)

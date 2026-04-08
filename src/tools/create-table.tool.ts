@@ -27,7 +27,7 @@ const columnDefinitionSchema = z.object({
 });
 
 export const createTableTool = tool({
-  description: "Create a new table in the default database (blackdog). Call this after prerequisite checks/tool calls are complete for the current run.",
+  description: "Create a new table in the default database. Call this after prerequisite checks/tool calls are complete for the current run.",
   inputSchema: z.object({
     tableName: z.string()
       .min(1)

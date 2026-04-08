@@ -7,7 +7,7 @@ import type { IQueryResult } from "../helpers/litesql.js";
 const DEFAULT_DATABASE = "blackdog";
 
 export const readFromDatabaseTool = tool({
-  description: "Read rows from a table in the default database (blackdog) with optional filtering, ordering, and column selection",
+  description: "Read rows from a table in the default database with optional filtering, ordering, and column selection",
   inputSchema: z.object({
     tableName: z.string()
       .min(1)
