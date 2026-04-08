@@ -55,6 +55,12 @@ export const createTableTool = tool({
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
+      for (const col of columns) {
+        if (col.defaultValue !== undefined) {
+          litesql.validateDefaultValue(col.type, col.defaultValue);
+        }
+      }
+
       let dbExists: boolean = await litesql.databaseExistsAsync(DEFAULT_DATABASE);
       if (!dbExists) {
         await litesql.createDatabaseAsync(DEFAULT_DATABASE);

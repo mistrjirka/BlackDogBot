@@ -181,6 +181,10 @@ export class PromptService {
   public async resetAllPromptsAsync(): Promise<void> {
     this._ensureInitialized();
 
+    await this._resetAllPromptsInternalAsync();
+  }
+
+  private async _resetAllPromptsInternalAsync(): Promise<void> {
     const defaultFiles: string[] = await this._listFilesRecursiveAsync(this._defaultsDir);
 
     for (const defaultFile of defaultFiles) {
@@ -522,6 +526,7 @@ export class PromptService {
 
     await this._writeStoredCommitHashAsync(currentHash);
     await this._pruneOldBackupsAsync();
+    await this._resetAllPromptsInternalAsync();
   }
 
   private _getBackupFilename(originalPath: string, timestamp: string): string {

@@ -206,7 +206,7 @@ export async function ensureDefaultDatabaseAsync(): Promise<void> {
 }
 
 export function getOldDatumBackupDir(): string {
-  return path.join(process.cwd(), ".old.datumofthesave");
+  return path.join(getBaseDir(), ".old.datumofthesave");
 }
 
 export function getCommitHashPath(): string {

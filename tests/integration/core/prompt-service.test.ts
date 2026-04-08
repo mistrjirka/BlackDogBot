@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { PromptService } from "../../../src/services/prompt.service.js";
+import { getOldDatumBackupDir, getCommitHashPath } from "../../../src/utils/paths.js";
 
 //#region Helpers
 
@@ -203,6 +204,44 @@ describe("PromptService", () => {
     await expect(service.getPromptAsync("nonexistent-prompt-xyz")).rejects.toThrow(
       "Prompt not found",
     );
+  });
+
+  it("should auto-update prompts on startup when git commit hash differs", async () => {
+    const service: PromptService = PromptService.getInstance();
+
+    await service.initializeAsync();
+
+    const originalRaw: string = await service.getPromptRawAsync("main-agent");
+
+    await service.writePromptAsync("main-agent", "user-modified content that should be replaced");
+
+    service.clearCache();
+
+    const userModified: string = await service.getPromptRawAsync("main-agent");
+    expect(userModified).toBe("user-modified content that should be replaced");
+
+    const commitHashPath: string = getCommitHashPath();
+    await fs.writeFile(commitHashPath, "old-commit-hash-that-does-not-match", "utf-8");
+
+    (PromptService as unknown as { _instance: null })._instance = null;
+    const service2: PromptService = PromptService.getInstance();
+    await service2.initializeAsync();
+
+    service2.clearCache();
+
+    const afterAutoUpdate: string = await service2.getPromptRawAsync("main-agent");
+    expect(afterAutoUpdate).toBe(originalRaw);
+
+    const backupDir: string = getOldDatumBackupDir();
+    const backupFiles: string[] = await fs.readdir(backupDir);
+    const mainAgentBackups: string[] = backupFiles.filter((f: string) => f.includes("main-agent"));
+    expect(mainAgentBackups.length).toBeGreaterThan(0);
+
+    const backupContent: string = await fs.readFile(
+      path.join(backupDir, mainAgentBackups[0]),
+      "utf-8",
+    );
+    expect(backupContent).toBe("user-modified content that should be replaced");
   });
 });
 

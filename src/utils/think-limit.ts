@@ -15,12 +15,6 @@ export interface ThinkLimitConfig {
    * Default: 50,000 (approx. 12,500 tokens)
    */
   maxTotalThinkCharacters?: number;
-
-  /**
-   * Maximum individual thought length in characters.
-   * Default: 2,000 (approx. 500 tokens)
-   */
-  maxSingleThoughtLength?: number;
 }
 
 /**
@@ -31,44 +25,27 @@ export class ThinkOperationTracker {
   private _totalThinkCharacters: number = 0;
   private _maxThinkCount: number;
   private _maxTotalCharacters: number;
-  private _maxSingleThought: number;
   private _logger: LoggerService;
 
   constructor(config: ThinkLimitConfig = {}) {
     this._logger = LoggerService.getInstance();
     this._maxThinkCount = config.maxThinkOperations ?? 20;
     this._maxTotalCharacters = config.maxTotalThinkCharacters ?? 50000;
-    this._maxSingleThought = config.maxSingleThoughtLength ?? 2000;
 
     this._logger.info("ThinkOperationTracker initialized", {
       maxThinkOperations: this._maxThinkCount,
       maxTotalCharacters: this._maxTotalCharacters,
-      maxSingleThoughtLength: this._maxSingleThought,
     });
   }
 
   /**
    * Record a think operation and check if limits are being approached.
-   * Returns the thought (potentially truncated) and whether it was modified.
+   * Returns the thought and whether it was truncated (always false - truncation disabled).
    */
   recordThinkOperation(thought: string): { thought: string; wasTruncated: boolean } {
     this._thinkCount++;
     const thoughtLength = thought.length;
     this._totalThinkCharacters += thoughtLength;
-
-    // Check for single thought length limit
-    if (thoughtLength > this._maxSingleThought) {
-      const truncated = thought.substring(0, this._maxSingleThought) + 
-                       `\n\n[TRUNCATED: original length ${thoughtLength} chars, kept ${this._maxSingleThought}]`;
-      
-      this._logger.warn("Single thought exceeded maximum length", {
-        maxLength: this._maxSingleThought,
-        actualLength: thoughtLength,
-        excess: thoughtLength - this._maxSingleThought,
-      });
-
-      return { thought: truncated, wasTruncated: true };
-    }
 
     // Check if we're approaching limits
     if (this._thinkCount >= this._maxThinkCount * 0.8) {

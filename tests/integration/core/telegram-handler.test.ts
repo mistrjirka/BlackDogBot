@@ -398,8 +398,8 @@ describe("TelegramHandler", () => {
     expect(editMessageTextSpy).toHaveBeenCalled();
 
     const serializedCalls: string = JSON.stringify(editMessageTextSpy.mock.calls);
-    expect(serializedCalls).toContain("&amp;lt;unsafe&amp;gt;");
-    expect(serializedCalls).toContain("&amp;amp;");
+    expect(serializedCalls).toContain("&lt;unsafe&gt;");
+    expect(serializedCalls).toContain("&amp;");
     expect(serializedCalls).not.toContain("<unsafe>");
   }, 600000);
 
@@ -526,6 +526,188 @@ describe("TelegramHandler", () => {
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
     await expect(handler.handleMessageAsync(ctx)).resolves.toBeUndefined();
+  }, 600000);
+
+  it("should treat 'message is not modified' as noise (no warning) on primary path", async () => {
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    const loggerService: LoggerService = LoggerService.getInstance();
+    const warnSpy = vi.spyOn(loggerService, "warn").mockClear();
+
+    vi.spyOn(mainAgent, "initializeForChatAsync").mockResolvedValue(undefined);
+    vi.spyOn(mainAgent, "processMessageForChatAsync").mockResolvedValue({ text: "Done", stepsCount: 1 });
+
+    const replySpy: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue({ message_id: 6001 });
+    const editMessageTextSpy: ReturnType<typeof vi.fn> = vi.fn()
+      .mockRejectedValue(new Error("Bad Request: message is not modified"));
+
+    const ctx: Context = makeCtx({
+      chatId: 100,
+      text: "test",
+      replyImpl: replySpy,
+    });
+    (ctx as unknown as { api?: unknown }).api = {
+      editMessageText: editMessageTextSpy,
+    };
+
+    const handler: TelegramHandler = TelegramHandler.getInstance();
+    await handler.handleMessageAsync(ctx);
+
+    expect(editMessageTextSpy).toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Telegram editMessageText failed"),
+      expect.anything(),
+    );
+  }, 600000);
+
+  it("should handle 'message too long' gracefully on primary path (triggers retry path)", async () => {
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    const loggerService: LoggerService = LoggerService.getInstance();
+    const warnSpy = vi.spyOn(loggerService, "warn").mockClear();
+
+    let capturedOnStep: ((stepNumber: number, toolCalls: Array<{ name: string; input: Record<string, unknown> }>) => Promise<void>) | undefined;
+
+    vi.spyOn(mainAgent, "initializeForChatAsync").mockImplementation(async (
+      _chatId,
+      _sender,
+      _photoSender,
+      onStepAsync,
+    ) => {
+      capturedOnStep = onStepAsync;
+    });
+
+    const longArg = "echo " + "x".repeat(5000);
+    vi.spyOn(mainAgent, "processMessageForChatAsync").mockImplementation(async () => {
+      if (capturedOnStep) {
+        await capturedOnStep(1, [{ name: "run_cmd", input: { command: longArg } }]);
+      }
+      return { text: "Done", stepsCount: 1 };
+    });
+
+    const replySpy: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue({ message_id: 6001 });
+    const editMessageTextSpy: ReturnType<typeof vi.fn> = vi.fn()
+      .mockRejectedValueOnce(new Error("Bad Request: message too long"))
+      .mockResolvedValueOnce(undefined);
+
+    const ctx: Context = makeCtx({
+      chatId: 100,
+      text: "test",
+      replyImpl: replySpy,
+    });
+    (ctx as unknown as { api?: unknown }).api = {
+      editMessageText: editMessageTextSpy,
+    };
+
+    const handler: TelegramHandler = TelegramHandler.getInstance();
+    await handler.handleMessageAsync(ctx);
+
+    expect(editMessageTextSpy).toHaveBeenCalledTimes(2);
+  }, 600000);
+
+  it("should surface genuine edit failures as warning on primary path", async () => {
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    const loggerService: LoggerService = LoggerService.getInstance();
+    const warnSpy = vi.spyOn(loggerService, "warn").mockClear();
+
+    vi.spyOn(mainAgent, "initializeForChatAsync").mockResolvedValue(undefined);
+    vi.spyOn(mainAgent, "processMessageForChatAsync").mockResolvedValue({ text: "Done", stepsCount: 1 });
+
+    const replySpy: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue({ message_id: 6001 });
+    const editMessageTextSpy: ReturnType<typeof vi.fn> = vi.fn()
+      .mockRejectedValue(new Error("Bad Request: chat not found"));
+
+    const ctx: Context = makeCtx({
+      chatId: 100,
+      text: "test",
+      replyImpl: replySpy,
+    });
+    (ctx as unknown as { api?: unknown }).api = {
+      editMessageText: editMessageTextSpy,
+    };
+
+    const handler: TelegramHandler = TelegramHandler.getInstance();
+    await handler.handleMessageAsync(ctx);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Telegram editMessageText failed",
+      expect.objectContaining({ error: "Bad Request: chat not found" }),
+    );
+  }, 600000);
+
+  it("should treat 'message is not modified' as noise on merged-queue path", async () => {
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    const handler: TelegramHandler = TelegramHandler.getInstance();
+    const loggerService: LoggerService = LoggerService.getInstance();
+    const warnSpy = vi.spyOn(loggerService, "warn").mockClear();
+
+    vi.spyOn(mainAgent, "initializeForChatAsync").mockResolvedValue(undefined);
+    vi.spyOn(mainAgent, "processMessageForChatAsync").mockResolvedValue({ text: "queued response", stepsCount: 1 });
+
+    const fakeBotApi = {
+      sendMessage: vi.fn().mockResolvedValue({ message_id: 7001 }),
+      editMessageText: vi.fn().mockRejectedValue(new Error("Bad Request: message is not modified")),
+    };
+    (handler as unknown as { _bot: unknown })._bot = { api: fakeBotApi };
+
+    await (handler as unknown as {
+      _processMergedQueuedMessageAsync: (chatId: string, queuedMessages: Array<{ text: string; messageId: number | null; imageAttachments: unknown[] }>) => Promise<void>
+    })._processMergedQueuedMessageAsync("100", [
+      { text: "queued message", messageId: null, imageAttachments: [] },
+    ]);
+
+    expect(fakeBotApi.editMessageText).toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Telegram editMessageText failed"),
+      expect.anything(),
+    );
+  }, 600000);
+
+  it("should handle 'message too long' gracefully on merged-queue path (no crash)", async () => {
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    const handler: TelegramHandler = TelegramHandler.getInstance();
+
+    vi.spyOn(mainAgent, "initializeForChatAsync").mockResolvedValue(undefined);
+    vi.spyOn(mainAgent, "processMessageForChatAsync").mockResolvedValue({ text: "queued response", stepsCount: 1 });
+
+    const fakeBotApi = {
+      sendMessage: vi.fn().mockResolvedValue({ message_id: 7001 }),
+      editMessageText: vi.fn().mockRejectedValue(new Error("Bad Request: message too long")),
+    };
+    (handler as unknown as { _bot: unknown })._bot = { api: fakeBotApi };
+
+    await (handler as unknown as {
+      _processMergedQueuedMessageAsync: (chatId: string, queuedMessages: Array<{ text: string; messageId: number | null; imageAttachments: unknown[] }>) => Promise<void>
+    })._processMergedQueuedMessageAsync("100", [
+      { text: "queued message", messageId: null, imageAttachments: [] },
+    ]);
+
+    expect(fakeBotApi.editMessageText).toHaveBeenCalled();
+  }, 600000);
+
+  it("should surface genuine edit failures as warning on merged-queue path", async () => {
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    const handler: TelegramHandler = TelegramHandler.getInstance();
+    const loggerService: LoggerService = LoggerService.getInstance();
+    const warnSpy = vi.spyOn(loggerService, "warn").mockClear();
+
+    vi.spyOn(mainAgent, "initializeForChatAsync").mockResolvedValue(undefined);
+    vi.spyOn(mainAgent, "processMessageForChatAsync").mockResolvedValue({ text: "queued response", stepsCount: 1 });
+
+    const fakeBotApi = {
+      sendMessage: vi.fn().mockResolvedValue({ message_id: 7001 }),
+      editMessageText: vi.fn().mockRejectedValue(new Error("Bad Request: chat not found")),
+    };
+    (handler as unknown as { _bot: unknown })._bot = { api: fakeBotApi };
+
+    await (handler as unknown as {
+      _processMergedQueuedMessageAsync: (chatId: string, queuedMessages: Array<{ text: string; messageId: number | null; imageAttachments: unknown[] }>) => Promise<void>
+    })._processMergedQueuedMessageAsync("100", [
+      { text: "queued message", messageId: null, imageAttachments: [] },
+    ]);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Telegram editMessageText failed",
+      expect.objectContaining({ error: "Bad Request: chat not found" }),
+    );
   }, 600000);
 });
 
