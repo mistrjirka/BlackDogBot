@@ -580,7 +580,7 @@ export const CRON_VALID_TOOL_NAMES = [
   "edit_file",
   "run_job",
   "get_jobs",
-  "list_crons",
+  "list_timed",
   "fetch_rss",
   "searxng",
   "crawl4ai",
@@ -703,10 +703,10 @@ export const editIntervalToolInputSchema = z.object({
 export const editInstructionsToolInputSchema = z.object({
   taskId: z.string()
     .min(1)
-    .describe("ID of the cron task to update"),
+    .describe("ID of the scheduled task to update"),
   instructions: z.string()
     .min(1)
-    .describe("Complete NEW instructions text for the cron task (full replacement)."),
+    .describe("Complete NEW instructions text for the scheduled task (full replacement)."),
   intention: z.string()
     .min(1)
     .describe("Why this instruction update is needed. Metadata only; does not modify instructions by itself."),
@@ -741,7 +741,7 @@ export const removeCronToolOutputSchema = z.object({
 export const getCronToolInputSchema = z.object({
   taskId: z.string()
     .min(1)
-    .describe("ID of the cron task to retrieve"),
+    .describe("ID of the scheduled task to retrieve"),
 });
 
 export const getCronToolOutputSchema = z.object({
@@ -797,7 +797,7 @@ export const setJobScheduleToolInputSchema = z.object({
     expression: z.string()
       .optional(),
   })
-    .describe("Schedule configuration (same format as add_cron)"),
+    .describe("Schedule configuration (same format as add_once or add_interval)"),
 }).superRefine((data, ctx) => {
   if (data.schedule.type === "once") {
     if (!data.schedule.runAt || data.schedule.runAt.trim().length === 0) {
@@ -1364,10 +1364,13 @@ const TASK_ID_PLACEHOLDER = "TASK_ID_PLACEHOLDER";
  * use the same taskId that was passed to the calling tool).
  */
 export const TOOL_PREREQUISITES: Record<string, { tool: string; args: Record<string, unknown> }[]> = {
-  edit_cron: [
-    { tool: "get_cron", args: { taskId: TASK_ID_PLACEHOLDER } },
+  edit_once: [
+    { tool: "get_timed", args: { taskId: TASK_ID_PLACEHOLDER } },
   ],
-  edit_cron_instructions: [
-    { tool: "get_cron", args: { taskId: TASK_ID_PLACEHOLDER } },
+  edit_interval: [
+    { tool: "get_timed", args: { taskId: TASK_ID_PLACEHOLDER } },
+  ],
+  edit_instructions: [
+    { tool: "get_timed", args: { taskId: TASK_ID_PLACEHOLDER } },
   ],
 };

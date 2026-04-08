@@ -31,7 +31,7 @@ const TOOL_DESCRIPTION: string =
   "You MUST provide the COMPLETE new instructions text in the 'instructions' field (full replacement), plus 'intention' explaining why the change is needed. " +
   "Optionally provide 'tools' to replace the task tool list in the same call when instruction changes require different tools. " +
   "IMPORTANT: 'intention' is metadata only and does NOT change instructions by itself. " +
-  "IMPORTANT: You MUST call 'get_cron' first to retrieve the current task configuration before using this tool.";
+  "IMPORTANT: You MUST call 'get_timed' first to retrieve the current task configuration before using this tool.";
 
 //#endregion Constants
 

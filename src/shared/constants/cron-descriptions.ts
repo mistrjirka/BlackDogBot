@@ -84,8 +84,8 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "List all jobs, optionally filtered by status (creating | ready | running | completed | failed). " +
     "Args: status (enum, optional).",
 
-  list_crons:
-    "List all scheduled cron tasks managed by the scheduler. " +
+  list_timed:
+    "List all scheduled tasks managed by the scheduler. " +
     "Args: enabledOnly (boolean, default false).",
 
   fetch_rss:

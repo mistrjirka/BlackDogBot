@@ -25,7 +25,7 @@ const TOOL_DESCRIPTION: string =
   "Modify an existing one-time scheduled task. " +
   "You can patch non-instruction fields (name, description, tools, runAt, notifyUser, enabled). " +
   "send_message performs internal deduplication against previous cron messages. " +
-  "IMPORTANT: You MUST call 'get_cron' first to retrieve the current task configuration before using this tool.";
+  "IMPORTANT: You MUST call 'get_timed' first to retrieve the current task configuration before using this tool.";
 
 //#endregion Const
 
