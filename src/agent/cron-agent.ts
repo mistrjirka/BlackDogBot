@@ -296,7 +296,7 @@ export class CronAgent extends BaseAgentBase {
       write_file: createWriteFileTool(readTracker),
       append_file: appendFileTool,
       edit_file: editFileTool,
-      list_crons: listTimedTool,
+      list_timed: listTimedTool,
       fetch_rss: fetchRssTool,
       searxng: searxngTool,
       crawl4ai: crawl4aiTool,
