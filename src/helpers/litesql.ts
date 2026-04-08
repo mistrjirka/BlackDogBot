@@ -29,6 +29,8 @@ export interface IColumnInfo {
   defaultValue: string | null;
 }
 
+//#region Types and Validation
+
 export interface IInsertResult {
   insertedCount: number;
   lastRowId: number;
@@ -46,7 +48,67 @@ export interface IQueryResult {
   totalCount: number;
 }
 
-//#endregion Types
+//#endregion Types and Validation
+
+//#region Validation Functions
+
+const SQL_LITERAL_TYPES = ["TEXT", "INTEGER", "REAL", "BLOB"] as const;
+type SqlLiteralType = (typeof SQL_LITERAL_TYPES)[number];
+
+const BLOCKED_CHARS_RE = /[;{}\[\]\\]/;
+const INTEGER_VALID_RE = /^[0-9+-]+$/;
+const REAL_VALID_RE = /^[0-9+-.]+[0-9]*$/;
+
+export function validateDefaultValue(type: string, defaultValue: string | undefined | null): void {
+  if (defaultValue === undefined || defaultValue === null) {
+    return;
+  }
+
+  if (typeof defaultValue !== "string") {
+    throw new Error("Invalid default value for column: must be a string");
+  }
+
+  const upperType: string = type.toUpperCase().trim() as SqlLiteralType;
+
+  if (!SQL_LITERAL_TYPES.includes(upperType as SqlLiteralType)) {
+    return;
+  }
+
+  if (BLOCKED_CHARS_RE.test(defaultValue)) {
+    throw new Error(
+      `Invalid default value for column: contains blocked characters ( ; { } [ ] \\ )`
+    );
+  }
+
+  if (defaultValue.includes("'")) {
+    const singleQuotes: string[] = defaultValue.split("'");
+    if (singleQuotes.length % 2 === 0) {
+      throw new Error("Invalid default value for column: unmatched quote in string literal");
+    }
+  }
+
+  if (defaultValue.includes("--")) {
+    throw new Error("Invalid default value for column: SQL comment marker not allowed");
+  }
+
+  if (defaultValue.includes("/*") || defaultValue.includes("*/")) {
+    throw new Error("Invalid default value for column: block comment markers not allowed");
+  }
+
+  if (upperType === "INTEGER") {
+    if (!INTEGER_VALID_RE.test(defaultValue)) {
+      throw new Error("Invalid default value for column: INTEGER default must be a numeric literal");
+    }
+  }
+
+  if (upperType === "REAL") {
+    if (!REAL_VALID_RE.test(defaultValue)) {
+      throw new Error("Invalid default value for column: REAL default must be a numeric literal");
+    }
+  }
+}
+
+//#endregion Validation Functions
 
 //#region Public Functions
 
@@ -174,6 +236,10 @@ export async function createTableAsync(
 
   try {
     const columnDefs: string[] = columns.map((col) => {
+      if (col.defaultValue !== undefined) {
+        validateDefaultValue(col.type, col.defaultValue);
+      }
+
       let def: string = `"${col.name}" ${col.type.toUpperCase()}`;
 
       if (col.primaryKey) {

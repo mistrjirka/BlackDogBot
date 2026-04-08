@@ -7,7 +7,6 @@ import { ThinkOperationTracker } from "../utils/think-limit.js";
 const thinkTracker = new ThinkOperationTracker({
   maxThinkOperations: 30,
   maxTotalThinkCharacters: 100000,
-  maxSingleThoughtLength: 3000,
 });
 
 export const thinkTool = tool({

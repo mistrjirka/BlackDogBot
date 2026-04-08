@@ -315,26 +315,15 @@ export class TelegramHandler {
 
               const progressText: string = buildProgressText("⚙️ Working...");
 
-              try {
-                await ctx.api.editMessageText(chatId, progressMsgId!, progressText, {
-                  parse_mode: "HTML",
-                });
-                this._logger.debug("Telegram progress message updated", {
-                  chatId,
-                  stepNumber,
-                  progressLength: progressText.length,
-                  hasTrace: stepLogs.length > 0,
-                });
-              } catch (editError: unknown) {
-                this._logger.warn("Failed to update Telegram progress message", {
-                  chatId,
-                  stepNumber,
-                  progressLength: progressText.length,
-                  hasTrace: stepLogs.length > 0,
-                  error: editError instanceof Error ? editError.message : String(editError),
-                });
-                // Ignore edit failures
-              }
+              await _tryEditMessageTextAsync(
+                ctx.api,
+                this._logger,
+                chatId,
+                progressMsgId!,
+                progressText,
+                "HTML",
+                "progress-step",
+              );
             }
           : undefined;
 
@@ -364,29 +353,24 @@ export class TelegramHandler {
 
         // Update progress message to done
         if (progressMsgId !== null) {
-          try {
-            const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
-            const doneProgressText: string = buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`);
-            await ctx.api.editMessageText(
-              chatId,
-              progressMsgId,
-              doneProgressText,
-              { parse_mode: "HTML" }
-            );
+          const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
+          const doneProgressText: string = buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`);
+          const edited: boolean = await _tryEditMessageTextAsync(
+            ctx.api,
+            this._logger,
+            chatId,
+            progressMsgId,
+            doneProgressText,
+            "HTML",
+            "progress-done",
+          );
+          if (edited) {
             this._logger.debug("Telegram progress marked done", {
               chatId,
               stepsCount: result.stepsCount,
               progressLength: doneProgressText.length,
               hasTrace: stepLogs.length > 0,
             });
-          } catch (doneEditError: unknown) {
-            this._logger.warn("Failed to mark Telegram progress as done", {
-              chatId,
-              stepsCount: result.stepsCount,
-              hasTrace: stepLogs.length > 0,
-              error: doneEditError instanceof Error ? doneEditError.message : String(doneEditError),
-            });
-            // Ignore
           }
         }
 
@@ -461,23 +445,22 @@ export class TelegramHandler {
     } catch (error: unknown) {
       // Update progress message to error state
       if (progressMsgId !== null) {
-        try {
-          const errorProgressText: string = buildProgressText("❌ Error");
-          await ctx.api.editMessageText(chatId, progressMsgId, errorProgressText, {
-            parse_mode: "HTML",
-          });
+        const errorProgressText: string = buildProgressText("❌ Error");
+        const edited: boolean = await _tryEditMessageTextAsync(
+          ctx.api,
+          this._logger,
+          chatId,
+          progressMsgId,
+          errorProgressText,
+          "HTML",
+          "progress-error",
+        );
+        if (edited) {
           this._logger.debug("Telegram progress marked error", {
             chatId,
             progressLength: errorProgressText.length,
             hasTrace: stepLogs.length > 0,
           });
-        } catch (errorEditError: unknown) {
-          this._logger.warn("Failed to mark Telegram progress as error", {
-            chatId,
-            hasTrace: stepLogs.length > 0,
-            error: errorEditError instanceof Error ? errorEditError.message : String(errorEditError),
-          });
-          // Ignore
         }
       }
 
@@ -850,13 +833,15 @@ export class TelegramHandler {
                 stepLogs.push(`Step ${stepNumber}: ${formatted}`);
               }
 
-              try {
-                await bot!.api.editMessageText(chatId, progressMsgId!, buildProgressText("⚙️ Working..."), {
-                  parse_mode: "HTML",
-                });
-              } catch {
-                // Ignore transient progress edit failures.
-              }
+              await _tryEditMessageTextAsync(
+                bot!.api,
+                this._logger,
+                chatId,
+                progressMsgId!,
+                buildProgressText("⚙️ Working..."),
+                "HTML",
+                "queue-progress-step",
+              );
             }
           : undefined;
 
@@ -876,17 +861,16 @@ export class TelegramHandler {
         }
 
         if (progressMsgId !== null) {
-          try {
-            const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
-            await bot!.api.editMessageText(
-              chatId,
-              progressMsgId,
-              buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`),
-              { parse_mode: "HTML" },
-            );
-          } catch {
-            // Ignore done-state edit failures.
-          }
+          const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
+          await _tryEditMessageTextAsync(
+            bot!.api,
+            this._logger,
+            chatId,
+            progressMsgId,
+            buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`),
+            "HTML",
+            "queue-progress-done",
+          );
         }
 
         this._logger.info("Merged queued Telegram messages processed", {
@@ -919,17 +903,16 @@ export class TelegramHandler {
       }
 
       if (progressMsgId !== null) {
-        try {
-          const stepWord: string = totalStepsCount === 1 ? "step" : "steps";
-          await bot!.api.editMessageText(
-            chatId,
-            progressMsgId,
-            buildProgressText(`✅ Done (${totalStepsCount} ${stepWord})`),
-            { parse_mode: "HTML" },
-          );
-        } catch {
-          // Ignore done-state edit failures.
-        }
+        const stepWord: string = totalStepsCount === 1 ? "step" : "steps";
+        await _tryEditMessageTextAsync(
+          bot!.api,
+          this._logger,
+          chatId,
+          progressMsgId,
+          buildProgressText(`✅ Done (${totalStepsCount} ${stepWord})`),
+          "HTML",
+          "queue-progress-done-images",
+        );
       }
 
       this._logger.info("Merged queued Telegram messages processed", {
@@ -952,13 +935,15 @@ export class TelegramHandler {
       });
 
       if (progressMsgId !== null) {
-        try {
-          await bot!.api.editMessageText(chatId, progressMsgId, buildProgressText("❌ Error"), {
-            parse_mode: "HTML",
-          });
-        } catch {
-          // Ignore error-state edit failures.
-        }
+        await _tryEditMessageTextAsync(
+          bot!.api,
+          this._logger,
+          chatId,
+          progressMsgId,
+          buildProgressText("❌ Error"),
+          "HTML",
+          "queue-progress-error",
+        );
       }
     }
   }
@@ -1115,6 +1100,7 @@ export class TelegramHandler {
 const RESPONSE_TRUNCATE_LENGTH: number = 5000;
 const TOOL_ARG_TRUNCATE_STEPS: number[] = [500, 250, 125];
 const MAX_BLOCKQUOTE_LENGTH: number = 3000;
+const TELEGRAM_EDIT_MAX_LENGTH: number = 4096;
 
 function _truncateArg(arg: string, maxLength: number): string {
   if (arg.length <= maxLength) return arg;
@@ -1247,6 +1233,98 @@ function _detectThinkLeakInModelText(text: string): { hasThinkTags: boolean; has
     hasThinkTags,
     hasReasoningPhrases,
   };
+}
+
+async function _tryEditMessageTextAsync(
+  editApi: { editMessageText: (chatId: string, messageId: number, text: string, options?: Record<string, unknown>) => Promise<unknown> },
+  logger: LoggerService,
+  chatId: string,
+  messageId: number,
+  text: string,
+  parseMode: "HTML" | undefined,
+  source: string,
+): Promise<boolean> {
+  try {
+    await editApi.editMessageText(chatId, messageId, text, { parse_mode: parseMode });
+    return true;
+  } catch (error: unknown) {
+    const errorMessage: string = error instanceof Error ? error.message : String(error);
+    const lowerError: string = errorMessage.toLowerCase();
+
+    if (lowerError.includes("message is not modified") || lowerError.includes("message not modified")) {
+      logger.debug("Telegram editMessageText skipped (not modified)", {
+        chatId,
+        messageId,
+        source,
+      });
+      return true;
+    }
+
+    if (lowerError.includes("message too long") || lowerError.includes("too long")) {
+      const truncated: string = _truncateForEdit(text, TELEGRAM_EDIT_MAX_LENGTH);
+      if (truncated !== text) {
+        try {
+          await editApi.editMessageText(chatId, messageId, truncated, { parse_mode: parseMode });
+          logger.debug("Telegram editMessageText succeeded after truncation", {
+            chatId,
+            messageId,
+            source,
+            originalLength: text.length,
+            truncatedLength: truncated.length,
+          });
+          return true;
+        } catch (retryError: unknown) {
+          const retryMessage: string = retryError instanceof Error ? retryError.message : String(retryError);
+          if (retryMessage.toLowerCase().includes("message is not modified") || retryMessage.toLowerCase().includes("message not modified")) {
+            logger.debug("Telegram editMessageText skipped after truncation (not modified)", {
+              chatId,
+              messageId,
+              source,
+            });
+            return true;
+          }
+          logger.warn("Telegram editMessageText failed even after truncation", {
+            chatId,
+            messageId,
+            source,
+            error: retryMessage,
+          });
+          return false;
+        }
+      }
+      logger.warn("Telegram editMessageText failed: message too long (truncation gave same result)", {
+        chatId,
+        messageId,
+        source,
+        textLength: text.length,
+      });
+      return false;
+    }
+
+    logger.warn("Telegram editMessageText failed", {
+      chatId,
+      messageId,
+      source,
+      error: errorMessage,
+    });
+    return false;
+  }
+}
+
+function _truncateForEdit(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  const notice: string = " [truncated]";
+  const noticeLength: number = notice.length;
+  const availableLength: number = maxLength - noticeLength;
+
+  if (availableLength <= 0) {
+    return text.slice(0, Math.max(0, maxLength - 1)) + "…";
+  }
+
+  return text.slice(0, availableLength) + notice;
 }
 
 //#endregion Private Functions
