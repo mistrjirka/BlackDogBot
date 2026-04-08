@@ -13,6 +13,8 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
   "edit_file",
   "add_knowledge",
   "edit_knowledge",
+  "add_cron",
+  "remove_cron",
   "add_once",
   "add_interval",
   "edit_once",

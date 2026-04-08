@@ -36,20 +36,6 @@ import {
 
 //#region Constants
 
-const TimedTools: ReadonlySet<string> = new Set(["add_once", "add_interval", "edit_once", "edit_interval", "edit_instructions"]);
-
-const TimedToolKeys: Record<string, string> = {
-  add_once: "name",
-  add_interval: "name",
-  edit_once: "taskId",
-  edit_interval: "taskId",
-  edit_instructions: "taskId",
-  remove_timed: "taskId",
-  list_timed: "taskId",
-  get_timed: "taskId",
-  run_timed: "taskId",
-};
-
 const TOOL_PRIMARY_KEY: Record<string, string> = {
   run_cmd: "command",
   fetch_rss: "url",
