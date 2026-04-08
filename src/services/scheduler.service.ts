@@ -1,8 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { CronScheduler } from "./cron-scheduler.js";
-
 import { IScheduledTask } from "../shared/types/index.js";
 import { scheduledTaskSchema } from "../shared/schemas/index.js";
 import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
@@ -45,7 +43,6 @@ export class SchedulerService {
 
   private static _instance: SchedulerService | null;
   private _logger: LoggerService;
-  private _cronScheduler: CronScheduler;
   private _tasks: Map<string, IScheduledTask>;
   private _taskExecutor: ((task: IScheduledTask) => Promise<void>) | null;
   private _onTaskFailure: ((task: IScheduledTask, error: string) => Promise<void>) | null;
@@ -65,7 +62,6 @@ export class SchedulerService {
 
   private constructor() {
     this._logger = LoggerService.getInstance();
-    this._cronScheduler = new CronScheduler();
     this._tasks = new Map();
     this._taskExecutor = null;
     this._onTaskFailure = null;
@@ -129,8 +125,6 @@ export class SchedulerService {
     this._maxParallelCrons = config.scheduler.maxParallelCrons ?? DEFAULT_MAX_PARALLEL_CRONS;
     this._cronQueueSize = config.scheduler.cronQueueSize ?? DEFAULT_CRON_QUEUE_SIZE;
 
-    this._cronScheduler.start();
-
     for (const task of this._tasks.values()) {
       if (task.enabled) {
         this._scheduleTask(task);
@@ -146,8 +140,6 @@ export class SchedulerService {
   }
 
   public async stopAsync(): Promise<void> {
-    this._cronScheduler.stop();
-
     for (const [taskId, intervalId] of this._intervals) {
       clearInterval(intervalId);
       this._intervals.delete(taskId);
@@ -618,8 +610,6 @@ export class SchedulerService {
   }
 
   private _unscheduleTask(taskId: string): void {
-    this._cronScheduler.removeJob(taskId);
-
     const intervalId: NodeJS.Timeout | undefined =
       this._intervals.get(taskId);
 
