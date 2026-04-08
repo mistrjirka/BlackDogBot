@@ -13,7 +13,7 @@ import {
   getJobTestsDir,
   getKnowledgeDir,
   getLanceDbDir,
-  getCronDir,
+  getTimedDir,
   getLogsDir,
   getCacheDir,
   getPromptsDir,
@@ -23,7 +23,7 @@ import {
   getSkillStatePath,
   getNodeFilePath,
   getNodeTestFilePath,
-  getCronFilePath,
+  getTimedFilePath,
   getPromptFilePath,
   getWorkspaceDir,
   getRssStateDir,
@@ -116,8 +116,8 @@ describe("paths utility", () => {
     expect(lanceDir.startsWith(knowledgeDir)).toBe(true);
   });
 
-  it("should return cron, logs, prompts, and prompt-fragments directories", () => {
-    expect(getCronDir()).toContain("cron");
+  it("should return timed, logs, prompts, and prompt-fragments directories", () => {
+    expect(getTimedDir()).toContain("timed");
     expect(getLogsDir()).toContain("logs");
     expect(getCacheDir()).toContain("cache");
     expect(getPromptsDir()).toContain("prompts");
@@ -174,11 +174,11 @@ describe("paths utility", () => {
     expect(nodeTestFilePath).toContain("tests");
   });
 
-  it("should return cron and prompt file paths", () => {
-    const cronFilePath: string = getCronFilePath("task-1");
+  it("should return timed and prompt file paths", () => {
+    const timedFilePath: string = getTimedFilePath("task-1");
     const promptFilePath: string = getPromptFilePath("main-agent");
 
-    expect(cronFilePath).toContain("task-1.json");
+    expect(timedFilePath).toContain("task-1.json");
     expect(promptFilePath).toContain("main-agent.md");
   });
 
@@ -198,13 +198,13 @@ describe("paths utility", () => {
     // Verify a selection of directories exist
     const base: string = getBaseDir();
     const skillsDir: string = getSkillsDir();
-    const cronDir: string = getCronDir();
+    const timedDir: string = getTimedDir();
     const logsDir: string = getLogsDir();
     const promptsDir: string = getPromptsDir();
     const workspaceDir: string = getWorkspaceDir();
     const rssStateDir: string = getRssStateDir();
 
-    for (const dir of [base, skillsDir, cronDir, logsDir, promptsDir, workspaceDir, rssStateDir]) {
+    for (const dir of [base, skillsDir, timedDir, logsDir, promptsDir, workspaceDir, rssStateDir]) {
       const stat = await fs.stat(dir);
 
       expect(stat.isDirectory()).toBe(true);
