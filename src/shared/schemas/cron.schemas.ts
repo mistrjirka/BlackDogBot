@@ -17,17 +17,9 @@ export const scheduleIntervalSchema = z.object({
     .describe("Interval in milliseconds"),
 });
 
-export const scheduleCronSchema = z.object({
-  type: z.literal("cron"),
-  expression: z.string()
-    .min(1)
-    .describe("Cron expression (e.g. '0 9 * * *' for daily at 09:00)"),
-});
-
 export const scheduleSchema = z.discriminatedUnion("type", [
   scheduleOnceSchema,
   scheduleIntervalSchema,
-  scheduleCronSchema,
 ]);
 
 export const cronMessageHistorySchema = z.object({

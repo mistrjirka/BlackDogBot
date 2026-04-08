@@ -26,10 +26,15 @@ import {
   type MessageSender,
   createCallSkillTool,
   getSkillFileTool,
-  removeCronTool,
-  listCronsTool,
-  getCronTool,
-  runCronTool,
+  addOnceTool,
+  addIntervalTool,
+  editOnceTool,
+  editIntervalTool,
+  editInstructionsTool,
+  removeTimedTool,
+  listTimedTool,
+  getTimedTool,
+  runTimedTool,
   createReadFileTool,
   createReadImageTool,
   createWriteFileTool,
@@ -46,7 +51,6 @@ import {
   searxngTool,
   crawl4aiTool,
 } from "../tools/index.js";
-import { buildCronToolsAsync } from "../tools/build-cron-tools.js";
 import { BrainInterfaceService } from "../brain-interface/service.js";
 import type { IBrainInterfaceEmitter } from "../brain-interface/types.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
@@ -240,10 +244,10 @@ export class MainAgent extends BaseAgentBase {
       write_file: createWriteFileTool(readTracker),
       append_file: appendFileTool,
       edit_file: editFileTool,
-      remove_cron: removeCronTool,
-      list_crons: listCronsTool,
-      get_cron: getCronTool,
-      run_cron: runCronTool,
+      remove_timed: removeTimedTool,
+      list_timed: listTimedTool,
+      get_timed: getTimedTool,
+      run_timed: runTimedTool,
       fetch_rss: fetchRssTool,
       list_tables: listTablesTool,
       get_table_schema: getTableSchemaTool,
@@ -255,10 +259,11 @@ export class MainAgent extends BaseAgentBase {
       crawl4ai: crawl4aiTool,
     };
 
-    const cronTools = await buildCronToolsAsync();
-    tools.add_cron = cronTools.add_cron;
-    tools.edit_cron = cronTools.edit_cron;
-    tools.edit_cron_instructions = cronTools.edit_cron_instructions;
+    tools.add_once = addOnceTool;
+    tools.add_interval = addIntervalTool;
+    tools.edit_once = editOnceTool;
+    tools.edit_interval = editIntervalTool;
+    tools.edit_instructions = editInstructionsTool;
 
     if (aiProviderService.getSupportsVision()) {
       tools.read_image = createReadImageTool(readTracker);

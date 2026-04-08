@@ -5,7 +5,7 @@ import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
 
-interface IListCronsTaskSummary {
+interface IListTimedTaskSummary {
   taskId: string;
   name: string;
   description: string;
@@ -21,29 +21,26 @@ interface IListCronsTaskSummary {
   lastRunStatus: string | null;
 }
 
-interface IListCronsResult {
-  tasks: IListCronsTaskSummary[];
+interface IListTimedResult {
+  tasks: IListTimedTaskSummary[];
 }
 
 //#endregion Interfaces
 
 //#region Const
 
-const TOOL_DESCRIPTION: string = "List all scheduled tasks (cron jobs) managed by the scheduler";
+const TOOL_DESCRIPTION: string = "List all scheduled tasks managed by the scheduler. **Note:** Users may refer to these as 'cron', 'timed', 'scheduled', or 'task'. The system determines intent from context.";
 
 //#endregion Const
 
 //#region Private methods
 
-function _mapTaskToSummary(task: IScheduledTask): IListCronsTaskSummary {
-  const scheduleSummary: IListCronsTaskSummary["schedule"] = {
+function _mapTaskToSummary(task: IScheduledTask): IListTimedTaskSummary {
+  const scheduleSummary: IListTimedTaskSummary["schedule"] = {
     type: task.schedule.type,
   };
 
   switch (task.schedule.type) {
-    case "cron":
-      scheduleSummary.expression = task.schedule.expression;
-      break;
     case "interval":
       scheduleSummary.intervalMs = task.schedule.intervalMs;
       break;
@@ -68,17 +65,17 @@ function _mapTaskToSummary(task: IScheduledTask): IListCronsTaskSummary {
 
 //#region Tool
 
-export const listCronsTool = tool({
+export const listTimedTool = tool({
   description: TOOL_DESCRIPTION,
   inputSchema: listCronsToolInputSchema,
-  execute: async ({ enabledOnly }: { enabledOnly: boolean }): Promise<IListCronsResult> => {
+  execute: async ({ enabledOnly }: { enabledOnly: boolean }): Promise<IListTimedResult> => {
     const scheduler: SchedulerService = SchedulerService.getInstance();
 
     const tasks: IScheduledTask[] = enabledOnly
       ? scheduler.getTasksByEnabled(true)
       : scheduler.getAllTasks();
 
-    const mappedTasks: IListCronsTaskSummary[] = tasks.map(_mapTaskToSummary);
+    const mappedTasks: IListTimedTaskSummary[] = tasks.map(_mapTaskToSummary);
 
     return { tasks: mappedTasks };
   },

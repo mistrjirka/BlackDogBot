@@ -1,14 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { CronScheduler } from "./cron-scheduler.js";
-
 import { IScheduledTask } from "../shared/types/index.js";
 import { scheduledTaskSchema } from "../shared/schemas/index.js";
 import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
 import {
-  getCronDir,
-  getCronFilePath,
+  getTimedDir,
+  getTimedFilePath,
   ensureDirectoryExistsAsync,
 } from "../utils/paths.js";
 import { LoggerService } from "./logger.service.js";
@@ -45,7 +43,6 @@ export class SchedulerService {
 
   private static _instance: SchedulerService | null;
   private _logger: LoggerService;
-  private _cronScheduler: CronScheduler;
   private _tasks: Map<string, IScheduledTask>;
   private _taskExecutor: ((task: IScheduledTask) => Promise<void>) | null;
   private _onTaskFailure: ((task: IScheduledTask, error: string) => Promise<void>) | null;
@@ -65,7 +62,6 @@ export class SchedulerService {
 
   private constructor() {
     this._logger = LoggerService.getInstance();
-    this._cronScheduler = new CronScheduler();
     this._tasks = new Map();
     this._taskExecutor = null;
     this._onTaskFailure = null;
@@ -121,15 +117,13 @@ export class SchedulerService {
   }
 
   public async startAsync(): Promise<void> {
-    await ensureDirectoryExistsAsync(getCronDir());
+    await ensureDirectoryExistsAsync(getTimedDir());
     await this._loadAllTasksAsync();
 
     // Read concurrency settings from config
     const config = ConfigService.getInstance().getConfig();
     this._maxParallelCrons = config.scheduler.maxParallelCrons ?? DEFAULT_MAX_PARALLEL_CRONS;
     this._cronQueueSize = config.scheduler.cronQueueSize ?? DEFAULT_CRON_QUEUE_SIZE;
-
-    this._cronScheduler.start();
 
     for (const task of this._tasks.values()) {
       if (task.enabled) {
@@ -146,8 +140,6 @@ export class SchedulerService {
   }
 
   public async stopAsync(): Promise<void> {
-    this._cronScheduler.stop();
-
     for (const [taskId, intervalId] of this._intervals) {
       clearInterval(intervalId);
       this._intervals.delete(taskId);
@@ -189,7 +181,7 @@ export class SchedulerService {
       (queued: IQueuedTask) => queued.task.taskId !== taskId,
     );
 
-    const filePath: string = getCronFilePath(taskId);
+    const filePath: string = getTimedFilePath(taskId);
 
     try {
       await fs.unlink(filePath);
@@ -292,15 +284,15 @@ export class SchedulerService {
   //#region Private methods
 
   private async _loadAllTasksAsync(): Promise<void> {
-    const cronDir: string = getCronDir();
+    const timedDir: string = getTimedDir();
 
     let entries: string[];
 
     try {
-      entries = await fs.readdir(cronDir);
+      entries = await fs.readdir(timedDir);
     } catch (error: unknown) {
-      this._logger.warn("Failed to read cron directory", {
-        cronDir,
+      this._logger.warn("Failed to read timed directory", {
+        timedDir,
         error: extractErrorMessage(error),
       });
       return;
@@ -311,7 +303,7 @@ export class SchedulerService {
     );
 
     // Build per-table write tool names once to migrate legacy generic write tools
-    // in existing persisted cron tasks.
+    // in existing persisted timed tasks.
     let perTableWriteToolNames: string[] = [];
     try {
       const perTableTools = await buildPerTableToolsAsync();
@@ -319,7 +311,7 @@ export class SchedulerService {
         .filter((name: string): boolean => name.startsWith("write_table_"))
         .sort();
     } catch (error: unknown) {
-      this._logger.warn("Failed to build per-table tools for cron migration", {
+      this._logger.warn("Failed to build per-table tools for timed migration", {
         error: extractErrorMessage(error),
       });
     }
@@ -327,7 +319,7 @@ export class SchedulerService {
     const migratedTasks: string[] = [];
 
     for (const fileName of jsonFiles) {
-      const filePath: string = path.join(cronDir, fileName);
+      const filePath: string = path.join(timedDir, fileName);
 
       try {
         const content: string = await fs.readFile(filePath, "utf-8");
@@ -338,7 +330,7 @@ export class SchedulerService {
         if (migration.changed) {
           await fs.writeFile(filePath, JSON.stringify(migration.task, null, 2), "utf-8");
 
-          this._logger.info("Migrated legacy write cron tools to per-table tools", {
+          this._logger.info("Migrated legacy write timed tools to per-table tools", {
             taskId: migration.task.taskId,
             name: migration.task.name,
             replacedTools: migration.replacedTools,
@@ -367,7 +359,7 @@ export class SchedulerService {
 
     if (migratedTasks.length > 0) {
       this._logger.warn(
-        `${migratedTasks.length} cron task(s) use deprecated tool names that will be auto-expanded at runtime:`,
+        `${migratedTasks.length} timed task(s) use deprecated tool names that will be auto-expanded at runtime:`,
         { tasks: migratedTasks },
       );
     }
@@ -391,7 +383,7 @@ export class SchedulerService {
     }
 
     if (perTableWriteToolNames.length === 0) {
-      this._logger.warn("Legacy write cron tools detected but no write_table_* tools exist yet", {
+      this._logger.warn("Legacy write timed tools detected but no write_table_* tools exist yet", {
         taskId: task.taskId,
         name: task.name,
         replacedTools,
@@ -425,9 +417,9 @@ export class SchedulerService {
   }
 
   private async _saveTaskAsync(task: IScheduledTask): Promise<void> {
-    const filePath: string = getCronFilePath(task.taskId);
+    const filePath: string = getTimedFilePath(task.taskId);
 
-    await ensureDirectoryExistsAsync(getCronDir());
+    await ensureDirectoryExistsAsync(getTimedDir());
     await fs.writeFile(filePath, JSON.stringify(task, null, 2), "utf-8");
   }
 
@@ -577,27 +569,6 @@ export class SchedulerService {
     const schedule = task.schedule;
 
     switch (schedule.type) {
-      case "cron": {
-        const config = ConfigService.getInstance().getConfig();
-        const timezone = config.scheduler.timezone;
-        const nextRun: Date | null = this._cronScheduler.addJob(
-          task.taskId,
-          schedule.expression,
-          timezone,
-          () => {
-            this._dispatchOrEnqueue(task, executeCallback);
-          },
-        );
-
-        this._logger.debug("Scheduled cron task", {
-          taskId: task.taskId,
-          expression: schedule.expression,
-          timezone: timezone ?? "server local",
-          nextRun: nextRun ? nextRun.toISOString() : "none",
-        });
-        break;
-      }
-
       case "interval": {
         const intervalId: NodeJS.Timeout = setInterval(() => {
           this._dispatchOrEnqueue(task, executeCallback);
@@ -639,8 +610,6 @@ export class SchedulerService {
   }
 
   private _unscheduleTask(taskId: string): void {
-    this._cronScheduler.removeJob(taskId);
-
     const intervalId: NodeJS.Timeout | undefined =
       this._intervals.get(taskId);
 

@@ -9,7 +9,7 @@ import type { ToolExecuteContext } from "../utils/tool-factory.js";
 
 //#region Interfaces
 
-interface IGetCronResult {
+interface IGetTimedResult {
   success: boolean;
   task?: IScheduledTask;
   display?: string;
@@ -20,13 +20,13 @@ interface IGetCronResult {
 
 //#region Tool
 
-export const getCronTool = tool({
-  description: "Get the full configuration of a scheduled (cron) task by its ID.",
+export const getTimedTool = tool({
+  description: "Get the full configuration of a scheduled task by its ID. **Note:** Users may refer to these as 'cron', 'timed', 'scheduled', or 'task'. The system determines intent from context.",
   inputSchema: getCronToolInputSchema,
   execute: async (
     { taskId }: { taskId: string },
     _context: ToolExecuteContext,
-  ): Promise<IGetCronResult> => {
+  ): Promise<IGetTimedResult> => {
     const scheduler: SchedulerService = SchedulerService.getInstance();
     const task: IScheduledTask | undefined =
       await scheduler.getTaskAsync(taskId);
@@ -34,7 +34,7 @@ export const getCronTool = tool({
     if (!task) {
       return {
         success: false,
-        error: `Cron task with ID '${taskId}' not found.`,
+        error: `Task with ID '${taskId}' not found.`,
       };
     }
 

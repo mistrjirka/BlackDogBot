@@ -662,10 +662,10 @@ After creating a job, you can attach a schedule so it runs automatically:
 
 1. **Set a schedule** — call `set_job_schedule` with the `jobId` and a `schedule`
    object. This creates a ScheduledTask that will run the job automatically.
-   The schedule format is the same as `add_cron`:
-   - `{ type: "cron", expression: "0 9 * * *" }` — daily at 09:00
+   The schedule object format:
    - `{ type: "interval", intervalMs: 3600000 }` — every hour
    - `{ type: "once", runAt: "2026-03-01T00:00:00Z" }` — one-time
+   - `{ type: "interval", intervalMs: 86400000 }` — daily (24-hour interval)
 
 2. **Update a schedule** — call `set_job_schedule` again with a new schedule.
    The old ScheduledTask is automatically removed and replaced.
@@ -679,13 +679,13 @@ start_job_creation(name="Daily RSS Digest", ...)
 add_rss_fetcher_node(...)
 add_output_to_ai_node(...)
 finish_job_creation(jobId)
-set_job_schedule(jobId, { type: "cron", expression: "0 8 * * *" })
+set_job_schedule(jobId, { type: "interval", intervalMs: 86400000 })
 ```
 
-**Note:** `set_job_schedule` is preferred over `add_cron` for job scheduling
-because it links the schedule to the job's start node, making it easy to
-update or remove later. Use `add_cron` only for general-purpose scheduled
-tasks that are not tied to a specific job.
+**Note:** `set_job_schedule` is preferred for job scheduling because it
+links the schedule to the job's start node, making it easy to update or
+remove later. Use `add_interval` or `add_once` only for general-purpose
+scheduled tasks that are not tied to a specific job.
 
 **Important:** Each job can have only one schedule at a time. Calling
 `set_job_schedule` replaces any existing schedule for that job. If the user

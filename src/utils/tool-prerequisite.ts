@@ -5,7 +5,7 @@ import type { ModelMessage } from "ai";
  * with matching required arguments.
  *
  * @param messages - The conversation history from context.messages
- * @param prerequisiteToolName - The tool that must have been called (e.g., "get_cron")
+ * @param prerequisiteToolName - The tool that must have been called (e.g., "get_timed")
  * @param requiredArgs - Arguments that must match (e.g., { taskId: "abc" })
  * @returns true if the prerequisite was met
  */

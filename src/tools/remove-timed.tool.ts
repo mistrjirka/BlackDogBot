@@ -1,12 +1,12 @@
 import { tool } from "ai";
-import { removeCronToolInputSchema } from "../shared/schemas/tool-schemas.js";
+import { removeTimedToolInputSchema } from "../shared/schemas/tool-schemas.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
 
-interface IRemoveCronResult {
+interface IRemoveTimedResult {
   success: boolean;
   message: string;
 }
@@ -15,17 +15,17 @@ interface IRemoveCronResult {
 
 //#region Const
 
-const TOOL_NAME: string = "remove-cron";
-const TOOL_DESCRIPTION: string = "Remove an existing scheduled task (cron job) from the scheduler";
+const TOOL_NAME: string = "remove_timed";
+const TOOL_DESCRIPTION: string = "Remove an existing scheduled task from the scheduler. **Note:** Users may refer to these as 'cron', 'timed', 'scheduled', or 'task'. The system determines intent from context.";
 
 //#endregion Const
 
 //#region Tool
 
-export const removeCronTool = tool({
+export const removeTimedTool = tool({
   description: TOOL_DESCRIPTION,
-  inputSchema: removeCronToolInputSchema,
-  execute: async ({ taskId }: { taskId: string }): Promise<IRemoveCronResult> => {
+  inputSchema: removeTimedToolInputSchema,
+  execute: async ({ taskId }: { taskId: string }): Promise<IRemoveTimedResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
@@ -34,7 +34,7 @@ export const removeCronTool = tool({
       return { success: true, message: "Task removed successfully" };
     } catch (error: unknown) {
       const errorMessage: string = extractErrorMessage(error);
-      logger.error(`[${TOOL_NAME}] Failed to remove cron task: ${errorMessage}`);
+      logger.error(`[${TOOL_NAME}] Failed to remove timed task: ${errorMessage}`);
 
       return { success: false, message: errorMessage };
     }

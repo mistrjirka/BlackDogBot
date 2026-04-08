@@ -50,8 +50,8 @@ export function getLanceDbDir(): string {
   return path.join(getKnowledgeDir(), "lancedb");
 }
 
-export function getCronDir(): string {
-  return path.join(getBaseDir(), "cron");
+export function getTimedDir(): string {
+  return path.join(getBaseDir(), "timed");
 }
 
 export function getLogsDir(): string {
@@ -114,8 +114,8 @@ export function getNodeTestFilePath(jobId: string, nodeId: string): string {
   return path.join(getJobTestsDir(jobId), `${nodeId}.json`);
 }
 
-export function getCronFilePath(taskId: string): string {
-  return path.join(getCronDir(), `${taskId}.json`);
+export function getTimedFilePath(taskId: string): string {
+  return path.join(getTimedDir(), `${taskId}.json`);
 }
 
 export function getPromptFilePath(promptName: string): string {
@@ -176,7 +176,7 @@ export async function ensureAllDirectoriesAsync(): Promise<void> {
     getJobsDir(),
     getKnowledgeDir(),
     getLanceDbDir(),
-    getCronDir(),
+    getTimedDir(),
     getLogsDir(),
     getCacheDir(),
     getJobLogsDir(),

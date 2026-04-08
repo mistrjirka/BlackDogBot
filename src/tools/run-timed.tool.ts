@@ -10,7 +10,7 @@ import { generateId } from "../utils/id.js";
 
 //#region Interfaces
 
-interface IRunCronInput {
+interface IRunTimedInput {
   taskId: string;
   sendToUser?: boolean;
 }
@@ -20,7 +20,7 @@ interface ISentMessage {
   timestamp: string;
 }
 
-interface IRunCronResult {
+interface IRunTimedResult {
   success: boolean;
   markdown: string;
 }
@@ -45,9 +45,10 @@ class SimpleTraceCollector implements ITraceCollector {
 
 //#region Tool
 
-export const runCronTool = tool({
+export const runTimedTool = tool({
   description:
     "Execute a scheduled task immediately. " +
+    "**Note:** Users may refer to these as 'cron', 'timed', 'scheduled', or 'task'. The system determines intent from context. " +
     "**Call ONCE per task** - it runs to completion. " +
     "Returns tool call trace and messages. " +
     "Default: sendToUser=false (dry-run, messages shown in output only). " +
@@ -71,7 +72,7 @@ export const runCronTool = tool({
       .default(false)
       .describe("If true, send messages to notification channels. If false (default), only show in output (dry-run)"),
   }),
-  execute: async (input: IRunCronInput): Promise<IRunCronResult> => {
+  execute: async (input: IRunTimedInput): Promise<IRunTimedResult> => {
     const logger = LoggerService.getInstance();
     const scheduler = SchedulerService.getInstance();
     const cronAgent = CronAgent.getInstance();
@@ -157,7 +158,7 @@ export const runCronTool = tool({
       };
     } catch (error: unknown) {
       const errorMessage = extractErrorMessage(error);
-      logger.error(`[run-cron] Failed to execute task`, { error: errorMessage });
+      logger.error(`[run_timed] Failed to execute task`, { error: errorMessage });
 
       return {
         success: false,

@@ -1,7 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-
-import { editCronInstructionsToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { editInstructionsToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -15,7 +14,7 @@ import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
 
-interface IEditCronInstructionsResult {
+interface IEditInstructionsResult {
   success: boolean;
   task?: IScheduledTask;
   display?: string;
@@ -26,19 +25,19 @@ interface IEditCronInstructionsResult {
 
 //#region Constants
 
-const TOOL_NAME: string = "edit-cron-instructions";
+const TOOL_NAME: string = "edit_instructions";
 const TOOL_DESCRIPTION: string =
-  "Update ONLY the instructions text of an existing cron task. " +
+  "Update ONLY the instructions text of an existing scheduled task. " +
   "You MUST provide the COMPLETE new instructions text in the 'instructions' field (full replacement), plus 'intention' explaining why the change is needed. " +
   "Optionally provide 'tools' to replace the task tool list in the same call when instruction changes require different tools. " +
   "IMPORTANT: 'intention' is metadata only and does NOT change instructions by itself. " +
-  "IMPORTANT: You MUST call 'get_cron' first to retrieve the current task configuration before using this tool.";
+  "IMPORTANT: You MUST call 'get_timed' first to retrieve the current task configuration before using this tool.";
 
 //#endregion Constants
 
 //#region Tool
 
-const executeEditCronInstructions = async (
+const executeEditInstructions = async (
   {
     taskId,
     instructions,
@@ -51,14 +50,14 @@ const executeEditCronInstructions = async (
     tools?: string[];
   },
   _context: ToolExecuteContext,
-): Promise<IEditCronInstructionsResult> => {
+): Promise<IEditInstructionsResult> => {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
 
   try {
     const existingTask: IScheduledTask | undefined = await scheduler.getTaskAsync(taskId);
     if (!existingTask) {
-      return { success: false, error: `Cron task with ID '${taskId}' not found.` };
+      return { success: false, error: `Task with ID '${taskId}' not found.` };
     }
 
     const normalizedInstructions: string = (instructions ?? "").trim();
@@ -99,7 +98,7 @@ const executeEditCronInstructions = async (
       };
     }
 
-    logger.debug(`[${TOOL_NAME}] Re-verifying cron instructions for task: ${taskId}`);
+    logger.debug(`[${TOOL_NAME}] Re-verifying instructions for task: ${taskId}`);
 
     const toolsToVerify: string[] = tools ?? existingTask.tools;
 
@@ -175,7 +174,7 @@ RULES:
 
 8. If instructions mention tools not present in the tool list, they are invalid unless those tools are being added in this same update.
 
-=== CURRENT CRON TASK ===
+=== CURRENT TASK ===
 Task ID: ${existingTask.taskId}
 Name: ${existingTask.name}
 Description: ${existingTask.description}
@@ -244,7 +243,7 @@ Output a JSON object with:
     const updatedTask: IScheduledTask | undefined = await scheduler.updateTaskAsync(taskId, updatePatch);
 
     if (updatedTask) {
-      logger.info("[edit-cron-instructions] Updated task instructions", {
+      logger.info("[edit_instructions] Updated task instructions", {
         taskId: updatedTask.taskId,
         name: updatedTask.name,
         updatedAt: updatedTask.updatedAt,
@@ -258,7 +257,7 @@ Output a JSON object with:
     };
   } catch (error: unknown) {
     const errorMessage: string = extractErrorMessage(error);
-    logger.error(`[${TOOL_NAME}] Failed to edit cron instructions: ${errorMessage}`, {
+    logger.error(`[${TOOL_NAME}] Failed to edit instructions: ${errorMessage}`, {
       taskId,
       error: errorMessage,
     });
@@ -267,13 +266,13 @@ Output a JSON object with:
   }
 };
 
-export const editCronInstructionsTool = tool({
+export const editInstructionsTool = tool({
   description: TOOL_DESCRIPTION,
-  inputSchema: editCronInstructionsToolInputSchema,
+  inputSchema: editInstructionsToolInputSchema,
   execute: createToolWithPrerequisites(
-    "edit_cron_instructions",
-    TOOL_PREREQUISITES["edit_cron_instructions"] || [],
-    executeEditCronInstructions,
+    "edit_instructions",
+    TOOL_PREREQUISITES["edit_instructions"] || [],
+    executeEditInstructions,
   ) as any,
 });
 
