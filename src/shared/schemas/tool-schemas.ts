@@ -710,6 +710,12 @@ export const addIntervalToolInputSchema = z.object({
     .int()
     .positive()
     .describe("Interval in milliseconds (required, must be > 0)"),
+  offsetMinutes: z.number()
+    .int()
+    .nonnegative()
+    .optional()
+    .default(0)
+    .describe("Offset in minutes to wait before first run (default: 0)"),
   notifyUser: z.boolean()
     .describe("Whether to send a Telegram notification when this task completes (required)"),
 });
@@ -772,6 +778,11 @@ export const editIntervalToolInputSchema = z.object({
     .positive()
     .optional()
     .describe("Interval in milliseconds for 'interval' schedule"),
+  offsetMinutes: z.number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe("Offset in minutes for 'interval' schedule"),
   notifyUser: z.boolean()
     .optional()
     .describe("Whether to send a Telegram notification"),
@@ -853,6 +864,8 @@ export const listCronsToolOutputSchema = z.object({
       intervalMs: z.number()
         .optional(),
       runAt: z.string()
+        .optional(),
+      offsetMinutes: z.number()
         .optional(),
     }),
     enabled: z.boolean(),

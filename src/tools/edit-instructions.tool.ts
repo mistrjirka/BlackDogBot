@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { editInstructionsToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
+import { filterInvalidTools } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
@@ -77,9 +78,7 @@ const executeEditInstructions = async (
     }
 
     if (tools !== undefined) {
-      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = tools.filter((t: string) => !validToolSet.has(t) && !isDynamicWriteTableTool(t));
+      const invalidTools: string[] = filterInvalidTools(tools);
       if (invalidTools.length > 0) {
         return {
           success: false,
@@ -273,6 +272,7 @@ export const editInstructionsTool = tool({
     "edit_instructions",
     TOOL_PREREQUISITES["edit_instructions"] || [],
     executeEditInstructions,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK tool execute typing mismatch with wrapper
   ) as any,
 });
 

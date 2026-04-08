@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { addIntervalToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { filterInvalidTools } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
@@ -37,10 +38,11 @@ const TOOL_DESCRIPTION: string =
 
 //#region Private methods
 
-function _buildSchedule(intervalMs: number): Schedule {
+function _buildSchedule(intervalMs: number, offsetMinutes: number = 0): Schedule {
   return {
     type: "interval",
     intervalMs,
+    offsetMinutes,
   };
 }
 
@@ -57,6 +59,7 @@ export const addIntervalTool = tool({
     instructions,
     tools,
     intervalMs,
+    offsetMinutes,
     notifyUser,
   }: {
     name: string;
@@ -64,16 +67,13 @@ export const addIntervalTool = tool({
     instructions: string;
     tools: string[];
     intervalMs: number;
+    offsetMinutes?: number;
     notifyUser: boolean;
   }): Promise<IAddIntervalResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = tools.filter(
-        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
-      );
+      const invalidTools: string[] = filterInvalidTools(tools);
       if (invalidTools.length > 0) {
         return {
           taskId: "",
@@ -154,7 +154,7 @@ Output a JSON object with:
 
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
-      const builtSchedule: Schedule = _buildSchedule(intervalMs);
+      const builtSchedule: Schedule = _buildSchedule(intervalMs, offsetMinutes ?? 0);
 
       const task: IScheduledTask = {
         taskId,
@@ -177,7 +177,8 @@ Output a JSON object with:
 
       await SchedulerService.getInstance().addTaskAsync(task);
 
-      const displaySummary = `Created interval task "${name}" (ID: ${taskId})\nSchedule: every ${intervalMs}ms\nTools: [${tools.join(", ")}]`;
+      const offsetStr: string = (offsetMinutes ?? 0) > 0 ? ` (+${offsetMinutes}m offset)` : "";
+      const displaySummary = `Created interval task "${name}" (ID: ${taskId})\nSchedule: every ${intervalMs}ms${offsetStr}\nTools: [${tools.join(", ")}]`;
 
       return { taskId, success: true, displaySummary };
     } catch (error: unknown) {

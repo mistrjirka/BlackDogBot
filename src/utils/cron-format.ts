@@ -2,8 +2,10 @@ import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 
 function formatSchedule(schedule: Schedule): string {
   switch (schedule.type) {
-    case "interval":
-      return `interval: ${schedule.intervalMs}ms`;
+    case "interval": {
+      const offsetStr: string = schedule.offsetMinutes > 0 ? ` (+${schedule.offsetMinutes}m offset)` : "";
+      return `interval: ${schedule.intervalMs}ms${offsetStr}`;
+    }
     case "once":
       return `once: ${schedule.runAt}`;
     default:

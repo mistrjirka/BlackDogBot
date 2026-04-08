@@ -9,11 +9,13 @@ export interface ICronMessageHistory {
 export interface IScheduleOnce {
   type: "once";
   runAt: string;
+  offsetMinutes: number;
 }
 
 export interface IScheduleInterval {
   type: "interval";
   intervalMs: number;
+  offsetMinutes: number;
 }
 
 export type Schedule = IScheduleOnce | IScheduleInterval;

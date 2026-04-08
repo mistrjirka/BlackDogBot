@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { editIntervalToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
+import { filterInvalidTools } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
@@ -38,6 +39,7 @@ const executeEditInterval = async (
     description,
     tools,
     intervalMs,
+    offsetMinutes,
     notifyUser,
     enabled,
   }: {
@@ -46,6 +48,7 @@ const executeEditInterval = async (
     description?: string;
     tools?: string[];
     intervalMs?: number;
+    offsetMinutes?: number;
     notifyUser?: boolean;
     enabled?: boolean;
   },
@@ -56,11 +59,7 @@ const executeEditInterval = async (
 
   try {
     if (tools !== undefined) {
-      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = tools.filter(
-        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
-      );
+      const invalidTools: string[] = filterInvalidTools(tools);
       if (invalidTools.length > 0) {
         return {
           success: false,
@@ -81,15 +80,20 @@ const executeEditInterval = async (
       };
     }
 
-    const patch: Record<string, unknown> = {};
+    const patch: Partial<IScheduledTask> = {};
     if (name !== undefined) patch.name = name;
     if (description !== undefined) patch.description = description;
     if (tools !== undefined) patch.tools = tools;
     if (notifyUser !== undefined) patch.notifyUser = notifyUser;
     if (enabled !== undefined) patch.enabled = enabled;
 
-    if (intervalMs !== undefined) {
-      patch.schedule = { type: "interval", intervalMs };
+    if (intervalMs !== undefined || offsetMinutes !== undefined) {
+      const currentSchedule = existingTask.schedule;
+      patch.schedule = {
+        type: "interval",
+        intervalMs: intervalMs ?? currentSchedule.intervalMs,
+        offsetMinutes: offsetMinutes ?? (currentSchedule.type === "interval" ? currentSchedule.offsetMinutes : 0),
+      };
     }
 
     if (Object.keys(patch).length === 0) {
@@ -99,7 +103,7 @@ const executeEditInterval = async (
       };
     }
 
-    const updatedTask = await scheduler.updateTaskAsync(taskId, patch as any);
+    const updatedTask = await scheduler.updateTaskAsync(taskId, patch);
 
     if (updatedTask) {
       logger.info("[edit_interval] Updated task details", {
@@ -125,7 +129,7 @@ const executeEditInterval = async (
     const errorMessage: string = extractErrorMessage(error);
     logger.error(`[${TOOL_NAME}] Failed to edit task: ${errorMessage}`, {
       taskId,
-      patch: { name, description, tools, intervalMs, notifyUser, enabled },
+      patch: { name, description, tools, intervalMs, offsetMinutes, notifyUser, enabled },
       error: errorMessage,
     });
 
@@ -140,6 +144,7 @@ export const editIntervalTool = tool({
     "edit_interval",
     TOOL_PREREQUISITES["edit_interval"] || [],
     executeEditInterval,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK tool execute typing mismatch with wrapper
   ) as any,
 });
 

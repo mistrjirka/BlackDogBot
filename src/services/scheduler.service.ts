@@ -324,21 +324,31 @@ export class SchedulerService {
       try {
         const content: string = await fs.readFile(filePath, "utf-8");
         const parsed: unknown = JSON.parse(content);
-        const task: IScheduledTask = scheduledTaskSchema.parse(parsed);
+        let task: IScheduledTask = scheduledTaskSchema.parse(parsed);
 
-        const migration = this._migrateLegacyWriteTools(task, perTableWriteToolNames);
-        if (migration.changed) {
-          await fs.writeFile(filePath, JSON.stringify(migration.task, null, 2), "utf-8");
-
-          this._logger.info("Migrated legacy write timed tools to per-table tools", {
-            taskId: migration.task.taskId,
-            name: migration.task.name,
-            replacedTools: migration.replacedTools,
-            addedWriteTableTools: migration.addedWriteTableTools,
+        // Migrate legacy offsetMinutes (normalize missing to 0 and persist)
+        const migrationResult = await this._migrateLegacyOffsetMinutes(parsed, task, filePath);
+        if (migrationResult.migrated) {
+          task = migrationResult.task;
+          this._logger.info("Migrated legacy timed task offsetMinutes", {
+            taskId: task.taskId,
+            name: task.name,
           });
         }
 
-        const effectiveTask: IScheduledTask = migration.task;
+        const writeToolsMigration = this._migrateLegacyWriteTools(task, perTableWriteToolNames);
+        if (writeToolsMigration.changed) {
+          await fs.writeFile(filePath, JSON.stringify(writeToolsMigration.task, null, 2), "utf-8");
+
+          this._logger.info("Migrated legacy write timed tools to per-table tools", {
+            taskId: writeToolsMigration.task.taskId,
+            name: writeToolsMigration.task.name,
+            replacedTools: writeToolsMigration.replacedTools,
+            addedWriteTableTools: writeToolsMigration.addedWriteTableTools,
+          });
+        }
+
+        const effectiveTask: IScheduledTask = writeToolsMigration.task;
 
         // Check for deprecated tool names
         const deprecatedTools: string[] = effectiveTask.tools.filter(
@@ -414,6 +424,32 @@ export class SchedulerService {
       replacedTools,
       addedWriteTableTools: perTableWriteToolNames.length,
     };
+  }
+
+  private async _migrateLegacyOffsetMinutes(
+    rawParsed: unknown,
+    task: IScheduledTask,
+    filePath: string,
+  ): Promise<{ task: IScheduledTask; migrated: boolean }> {
+    const raw = rawParsed as Record<string, unknown>;
+    const schedule = raw.schedule as Record<string, unknown> | undefined;
+
+    if (!schedule || schedule.offsetMinutes !== undefined) {
+      return { task, migrated: false };
+    }
+
+    const migratedTask: IScheduledTask = {
+      ...task,
+      schedule: {
+        ...task.schedule,
+        offsetMinutes: 0,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+
+    await fs.writeFile(filePath, JSON.stringify(migratedTask, null, 2), "utf-8");
+
+    return { task: migratedTask, migrated: true };
   }
 
   private async _saveTaskAsync(task: IScheduledTask): Promise<void> {
@@ -570,15 +606,37 @@ export class SchedulerService {
 
     switch (schedule.type) {
       case "interval": {
-        const intervalId: NodeJS.Timeout = setInterval(() => {
-          this._dispatchOrEnqueue(task, executeCallback);
-        }, schedule.intervalMs);
+        const offsetMs: number = (schedule.offsetMinutes ?? 0) * 60000;
 
-        this._intervals.set(task.taskId, intervalId);
-        this._logger.debug("Scheduled interval task", {
-          taskId: task.taskId,
-          intervalMs: schedule.intervalMs,
-        });
+        if (offsetMs > 0) {
+          const timeoutId: NodeJS.Timeout = setTimeout(() => {
+            this._dispatchOrEnqueue(task, executeCallback);
+
+            const intervalId: NodeJS.Timeout = setInterval(() => {
+              this._dispatchOrEnqueue(task, executeCallback);
+            }, schedule.intervalMs);
+
+            this._intervals.set(task.taskId, intervalId);
+            this._timeouts.delete(task.taskId);
+          }, offsetMs);
+
+          this._timeouts.set(task.taskId, timeoutId);
+          this._logger.debug("Scheduled interval task with offset", {
+            taskId: task.taskId,
+            intervalMs: schedule.intervalMs,
+            offsetMs,
+          });
+        } else {
+          const intervalId: NodeJS.Timeout = setInterval(() => {
+            this._dispatchOrEnqueue(task, executeCallback);
+          }, schedule.intervalMs);
+
+          this._intervals.set(task.taskId, intervalId);
+          this._logger.debug("Scheduled interval task", {
+            taskId: task.taskId,
+            intervalMs: schedule.intervalMs,
+          });
+        }
         break;
       }
 
