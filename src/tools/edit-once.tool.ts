@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { editOnceToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
+import { filterInvalidTools } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
@@ -64,11 +65,7 @@ const executeEditOnce = async (
 
   try {
     if (tools !== undefined) {
-      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = tools.filter(
-        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
-      );
+      const invalidTools: string[] = filterInvalidTools(tools);
       if (invalidTools.length > 0) {
         return {
           success: false,
@@ -89,7 +86,7 @@ const executeEditOnce = async (
       };
     }
 
-    const patch: Record<string, unknown> = {};
+    const patch: Partial<IScheduledTask> = {};
     if (name !== undefined) patch.name = name;
     if (description !== undefined) patch.description = description;
     if (tools !== undefined) patch.tools = tools;
@@ -111,7 +108,7 @@ const executeEditOnce = async (
         0,
       ).toISOString();
 
-      patch.schedule = { type: "once", runAt: newRunAt };
+      patch.schedule = { type: "once", runAt: newRunAt, offsetMinutes: 0 };
     }
 
     if (Object.keys(patch).length === 0) {
@@ -121,7 +118,7 @@ const executeEditOnce = async (
       };
     }
 
-    const updatedTask = await scheduler.updateTaskAsync(taskId, patch as any);
+    const updatedTask = await scheduler.updateTaskAsync(taskId, patch);
 
     if (updatedTask) {
       logger.info("[edit_once] Updated task details", {
@@ -162,6 +159,7 @@ export const editOnceTool = tool({
     "edit_once",
     TOOL_PREREQUISITES["edit_once"] || [],
     executeEditOnce,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK tool execute typing mismatch with wrapper
   ) as any,
 });
 

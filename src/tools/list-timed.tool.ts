@@ -15,6 +15,7 @@ interface IListTimedTaskSummary {
     expression?: string;
     intervalMs?: number;
     runAt?: string;
+    offsetMinutes?: number;
   };
   enabled: boolean;
   lastRunAt: string | null;
@@ -43,9 +44,11 @@ function _mapTaskToSummary(task: IScheduledTask): IListTimedTaskSummary {
   switch (task.schedule.type) {
     case "interval":
       scheduleSummary.intervalMs = task.schedule.intervalMs;
+      scheduleSummary.offsetMinutes = task.schedule.offsetMinutes;
       break;
     case "once":
       scheduleSummary.runAt = task.schedule.runAt;
+      scheduleSummary.offsetMinutes = task.schedule.offsetMinutes;
       break;
   }
 

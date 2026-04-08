@@ -7,6 +7,11 @@ export const scheduleOnceSchema = z.object({
   runAt: z.string()
     .datetime()
     .describe("ISO 8601 datetime to run at"),
+  offsetMinutes: z.number()
+    .int()
+    .nonnegative()
+    .default(0)
+    .describe("Offset in minutes to apply to the scheduled time"),
 });
 
 export const scheduleIntervalSchema = z.object({
@@ -15,6 +20,11 @@ export const scheduleIntervalSchema = z.object({
     .int()
     .positive()
     .describe("Interval in milliseconds"),
+  offsetMinutes: z.number()
+    .int()
+    .nonnegative()
+    .default(0)
+    .describe("Offset in minutes applied before each interval trigger"),
 });
 
 export const scheduleSchema = z.discriminatedUnion("type", [

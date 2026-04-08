@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { addOnceToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { filterInvalidTools } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
@@ -41,6 +42,7 @@ function _buildSchedule(params: { year: number; month: number; day: number; hour
   return {
     type: "once",
     runAt,
+    offsetMinutes: 0,
   };
 }
 
@@ -77,11 +79,7 @@ export const addOnceTool = tool({
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
-      const isDynamicWriteTableTool = (toolName: string): boolean => toolName.startsWith("write_table_");
-      const invalidTools: string[] = tools.filter(
-        (t) => !validToolSet.has(t) && !isDynamicWriteTableTool(t),
-      );
+      const invalidTools: string[] = filterInvalidTools(tools);
       if (invalidTools.length > 0) {
         return {
           taskId: "",
