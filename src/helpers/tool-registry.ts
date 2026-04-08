@@ -13,10 +13,12 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
   "edit_file",
   "add_knowledge",
   "edit_knowledge",
-  "add_cron",
-  "edit_cron",
-  "edit_cron_instructions",
-  "remove_cron",
+  "add_once",
+  "add_interval",
+  "edit_once",
+  "edit_interval",
+  "edit_instructions",
+  "remove_timed",
   "add_job",
   "edit_job",
   "remove_job",
@@ -40,6 +42,18 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
   "remove_job_schedule",
   "finish_job",
 ]);
+
+export const TIMED_VALID_TOOL_NAMES = [
+  "add_once",
+  "add_interval",
+  "edit_once",
+  "edit_interval",
+  "edit_instructions",
+  "remove_timed",
+  "list_timed",
+  "get_timed",
+  "run_timed",
+] as const;
 
 const JOB_CREATION_TOOLS: Set<string> = new Set([
   "start_job_creation",

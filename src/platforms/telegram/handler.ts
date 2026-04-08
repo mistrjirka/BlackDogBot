@@ -36,6 +36,20 @@ import {
 
 //#region Constants
 
+const TimedTools: ReadonlySet<string> = new Set(["add_once", "add_interval", "edit_once", "edit_interval", "edit_instructions"]);
+
+const TimedToolKeys: Record<string, string> = {
+  add_once: "name",
+  add_interval: "name",
+  edit_once: "taskId",
+  edit_interval: "taskId",
+  edit_instructions: "taskId",
+  remove_timed: "taskId",
+  list_timed: "taskId",
+  get_timed: "taskId",
+  run_timed: "taskId",
+};
+
 const TOOL_PRIMARY_KEY: Record<string, string> = {
   run_cmd: "command",
   fetch_rss: "url",
@@ -60,13 +74,15 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
   append_file: "filePath",
   edit_file: "filePath",
   render_graph: "jobId",
-  add_cron: "name",
-  edit_cron: "taskId",
-  edit_cron_instructions: "taskId",
-  remove_cron: "taskId",
-  get_cron: "taskId",
-  list_crons: "taskId",
-  run_cron: "taskId",
+  add_once: "name",
+  add_interval: "name",
+  edit_once: "taskId",
+  edit_interval: "taskId",
+  edit_instructions: "taskId",
+  remove_timed: "taskId",
+  list_timed: "taskId",
+  get_timed: "taskId",
+  run_timed: "taskId",
   think: "thought",
 };
 
