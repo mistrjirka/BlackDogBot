@@ -139,6 +139,9 @@ export abstract class BaseAgentBase {
   protected _forceCompactionOnNextStep: boolean = false;
   protected _tokenEstimateCorrectionFactor: number;
   protected _lastPrepareStepEstimatedTokens: number | null;
+  protected _estimatedInputTokens: number = 0;
+  protected _providerInputTokens: number | null = null;
+  protected _rawEstimatedInputTokens: number = 0;
   protected _shouldTerminateRunCallback: (() => boolean) | null;
 
   //#endregion Data members
@@ -242,9 +245,12 @@ export abstract class BaseAgentBase {
               statusCode: aiErrorDetails.statusCode,
               responseBody: responseBody,
               errorMessage: errorMessage,
-              currentTokenCount: this._totalInputTokens,
+              rawEstimatedInputTokens: this._rawEstimatedInputTokens,
+              estimatedInputTokens: this._estimatedInputTokens,
+              providerInputTokens: this._providerInputTokens,
+              currentTokenCount: this._providerInputTokens ?? this._estimatedInputTokens,
               contextWindow: this._contextWindow,
-              utilization: `${((this._totalInputTokens / this._contextWindow) * 100).toFixed(1)}%`,
+              utilization: `${((this._providerInputTokens ?? this._estimatedInputTokens) / this._contextWindow * 100).toFixed(1)}%`,
             });
 
             this._forceCompactionOnNextStep = true;
@@ -391,8 +397,10 @@ export abstract class BaseAgentBase {
         const inputTokens = result.totalUsage?.inputTokens ?? result.usage?.inputTokens;
         if (inputTokens !== undefined) {
           this._totalInputTokens = inputTokens;
+          this._providerInputTokens = inputTokens ?? null;
         } else {
           this._totalInputTokens = 0;
+          this._providerInputTokens = null;
           this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
         }
 
@@ -634,8 +642,10 @@ export abstract class BaseAgentBase {
           requestEstimate?.estimatedTokens ??
           countTokens(messages);
         self._lastPrepareStepEstimatedTokens = rawTokenEstimate;
+        self._rawEstimatedInputTokens = rawTokenEstimate;
 
         const tokenCount: number = Math.ceil(rawTokenEstimate * self._tokenEstimateCorrectionFactor);
+        self._estimatedInputTokens = tokenCount;
         const estimationSource: "tiktoken_request_body" | "bytes_fallback" | "tiktoken_messages_only" =
           preciseRequestEstimate
             ? "tiktoken_request_body"
@@ -646,6 +656,18 @@ export abstract class BaseAgentBase {
         // Keep a consistent internal token estimate for fallback/error diagnostics.
         self._totalInputTokens = tokenCount;
 
+        // Message-only token count (what compaction can actually reduce)
+        const messageTokensEstimated = countTokens(messages);
+
+        // Fixed overhead that compaction cannot reduce (tools + system + JSON structure)
+        const fixedOverheadTokens = Math.max(0, tokenCount - messageTokensEstimated);
+
+        // Soft threshold based on compactable budget only
+        const compactableThreshold = Math.max(1200, compactionTokenThreshold - COMPACTION_HEADROOM_TOKENS);
+
+        // Only trigger soft compaction when message tokens exceed compactable budget
+        const messageBasedSoftTrigger = messageTokensEstimated > compactableThreshold;
+
         // Update status service with context info (including percentage for UI display)
         const statusService: StatusService = StatusService.getInstance();
         statusService.setContextTokensWithThreshold(tokenCount, compactionTokenThreshold, self._contextWindow);
@@ -655,8 +677,8 @@ export abstract class BaseAgentBase {
         const hardLimit: number = Math.floor(self._contextWindow * HARD_GATE_THRESHOLD_PERCENTAGE);
         const exceedsHardLimitEstimate: boolean = tokenCount > hardLimit;
         const shouldCompact: boolean =
-          exceedsHardLimitEstimate ||
-          tokenCount + COMPACTION_HEADROOM_TOKENS > compactionTokenThreshold ||
+          exceedsHardLimitEstimate || // Hard limit still uses full request estimate
+          messageBasedSoftTrigger ||  // Soft trigger uses message-only budget
           self._forceCompactionOnNextStep;
 
         if (shouldCompact) {
@@ -666,7 +688,11 @@ export abstract class BaseAgentBase {
 
           logger.info("Compacting agent history", {
             tokenCount,
+            messageTokensEstimated,
+            fixedOverheadTokens,
+            compactableThreshold,
             threshold: compactionTokenThreshold,
+            messageBasedSoftTrigger,
             hardLimit,
             exceedsHardLimitEstimate,
             messageCount: messages.length,
@@ -674,6 +700,9 @@ export abstract class BaseAgentBase {
             aggressiveCompaction,
             correctionFactor: self._tokenEstimateCorrectionFactor,
             estimationSource,
+            rawEstimatedInputTokens: self._rawEstimatedInputTokens,
+            estimatedInputTokens: self._estimatedInputTokens,
+            providerInputTokens: this._providerInputTokens,
           });
 
           // Use summary-only compaction (no truncation)
@@ -697,6 +726,13 @@ export abstract class BaseAgentBase {
             passes: compactionResult.passes,
             converged: compactionResult.converged,
             finalMessageCount: compactionResult.messages.length,
+          });
+
+          const postMessageTokensEstimated = countTokens(compactionResult.messages);
+          logger.info("Post-compaction message budget check", {
+            postMessageTokensEstimated,
+            postCompactableThreshold: compactableThreshold,
+            stillAboveCompactableThreshold: postMessageTokensEstimated > compactableThreshold,
           });
 
           const postCompactionEstimate: IRequestLikeByteTokenEstimate | null = estimateRequestLikeTokensByBytes(
@@ -764,8 +800,11 @@ export abstract class BaseAgentBase {
   }
 
   //#endregion Protected methods
-}
 
+  protected get _currentInputTokensForLegacyLogs(): number {
+    return this._providerInputTokens ?? this._estimatedInputTokens;
+  }
+}
 //#endregion BaseAgent
 
 //#region Private functions

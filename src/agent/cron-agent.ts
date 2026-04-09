@@ -172,7 +172,10 @@ export class CronAgent extends BaseAgentBase {
         const utilization = (this._totalInputTokens / this._contextWindow) * 100;
         
         this._logger.info(`Step ${stepNumber}: Token usage tracking`, {
-          totalInputTokens: this._totalInputTokens,
+          // Note: _estimatedInputTokens and _providerInputTokens don't exist on BaseAgentBase,
+          // using _totalInputTokens as the authoritative token count from the AI provider.
+          estimatedInputTokens: this._totalInputTokens,
+          providerInputTokens: this._totalInputTokens,
           contextWindow: this._contextWindow,
           utilization: `${utilization.toFixed(1)}%`,
           hardLimit: hardLimit,

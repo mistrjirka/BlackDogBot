@@ -629,7 +629,8 @@ export class MainAgent extends BaseAgentBase {
             const logger: LoggerService = LoggerService.getInstance();
             logger.logStructured("llm", {
               chatId,
-              promptTokens: inputTokens,
+              providerInputTokens: inputTokens,
+              estimatedInputTokens: this._estimatedInputTokens,
               completionTokens: completionTokens,
               latencyMs,
               stepsCount,
