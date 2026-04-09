@@ -147,4 +147,31 @@ describe("createTableAsync validation", () => {
     const schema = await litesql.getTableSchemaAsync("testdb", "t15");
     expect(schema.columns[1].defaultValue).toBe("0.123");
   });
+
+  it("rejects empty TEXT default to avoid invalid SQL DEFAULT clause", async () => {
+    await expect(
+      litesql.createTableAsync("testdb", "t16", [
+        { name: "id", type: "INTEGER", primaryKey: true },
+        { name: "name", type: "TEXT", defaultValue: "" },
+      ])
+    ).rejects.toThrow(/empty string is not a valid default/i);
+  });
+
+  it("rejects empty INTEGER default", async () => {
+    await expect(
+      litesql.createTableAsync("testdb", "t17", [
+        { name: "id", type: "INTEGER", primaryKey: true },
+        { name: "count", type: "INTEGER", defaultValue: "" },
+      ])
+    ).rejects.toThrow(/empty string is not a valid default/i);
+  });
+
+  it("rejects empty REAL default", async () => {
+    await expect(
+      litesql.createTableAsync("testdb", "t18", [
+        { name: "id", type: "INTEGER", primaryKey: true },
+        { name: "price", type: "REAL", defaultValue: "" },
+      ])
+    ).rejects.toThrow(/empty string is not a valid default/i);
+  });
 });

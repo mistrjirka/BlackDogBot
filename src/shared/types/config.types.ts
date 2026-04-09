@@ -129,6 +129,8 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface ILoggingConfig {
   level: LogLevel;
+  fullToolArgs?: boolean;
+  fullToolArgsMaxBytes?: number;
 }
 
 export interface IServicesConfig {

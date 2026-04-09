@@ -46,6 +46,8 @@ skills:
   directories: []
 logging:
   level: debug
+  fullToolArgs: true
+  fullToolArgsMaxBytes: 2048
 `;
 
 //#endregion Helpers
@@ -211,6 +213,8 @@ logging:
     await service.initializeAsync(configPath);
 
     expect(service.getLoggingConfig().level).toBe("debug");
+    expect(service.getLoggingConfig().fullToolArgs).toBe(true);
+    expect(service.getLoggingConfig().fullToolArgsMaxBytes).toBe(2048);
   });
 
   it("should save config to disk via saveConfigAsync", async () => {

@@ -232,6 +232,14 @@ const loggingConfigSchema = z.object({
   level: z.enum(["debug", "info", "warn", "error"])
     .default("info")
     .describe("Minimum log level"),
+  fullToolArgs: z.boolean()
+    .default(false)
+    .describe("Include full tool call input/output in structured tool logs"),
+  fullToolArgsMaxBytes: z.number()
+    .int()
+    .positive()
+    .default(200000)
+    .describe("Maximum serialized bytes for full tool argument logs before truncation"),
 });
 
 const servicesConfigSchema = z.object({

@@ -193,7 +193,7 @@ describe("MainAgent unit", () => {
 
     let generateCallCount: number = 0;
     const fakeAgent = {
-      generate: vi.fn(async (args: { abortSignal: AbortSignal }) => {
+      generate: vi.fn(async (args: { abortSignal: AbortSignal; messages: Array<{ role: string; content: unknown }> }) => {
         generateCallCount++;
 
         if (generateCallCount === 1) {
@@ -206,6 +206,22 @@ describe("MainAgent unit", () => {
             });
           });
         }
+
+        const hasSystemSteeringMessage: boolean = args.messages.some((m) =>
+          m.role === "system" &&
+          ((typeof m.content === "string" && m.content.includes("[STEER]")) ||
+            (Array.isArray(m.content) && JSON.stringify(m.content).includes("[STEER]"))),
+        );
+
+        expect(hasSystemSteeringMessage).toBe(false);
+
+        const hasUserSteeringMessage: boolean = args.messages.some((m) =>
+          m.role === "user" &&
+          ((typeof m.content === "string" && m.content.includes("[STEER]")) ||
+            (Array.isArray(m.content) && JSON.stringify(m.content).includes("[STEER]"))),
+        );
+
+        expect(hasUserSteeringMessage).toBe(true);
 
         return {
           text: "Steering applied and continued.",

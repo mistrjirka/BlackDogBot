@@ -68,6 +68,7 @@ import { extractAiErrorDetails } from "../utils/ai-error.js";
 import { buildPerTableToolsAsync, buildPerTableToolsWithUpdatesAsync } from "../utils/per-table-tools.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
 import { countTokens } from "../utils/token-tracker.js";
+import { redactSensitiveData } from "../utils/log-redaction.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
 import * as toolRegistry from "../helpers/tool-registry.js";
 import type { IToolCallSummary } from "./base-agent.js";
@@ -343,6 +344,27 @@ export class MainAgent extends BaseAgentBase {
           toolCall.input,
         );
 
+        const loggingConfig = ConfigService.getInstance().getLoggingConfig();
+        if (loggingConfig.fullToolArgs) {
+          const maxBytes: number = loggingConfig.fullToolArgsMaxBytes ?? 200000;
+          const redactedInput: unknown = redactSensitiveData(toolCall.input);
+          const redactedOutput: unknown = redactSensitiveData(toolCall.result);
+          const serializedPayload: string = JSON.stringify({ input: redactedInput, output: redactedOutput });
+          const truncated: boolean = Buffer.byteLength(serializedPayload, "utf-8") > maxBytes;
+
+          LoggerService.getInstance().logStructured("tool", {
+            scope: "main",
+            chatId,
+            stepNumber,
+            toolName: toolCall.name,
+            isError: toolCall.isError ?? false,
+            truncated,
+            maxBytes,
+            input: truncated ? JSON.stringify(redactedInput).slice(0, maxBytes) : redactedInput,
+            output: truncated ? JSON.stringify(redactedOutput).slice(0, maxBytes) : redactedOutput,
+          });
+        }
+
         if (toolCall.result !== undefined || toolCall.isError !== undefined) {
           const isError = toolCall.isError ?? false;
           let errorMsg: string | undefined;
@@ -603,7 +625,7 @@ export class MainAgent extends BaseAgentBase {
           while (session.steeringQueue.length > 0) {
             const steeringMessage = session.steeringQueue.shift()!;
             messagesForCall.push({
-              role: "system",
+              role: "user",
               content: `[STEER] ${steeringMessage}`,
             } as unknown as ModelMessage);
             this._logger.info("Injected steering message", { chatId, message: steeringMessage.substring(0, 100) });

@@ -48,6 +48,7 @@ import type { MessageSender, TaskIdProvider } from "../tools/index.js";
 import { StatusService } from "../services/status.service.js";
 import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/per-table-tools.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
+import { redactSensitiveData } from "../utils/log-redaction.js";
 
 //#region Interfaces
 
@@ -188,6 +189,28 @@ export class CronAgent extends BaseAgentBase {
           : "(pending)";
         this._logger.debug(`Step ${stepNumber}: tool_call ${tc.name} ${argsStr}`);
         this._logger.debug(`Step ${stepNumber}: tool_result ${tc.name} ${resultStr}`);
+
+        const loggingConfig = ConfigService.getInstance().getLoggingConfig();
+        if (loggingConfig.fullToolArgs) {
+          const maxBytes: number = loggingConfig.fullToolArgsMaxBytes ?? 200000;
+          const redactedInput: unknown = redactSensitiveData(tc.input);
+          const redactedOutput: unknown = redactSensitiveData(tc.result);
+          const serializedPayload: string = JSON.stringify({ input: redactedInput, output: redactedOutput });
+          const truncated: boolean = Buffer.byteLength(serializedPayload, "utf-8") > maxBytes;
+
+          this._logger.logStructured("tool", {
+            scope: "cron",
+            taskName: task.name,
+            taskId: task.taskId,
+            stepNumber,
+            toolName: tc.name,
+            isError: tc.isError ?? false,
+            truncated,
+            maxBytes,
+            input: truncated ? JSON.stringify(redactedInput).slice(0, maxBytes) : redactedInput,
+            output: truncated ? JSON.stringify(redactedOutput).slice(0, maxBytes) : redactedOutput,
+          });
+        }
 
         if (traceCollector) {
           traceCollector.addTrace({

@@ -68,6 +68,10 @@ export function validateDefaultValue(type: string, defaultValue: string | undefi
     throw new Error("Invalid default value for column: must be a string");
   }
 
+  if (defaultValue.trim().length === 0) {
+    throw new Error("Invalid default value for column: empty string is not a valid default");
+  }
+
   const upperType: string = type.toUpperCase().trim() as SqlLiteralType;
 
   if (!SQL_LITERAL_TYPES.includes(upperType as SqlLiteralType)) {
