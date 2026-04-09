@@ -3,6 +3,7 @@ import { editOnceToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } fr
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
 import { filterInvalidTools } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
+import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
@@ -62,6 +63,7 @@ const executeEditOnce = async (
 ): Promise<IEditOnceResult> => {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
+  const timezone: string | undefined = ConfigService.getInstance().getConfig().scheduler.timezone;
 
   try {
     if (tools !== undefined) {
@@ -138,7 +140,7 @@ const executeEditOnce = async (
     return {
       success: true,
       task: updatedTask,
-      display: updatedTask ? formatScheduledTask(updatedTask) : undefined,
+      display: updatedTask ? formatScheduledTask(updatedTask, timezone) : undefined,
     };
   } catch (error: unknown) {
     const errorMessage: string = extractErrorMessage(error);

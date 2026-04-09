@@ -49,7 +49,7 @@ describe("cron-format", () => {
       expect(result).toContain("interval: 3600000ms (+5m offset)");
     });
 
-    it("should format once schedule", () => {
+    it("should format once schedule in human local form", () => {
       const task = createTask({
         schedule: {
           type: "once",
@@ -57,8 +57,8 @@ describe("cron-format", () => {
           offsetMinutes: 0,
         } as IScheduleOnce,
       });
-      const result = formatScheduledTask(task);
-      expect(result).toContain("once: 2024-06-15T10:00:00.000Z");
+      const result = formatScheduledTask(task, "UTC");
+      expect(result).toContain("once: Sat 2024-06-15 10:00:00 (UTC)");
     });
 
     it("should not show offset for once schedule with offsetMinutes = 0", () => {
@@ -69,8 +69,8 @@ describe("cron-format", () => {
           offsetMinutes: 0,
         } as IScheduleOnce,
       });
-      const result = formatScheduledTask(task);
-      expect(result).toContain("once: 2024-06-15T10:00:00.000Z");
+      const result = formatScheduledTask(task, "UTC");
+      expect(result).toContain("once: Sat 2024-06-15 10:00:00 (UTC)");
       expect(result).not.toContain("offset");
     });
   });

@@ -1,25 +1,53 @@
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 
-function formatSchedule(schedule: Schedule): string {
+function formatSchedule(schedule: Schedule, timezone?: string): string {
   switch (schedule.type) {
     case "interval": {
       const offsetStr: string = schedule.offsetMinutes > 0 ? ` (+${schedule.offsetMinutes}m offset)` : "";
       return `interval: ${schedule.intervalMs}ms${offsetStr}`;
     }
-    case "once":
-      return `once: ${schedule.runAt}`;
+    case "once": {
+      return `once: ${formatRunAtLocal(schedule.runAt, timezone)}`;
+    }
     default:
       return JSON.stringify(schedule);
   }
 }
 
-export function formatScheduledTask(task: IScheduledTask): string {
+function formatRunAtLocal(runAtIso: string, timezone?: string): string {
+  const runAt: Date = new Date(runAtIso);
+  const tz: string = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+  const weekday: string = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+  }).format(runAt);
+
+  const datePart: string = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(runAt);
+
+  const timePart: string = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(runAt);
+
+  return `${weekday} ${datePart} ${timePart} (${tz})`;
+}
+
+export function formatScheduledTask(task: IScheduledTask, timezone?: string): string {
   const lines: string[] = [];
 
   lines.push(`Task ID: ${task.taskId}`);
   lines.push(`Name: ${task.name}`);
   lines.push(`Description: ${task.description}`);
-  lines.push(`Schedule: ${formatSchedule(task.schedule)}`);
+  lines.push(`Schedule: ${formatSchedule(task.schedule, timezone)}`);
   lines.push(`Tools: [${task.tools.join(", ")}]`);
   lines.push(`Enabled: ${task.enabled}`);
   lines.push(`Notify User: ${task.notifyUser}`);

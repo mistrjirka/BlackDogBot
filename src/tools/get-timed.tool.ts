@@ -3,6 +3,7 @@ import {
   getCronToolInputSchema,
 } from "../shared/schemas/index.js";
 import { SchedulerService } from "../services/scheduler.service.js";
+import { ConfigService } from "../services/config.service.js";
 import { IScheduledTask } from "../shared/types/index.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
 import type { ToolExecuteContext } from "../utils/tool-factory.js";
@@ -28,6 +29,7 @@ export const getTimedTool = tool({
     _context: ToolExecuteContext,
   ): Promise<IGetTimedResult> => {
     const scheduler: SchedulerService = SchedulerService.getInstance();
+    const timezone: string | undefined = ConfigService.getInstance().getConfig().scheduler.timezone;
     const task: IScheduledTask | undefined =
       await scheduler.getTaskAsync(taskId);
 
@@ -41,7 +43,7 @@ export const getTimedTool = tool({
     return {
       success: true,
       task,
-      display: formatScheduledTask(task),
+      display: formatScheduledTask(task, timezone),
     };
   },
 } as any);
