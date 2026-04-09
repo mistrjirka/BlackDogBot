@@ -32,7 +32,7 @@ const TOOL_DESCRIPTION: string =
   "Common intervals: 3600000 (1 hour), 7200000 (2 hours), 86400000 (1 day). " +
   "For ONE-TIME tasks (runs once), use add_once instead. " +
   "send_message performs internal deduplication against previous cron messages. " +
-  "If the task's instructions reference a database, ensure the table(s) have been created first using create_table, then reference them by table name in the instructions.";
+  "If task instructions use table-storage tools, create required table(s) first using create_table, then reference explicit table names in the instructions.";
 
 //#endregion Const
 

@@ -31,7 +31,7 @@ const TOOL_DESCRIPTION: string =
   "Required inputs: name, description, instructions, tools, year/month/day/hour/minute, notifyUser. " +
   "For RECURRING tasks (e.g., every hour, daily), use add_interval instead. " +
   "send_message performs internal deduplication against previous cron messages. " +
-  "If the task's instructions reference a database, ensure the table(s) have been created first using create_table, then reference them by table name in the instructions.";
+  "If task instructions use table-storage tools, create required table(s) first using create_table, then reference explicit table names in the instructions.";
 
 //#endregion Const
 
