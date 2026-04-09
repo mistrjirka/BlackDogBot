@@ -88,11 +88,15 @@ export class DiscordHandler {
         return;
       }
 
-      if (interaction.commandType !== ApplicationCommandType.ChatInput || interaction.commandName !== "cancel") {
+      if (interaction.commandType !== ApplicationCommandType.ChatInput) {
         return;
       }
 
-      await this._handleCancelSlashCommandAsync(interaction);
+      if (interaction.commandName === "cancel") {
+        await this._handleCancelSlashCommandAsync(interaction);
+      } else if (interaction.commandName === "steer") {
+        await this._handleSteerSlashCommandAsync(interaction);
+      }
     });
 
     this._logger.info("DiscordHandler initialized");
@@ -101,6 +105,30 @@ export class DiscordHandler {
   //#endregion Public Methods
 
   //#region Private Methods
+
+  private async _handleSteerSlashCommandAsync(interaction: ChatInputCommandInteraction): Promise<void> {
+    const chatId: string = String(interaction.channelId);
+    const message: string = interaction.options.getString("message") ?? "";
+
+    if (!message.trim()) {
+      await interaction.reply({
+        content: "Usage: /steer <message>\n\nExample: /steer focus on summarizing the main points only",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    const success: boolean = mainAgent.steerChat(chatId, message.trim());
+
+    if (success) {
+      await interaction.reply("↩️ Steering message queued. The agent will be guided on its next turn.");
+    } else {
+      await interaction.reply("⚠️ Could not queue steering message. The chat may not be active.");
+    }
+
+    this._logger.info("Steering message queued via /steer command.", { chatId, message: message.trim().substring(0, 50) });
+  }
 
   private async _handleMessageAsync(message: Message): Promise<void> {
     // Ignore bot messages

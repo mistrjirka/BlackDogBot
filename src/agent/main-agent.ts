@@ -97,6 +97,7 @@ interface IChatSession {
   pendingToolRebuild: { toolName: string; tableName: string } | null;
   toolRebuildCount: number;
   terminateCurrentRun: boolean;
+  steeringQueue: string[];
 }
 
 interface IPersistedSession {
@@ -202,6 +203,7 @@ export class MainAgent extends BaseAgentBase {
         pendingToolRebuild: null,
         toolRebuildCount: 0,
         terminateCurrentRun: false,
+        steeringQueue: [],
       });
 
       if (saved !== null) {
@@ -594,21 +596,44 @@ export class MainAgent extends BaseAgentBase {
           // Create messagesForCall inside the loop so retries use updated session messages
           const messagesForCall: ModelMessage[] = [...session.messages, userModelMessage];
 
+          // Inject steering messages if any are queued
+          while (session.steeringQueue.length > 0) {
+            const steeringMessage = session.steeringQueue.shift()!;
+            messagesForCall.push({
+              role: "system",
+              content: `[STEER] ${steeringMessage}`,
+            } as unknown as ModelMessage);
+            this._logger.info("Injected steering message", { chatId, message: steeringMessage.substring(0, 100) });
+          }
+
+          const llmStartTime: number = Date.now();
           try {
             const generateResult = await this._agent!.generate({
               messages: messagesForCall,
               abortSignal: abortController.signal,
             });
 
+            const latencyMs: number = Date.now() - llmStartTime;
             const stepsCount: number = generateResult.steps?.length ?? 1;
 
             const inputTokens = generateResult.totalUsage?.inputTokens ?? generateResult.usage?.inputTokens;
+            const completionTokens = generateResult.totalUsage?.outputTokens ?? generateResult.usage?.outputTokens;
             if (inputTokens !== undefined) {
               this._totalInputTokens = inputTokens;
             } else {
               this._totalInputTokens = 0;
               this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
             }
+
+            // Structured LLM logging
+            const logger: LoggerService = LoggerService.getInstance();
+            logger.logStructured("llm", {
+              chatId,
+              promptTokens: inputTokens,
+              completionTokens: completionTokens,
+              latencyMs,
+              stepsCount,
+            });
 
             const brainInterfaceForOutput: IBrainInterfaceEmitter = BrainInterfaceService.getInstance();
 
@@ -970,6 +995,25 @@ export class MainAgent extends BaseAgentBase {
 
     session.abortController.abort();
     this._logger.info("Chat stopped.", { chatId });
+    return true;
+  }
+
+  public steerChat(chatId: string, message: string): boolean {
+    const session: IChatSession | undefined = this._sessions.get(chatId);
+
+    if (!session) {
+      this._logger.warn("Cannot steer: session not found", { chatId });
+      return false;
+    }
+
+    session.steeringQueue.push(message);
+    this._logger.info("Steering message queued", { chatId, queueLength: session.steeringQueue.length });
+
+    if (session.abortController && !session.abortController.signal.aborted) {
+      session.abortController.abort();
+      this._logger.info("Aborted current LLM call for steering", { chatId });
+    }
+
     return true;
   }
 

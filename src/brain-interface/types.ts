@@ -7,6 +7,7 @@ export type BrainCommandType =
   | "pause"
   | "resume"
   | "stop"
+  | "steer"
   | "get_graph"
   | "list_jobs"
   | "load_job"
@@ -71,7 +72,8 @@ export type BrainCommand =
   | IGetNodeTestsCommand
   | IRunNodeTestCommand
   | IQueryDatabaseCommand
-  | { type: "factory_reset" };
+  | { type: "factory_reset" }
+  | { type: "steer"; chatId: string; message: string };
 
 export interface BrainCommandResponse {
   success: boolean;

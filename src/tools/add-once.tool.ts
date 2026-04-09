@@ -129,6 +129,10 @@ RULES:
    - Set notifyUser=false for background tasks where only explicit send_message tool calls should reach Telegram (e.g. cleanup, archival, internal data processing).
    - The send_message tool ALWAYS sends to Telegram regardless of notifyUser — notifyUser only gates the automatic forwarding of the agent's final text output.
 
+7. **READ-ONLY vs. FETCH/WRITE TASK DISTINCTION:**
+   - If instructions only READ from a database (e.g., "summarize items", "generate report", "send notification based on stored data"), they do NOT require an external source URL. The database IS their source. Mark as VALID.
+   - If instructions FETCH from external sources (RSS, APIs, web) or WRITE to a database, they MUST specify source URLs AND target table schemas. Mark as INVALID if missing.
+
 Instructions to verify:
 """
 ${instructions}
@@ -153,7 +157,7 @@ Output a JSON object with:
       });
 
       if (!verificationResult.object.isClear) {
-        const errorMsg = `REJECTED. The instructions are ambiguous or missing context: ${verificationResult.object.missingContext}. Please provide complete, self-contained instructions.`;
+        const errorMsg = `REJECTED. ${verificationResult.object.missingContext} → Solution: Embed the missing information directly into the \`instructions\` parameter. Scheduled agents have no access to external files unless you add explicit \`read_file\` steps.`;
         logger.warn(`[${TOOL_NAME}] Task rejected: ${errorMsg}`);
         return { taskId: "", success: false, error: errorMsg };
       }

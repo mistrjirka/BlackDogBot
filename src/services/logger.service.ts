@@ -180,6 +180,19 @@ export class LoggerService {
     }
   }
 
+  public logStructured(category: "llm" | "tool", data: Record<string, unknown>): void {
+    const logDir: string = getLogsDir();
+    const date: string = new Date().toISOString().split("T")[0];
+    const logFile: string = path.join(logDir, category === "llm" ? `llm-audit-${date}.jsonl` : `tools-${date}.jsonl`);
+
+    const entry: string = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      ...data,
+    });
+
+    fsSync.appendFileSync(logFile, entry + "\n", { encoding: "utf-8" });
+  }
+
   private _colorMessage(message: string): string {
     // Highlight tool call/result trace messages differently.
     if (message.includes("tool_call ")) {

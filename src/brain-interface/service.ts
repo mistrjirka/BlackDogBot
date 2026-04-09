@@ -427,6 +427,21 @@ export class BrainInterfaceService {
           break;
         }
 
+        case "steer": {
+          if (!command.chatId || !command.message) {
+            response.error = "chatId and message are required";
+            break;
+          }
+
+          const success: boolean = MainAgent.getInstance().steerChat(command.chatId, command.message);
+          response.success = success;
+
+          if (!success) {
+            response.error = "Could not queue steering message. Chat may not be active.";
+          }
+          break;
+        }
+
         case "run_job":
           if (!command.jobId) {
             throw new Error("jobId is required for run_job command");

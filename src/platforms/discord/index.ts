@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits } from "discord.js";
+import { Client, GatewayIntentBits, ApplicationCommandOptionType } from "discord.js";
 
 import type { IPlatform, IPlatformDeps } from "../types.js";
 import { registerPlatform } from "../registry.js";
@@ -54,6 +54,23 @@ export const discordPlatform: IPlatform<IDiscordConfig> = {
       description: "Stop current generation and delete the active prompt.",
     }).catch((error: unknown) => {
       deps.logger.warn("Failed to register Discord /cancel command", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+    await client.application?.commands.create({
+      name: "steer",
+      description: "Queue a steering message to guide the next response.",
+      options: [
+        {
+          type: ApplicationCommandOptionType.String,
+          name: "message",
+          description: "The steering message",
+          required: true,
+        },
+      ],
+    }).catch((error: unknown) => {
+      deps.logger.warn("Failed to register Discord /steer command", {
         error: error instanceof Error ? error.message : String(error),
       });
     });
