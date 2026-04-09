@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -172,6 +172,68 @@ describe("MainAgent unit", () => {
 
     // Assert — still only one session entry
     expect(sessions.size).toBe(1);
+  });
+
+  it("should continue run after steering abort instead of returning stopped", async () => {
+    await initializeServicesAsync();
+
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    await mainAgent.initializeForChatAsync("chat-steer", messageSender, photoSender);
+
+    const session = (mainAgent as unknown as {
+      _sessions: Map<string, { steeringQueue: string[]; abortController: AbortController | null }>;
+    })._sessions.get("chat-steer");
+
+    expect(session).toBeDefined();
+
+    let firstGenerateStartedResolve: (() => void) | null = null;
+    const firstGenerateStarted: Promise<void> = new Promise<void>((resolve) => {
+      firstGenerateStartedResolve = resolve;
+    });
+
+    let generateCallCount: number = 0;
+    const fakeAgent = {
+      generate: vi.fn(async (args: { abortSignal: AbortSignal }) => {
+        generateCallCount++;
+
+        if (generateCallCount === 1) {
+          firstGenerateStartedResolve?.();
+          await new Promise<never>((_resolve, reject) => {
+            args.abortSignal.addEventListener("abort", () => {
+              const abortError: Error = new Error("Operation was stopped.");
+              abortError.name = "AbortError";
+              reject(abortError);
+            });
+          });
+        }
+
+        return {
+          text: "Steering applied and continued.",
+          steps: [{ type: "text" }],
+          usage: { inputTokens: 10, outputTokens: 5 },
+          response: { messages: [] },
+        };
+      }),
+    };
+
+    (mainAgent as unknown as { _agent: unknown })._agent = fakeAgent;
+
+    const runPromise: Promise<{ text: string; stepsCount: number }> = mainAgent.processMessageForChatAsync(
+      "chat-steer",
+      "start long task",
+    );
+
+    await firstGenerateStarted;
+
+    const steerResult: boolean = mainAgent.steerChat("chat-steer", "please explain what changed");
+    expect(steerResult).toBe(true);
+
+    const result = await runPromise;
+
+    expect(result.text).toBe("Steering applied and continued.");
+    expect(result.text).not.toBe("Operation was stopped.");
+    expect(generateCallCount).toBeGreaterThanOrEqual(2);
+    expect(session?.steeringQueue.length).toBe(0);
   });
 });
 

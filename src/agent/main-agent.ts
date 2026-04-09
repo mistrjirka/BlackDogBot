@@ -98,6 +98,7 @@ interface IChatSession {
   toolRebuildCount: number;
   terminateCurrentRun: boolean;
   steeringQueue: string[];
+  isSteeringAbort: boolean;
 }
 
 interface IPersistedSession {
@@ -204,6 +205,7 @@ export class MainAgent extends BaseAgentBase {
         toolRebuildCount: 0,
         terminateCurrentRun: false,
         steeringQueue: [],
+        isSteeringAbort: false,
       });
 
       if (saved !== null) {
@@ -575,6 +577,7 @@ export class MainAgent extends BaseAgentBase {
       // setup so /cancel works during initialization). If one doesn't exist, create it.
       let abortController: AbortController = session.abortController ?? new AbortController();
       session.abortController = abortController;
+      let continueAfterSteeringAbort: boolean = false;
 
       let result: IAgentResult = { text: "Unexpected error.", stepsCount: 0 };
 
@@ -836,14 +839,25 @@ export class MainAgent extends BaseAgentBase {
       } catch (error: unknown) {
         if (error instanceof Error && error.name === "AbortError") {
           session.abortController = null;
-          return { text: "Operation was stopped.", stepsCount: 0 };
+          if (session.isSteeringAbort) {
+            session.isSteeringAbort = false;
+            continueAfterSteeringAbort = true;
+          } else {
+            return { text: "Operation was stopped.", stepsCount: 0 };
+          }
+        } else {
+          throw error;
         }
-        throw error;
       } finally {
         statusService.endInFlight();
         session.abortController = null;
         session.paused = false;
         session.resumeResolve = null;
+      }
+
+      if (continueAfterSteeringAbort) {
+        this._logger.info("Continuing run after steering abort", { chatId, queuedSteeringMessages: session.steeringQueue.length });
+        continue;
       }
 
       // Check if a tool rebuild occurred during this generate() call
@@ -994,6 +1008,7 @@ export class MainAgent extends BaseAgentBase {
       return false;
     }
 
+    session.isSteeringAbort = false;
     session.abortController.abort();
     this._logger.info("Chat stopped.", { chatId });
     return true;
@@ -1011,6 +1026,7 @@ export class MainAgent extends BaseAgentBase {
     this._logger.info("Steering message queued", { chatId, queueLength: session.steeringQueue.length });
 
     if (session.abortController && !session.abortController.signal.aborted) {
+      session.isSteeringAbort = true;
       session.abortController.abort();
       this._logger.info("Aborted current LLM call for steering", { chatId });
     }

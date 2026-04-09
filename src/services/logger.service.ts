@@ -185,6 +185,8 @@ export class LoggerService {
     const date: string = new Date().toISOString().split("T")[0];
     const logFile: string = path.join(logDir, category === "llm" ? `llm-audit-${date}.jsonl` : `tools-${date}.jsonl`);
 
+    fsSync.mkdirSync(logDir, { recursive: true });
+
     const entry: string = JSON.stringify({
       timestamp: new Date().toISOString(),
       ...data,
