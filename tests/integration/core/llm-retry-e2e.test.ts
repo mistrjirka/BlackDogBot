@@ -45,9 +45,9 @@ describe("llm-retry E2E — real LLM calls", () => {
 
     await AiProviderService.getInstance().initializeAsync(configService.getConfig().ai);
 
-    // Check if LM Studio is configured - skip tests if using local provider without LM Studio running
+    // Skip only when LM Studio is the active provider (requires local runtime readiness).
     const provider: string = AiProviderService.getInstance().getActiveProvider();
-    shouldSkipLmTests = provider === "openai-compatible" || provider === "lm-studio";
+    shouldSkipLmTests = provider === "lm-studio";
   }, 60000);
 
   afterAll(async () => {

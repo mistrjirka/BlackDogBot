@@ -4,6 +4,7 @@ import { editInstructionsToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NA
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
 import { filterInvalidTools } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
+import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
@@ -54,6 +55,7 @@ const executeEditInstructions = async (
 ): Promise<IEditInstructionsResult> => {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
+  const timezone: string | undefined = ConfigService.getInstance().getConfig().scheduler.timezone;
 
   try {
     const existingTask: IScheduledTask | undefined = await scheduler.getTaskAsync(taskId);
@@ -119,8 +121,8 @@ const executeEditInstructions = async (
     if (mentionsRunCmd && mentionsSqlite) {
       const recommendedWriter: string | undefined = toolsToVerify.find((toolName: string) => toolName.startsWith("write_table_"));
       const guidance: string = recommendedWriter
-        ? `Use ${recommendedWriter} for inserts and database tools (read_from_database/update_database/delete_from_database) for mutations instead of run_cmd/sqlite3.`
-        : "Use write_table_<tableName> for inserts and database tools (read_from_database/update_database/delete_from_database) instead of run_cmd/sqlite3.";
+        ? `Use ${recommendedWriter} for inserts and table tools (read_from_database/update_table_<tableName>/delete_from_database) for mutations instead of run_cmd/sqlite3.`
+        : "Use write_table_<tableName> for inserts and table tools (read_from_database/update_table_<tableName>/delete_from_database) instead of run_cmd/sqlite3.";
 
       return {
         success: false,
@@ -168,8 +170,8 @@ RULES:
 7. Database rules are strict:
    - NEVER use run_cmd with sqlite/sqlite3 for internal database work.
    - For inserts, prefer write_table_<tableName> tools when available.
-   - Use read_from_database/update_database/delete_from_database for database access and mutation.
-   - Use just database names without .db extension.
+    - Use read_from_database/update_table_<tableName>/delete_from_database for table access and mutation.
+    - Do not reference database names or .db file paths; tables are in the default internal database.
 
 8. If instructions mention tools not present in the tool list, they are invalid unless those tools are being added in this same update.
 
@@ -252,7 +254,7 @@ Output a JSON object with:
     return {
       success: true,
       task: updatedTask,
-      display: updatedTask ? formatScheduledTask(updatedTask) : undefined,
+      display: updatedTask ? formatScheduledTask(updatedTask, timezone) : undefined,
     };
   } catch (error: unknown) {
     const errorMessage: string = extractErrorMessage(error);

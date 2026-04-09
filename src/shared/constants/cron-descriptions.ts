@@ -101,38 +101,33 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Args: url (string, required); selector (string, optional, CSS selector to extract specific content).",
 
   get_table_schema:
-    "Get the schema (columns and types) of a specific table. Use just the database name, not a file path. " +
-    "Args: databaseName (string, required); tableName (string, required).",
+    "Get the schema (columns and types) of a specific table in the default internal database. " +
+    "Args: tableName (string, required).",
 
   create_table:
-    "Create a new table in a database. Use just the database name, not a file path. " +
-    "Args: databaseName (string, required); tableName (string, required); " +
+    "Create a new table in the default internal database. " +
+    "Args: tableName (string, required); " +
     "columns (array of {name, type: TEXT|INTEGER|REAL|BLOB, primaryKey?, notNull?, defaultValue?}, required).",
 
   drop_table:
-    "Drop (permanently delete) a table from a database. Use just the database name, not a file path. " +
-    "Args: databaseName (string, required); tableName (string, required).",
+    "Drop (permanently delete) a table from the default internal database. " +
+    "Args: tableName (string, required).",
 
   read_from_database:
-    "Read rows from a database table with optional filtering, ordering, and column selection. " +
-    "Use just the database name, not a file path. " +
-    "Args: databaseName (string, required); tableName (string, required); " +
+    "Read rows from a table with optional filtering, ordering, and column selection. " +
+    "Tables live in the default internal database. " +
+    "Args: tableName (string, required); " +
     "where (string, optional SQL WHERE); orderBy (string, optional); limit (number, optional, default 100); columns (string[], optional).",
 
-  write_to_database:
-    "Deprecated generic write tool. Prefer table-specific tools named write_table_<tableName> (for example write_table_news_items). " +
-    "Use just the database name, not a file path. Args: databaseName (string, required); tableName (string, required); " +
-    "data (array of row objects, required, e.g. [{title: 'Hello', score: 5}]).",
-
   "update_table_<tableName>":
-    "Update rows in a specific database table using the table-specific tool. " +
-    "Use just the database name, not a file path. " +
-    "Args: databaseName (string, required); set (object of column-value pairs, required); where (string, required).",
+    "Update rows in a specific table using the table-specific tool. " +
+    "Tables live in the default internal database. " +
+    "Args: set (object of column-value pairs, required); where (string, required).",
 
   delete_from_database:
-    "Delete rows from a database table. Requires a WHERE clause for safety. " +
-    "Use just the database name, not a file path. " +
-    "Args: databaseName (string, required); tableName (string, required); where (string, required).",
+    "Delete rows from a table. Requires a WHERE clause for safety. " +
+    "Tables live in the default internal database. " +
+    "Args: tableName (string, required); where (string, required).",
 
   call_skill:
     "Invoke a named skill agent with the given input and return its output. " +

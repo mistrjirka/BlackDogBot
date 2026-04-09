@@ -77,9 +77,9 @@ describe("Setup Runner E2E", () => {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     aiProviderService.initialize(configService.getConfig().ai);
 
-    // Check if LM Studio is configured - skip tests if using local provider without LM Studio running
+    // Skip only when LM Studio is the active provider (requires local runtime readiness).
     const provider: string = aiProviderService.getActiveProvider();
-    shouldSkipLmTests = provider === "openai-compatible" || provider === "lm-studio";
+    shouldSkipLmTests = provider === "lm-studio";
 
     const promptService: PromptService = PromptService.getInstance();
     await promptService.initializeAsync();

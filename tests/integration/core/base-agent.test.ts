@@ -65,7 +65,7 @@ describe("BaseAgentBase", () => {
     aiProviderService.initialize(configService.getConfig().ai);
 
     const provider: string = aiProviderService.getActiveProvider();
-    shouldSkipLmTests = provider === "openai-compatible" || provider === "lm-studio";
+    shouldSkipLmTests = provider === "lm-studio";
   });
 
   afterAll(async () => {

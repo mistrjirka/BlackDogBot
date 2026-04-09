@@ -143,11 +143,11 @@ not the same as node types.
 | `append_file` | Append content to a file |
 | `edit_file` | Edit a file in place |
 | `write_table_<tableName>` | Insert rows into a specific table using schema-validated per-table tools. Use the exact tool for your table, e.g. `write_table_news_items`. |
-| `read_from_database` | Query rows from a database table with optional WHERE, ORDER BY, LIMIT, and column selection. |
+| `read_from_database` | Query rows from a table (default internal database) with optional WHERE, ORDER BY, LIMIT, and column selection. |
 | `update_table_<tableName>` | Update existing rows in a specific table. Requires a WHERE clause for safety. Use the exact tool for your table, e.g. `update_table_news_items`. |
-| `delete_from_database` | Delete rows from a table. Requires a WHERE clause for safety. |
+| `delete_from_database` | Delete rows from a table (default internal database). Requires a WHERE clause for safety. |
 | `get_table_schema` | Get the schema (columns, types) of a specific table. |
-| `create_table` | Create a new table in a database with specified columns and types. |
+| `create_table` | Create a new table in the default internal database with specified columns and types. |
 
 **Notes:**
 - `think` is always injected automatically — you do not need

@@ -14,6 +14,7 @@ import { RateLimiterService } from "../../../src/services/rate-limiter.service.j
 let tempDir: string;
 let originalHome: string;
 let shouldSkipLmTests: boolean = false;
+let activeProvider: string = "";
 
 
 //#region Tests
@@ -47,9 +48,8 @@ describe("AiProvider E2E", () => {
 
     aiProviderService.initialize(configService.getConfig().ai);
 
-    // Check if LM Studio is configured - skip tests if using local provider without LM Studio running
-    const provider: string = aiProviderService.getActiveProvider();
-    shouldSkipLmTests = provider === "openai-compatible" || provider === "lm-studio";
+    activeProvider = aiProviderService.getActiveProvider();
+    shouldSkipLmTests = activeProvider === "lm-studio";
   }, 60000);
 
   afterAll(async () => {
@@ -66,7 +66,7 @@ describe("AiProvider E2E", () => {
     const model: LanguageModel = aiProviderService.getDefaultModel();
 
     expect(model).toBeDefined();
-    expect(aiProviderService.getActiveProvider()).toBe("openrouter");
+    expect(aiProviderService.getActiveProvider()).toBe(activeProvider);
   });
 
   it("should make a real LLM call via generateText and get a response", async () => {

@@ -60,7 +60,7 @@ describe("BaseAgentBase E2E", () => {
     aiProviderService.initialize(configService.getConfig().ai);
 
     const provider: string = aiProviderService.getActiveProvider();
-    shouldSkipLmTests = provider === "openai-compatible" || provider === "lm-studio";
+    shouldSkipLmTests = provider === "lm-studio";
   }, 600000);
 
   afterAll(async () => {
