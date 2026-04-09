@@ -713,9 +713,8 @@ export const addIntervalToolInputSchema = z.object({
   offsetMinutes: z.number()
     .int()
     .nonnegative()
-    .optional()
     .default(0)
-    .describe("Offset in minutes to wait before first run (default: 0)"),
+    .describe("Offset in minutes applied before each interval trigger"),
   notifyUser: z.boolean()
     .describe("Whether to send a Telegram notification when this task completes (required)"),
 });
@@ -782,7 +781,7 @@ export const editIntervalToolInputSchema = z.object({
     .int()
     .nonnegative()
     .optional()
-    .describe("Offset in minutes for 'interval' schedule"),
+    .describe("Offset in minutes applied before each interval trigger"),
   notifyUser: z.boolean()
     .optional()
     .describe("Whether to send a Telegram notification"),

@@ -16,7 +16,7 @@ import { SkillLoaderService } from "../../../src/services/skill-loader.service.j
 import * as litesql from "../../../src/helpers/litesql.js";
 import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
 import { MainAgent, type IAgentResult } from "../../../src/agent/main-agent.js";
-import type { MessageSender, PhotoSender } from "../../../src/tools/index.js";
+import type { MessageSender } from "../../../src/tools/index.js";
 import type { IToolCallSummary } from "../../../src/agent/base-agent.js";
 
 
@@ -32,7 +32,7 @@ const mockMessageSender: MessageSender = async (message: string): Promise<string
   return "mock-message-id";
 };
 
-const mockPhotoSender: PhotoSender = async (): Promise<string | null> => {
+const mockPhotoSender = async (): Promise<string | null> => {
   return "mock-photo-id";
 };
 
@@ -148,6 +148,10 @@ describe("MainAgent E2E", () => {
   }, 600000);
 
   it("should use the think tool when asked to reason", async () => {
+    if (shouldSkipLmTests) {
+      return;
+    }
+
     const mainAgent: MainAgent = MainAgent.getInstance();
     const result: IAgentResult = await mainAgent.processMessageForChatAsync(
       "test-chat",

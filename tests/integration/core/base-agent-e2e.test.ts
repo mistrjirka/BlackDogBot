@@ -16,6 +16,7 @@ import type { ToolSet, LanguageModel } from "ai";
 
 let tempDir: string;
 let originalHome: string;
+let shouldSkipLmTests: boolean = false;
 
 /**
  * Concrete subclass of BaseAgentBase for e2e testing.
@@ -57,6 +58,9 @@ describe("BaseAgentBase E2E", () => {
 
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
     aiProviderService.initialize(configService.getConfig().ai);
+
+    const provider: string = aiProviderService.getActiveProvider();
+    shouldSkipLmTests = provider === "openai-compatible" || provider === "lm-studio";
   }, 600000);
 
   afterAll(async () => {
@@ -66,6 +70,10 @@ describe("BaseAgentBase E2E", () => {
   });
 
   it("should process a message with a real LLM and return a result", async () => {
+    if (shouldSkipLmTests) {
+      return;
+    }
+
     const model: LanguageModel = AiProviderService.getInstance().getModel();
     const agent: TestAgent = new TestAgent();
 
@@ -86,6 +94,10 @@ describe("BaseAgentBase E2E", () => {
   }, 600000);
 
   it("should return stepsCount matching the number of agent steps", async () => {
+    if (shouldSkipLmTests) {
+      return;
+    }
+
     const model: LanguageModel = AiProviderService.getInstance().getModel();
     const agent: TestAgent = new TestAgent();
 

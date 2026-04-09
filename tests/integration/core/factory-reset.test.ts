@@ -24,7 +24,7 @@ describe("factoryResetAsync", () => {
 
     const blackdogbotDir: string = path.join(tempDir, ".blackdogbot");
 
-    await fs.mkdir(path.join(blackdogbotDir, "cron"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "timed"), { recursive: true });
     await fs.mkdir(path.join(blackdogbotDir, "workspace"), { recursive: true });
     await fs.mkdir(path.join(blackdogbotDir, "databases"), { recursive: true });
     await fs.mkdir(path.join(blackdogbotDir, "rss-state"), { recursive: true });
@@ -33,7 +33,7 @@ describe("factoryResetAsync", () => {
     await fs.mkdir(path.join(blackdogbotDir, "prompts"), { recursive: true });
     await fs.mkdir(path.join(blackdogbotDir, "skills", "test-skill"), { recursive: true });
 
-    await fs.writeFile(path.join(blackdogbotDir, "cron", "test-task.json"), JSON.stringify({ taskId: "test", name: "Test" }));
+    await fs.writeFile(path.join(blackdogbotDir, "timed", "test-task.json"), JSON.stringify({ taskId: "test", name: "Test" }));
     await fs.writeFile(path.join(blackdogbotDir, "workspace", "testfile.txt"), "hello");
     await fs.writeFile(path.join(blackdogbotDir, "databases", "test.db"), "");
     await fs.writeFile(path.join(blackdogbotDir, "rss-state", "somehash.json"), "{}");
@@ -75,11 +75,11 @@ describe("factoryResetAsync", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it("should wipe the cron directory", async () => {
+  it("should wipe the timed directory", async () => {
     await factoryResetAsync();
 
-    const cronDir: string = path.join(tempDir, ".blackdogbot", "cron");
-    const files: string[] = await fs.readdir(cronDir);
+    const timedDir: string = path.join(tempDir, ".blackdogbot", "timed");
+    const files: string[] = await fs.readdir(timedDir);
     expect(files.length).toBe(0);
   });
 

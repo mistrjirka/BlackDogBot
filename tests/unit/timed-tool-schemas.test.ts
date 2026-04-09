@@ -2,7 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   addOnceToolInputSchema,
   editOnceToolInputSchema,
+  addIntervalToolInputSchema,
+  editIntervalToolInputSchema,
 } from "../../src/shared/schemas/tool-schemas.js";
+import { scheduleOnceSchema, scheduleIntervalSchema } from "../../src/shared/schemas/cron.schemas.js";
 
 describe("addOnceToolInputSchema - new split datetime fields", () => {
   it("should reject year in the past (before current year)", () => {
@@ -219,5 +222,118 @@ describe("editOnceToolInputSchema - new split datetime fields", () => {
       minute: 0,
     });
     expect(result.success).toBe(false);
+  });
+
+  it("should reject Feb 29 for non-leap year", () => {
+    const result = editOnceToolInputSchema.safeParse({
+      taskId: "abc123",
+      year: 2023,
+      month: 2,
+      day: 29,
+      hour: 14,
+      minute: 30,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("scheduleOnceSchema - offsetMinutes", () => {
+  it("should accept offsetMinutes field", () => {
+    const result = scheduleOnceSchema.safeParse({
+      type: "once",
+      runAt: "2026-04-08T12:00:00Z",
+      offsetMinutes: 30,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("should default offsetMinutes to 0", () => {
+    const result = scheduleOnceSchema.safeParse({
+      type: "once",
+      runAt: "2026-04-08T12:00:00Z",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.offsetMinutes).toBe(0);
+    }
+  });
+
+  it("should reject negative offsetMinutes", () => {
+    const result = scheduleOnceSchema.safeParse({
+      type: "once",
+      runAt: "2026-04-08T12:00:00Z",
+      offsetMinutes: -10,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("scheduleIntervalSchema - offsetMinutes", () => {
+  it("should accept offsetMinutes field", () => {
+    const result = scheduleIntervalSchema.safeParse({
+      type: "interval",
+      intervalMs: 3600000,
+      offsetMinutes: 15,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("should default offsetMinutes to 0", () => {
+    const result = scheduleIntervalSchema.safeParse({
+      type: "interval",
+      intervalMs: 3600000,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.offsetMinutes).toBe(0);
+    }
+  });
+});
+
+describe("addIntervalToolInputSchema - offsetMinutes", () => {
+  it("should accept offsetMinutes in schedule", () => {
+    const result = addIntervalToolInputSchema.safeParse({
+      name: "Test",
+      description: "Test task",
+      instructions: "Do something",
+      tools: ["send_message"],
+      intervalMs: 3600000,
+      notifyUser: true,
+      offsetMinutes: 45,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("should default offsetMinutes to 0", () => {
+    const result = addIntervalToolInputSchema.safeParse({
+      name: "Test",
+      description: "Test task",
+      instructions: "Do something",
+      tools: ["send_message"],
+      intervalMs: 3600000,
+      notifyUser: true,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.offsetMinutes).toBe(0);
+    }
+  });
+});
+
+describe("editIntervalToolInputSchema - offsetMinutes", () => {
+  it("should accept optional offsetMinutes", () => {
+    const result = editIntervalToolInputSchema.safeParse({
+      taskId: "abc123",
+      offsetMinutes: 20,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("should pass without offsetMinutes", () => {
+    const result = editIntervalToolInputSchema.safeParse({
+      taskId: "abc123",
+      name: "New Name",
+    });
+    expect(result.success).toBe(true);
   });
 });
