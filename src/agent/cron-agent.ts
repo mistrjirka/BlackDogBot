@@ -167,19 +167,17 @@ export class CronAgent extends BaseAgentBase {
       });
 
       // Log token usage at each step to track accumulation during long-running tasks
-      if (this._totalInputTokens > 0) {
+      if (this._estimatedInputTokens > 0 || this._providerInputTokens !== null) {
         const hardLimit = Math.floor(this._contextWindow * 0.85);
-        const utilization = (this._totalInputTokens / this._contextWindow) * 100;
+        const utilization = (this._estimatedInputTokens / this._contextWindow) * 100;
         
         this._logger.info(`Step ${stepNumber}: Token usage tracking`, {
-          // Note: _estimatedInputTokens and _providerInputTokens don't exist on BaseAgentBase,
-          // using _totalInputTokens as the authoritative token count from the AI provider.
-          estimatedInputTokens: this._totalInputTokens,
-          providerInputTokens: this._totalInputTokens,
+          estimatedInputTokens: this._estimatedInputTokens,
+          providerInputTokens: this._providerInputTokens,
           contextWindow: this._contextWindow,
           utilization: `${utilization.toFixed(1)}%`,
           hardLimit: hardLimit,
-          remainingTokens: Math.max(0, hardLimit - this._totalInputTokens),
+          remainingTokens: Math.max(0, hardLimit - this._estimatedInputTokens),
         });
       }
 

@@ -248,7 +248,6 @@ export abstract class BaseAgentBase {
               rawEstimatedInputTokens: this._rawEstimatedInputTokens,
               estimatedInputTokens: this._estimatedInputTokens,
               providerInputTokens: this._providerInputTokens,
-              currentTokenCount: this._providerInputTokens ?? this._estimatedInputTokens,
               contextWindow: this._contextWindow,
               utilization: `${((this._providerInputTokens ?? this._estimatedInputTokens) / this._contextWindow * 100).toFixed(1)}%`,
             });
