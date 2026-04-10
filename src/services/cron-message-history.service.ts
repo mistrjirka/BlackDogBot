@@ -75,42 +75,60 @@ interface IBuildNoveltyPromptInput {
 export function buildCronNoveltyPrompt(input: IBuildNoveltyPromptInput): string {
   return `You are a strict deduplication checker for cron notifications.
 
-Your job: determine whether the CANDIDATE MESSAGE describes a genuinely NEW EVENT that users have not already been notified about.
+Your job: determine whether the CANDIDATE MESSAGE describes genuinely new information that users have not already been notified about.
 
 RULES:
 - If the candidate and any previous message describe the SAME CORE EVENT, classify as DUPLICATE (isNewInformation=false).
 - "Same core event" means same real-world incident/alert subject, even if the candidate adds new context, extra details, statistics, or stronger wording.
 - Added details about an already-known event are NOT new information.
 - Rephrasing, different tone, reordered wording, timestamp formatting, or style changes are NOT new information.
-- Status/progress chatter ("task done", "fetched X", "processing complete") is NOT new information unless task instructions explicitly require those updates.
+- Status/progress chatter ("task done", "fetched X", "processed Y") is NOT new information.
 - Only classify as NEW when the core event itself is different (different incident/entity/location/outcome), not just richer description of the same incident.
 - When uncertain, choose isNewInformation=false.
 
-CORE EVENT TEST (must be applied first):
+EXCEPTIONS - Always classify as NEW (isNewInformation=true):
+1) TIME-SENSITIVE DATA: Weather, stock prices, market data, system metrics, sensor readings, current values - the current value IS the information, regardless of task type
+2) PERIODIC DELIVERABLES: Tasks that explicitly deliver current state on schedule (e.g., "daily weather", "hourly metrics", "daily digest")
+3) STATE-CHANGING DATA: Numbers, measurements, counts, values that differ each run regardless of wording
+4) DATA WITH NUMERIC CHANGES: Any message containing new/different numbers, temperatures, prices, counts, percentages
+
+ASK YOURSELF FIRST: "Does this message contain new numeric values, current readings, or data that changes per execution?" If yes, it's NEW - do NOT deduplicate.
+
+CORE EVENT TEST (apply only to event-based messages, not time-sensitive data):
 1) Identify the core event in the candidate.
 2) Check whether that same core event appears in any previous message.
 3) If yes, isNewInformation MUST be false.
 4) Only if core event is absent from all previous messages may isNewInformation be true.
 
-EXAMPLE A (duplicate -> false):
+EXAMPLE A (duplicate -> false - event-based):
 Candidate: "ENERGY ALERT: Trump threatens Iranian power plants; US weighs Kharg Island seizure"
 Previous:  "ENERGY ALERT: Trump's ultimatum threatens Iranian power infrastructure; US considers seizing Kharg Island"
 Reason: same core event, different wording.
 
-EXAMPLE B (duplicate -> false):
+EXAMPLE B (duplicate -> false - same event with extra context):
 Candidate: "ENERGY ALERT: Czech factory arson verified; IEA says crisis worse than 1970s"
 Previous:  "ENERGY ALERT: Czech thermal imaging factory arson attack confirmed"
 Reason: same core event (Czech factory arson). Added IEA context does not create a new event.
 
-EXAMPLE C (new -> true):
+EXAMPLE C (new -> true - different event):
 Candidate: "ENERGY ALERT: Slovenia starts fuel rationing at 50L/day"
 Previous:  "ENERGY ALERT: Trump threatens Iranian power plants; Kharg Island risk"
 Reason: different core event.
 
+EXAMPLE D (new -> true - time-sensitive data):
+Candidate: "Weather: 15°C, partly cloudy, Prague"
+Previous:  "Weather: 18°C, sunny, Prague"
+Reason: same location but different conditions - current weather value is the information.
+
+EXAMPLE E (new -> true - periodic with numeric changes):
+Candidate: "Daily summary: 5 articles processed, 2 new"
+Previous:  "Daily summary: 3 articles processed, 1 new"
+Reason: periodic report - each run delivers its own current snapshot with different numbers.
+
 OUTPUT REQUIREMENTS:
-1) In \`reasoning\`, explicitly state the candidate core event and whether it already exists in previous messages (cite the matching rank numbers when applicable).
-2) If core event already exists, isNewInformation MUST be false.
-3) Only mark true if the candidate core event is genuinely different.
+1) In \`reasoning\`, first check if message contains time-sensitive data (numeric values, current readings).
+2) If time-sensitive, reasoning should explain what changed and why it's new information.
+3) If event-based, explicitly state the candidate core event and whether it already exists in previous messages.
 
 ${input.taskContextBlock}
 
@@ -351,7 +369,7 @@ export class CronMessageHistoryService {
       });
 
       return {
-        isNewInformation: false,
+        isNewInformation: true,
         similarCount: 0,
         error: details,
       };
@@ -437,7 +455,7 @@ ${candidateMessage}`;
       });
 
       return {
-        shouldDispatch: false,
+        shouldDispatch: true,
         error: details,
       };
     }
