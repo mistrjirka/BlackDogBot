@@ -1,7 +1,6 @@
 import { type Tool, type ToolCallOptions, type ToolSet } from "ai";
 import { z } from "zod";
 
-import { isReasoningRequired } from "./prepare-step.js";
 import { LoggerService } from "../services/logger.service.js";
 
 //#region Constants
@@ -9,8 +8,7 @@ import { LoggerService } from "../services/logger.service.js";
 const _ReasoningExemptToolNames: Set<string> = new Set(["think"]);
 
 const _ReasoningDescription: string =
-  "Optional concise reasoning for this tool call. " +
-  "When the reasoning window is exceeded, this field becomes required for non-think tools.";
+  "Optional concise reasoning for this tool call.";
 
 //#endregion Constants
 
@@ -28,7 +26,7 @@ export interface IToolWrapperOptions {
 /**
  * Wraps a ToolSet so every non-think tool:
  * - accepts an optional `reasoning` input field in schema, and
- * - enforces non-empty `reasoning` at runtime when reasoning policy requires it.
+ * - strips `reasoning` before passing input to the underlying tool implementation.
  */
 export function wrapToolSetWithReasoning(
   tools: ToolSet,
@@ -56,7 +54,7 @@ export function wrapToolSetWithReasoning(
 //#region Private functions
 
 function _wrapSingleTool(
-  toolName: string,
+  _toolName: string,
   toolDef: Tool<unknown, unknown>,
 ): Tool<unknown, unknown> {
   const execute = toolDef.execute;
@@ -73,15 +71,6 @@ function _wrapSingleTool(
     ...toolDef,
     inputSchema,
     execute: async (input: unknown, options: ToolCallOptions): Promise<unknown> => {
-      const reasoningRequired: boolean = isReasoningRequired(options.messages);
-
-      if (reasoningRequired && !_hasNonEmptyReasoning(input)) {
-        throw new Error(
-          `Tool \"${toolName}\" requires non-empty reasoning in this step. ` +
-          `Provide a concise \"reasoning\" field or use the think tool first.`,
-        );
-      }
-
       const sanitizedInput: unknown = _stripReasoning(input);
 
       // Execute the original tool
@@ -107,22 +96,6 @@ function _augmentSchemaWithReasoning(inputSchema: unknown): unknown {
       .optional()
       .describe(_ReasoningDescription),
   });
-}
-
-function _hasNonEmptyReasoning(input: unknown): boolean {
-  if (typeof input !== "object" || input === null) {
-    return false;
-  }
-
-  const inputRecord: Record<string, unknown> = input as Record<string, unknown>;
-
-  if (!("reasoning" in inputRecord)) {
-    return false;
-  }
-
-  const reasoning: unknown = inputRecord.reasoning;
-
-  return typeof reasoning === "string" && reasoning.trim().length > 0;
 }
 
 function _stripReasoning(input: unknown): unknown {

@@ -5,14 +5,12 @@ import { z } from "zod";
 const everyTimePartsSchema = z.object({
   hours: z.number()
     .int()
-    .nonnegative()
-    .max(24)
-    .default(0),
+    .min(0)
+    .max(24),
   minutes: z.number()
     .int()
     .min(0)
-    .max(59)
-    .default(0),
+    .max(59),
 }).superRefine((data, ctx) => {
   if (data.hours === 24 && data.minutes !== 0) {
     ctx.addIssue({
@@ -27,13 +25,11 @@ const offsetTimePartsSchema = z.object({
   hours: z.number()
     .int()
     .min(0)
-    .max(23)
-    .default(0),
+    .max(23),
   minutes: z.number()
     .int()
     .min(0)
-    .max(59)
-    .default(0),
+    .max(59),
 });
 
 export const scheduleOnceSchema = z.object({
@@ -42,7 +38,6 @@ export const scheduleOnceSchema = z.object({
     .datetime()
     .describe("ISO 8601 datetime to run at"),
   offsetFromDayStart: offsetTimePartsSchema
-    .default({ hours: 0, minutes: 0 })
     .describe("Offset from day start (midnight) in local timezone"),
   timezone: z.string()
     .min(1)
@@ -55,7 +50,6 @@ const scheduleIntervalBaseSchema = z.object({
   every: everyTimePartsSchema
     .describe("Interval in hours/minutes"),
   offsetFromDayStart: offsetTimePartsSchema
-    .default({ hours: 0, minutes: 0 })
     .describe("Offset from day start (midnight) in local timezone"),
   timezone: z.string()
     .min(1)

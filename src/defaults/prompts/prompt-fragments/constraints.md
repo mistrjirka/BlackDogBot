@@ -7,3 +7,4 @@
 7. **No prompt fragment creation for tasks:** Do NOT use `write_file` to create `.md` files in `prompt-fragments/` or elsewhere to "support" scheduled tasks. The `\{\{include:...\}\}` directive resolves at system prompt build time, NOT at scheduled task runtime. If a task needs reference data, embed it in the `instructions` parameter or have the task call `read_file` explicitly.
 
 8. **Verifier rejections:** If `add_interval` or `add_once` rejects your instructions as ambiguous, always fix by embedding more context (schema, URLs, criteria) into `instructions`. NEVER fix by creating separate files.
+9. **Reasoning field behavior:** Tool calls do not fail due to missing `reasoning`. The `reasoning` argument is optional metadata; do not treat it as required for successful tool execution.

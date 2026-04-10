@@ -707,29 +707,24 @@ export const addIntervalToolInputSchema = z.object({
   every: z.object({
     hours: z.number()
       .int()
-      .nonnegative()
-      .max(24)
-      .default(0),
+      .min(0)
+      .max(24),
     minutes: z.number()
       .int()
       .min(0)
-      .max(59)
-      .default(0),
-  }).describe("Interval in hours/minutes (required; at least one non-zero)"),
+      .max(59),
+  }).describe("Interval in hours/minutes (both fields required; at least one non-zero)"),
   offsetFromDayStart: z.object({
     hours: z.number()
       .int()
       .min(0)
-      .max(23)
-      .default(0),
+      .max(23),
     minutes: z.number()
       .int()
       .min(0)
-      .max(59)
-      .default(0),
+      .max(59),
   })
-    .default({ hours: 0, minutes: 0 })
-    .describe("Offset from day start (midnight) in hours/minutes"),
+    .describe("Offset from day start (midnight) in hours/minutes (both fields required)"),
   timezone: z.string()
     .min(1)
     .optional()
@@ -810,31 +805,27 @@ export const editIntervalToolInputSchema = z.object({
   every: z.object({
     hours: z.number()
       .int()
-      .nonnegative()
-      .max(24)
-      .optional(),
+      .min(0)
+      .max(24),
     minutes: z.number()
       .int()
       .min(0)
-      .max(59)
-      .optional(),
+      .max(59),
   })
     .optional()
-    .describe("Updated interval in hours/minutes"),
+    .describe("Updated interval in hours/minutes (both fields required when provided)"),
   offsetFromDayStart: z.object({
     hours: z.number()
       .int()
       .min(0)
-      .max(23)
-      .optional(),
+      .max(23),
     minutes: z.number()
       .int()
       .min(0)
-      .max(59)
-      .optional(),
+      .max(59),
   })
     .optional()
-    .describe("Updated day-start offset in hours/minutes"),
+    .describe("Updated day-start offset in hours/minutes (both fields required when provided)"),
   timezone: z.string()
     .min(1)
     .optional()
@@ -846,7 +837,7 @@ export const editIntervalToolInputSchema = z.object({
     .optional()
     .describe("Whether the task is enabled"),
 }).superRefine((data, ctx) => {
-  if (data.every && data.every.hours === 24 && (data.every.minutes ?? 0) !== 0) {
+  if (data.every && data.every.hours === 24 && data.every.minutes !== 0) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["every", "minutes"],
@@ -854,11 +845,11 @@ export const editIntervalToolInputSchema = z.object({
     });
   }
 
-  if (data.every && (data.every.hours ?? 0) === 0 && (data.every.minutes ?? 0) === 0) {
+  if (data.every && data.every.hours === 0 && data.every.minutes === 0) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["every"],
-      message: "every patch cannot be 0h 0m",
+      message: "every must be > 0 (set hours or minutes)",
     });
   }
 });
@@ -971,18 +962,22 @@ export const setJobScheduleToolInputSchema = z.object({
       .optional(),
     every: z.object({
       hours: z.number()
-        .optional(),
+        .min(0)
+        .max(24),
       minutes: z.number()
-        .optional(),
+        .min(0)
+        .max(59),
     })
       .optional(),
     expression: z.string()
       .optional(),
     offsetFromDayStart: z.object({
       hours: z.number()
-        .optional(),
+        .min(0)
+        .max(23),
       minutes: z.number()
-        .optional(),
+        .min(0)
+        .max(59),
     })
       .optional(),
     timezone: z.string()
@@ -1002,17 +997,26 @@ export const setJobScheduleToolInputSchema = z.object({
 
   if (data.schedule.type === "interval") {
     const every = data.schedule.every;
+    const offset = data.schedule.offsetFromDayStart;
     const hours = every?.hours;
     const minutes = every?.minutes;
     const hasPositiveEvery =
       (typeof hours === "number" && Number.isFinite(hours) && hours > 0)
       || (typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0);
 
-    if (!every || !hasPositiveEvery) {
+    if (!every || hours === undefined || minutes === undefined || !hasPositiveEvery) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["schedule", "every"],
-        message: "schedule.every is required and must be > 0 when schedule.type is 'interval'",
+        message: "schedule.every is required with both hours and minutes, and must be > 0 when schedule.type is 'interval'",
+      });
+    }
+
+    if (!offset || offset.hours === undefined || offset.minutes === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["schedule", "offsetFromDayStart"],
+        message: "schedule.offsetFromDayStart is required with both hours and minutes when schedule.type is 'interval'",
       });
     }
   }

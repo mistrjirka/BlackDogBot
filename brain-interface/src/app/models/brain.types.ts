@@ -363,11 +363,24 @@ export interface BrainCommandResponse {
 export interface IScheduleOnce {
   type: "once";
   runAt: string;
+  offsetFromDayStart: {
+    hours: number;
+    minutes: number;
+  };
+  timezone: string;
 }
 
 export interface IScheduleInterval {
   type: "interval";
-  intervalMs: number;
+  every: {
+    hours: number;
+    minutes: number;
+  };
+  offsetFromDayStart: {
+    hours: number;
+    minutes: number;
+  };
+  timezone: string;
 }
 
 export interface IScheduleCron {

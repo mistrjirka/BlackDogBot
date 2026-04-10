@@ -60,7 +60,7 @@ describe("tool-reasoning-wrapper", () => {
     expect(parsed.success).toBe(true);
   });
 
-  it("should reject non-exempt tools without reasoning when threshold is reached", async () => {
+  it("should allow non-exempt tools without reasoning even when threshold is reached", async () => {
     const tools: ToolSet = {
       run_cmd: tool({
         inputSchema: z.object({ command: z.string() }),
@@ -71,10 +71,12 @@ describe("tool-reasoning-wrapper", () => {
     const wrapped: ToolSet = wrapToolSetWithReasoning(tools);
     const execute = wrapped.run_cmd.execute!;
 
-    await expect(execute(
+    const result = await Promise.resolve(execute(
       { command: "pwd" },
       _buildOptions(_messagesAtReasoningThreshold()),
-    )).rejects.toThrow(/requires non-empty reasoning/i);
+    ));
+
+    expect(result).toEqual({ ok: true });
   });
 
   it("should allow non-exempt tools with reasoning when threshold is reached", async () => {

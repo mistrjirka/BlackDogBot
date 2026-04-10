@@ -278,7 +278,7 @@ when the agent handles storage directly.
 
 ### Concrete example: "Fetch RSS, filter interesting items with agent, store to DB"
 
-**Task:** every 6 AM / 8 PM fetch a feed, use an agent to decide which items
+**Task:** every 8 AM / 8 PM fetch a feed, use an agent to decide which items
 are interesting, store the interesting ones to SQLite.
 
 **Step 1 — create the table first (tool call, not a pipeline node):**
@@ -666,9 +666,12 @@ After creating a job, you can attach a schedule so it runs automatically:
 1. **Set a schedule** — call `set_job_schedule` with the `jobId` and a `schedule`
    object. This creates a ScheduledTask that will run the job automatically.
    The schedule object format:
+   - `every.hours`, `every.minutes`, `offsetFromDayStart.hours`, and `offsetFromDayStart.minutes` are all required for interval schedules.
    - `{ type: "interval", every: { hours: 1, minutes: 0 }, offsetFromDayStart: { hours: 0, minutes: 0 }, timezone: "Europe/Prague" }` — every hour
-   - `{ type: "once", runAt: "2026-03-01T00:00:00Z" }` — one-time
+   - `{ type: "once", runAt: "2026-03-01T00:00:00Z" }` — one-time (`runAt` is required for `once`; `every`/`offsetFromDayStart` are interval-only)
    - `{ type: "interval", every: { hours: 24, minutes: 0 }, offsetFromDayStart: { hours: 0, minutes: 0 }, timezone: "Europe/Prague" }` — daily (24-hour interval)
+   - `{ type: "interval", every: { hours: 24, minutes: 0 }, offsetFromDayStart: { hours: 8, minutes: 0 }, timezone: "Europe/Prague" }` — daily at 08:00
+   - `{ type: "interval", every: { hours: 24, minutes: 0 }, offsetFromDayStart: { hours: 18, minutes: 0 }, timezone: "Europe/Prague" }` — daily at 18:00
 
 2. **Update a schedule** — call `set_job_schedule` again with a new schedule.
    The old ScheduledTask is automatically removed and replaced.

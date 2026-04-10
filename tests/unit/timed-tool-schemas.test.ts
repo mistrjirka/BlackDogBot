@@ -248,15 +248,22 @@ describe("scheduleOnceSchema - offsetFromDayStart", () => {
     expect(result.success).toBe(true);
   });
 
-  it("should default offsetFromDayStart to 0h0m and timezone to UTC", () => {
+  it("should require offsetFromDayStart and still default timezone to UTC", () => {
     const result = scheduleOnceSchema.safeParse({
       type: "once",
       runAt: "2026-04-08T12:00:00Z",
     });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.offsetFromDayStart).toEqual({ hours: 0, minutes: 0 });
-      expect(result.data.timezone).toBe("UTC");
+    expect(result.success).toBe(false);
+
+    const withOffset = scheduleOnceSchema.safeParse({
+      type: "once",
+      runAt: "2026-04-08T12:00:00Z",
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+    });
+
+    expect(withOffset.success).toBe(true);
+    if (withOffset.success) {
+      expect(withOffset.data.timezone).toBe("UTC");
     }
   });
 
@@ -282,15 +289,22 @@ describe("scheduleIntervalSchema - every and offsetFromDayStart", () => {
     expect(result.success).toBe(true);
   });
 
-  it("should default offsetFromDayStart and timezone", () => {
+  it("should require offsetFromDayStart and still default timezone", () => {
     const result = scheduleIntervalSchema.safeParse({
       type: "interval",
       every: { hours: 1, minutes: 0 },
     });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.offsetFromDayStart).toEqual({ hours: 0, minutes: 0 });
-      expect(result.data.timezone).toBe("UTC");
+    expect(result.success).toBe(false);
+
+    const withOffset = scheduleIntervalSchema.safeParse({
+      type: "interval",
+      every: { hours: 1, minutes: 0 },
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+    });
+
+    expect(withOffset.success).toBe(true);
+    if (withOffset.success) {
+      expect(withOffset.data.timezone).toBe("UTC");
     }
   });
 
@@ -319,7 +333,7 @@ describe("addIntervalToolInputSchema - every and offsetFromDayStart", () => {
     expect(result.success).toBe(true);
   });
 
-  it("should default offsetFromDayStart when omitted", () => {
+  it("should require offsetFromDayStart when omitted", () => {
     const result = addIntervalToolInputSchema.safeParse({
       name: "Test",
       description: "Test task",
@@ -328,10 +342,7 @@ describe("addIntervalToolInputSchema - every and offsetFromDayStart", () => {
       every: { hours: 1, minutes: 0 },
       notifyUser: true,
     });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.offsetFromDayStart).toEqual({ hours: 0, minutes: 0 });
-    }
+    expect(result.success).toBe(false);
   });
 
   it("should reject every=0h0m", () => {
@@ -344,6 +355,56 @@ describe("addIntervalToolInputSchema - every and offsetFromDayStart", () => {
       notifyUser: true,
     });
     expect(result.success).toBe(false);
+  });
+
+  it("should require both every.hours and every.minutes", () => {
+    const missingHours = addIntervalToolInputSchema.safeParse({
+      name: "Test",
+      description: "Test task",
+      instructions: "Do something",
+      tools: ["send_message"],
+      every: { minutes: 5 },
+      notifyUser: true,
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+    });
+
+    const missingMinutes = addIntervalToolInputSchema.safeParse({
+      name: "Test",
+      description: "Test task",
+      instructions: "Do something",
+      tools: ["send_message"],
+      every: { hours: 1 },
+      notifyUser: true,
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+    });
+
+    expect(missingHours.success).toBe(false);
+    expect(missingMinutes.success).toBe(false);
+  });
+
+  it("should require both offsetFromDayStart.hours and offsetFromDayStart.minutes", () => {
+    const missingHours = addIntervalToolInputSchema.safeParse({
+      name: "Test",
+      description: "Test task",
+      instructions: "Do something",
+      tools: ["send_message"],
+      every: { hours: 1, minutes: 0 },
+      notifyUser: true,
+      offsetFromDayStart: { minutes: 15 },
+    });
+
+    const missingMinutes = addIntervalToolInputSchema.safeParse({
+      name: "Test",
+      description: "Test task",
+      instructions: "Do something",
+      tools: ["send_message"],
+      every: { hours: 1, minutes: 0 },
+      notifyUser: true,
+      offsetFromDayStart: { hours: 0 },
+    });
+
+    expect(missingHours.success).toBe(false);
+    expect(missingMinutes.success).toBe(false);
   });
 });
 
@@ -370,5 +431,35 @@ describe("editIntervalToolInputSchema - every and offsetFromDayStart", () => {
       every: { hours: 0, minutes: 0 },
     });
     expect(result.success).toBe(false);
+  });
+
+  it("should reject partial every patch", () => {
+    const missingHours = editIntervalToolInputSchema.safeParse({
+      taskId: "abc123",
+      every: { minutes: 10 },
+    });
+
+    const missingMinutes = editIntervalToolInputSchema.safeParse({
+      taskId: "abc123",
+      every: { hours: 2 },
+    });
+
+    expect(missingHours.success).toBe(false);
+    expect(missingMinutes.success).toBe(false);
+  });
+
+  it("should reject partial offsetFromDayStart patch", () => {
+    const missingHours = editIntervalToolInputSchema.safeParse({
+      taskId: "abc123",
+      offsetFromDayStart: { minutes: 10 },
+    });
+
+    const missingMinutes = editIntervalToolInputSchema.safeParse({
+      taskId: "abc123",
+      offsetFromDayStart: { hours: 2 },
+    });
+
+    expect(missingHours.success).toBe(false);
+    expect(missingMinutes.success).toBe(false);
   });
 });

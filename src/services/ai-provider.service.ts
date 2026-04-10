@@ -33,7 +33,6 @@ import {
 } from "./model-profile.service.js";
 import { countRequestBodyTokens, IRequestTokenBreakdown } from "../utils/request-token-counter.js";
 import { extractErrorMessage } from "../utils/error.js";
-import { FORCE_THINK_INTERVAL } from "../shared/constants.js";
 import { getCurrentLlmCallType } from "../utils/llm-call-context.js";
 import { runToolCallingProbeAsync } from "../utils/llm-probe-helpers.js";
 import { createHash } from "node:crypto";
@@ -2532,10 +2531,6 @@ export class AiProviderService {
                 }
               }
 
-              if (this._promoteReasoningToRequiredIfNeeded(body)) {
-                modified = true;
-              }
-
               if (modified) {
                 init.body = JSON.stringify(body);
               }
@@ -2962,147 +2957,6 @@ export class AiProviderService {
     }
 
     return (message?.reasoning_content ?? "").trim();
-  }
-
-  private _promoteReasoningToRequiredIfNeeded(body: Record<string, unknown>): boolean {
-    const messagesUnknown: unknown = body.messages;
-    const toolsUnknown: unknown = body.tools;
-
-    if (!Array.isArray(messagesUnknown) || !Array.isArray(toolsUnknown)) {
-      return false;
-    }
-
-    const stepsSinceReasoningOrThink: number = this._stepsSinceLastReasoningOrThink(messagesUnknown);
-    if (stepsSinceReasoningOrThink < FORCE_THINK_INTERVAL) {
-      return false;
-    }
-
-    let modified: boolean = false;
-
-    for (const tool of toolsUnknown) {
-      if (typeof tool !== "object" || tool === null) {
-        continue;
-      }
-
-      const functionDef: unknown = (tool as { function?: unknown }).function;
-      if (typeof functionDef !== "object" || functionDef === null) {
-        continue;
-      }
-
-      const parametersUnknown: unknown = (functionDef as { parameters?: unknown }).parameters;
-      if (typeof parametersUnknown !== "object" || parametersUnknown === null) {
-        continue;
-      }
-
-      const parameters = parametersUnknown as {
-        properties?: Record<string, unknown>;
-        required?: unknown;
-      };
-
-      if (!parameters.properties || typeof parameters.properties !== "object") {
-        continue;
-      }
-
-      if (!("reasoning" in parameters.properties)) {
-        continue;
-      }
-
-      const required: string[] = Array.isArray(parameters.required)
-        ? parameters.required.filter((value: unknown): value is string => typeof value === "string")
-        : [];
-
-      if (!required.includes("reasoning")) {
-        parameters.required = [...required, "reasoning"];
-        modified = true;
-      }
-    }
-
-    return modified;
-  }
-
-  private _stepsSinceLastReasoningOrThink(messages: unknown[]): number {
-    let stepsCount: number = 0;
-
-    for (let i: number = messages.length - 1; i >= 0; i--) {
-      const message: unknown = messages[i];
-
-      if (typeof message !== "object" || message === null) {
-        continue;
-      }
-
-      const role: unknown = (message as { role?: unknown }).role;
-      const toolCalls: unknown = (message as { tool_calls?: unknown }).tool_calls;
-
-      if (role !== "assistant" || !Array.isArray(toolCalls)) {
-        continue;
-      }
-
-      let hasRelevantToolCalls: boolean = false;
-      let hasThink: boolean = false;
-      let hasReasoning: boolean = false;
-
-      for (const toolCall of toolCalls) {
-        if (typeof toolCall !== "object" || toolCall === null) {
-          continue;
-        }
-
-        const functionCall: unknown = (toolCall as { function?: unknown }).function;
-        if (typeof functionCall !== "object" || functionCall === null) {
-          continue;
-        }
-
-        const name: unknown = (functionCall as { name?: unknown }).name;
-        if (typeof name !== "string") {
-          continue;
-        }
-
-        hasRelevantToolCalls = true;
-
-        if (name === "think") {
-          hasThink = true;
-          continue;
-        }
-
-        const argumentsRaw: unknown = (functionCall as { arguments?: unknown }).arguments;
-        const parsedArgs: unknown = this._parseToolArguments(argumentsRaw);
-
-        if (this._hasNonEmptyReasoning(parsedArgs)) {
-          hasReasoning = true;
-        }
-      }
-
-      if (hasRelevantToolCalls) {
-        if (hasThink || hasReasoning) {
-          return stepsCount;
-        }
-
-        stepsCount++;
-      }
-    }
-
-    return stepsCount;
-  }
-
-  private _parseToolArguments(argumentsRaw: unknown): unknown {
-    if (typeof argumentsRaw === "string") {
-      try {
-        return JSON.parse(argumentsRaw);
-      } catch {
-        return argumentsRaw;
-      }
-    }
-
-    return argumentsRaw;
-  }
-
-  private _hasNonEmptyReasoning(toolArgs: unknown): boolean {
-    if (typeof toolArgs !== "object" || toolArgs === null) {
-      return false;
-    }
-
-    const reasoning: unknown = (toolArgs as { reasoning?: unknown }).reasoning;
-
-    return typeof reasoning === "string" && reasoning.trim().length > 0;
   }
 
   //#endregion Private methods

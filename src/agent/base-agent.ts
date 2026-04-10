@@ -476,7 +476,7 @@ export abstract class BaseAgentBase {
       ...(extraTools ?? {}),
     };
 
-    // Wrap tools with reasoning field augmentation and enforcement.
+    // Wrap tools with optional reasoning field augmentation.
     const allTools: ToolSet = wrapToolSetWithReasoning(rawTools, {
       logger: this._logger,
     });

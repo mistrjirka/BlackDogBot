@@ -29,8 +29,8 @@ const TOOL_NAME: string = "add_interval";
 const TOOL_DESCRIPTION: string =
   "Add a new RECURRING scheduled task that runs repeatedly at fixed intervals until deleted. " +
   "Use for: periodic monitoring, recurring reports, ongoing data collection. " +
-  "Required inputs: name, description, instructions, tools, every (hours/minutes), notifyUser. " +
-  "Optional inputs: offsetFromDayStart (hours/minutes), timezone. " +
+  "Required inputs: name, description, instructions, tools, every (hours/minutes), offsetFromDayStart (hours/minutes), notifyUser. " +
+  "Optional inputs: timezone. " +
   "Common intervals: every={hours:1,minutes:0}, every={hours:2,minutes:0}, every={hours:24,minutes:0}. " +
   "For ONE-TIME tasks (runs once), use add_once instead. " +
   "send_message performs internal deduplication against previous cron messages. " +
@@ -87,7 +87,7 @@ export const addIntervalTool = tool({
     instructions: string;
     tools: string[];
     every: { hours: number; minutes: number };
-    offsetFromDayStart?: { hours: number; minutes: number };
+    offsetFromDayStart: { hours: number; minutes: number };
     timezone?: string;
     notifyUser: boolean;
   }): Promise<IAddIntervalResult> => {
@@ -178,7 +178,7 @@ Output a JSON object with:
       }
 
       const effectiveOffsetFromDayStart: { hours: number; minutes: number } =
-        _normalizeTimeParts(offsetFromDayStart ?? { hours: 0, minutes: 0 });
+        _normalizeTimeParts(offsetFromDayStart);
 
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
