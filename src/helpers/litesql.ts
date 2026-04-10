@@ -50,70 +50,6 @@ export interface IQueryResult {
 
 //#endregion Types and Validation
 
-//#region Validation Functions
-
-const SQL_LITERAL_TYPES = ["TEXT", "INTEGER", "REAL", "BLOB"] as const;
-type SqlLiteralType = (typeof SQL_LITERAL_TYPES)[number];
-
-const BLOCKED_CHARS_RE = /[;{}\[\]\\]/;
-const INTEGER_VALID_RE = /^[0-9+-]+$/;
-const REAL_VALID_RE = /^[0-9+-.]+[0-9]*$/;
-
-export function validateDefaultValue(type: string, defaultValue: string | undefined | null): void {
-  if (defaultValue === undefined || defaultValue === null) {
-    return;
-  }
-
-  if (typeof defaultValue !== "string") {
-    throw new Error("Invalid default value for column: must be a string");
-  }
-
-  if (defaultValue.trim().length === 0) {
-    throw new Error("Invalid default value for column: empty string is not a valid default");
-  }
-
-  const upperType: string = type.toUpperCase().trim() as SqlLiteralType;
-
-  if (!SQL_LITERAL_TYPES.includes(upperType as SqlLiteralType)) {
-    return;
-  }
-
-  if (BLOCKED_CHARS_RE.test(defaultValue)) {
-    throw new Error(
-      `Invalid default value for column: contains blocked characters ( ; { } [ ] \\ )`
-    );
-  }
-
-  if (defaultValue.includes("'")) {
-    const singleQuotes: string[] = defaultValue.split("'");
-    if (singleQuotes.length % 2 === 0) {
-      throw new Error("Invalid default value for column: unmatched quote in string literal");
-    }
-  }
-
-  if (defaultValue.includes("--")) {
-    throw new Error("Invalid default value for column: SQL comment marker not allowed");
-  }
-
-  if (defaultValue.includes("/*") || defaultValue.includes("*/")) {
-    throw new Error("Invalid default value for column: block comment markers not allowed");
-  }
-
-  if (upperType === "INTEGER") {
-    if (!INTEGER_VALID_RE.test(defaultValue)) {
-      throw new Error("Invalid default value for column: INTEGER default must be a numeric literal");
-    }
-  }
-
-  if (upperType === "REAL") {
-    if (!REAL_VALID_RE.test(defaultValue)) {
-      throw new Error("Invalid default value for column: REAL default must be a numeric literal");
-    }
-  }
-}
-
-//#endregion Validation Functions
-
 //#region Public Functions
 
 export async function listDatabasesAsync(): Promise<IDatabaseInfo[]> {
@@ -233,17 +169,21 @@ export async function createDatabaseAsync(databaseName: string): Promise<void> {
 export async function createTableAsync(
   databaseName: string,
   tableName: string,
-  columns: { name: string; type: string; primaryKey?: boolean; notNull?: boolean; defaultValue?: string }[],
+  columns: { name: string; type: string; primaryKey?: boolean; notNull?: boolean }[],
 ): Promise<void> {
   const logger: LoggerService = LoggerService.getInstance();
   const db: Database.Database = openDatabase(databaseName);
 
   try {
-    const columnDefs: string[] = columns.map((col) => {
-      if (col.defaultValue !== undefined) {
-        validateDefaultValue(col.type, col.defaultValue);
-      }
+    const hasDefaultValueInRawInput: boolean = columns.some((col: { name: string; type: string; primaryKey?: boolean; notNull?: boolean }): boolean =>
+      Object.prototype.hasOwnProperty.call(col as Record<string, unknown>, "defaultValue"),
+    );
 
+    if (hasDefaultValueInRawInput) {
+      throw new Error("defaultValue is no longer supported in create_table. Create columns without defaults and provide required values when writing rows.");
+    }
+
+    const columnDefs: string[] = columns.map((col) => {
       let def: string = `"${col.name}" ${col.type.toUpperCase()}`;
 
       if (col.primaryKey) {
@@ -252,10 +192,6 @@ export async function createTableAsync(
 
       if (col.notNull && !col.primaryKey) {
         def += " NOT NULL";
-      }
-
-      if (col.defaultValue !== undefined) {
-        def += ` DEFAULT ${col.defaultValue}`;
       }
 
       return def;
