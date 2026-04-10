@@ -355,5 +355,154 @@ describe("SchedulerService interval scheduling", () => {
   });
 
   //#endregion Legacy migration
+
+  //#region timezone-aware interval slot resolution
+
+  describe("timezone-aware interval slot resolution", () => {
+    let realDateNow: () => number;
+
+    beforeAll(() => {
+      realDateNow = Date.now;
+    });
+
+    afterAll(() => {
+      Date.now = realDateNow;
+    });
+
+    it("should resolve 18:00 Europe/Prague (CEST, UTC+2) to 16:00 UTC", () => {
+      const fixedNow = Date.parse("2026-04-10T14:00:00.000Z");
+      Date.now = vi.fn(() => fixedNow);
+
+      const task = createIntervalTask({
+        taskId: "prague-cest-18",
+        name: "Prague CEST 18:00",
+        every: { hours: 24, minutes: 0 },
+        offsetFromDayStart: { hours: 18, minutes: 0 },
+        timezone: "Europe/Prague",
+      });
+
+      const nextSlot = (scheduler as unknown as {
+        _resolveNextIntervalSlotMs: (task: IScheduledTask) => number;
+      })._resolveNextIntervalSlotMs(task);
+
+      expect(nextSlot).toBe(Date.parse("2026-04-10T16:00:00.000Z"));
+    });
+
+    it("should resolve 06:00 Europe/Prague (CEST, UTC+2) to 04:00 UTC", () => {
+      const fixedNow = Date.parse("2026-04-10T02:00:00.000Z");
+      Date.now = vi.fn(() => fixedNow);
+
+      const task = createIntervalTask({
+        taskId: "prague-cest-06",
+        name: "Prague CEST 06:00",
+        every: { hours: 24, minutes: 0 },
+        offsetFromDayStart: { hours: 6, minutes: 0 },
+        timezone: "Europe/Prague",
+      });
+
+      const nextSlot = (scheduler as unknown as {
+        _resolveNextIntervalSlotMs: (task: IScheduledTask) => number;
+      })._resolveNextIntervalSlotMs(task);
+
+      expect(nextSlot).toBe(Date.parse("2026-04-10T04:00:00.000Z"));
+    });
+
+    it("should resolve 18:00 America/New_York (EDT, UTC-4) to 22:00 UTC", () => {
+      const fixedNow = Date.parse("2026-04-10T10:00:00.000Z");
+      Date.now = vi.fn(() => fixedNow);
+
+      const task = createIntervalTask({
+        taskId: "ny-edt-18",
+        name: "New York EDT 18:00",
+        every: { hours: 24, minutes: 0 },
+        offsetFromDayStart: { hours: 18, minutes: 0 },
+        timezone: "America/New_York",
+      });
+
+      const nextSlot = (scheduler as unknown as {
+        _resolveNextIntervalSlotMs: (task: IScheduledTask) => number;
+      })._resolveNextIntervalSlotMs(task);
+
+      expect(nextSlot).toBe(Date.parse("2026-04-10T22:00:00.000Z"));
+    });
+
+    it("should still resolve UTC offsets correctly (no regression)", () => {
+      const fixedNow = Date.parse("2026-04-10T00:24:00.000Z");
+      Date.now = vi.fn(() => fixedNow);
+
+      const task = createIntervalTask({
+        taskId: "utc-18",
+        name: "UTC 18:00",
+        every: { hours: 24, minutes: 0 },
+        offsetFromDayStart: { hours: 18, minutes: 0 },
+        timezone: "UTC",
+      });
+
+      const nextSlot = (scheduler as unknown as {
+        _resolveNextIntervalSlotMs: (task: IScheduledTask) => number;
+      })._resolveNextIntervalSlotMs(task);
+
+      expect(nextSlot).toBe(Date.parse("2026-04-10T18:00:00.000Z"));
+    });
+
+    it("should handle CET (winter, UTC+1) correctly for Prague", () => {
+      const fixedNow = Date.parse("2026-01-15T10:00:00.000Z");
+      Date.now = vi.fn(() => fixedNow);
+
+      const task = createIntervalTask({
+        taskId: "prague-cet-18",
+        name: "Prague CET 18:00",
+        every: { hours: 24, minutes: 0 },
+        offsetFromDayStart: { hours: 18, minutes: 0 },
+        timezone: "Europe/Prague",
+      });
+
+      const nextSlot = (scheduler as unknown as {
+        _resolveNextIntervalSlotMs: (task: IScheduledTask) => number;
+      })._resolveNextIntervalSlotMs(task);
+
+      expect(nextSlot).toBe(Date.parse("2026-01-15T17:00:00.000Z"));
+    });
+
+    it("should wrap to next day for past slot on same day", () => {
+      const fixedNow = Date.parse("2026-04-10T20:00:00.000Z");
+      Date.now = vi.fn(() => fixedNow);
+
+      const task = createIntervalTask({
+        taskId: "prague-wrap-next-day",
+        name: "Prague Wrap Next Day",
+        every: { hours: 24, minutes: 0 },
+        offsetFromDayStart: { hours: 18, minutes: 0 },
+        timezone: "Europe/Prague",
+      });
+
+      const nextSlot = (scheduler as unknown as {
+        _resolveNextIntervalSlotMs: (task: IScheduledTask) => number;
+      })._resolveNextIntervalSlotMs(task);
+
+      expect(nextSlot).toBe(Date.parse("2026-04-11T16:00:00.000Z"));
+    });
+
+    it("should handle interval tasks with every < 24h and non-UTC timezone", () => {
+      const fixedNow = Date.parse("2026-04-10T15:30:00.000Z");
+      Date.now = vi.fn(() => fixedNow);
+
+      const task = createIntervalTask({
+        taskId: "prague-2h-interval",
+        name: "Prague 2 Hour Interval",
+        every: { hours: 2, minutes: 0 },
+        offsetFromDayStart: { hours: 6, minutes: 0 },
+        timezone: "Europe/Prague",
+      });
+
+      const nextSlot = (scheduler as unknown as {
+        _resolveNextIntervalSlotMs: (task: IScheduledTask) => number;
+      })._resolveNextIntervalSlotMs(task);
+
+      expect(nextSlot).toBe(Date.parse("2026-04-10T16:00:00.000Z"));
+    });
+  });
+
+  //#endregion timezone-aware interval slot resolution
 });
-  let realDateNow: () => number;
+let realDateNow: () => number;
