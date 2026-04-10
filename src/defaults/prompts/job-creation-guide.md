@@ -665,6 +665,7 @@ After creating a job, you can attach a schedule so it runs automatically:
 
 1. **Set a schedule** — call `set_job_schedule` with the `jobId` and a `schedule`
    object. This creates a ScheduledTask that will run the job automatically.
+   If uncertain whether a request is one-time or recurring, treat it as recurring and use an interval schedule. Use one-time schedules only when the user explicitly asks for a single run at a specific date/time.
    The schedule object format:
    - `every.hours`, `every.minutes`, `offsetFromDayStart.hours`, and `offsetFromDayStart.minutes` are all required for interval schedules.
    - `{ type: "interval", every: { hours: 1, minutes: 0 }, offsetFromDayStart: { hours: 0, minutes: 0 }, timezone: "Europe/Prague" }` — every hour

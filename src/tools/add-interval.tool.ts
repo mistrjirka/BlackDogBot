@@ -29,6 +29,7 @@ const TOOL_NAME: string = "add_interval";
 const TOOL_DESCRIPTION: string =
   "Add a new RECURRING scheduled task that runs repeatedly at fixed intervals until deleted. " +
   "Use for: periodic monitoring, recurring reports, ongoing data collection. " +
+  "If uncertain whether a request is recurring or one-time, default to this tool. " +
   "Required inputs: name, description, instructions, tools, every (hours/minutes), offsetFromDayStart (hours/minutes), notifyUser. " +
   "Optional inputs: timezone. " +
   "Common intervals: every={hours:1,minutes:0}, every={hours:2,minutes:0}, every={hours:24,minutes:0}. " +

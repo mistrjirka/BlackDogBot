@@ -29,6 +29,7 @@ const TOOL_NAME: string = "add_once";
 const TOOL_DESCRIPTION: string =
   "Add a new ONE-TIME scheduled task that runs once at a specific date/time and then stops. " +
   "Use for: reminders, one-off alerts, single notifications. " +
+  "Only use this when the user explicitly wants one execution at a specific date/time. " +
   "Required inputs: name, description, instructions, tools, year/month/day/hour/minute, notifyUser. " +
   "For RECURRING tasks (e.g., every hour, daily), use add_interval instead. " +
   "send_message performs internal deduplication against previous cron messages. " +
