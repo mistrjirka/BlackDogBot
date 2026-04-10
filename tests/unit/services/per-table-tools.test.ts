@@ -73,6 +73,39 @@ describe("buildPerTableToolsAsync", () => {
     expect(Object.keys(result2)).toContain("write_table_new_table");
     expect(Object.keys(result2)).toContain("write_table_articles");
   });
+
+  it("auto-fills missing required date-like columns and accepts 'now' for date-like inputs", async () => {
+    vi.mocked(litesql.listTablesAsync).mockResolvedValue(["events"]);
+    vi.mocked(litesql.getTableSchemaAsync).mockResolvedValue({
+      name: "events",
+      columns: [
+        { name: "id", type: "INTEGER", notNull: true, primaryKey: true, defaultValue: null },
+        { name: "title", type: "TEXT", notNull: true, primaryKey: false, defaultValue: null },
+        { name: "created_at", type: "TEXT", notNull: true, primaryKey: false, defaultValue: null },
+        { name: "updated_at", type: "TEXT", notNull: true, primaryKey: false, defaultValue: null },
+      ],
+    });
+
+    vi.mocked(litesql.insertIntoTableAsync).mockResolvedValue({ insertedCount: 1, lastRowId: 1 });
+
+    const result = await buildPerTableToolsAsync();
+    const tool = result["write_table_events"] as any;
+
+    await tool.execute({
+      data: [
+        { title: "hello", updated_at: "now" },
+      ],
+    });
+
+    expect(litesql.insertIntoTableAsync).toHaveBeenCalledTimes(1);
+    const insertedRows = vi.mocked(litesql.insertIntoTableAsync).mock.calls[0][2] as Record<string, unknown>[];
+    expect(insertedRows[0].title).toBe("hello");
+    expect(typeof insertedRows[0].created_at).toBe("string");
+    expect((insertedRows[0].created_at as string)).toContain("T");
+    expect(typeof insertedRows[0].updated_at).toBe("string");
+    expect((insertedRows[0].updated_at as string)).toContain("T");
+    expect(insertedRows[0].updated_at).not.toBe("now");
+  });
 });
 
 describe("buildUpdateTableToolsAsync", () => {

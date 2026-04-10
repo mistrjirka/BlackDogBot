@@ -15,7 +15,9 @@ const WRITE_TO_TABLE_DESCRIPTION: string =
   "Insert rows into the \"{tableName}\" table. " +
   "USE THIS TOOL whenever you need to write data to the {tableName} table — do NOT use any other tool for database inserts. " +
   "Column names and types are enforced by the schema — only valid columns are accepted. " +
-  "Auto-fills created_at, updated_at, and similar timestamp columns if missing. " +
+  "All required non-primary-key fields must be provided. " +
+  "Date-like fields accept the literal 'now', which is converted to the current ISO timestamp. " +
+  "Auto-fills required date-like columns if missing. " +
   "Omit auto-increment primary key columns (they are assigned automatically).";
 
 export const SQLITE_TO_ZOD_TYPE: Record<string, z.ZodType> = {
@@ -55,6 +57,8 @@ export const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
   "created",
   "updated",
 ]);
+
+export const DATE_LIKE_TYPES: Set<string> = new Set(["DATE", "DATETIME", "TIMESTAMP"]);
 
 //#endregion Constants
 
@@ -227,13 +231,24 @@ function _buildWriteToolForTable(
 
       // Auto-fill timestamp columns if missing
       for (const col of columns) {
-        if (COMMON_TIMESTAMP_COLUMNS.has(col.name) && col.notNull && !col.primaryKey) {
+        if (_isDateLikeColumn(col) && col.notNull && !col.primaryKey) {
           timestampColumns[col.name] = new Date().toISOString();
         }
       }
 
       const enrichedData: Record<string, unknown>[] = data.map((row) => {
         const enriched: Record<string, unknown> = { ...row };
+
+        for (const col of columns) {
+          if (!Object.prototype.hasOwnProperty.call(enriched, col.name)) {
+            continue;
+          }
+
+          const value: unknown = enriched[col.name];
+          if (_isDateLikeColumn(col) && typeof value === "string" && value.trim().toLowerCase() === "now") {
+            enriched[col.name] = new Date().toISOString();
+          }
+        }
 
         for (const [colName, defaultValue] of Object.entries(timestampColumns)) {
           if (!(colName in enriched) || enriched[colName] === null || enriched[colName] === undefined) {
@@ -287,18 +302,25 @@ function _buildZodSchemaForColumns(columns: IColumnInfo[]): z.ZodArray<z.ZodObje
     const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
     const baseType = SQLITE_TO_ZOD_TYPE[normalizedType] ?? z.string();
 
-    if (col.notNull && !col.defaultValue) {
-      // Required column — no default, NOT NULL
-      shape[col.name] = baseType.describe(`${col.type}${col.notNull ? " NOT NULL" : ""}`);
+    if (col.notNull && !_isDateLikeColumn(col)) {
+      shape[col.name] = baseType.describe(`${col.type} NOT NULL`);
     } else {
-      // Optional column — has default or is nullable
+      const dateNowHint: string = _isDateLikeColumn(col)
+        ? " (accepts 'now' for current ISO timestamp)"
+        : "";
       shape[col.name] = baseType.optional().describe(
-        `${col.type}${col.defaultValue ? ` DEFAULT ${col.defaultValue}` : ""}${col.notNull ? " NOT NULL" : " NULLABLE"}`,
+        `${col.type}${col.notNull ? " NOT NULL" : " NULLABLE"}${dateNowHint}`,
       );
     }
   }
 
   return z.object(shape).array().min(1);
+}
+
+function _isDateLikeColumn(col: IColumnInfo): boolean {
+  const normalizedName: string = col.name.toLowerCase();
+  const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
+  return COMMON_TIMESTAMP_COLUMNS.has(normalizedName) || DATE_LIKE_TYPES.has(normalizedType);
 }
 
 //#endregion Private Functions

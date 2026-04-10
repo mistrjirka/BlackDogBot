@@ -107,7 +107,7 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
   create_table:
     "Create a new table in the default internal database. " +
     "Args: tableName (string, required); " +
-    "columns (array of {name, type: TEXT|INTEGER|REAL|BLOB, primaryKey?, notNull?, defaultValue?}, required).",
+    "columns (array of {name, type: TEXT|INTEGER|REAL|BLOB, primaryKey?, notNull?}, required).",
 
   drop_table:
     "Drop (permanently delete) a table from the default internal database. " +

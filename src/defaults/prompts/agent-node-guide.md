@@ -154,8 +154,12 @@ not the same as node types.
   to include it in `selectedTools`, but listing `think` is harmless.
 - For inserts, always use the exact `write_table_<tableName>` tool for the target
   table. Do not use `write_to_database` and do not use `run_cmd`/`sqlite3` for DB writes.
-- `write_table_<tableName>` tools enforce column names/types and auto-fill common
-  timestamps (`created_at`, `updated_at`, `timestamp`, `created`, `updated`) when missing.
+- `write_table_<tableName>` tools enforce column names/types and auto-fill auto-timestamp
+  fields (`created_at`, `updated_at`, `timestamp`, `created`, `updated`) when missing.
+  Date-like fields may use the literal string `'now'` (converted to the current ISO timestamp).
+  Required fields exclude auto-timestamp fields.
+- `create_table` does not support `defaultValue`; define only `name`, `type`,
+  `primaryKey`, and `notNull`.
 - If the required `write_table_<tableName>` tool is not available yet, include
   `create_table` in `selectedTools`, create the table first, then use the new write tool.
 - For update/delete operations, include `update_table_<tableName>` / `delete_from_database`

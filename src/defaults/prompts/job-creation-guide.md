@@ -294,6 +294,11 @@ create_table(
   ]
 )
 ```
+Note: `create_table` does not support `defaultValue`. Define only `name`,
+`type`, `primaryKey`, and `notNull`. Auto-timestamp fields (`created_at`,
+`updated_at`, `timestamp`, `created`, `updated`) are auto-filled by
+`write_table_<tableName>` and are not required. Date-like fields may use
+the literal `'now'` (converted to the current ISO timestamp).
 
 **Step 2 — build the pipeline:**
 ```

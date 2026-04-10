@@ -6,9 +6,15 @@ import type { IColumnInfo } from "../helpers/litesql.js";
 import * as litesqlValidation from "../helpers/litesql-validation.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
-import { SQLITE_TO_ZOD_TYPE } from "../utils/per-table-tools.js";
+import { COMMON_TIMESTAMP_COLUMNS, DATE_LIKE_TYPES, SQLITE_TO_ZOD_TYPE } from "../utils/per-table-tools.js";
 
 const DEFAULT_DATABASE = "blackdog";
+
+function _isDateLikeColumn(col: IColumnInfo): boolean {
+  const normalizedName: string = col.name.toLowerCase();
+  const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
+  return COMMON_TIMESTAMP_COLUMNS.has(normalizedName) || DATE_LIKE_TYPES.has(normalizedType);
+}
 
 export interface IUpdateTableResult {
   success: boolean;
@@ -32,7 +38,9 @@ export function createUpdateTableTool(
   for (const col of settableColumns) {
     const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
     const baseType = SQLITE_TO_ZOD_TYPE[normalizedType] ?? z.string();
-    const typeDescription = `${col.type}${col.defaultValue ? ` DEFAULT ${col.defaultValue}` : ""}${col.notNull ? " NOT NULL" : " NULLABLE"}`;
+    const isDateLike: boolean = _isDateLikeColumn(col);
+    const dateNowHint: string = isDateLike ? " (accepts 'now' for current ISO timestamp)" : "";
+    const typeDescription = `${col.type}${col.notNull ? " NOT NULL" : " NULLABLE"}${dateNowHint}`;
     columnSchemas[col.name] = baseType.optional().describe(`Value for column '${col.name}' (${typeDescription})`);
   }
 
@@ -47,6 +55,10 @@ export function createUpdateTableTool(
     { message: "At least one column must be set" },
   );
 
+  const dateLikeColumns: Set<string> = new Set(
+    settableColumns.filter(_isDateLikeColumn).map((col) => col.name),
+  );
+
   return dynamicTool({
     description: `Update rows in the '${tableName}' table. Requires a WHERE clause to prevent accidental full-table updates.`,
     inputSchema,
@@ -57,7 +69,11 @@ export function createUpdateTableTool(
       const setColumns: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(setParams)) {
         if (value !== undefined) {
-          setColumns[key] = value;
+          if (typeof value === "string" && value.trim().toLowerCase() === "now" && dateLikeColumns.has(key)) {
+            setColumns[key] = new Date().toISOString();
+          } else {
+            setColumns[key] = value;
+          }
         }
       }
 

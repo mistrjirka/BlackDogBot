@@ -21,10 +21,7 @@ const columnDefinitionSchema = z.object({
   notNull: z.boolean()
     .default(false)
     .describe("Whether this column cannot be NULL"),
-  defaultValue: z.string()
-    .optional()
-    .describe("Default value for the column"),
-});
+}).strict();
 
 export const createTableTool = tool({
   description: "Create a new table in the default database. Call this after prerequisite checks/tool calls are complete for the current run.",
@@ -55,10 +52,20 @@ export const createTableTool = tool({
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      for (const col of columns) {
-        if (col.defaultValue !== undefined) {
-          litesql.validateDefaultValue(col.type, col.defaultValue);
-        }
+      const hasDefaultValueInRawInput: boolean = columns.some((col: z.infer<typeof columnDefinitionSchema>): boolean =>
+        Object.prototype.hasOwnProperty.call(col as Record<string, unknown>, "defaultValue"),
+      );
+
+      if (hasDefaultValueInRawInput) {
+        return {
+          success: false,
+          databaseName: DEFAULT_DATABASE,
+          tableName,
+          columns: [],
+          inputSchema: { type: "object", properties: {}, required: [] },
+          message: "",
+          error: "defaultValue is no longer supported in create_table. Create columns without defaults and provide required values when writing rows.",
+        };
       }
 
       let dbExists: boolean = await litesql.databaseExistsAsync(DEFAULT_DATABASE);
@@ -88,7 +95,7 @@ export const createTableTool = tool({
         type: c.type,
         notNull: c.notNull ?? false,
         primaryKey: c.primaryKey ?? false,
-        defaultValue: c.defaultValue ?? null,
+        defaultValue: null,
       }));
 
       const inputSchema: IJsonSchema = columnsToJsonSchema(columnInfos);

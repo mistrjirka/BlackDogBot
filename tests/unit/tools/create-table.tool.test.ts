@@ -67,66 +67,53 @@ describe("create_table tool", () => {
     expect(litesql.createDatabaseAsync).not.toHaveBeenCalled();
   });
 
-  it("rejects malformed defaultValue with unmatched quote at tool level", async () => {
+  it("rejects defaultValue usage in create_table", async () => {
     vi.mocked(litesql.databaseExistsAsync).mockResolvedValue(true);
     vi.mocked(litesql.tableExistsAsync).mockResolvedValue(false);
-    vi.mocked(litesql.validateDefaultValue).mockImplementation((type: string, value: string) => {
-      if (value.includes("'") && value.split("'").length % 2 === 0) {
-        throw new Error("Invalid default value for column: unmatched quote in string literal");
-      }
-    });
 
     const result = await (createTableTool as any).execute({
       tableName: "messages",
       columns: [
         { name: "id", type: "INTEGER", primaryKey: true },
-        { name: "message", type: "TEXT", defaultValue: "'unclosed" },
+        { name: "message", type: "TEXT", defaultValue: "anything" },
       ],
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("unmatched quote");
+    expect(result.error).toContain("defaultValue is no longer supported");
   });
 
-  it("rejects malformed defaultValue with blocked characters at tool level", async () => {
+  it("ignores unrelated extra properties and still creates table", async () => {
     vi.mocked(litesql.databaseExistsAsync).mockResolvedValue(true);
     vi.mocked(litesql.tableExistsAsync).mockResolvedValue(false);
-    vi.mocked(litesql.validateDefaultValue).mockImplementation((type: string, value: string) => {
-      if (/[;{}\[\]\\]/.test(value)) {
-        throw new Error("Invalid default value for column: contains blocked characters");
-      }
-    });
+    vi.mocked(litesql.createTableAsync).mockResolvedValue(undefined);
 
     const result = await (createTableTool as any).execute({
       tableName: "messages",
       columns: [
         { name: "id", type: "INTEGER", primaryKey: true },
-        { name: "message", type: "TEXT", defaultValue: "abc}" },
+        { name: "message", type: "TEXT", randomExtraProperty: true },
       ],
     });
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("blocked characters");
+    expect(result.success).toBe(true);
+    expect(result.error).toBeUndefined();
   });
 
-  it("rejects SQL comment markers in defaultValue at tool level", async () => {
+  it("creates table successfully without defaultValue support", async () => {
     vi.mocked(litesql.databaseExistsAsync).mockResolvedValue(true);
     vi.mocked(litesql.tableExistsAsync).mockResolvedValue(false);
-    vi.mocked(litesql.validateDefaultValue).mockImplementation((type: string, value: string) => {
-      if (value.includes("--") || value.includes("/*") || value.includes("*/")) {
-        throw new Error("Invalid default value for column: SQL comment marker not allowed");
-      }
-    });
+    vi.mocked(litesql.createTableAsync).mockResolvedValue(undefined);
 
     const result = await (createTableTool as any).execute({
-      tableName: "messages",
+      tableName: "events",
       columns: [
         { name: "id", type: "INTEGER", primaryKey: true },
-        { name: "message", type: "TEXT", defaultValue: "default -- comment" },
+        { name: "title", type: "TEXT", notNull: true },
       ],
     });
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("SQL comment marker");
+    expect(result.success).toBe(true);
+    expect(result.error).toBeUndefined();
   });
 });
