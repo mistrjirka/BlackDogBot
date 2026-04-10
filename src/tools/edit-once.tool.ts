@@ -63,9 +63,19 @@ const executeEditOnce = async (
 ): Promise<IEditOnceResult> => {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
-  const timezone: string | undefined = ConfigService.getInstance().getConfig().scheduler.timezone;
+  const schedulerTimezone: string | undefined = ConfigService.getInstance().getConfig().scheduler.timezone;
 
   try {
+    const requestedTimezone: string = schedulerTimezone ?? "UTC";
+    const effectiveScheduleTimezone: string = (() => {
+      try {
+        Intl.DateTimeFormat("en-US", { timeZone: requestedTimezone }).format(new Date());
+        return requestedTimezone;
+      } catch {
+        return "UTC";
+      }
+    })();
+
     if (tools !== undefined) {
       const invalidTools: string[] = filterInvalidTools(tools);
       if (invalidTools.length > 0) {
@@ -110,7 +120,15 @@ const executeEditOnce = async (
         0,
       ).toISOString();
 
-      patch.schedule = { type: "once", runAt: newRunAt, offsetMinutes: 0 };
+      patch.schedule = {
+        type: "once",
+        runAt: newRunAt,
+        offsetFromDayStart: {
+          hours: 0,
+          minutes: 0,
+        },
+        timezone: effectiveScheduleTimezone,
+      };
     }
 
     if (Object.keys(patch).length === 0) {
@@ -140,7 +158,7 @@ const executeEditOnce = async (
     return {
       success: true,
       task: updatedTask,
-      display: updatedTask ? formatScheduledTask(updatedTask, timezone) : undefined,
+      display: updatedTask ? formatScheduledTask(updatedTask, schedulerTimezone) : undefined,
     };
   } catch (error: unknown) {
     const errorMessage: string = extractErrorMessage(error);

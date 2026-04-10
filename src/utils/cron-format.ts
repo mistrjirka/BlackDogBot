@@ -3,8 +3,14 @@ import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 function formatSchedule(schedule: Schedule, timezone?: string): string {
   switch (schedule.type) {
     case "interval": {
-      const offsetStr: string = schedule.offsetMinutes > 0 ? ` (+${schedule.offsetMinutes}m offset)` : "";
-      return `interval: ${schedule.intervalMs}ms${offsetStr}`;
+      const everyStr: string = `every ${schedule.every.hours}h ${schedule.every.minutes}m`;
+      const offset = schedule.offsetFromDayStart;
+      const hasOffset: boolean = offset.hours > 0 || offset.minutes > 0;
+      const offsetStr: string = hasOffset
+        ? ` (+${offset.hours}h ${offset.minutes}m from day start)`
+        : "";
+      const tz: string = schedule.timezone || timezone || "UTC";
+      return `${everyStr}${offsetStr} (${tz})`;
     }
     case "once": {
       return `once: ${formatRunAtLocal(schedule.runAt, timezone)}`;

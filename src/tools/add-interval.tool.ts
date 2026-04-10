@@ -3,6 +3,7 @@ import { z } from "zod";
 import { addIntervalToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { filterInvalidTools } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
+import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { generateId } from "../utils/id.js";
@@ -28,8 +29,9 @@ const TOOL_NAME: string = "add_interval";
 const TOOL_DESCRIPTION: string =
   "Add a new RECURRING scheduled task that runs repeatedly at fixed intervals until deleted. " +
   "Use for: periodic monitoring, recurring reports, ongoing data collection. " +
-  "Required inputs: name, description, instructions, tools, intervalMs, notifyUser. " +
-  "Common intervals: 3600000 (1 hour), 7200000 (2 hours), 86400000 (1 day). " +
+  "Required inputs: name, description, instructions, tools, every (hours/minutes), notifyUser. " +
+  "Optional inputs: offsetFromDayStart (hours/minutes), timezone. " +
+  "Common intervals: every={hours:1,minutes:0}, every={hours:2,minutes:0}, every={hours:24,minutes:0}. " +
   "For ONE-TIME tasks (runs once), use add_once instead. " +
   "send_message performs internal deduplication against previous cron messages. " +
   "If task instructions use table-storage tools, create required table(s) first using create_table, then reference explicit table names in the instructions.";
@@ -38,11 +40,28 @@ const TOOL_DESCRIPTION: string =
 
 //#region Private methods
 
-function _buildSchedule(intervalMs: number, offsetMinutes: number = 0): Schedule {
+function _buildSchedule(
+  every: { hours: number; minutes: number },
+  offsetFromDayStart: { hours: number; minutes: number },
+  timezone: string,
+): Schedule {
   return {
     type: "interval",
-    intervalMs,
-    offsetMinutes,
+    every,
+    offsetFromDayStart,
+    timezone,
+  };
+}
+
+function _normalizeTimeParts(
+  parts: { hours: number; minutes: number },
+): { hours: number; minutes: number } {
+  const safeHours: number = Math.max(0, parts.hours);
+  const safeMinutes: number = Math.max(0, parts.minutes);
+  const totalMinutes: number = (safeHours * 60) + safeMinutes;
+  return {
+    hours: Math.floor(totalMinutes / 60),
+    minutes: totalMinutes % 60,
   };
 }
 
@@ -58,16 +77,18 @@ export const addIntervalTool = tool({
     description,
     instructions,
     tools,
-    intervalMs,
-    offsetMinutes,
+    every,
+    offsetFromDayStart,
+    timezone,
     notifyUser,
   }: {
     name: string;
     description: string;
     instructions: string;
     tools: string[];
-    intervalMs: number;
-    offsetMinutes?: number;
+    every: { hours: number; minutes: number };
+    offsetFromDayStart?: { hours: number; minutes: number };
+    timezone?: string;
     notifyUser: boolean;
   }): Promise<IAddIntervalResult> => {
     const logger: LoggerService = LoggerService.getInstance();
@@ -99,7 +120,7 @@ ${toolContextBlock}
 
 RULES:
 
-1. Schedule/timing is already encoded in the cron expression — do NOT require the instructions to re-state when or how often the task runs.
+1. Schedule/timing is already encoded in the task schedule fields (every, offsetFromDayStart, timezone) — do NOT require the instructions to re-state when or how often the task runs.
 
 2. Tools that handle routing or delivery implicitly do NOT need extra config in the instructions.
    Example: "send_message" always reaches the correct user — instructions that say "send the results" or "notify the user" are VALID without specifying a chat ID or destination.
@@ -156,9 +177,25 @@ Output a JSON object with:
         return { taskId: "", success: false, error: errorMsg };
       }
 
+      const effectiveOffsetFromDayStart: { hours: number; minutes: number } =
+        _normalizeTimeParts(offsetFromDayStart ?? { hours: 0, minutes: 0 });
+
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
-      const builtSchedule: Schedule = _buildSchedule(intervalMs, offsetMinutes ?? 0);
+      const requestedTimezone: string = timezone ?? ConfigService.getInstance().getConfig().scheduler.timezone ?? "UTC";
+      const effectiveTimezone: string = (() => {
+        try {
+          Intl.DateTimeFormat("en-US", { timeZone: requestedTimezone }).format(new Date());
+          return requestedTimezone;
+        } catch {
+          return "UTC";
+        }
+      })();
+      const builtSchedule: Schedule = _buildSchedule(
+        every,
+        effectiveOffsetFromDayStart,
+        effectiveTimezone,
+      );
 
       const task: IScheduledTask = {
         taskId,
@@ -181,8 +218,15 @@ Output a JSON object with:
 
       await SchedulerService.getInstance().addTaskAsync(task);
 
-      const offsetStr: string = (offsetMinutes ?? 0) > 0 ? ` (+${offsetMinutes}m offset)` : "";
-      const displaySummary = `Created interval task "${name}" (ID: ${taskId})\nSchedule: every ${intervalMs}ms${offsetStr}\nTools: [${tools.join(", ")}]`;
+      const offsetStr: string =
+        effectiveOffsetFromDayStart.hours > 0 || effectiveOffsetFromDayStart.minutes > 0
+          ? ` (+${effectiveOffsetFromDayStart.hours}h ${effectiveOffsetFromDayStart.minutes}m from day start)`
+          : "";
+
+      const displaySummary =
+        `Created interval task "${name}" (ID: ${taskId})\n` +
+        `Schedule: every ${every.hours}h ${every.minutes}m${offsetStr} (${effectiveTimezone})\n` +
+        `Tools: [${tools.join(", ")}]`;
 
       return { taskId, success: true, displaySummary };
     } catch (error: unknown) {

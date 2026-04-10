@@ -3,6 +3,7 @@ import { z } from "zod";
 import { addOnceToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { filterInvalidTools } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
+import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { generateId } from "../utils/id.js";
@@ -37,12 +38,19 @@ const TOOL_DESCRIPTION: string =
 
 //#region Private methods
 
-function _buildSchedule(params: { year: number; month: number; day: number; hour: number; minute: number }): Schedule {
+function _buildSchedule(
+  params: { year: number; month: number; day: number; hour: number; minute: number },
+  timezone: string,
+): Schedule {
   const runAt: string = new Date(params.year, params.month - 1, params.day, params.hour, params.minute, 0, 0).toISOString();
   return {
     type: "once",
     runAt,
-    offsetMinutes: 0,
+    offsetFromDayStart: {
+      hours: 0,
+      minutes: 0,
+    },
+    timezone,
   };
 }
 
@@ -105,7 +113,7 @@ ${toolContextBlock}
 
 RULES:
 
-1. Schedule/timing is already encoded in the cron expression — do NOT require the instructions to re-state when or how often the task runs.
+1. Schedule/timing is already encoded in the task schedule fields — do NOT require the instructions to re-state when or how often the task runs.
 
 2. Tools that handle routing or delivery implicitly do NOT need extra config in the instructions.
    Example: "send_message" always reaches the correct user — instructions that say "send the results" or "notify the user" are VALID without specifying a chat ID or destination.
@@ -164,7 +172,17 @@ Output a JSON object with:
 
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
-      const builtSchedule: Schedule = _buildSchedule({ year, month, day, hour, minute });
+      const configuredTimezone: string = ConfigService.getInstance().getConfig().scheduler.timezone ?? "UTC";
+      const scheduleTimezone: string = (() => {
+        try {
+          Intl.DateTimeFormat("en-US", { timeZone: configuredTimezone }).format(new Date());
+          return configuredTimezone;
+        } catch {
+          return "UTC";
+        }
+      })();
+
+      const builtSchedule: Schedule = _buildSchedule({ year, month, day, hour, minute }, scheduleTimezone);
 
       const task: IScheduledTask = {
         taskId,

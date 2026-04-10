@@ -2,35 +2,89 @@ import { z } from "zod";
 
 //#region Cron Schemas
 
+const everyTimePartsSchema = z.object({
+  hours: z.number()
+    .int()
+    .nonnegative()
+    .max(24)
+    .default(0),
+  minutes: z.number()
+    .int()
+    .min(0)
+    .max(59)
+    .default(0),
+}).superRefine((data, ctx) => {
+  if (data.hours === 24 && data.minutes !== 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["minutes"],
+      message: "minutes must be 0 when hours is 24",
+    });
+  }
+});
+
+const offsetTimePartsSchema = z.object({
+  hours: z.number()
+    .int()
+    .min(0)
+    .max(23)
+    .default(0),
+  minutes: z.number()
+    .int()
+    .min(0)
+    .max(59)
+    .default(0),
+});
+
 export const scheduleOnceSchema = z.object({
   type: z.literal("once"),
   runAt: z.string()
     .datetime()
     .describe("ISO 8601 datetime to run at"),
-  offsetMinutes: z.number()
-    .int()
-    .nonnegative()
-    .default(0)
-    .describe("Offset in minutes to apply to the scheduled time"),
+  offsetFromDayStart: offsetTimePartsSchema
+    .default({ hours: 0, minutes: 0 })
+    .describe("Offset from day start (midnight) in local timezone"),
+  timezone: z.string()
+    .min(1)
+    .default("UTC")
+    .describe("IANA timezone for schedule calculations"),
 });
 
-export const scheduleIntervalSchema = z.object({
+const scheduleIntervalBaseSchema = z.object({
   type: z.literal("interval"),
-  intervalMs: z.number()
-    .int()
-    .positive()
-    .describe("Interval in milliseconds"),
-  offsetMinutes: z.number()
-    .int()
-    .nonnegative()
-    .default(0)
-    .describe("Offset in minutes applied before each interval trigger"),
+  every: everyTimePartsSchema
+    .describe("Interval in hours/minutes"),
+  offsetFromDayStart: offsetTimePartsSchema
+    .default({ hours: 0, minutes: 0 })
+    .describe("Offset from day start (midnight) in local timezone"),
+  timezone: z.string()
+    .min(1)
+    .default("UTC")
+    .describe("IANA timezone for schedule calculations"),
+});
+
+export const scheduleIntervalSchema = scheduleIntervalBaseSchema.superRefine((data, ctx) => {
+  if (data.every.hours === 0 && data.every.minutes === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["every"],
+      message: "every must be > 0 (set hours or minutes)",
+    });
+  }
 });
 
 export const scheduleSchema = z.discriminatedUnion("type", [
   scheduleOnceSchema,
-  scheduleIntervalSchema,
-]);
+  scheduleIntervalBaseSchema,
+]).superRefine((data, ctx) => {
+  if (data.type === "interval" && data.every.hours === 0 && data.every.minutes === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["every"],
+      message: "every must be > 0 (set hours or minutes)",
+    });
+  }
+});
 
 export const cronMessageHistorySchema = z.object({
   messageId: z.string()

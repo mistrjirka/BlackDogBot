@@ -704,17 +704,54 @@ export const addIntervalToolInputSchema = z.object({
     .array()
     .min(1)
     .describe("Tool names available to the task agent (required, at least one). send_message performs internal deduplication against previous cron messages."),
-  intervalMs: z.number()
-    .int()
-    .positive()
-    .describe("Interval in milliseconds (required, must be > 0)"),
-  offsetMinutes: z.number()
-    .int()
-    .nonnegative()
-    .default(0)
-    .describe("Offset in minutes applied before each interval trigger"),
+  every: z.object({
+    hours: z.number()
+      .int()
+      .nonnegative()
+      .max(24)
+      .default(0),
+    minutes: z.number()
+      .int()
+      .min(0)
+      .max(59)
+      .default(0),
+  }).describe("Interval in hours/minutes (required; at least one non-zero)"),
+  offsetFromDayStart: z.object({
+    hours: z.number()
+      .int()
+      .min(0)
+      .max(23)
+      .default(0),
+    minutes: z.number()
+      .int()
+      .min(0)
+      .max(59)
+      .default(0),
+  })
+    .default({ hours: 0, minutes: 0 })
+    .describe("Offset from day start (midnight) in hours/minutes"),
+  timezone: z.string()
+    .min(1)
+    .optional()
+    .describe("IANA timezone for schedule anchoring (e.g., Europe/Prague)"),
   notifyUser: z.boolean()
     .describe("Whether to send a Telegram notification when this task completes (required)"),
+}).superRefine((data, ctx) => {
+  if (data.every.hours === 24 && data.every.minutes !== 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["every", "minutes"],
+      message: "every.minutes must be 0 when every.hours is 24",
+    });
+  }
+
+  if (data.every.hours === 0 && data.every.minutes === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["every"],
+      message: "every must be > 0 (set hours or minutes)",
+    });
+  }
 });
 
 export const editOnceToolInputSchema = z
@@ -770,22 +807,60 @@ export const editIntervalToolInputSchema = z.object({
     .min(1)
     .optional()
     .describe("Updated list of available tool names"),
-  intervalMs: z.number()
-    .int()
-    .positive()
+  every: z.object({
+    hours: z.number()
+      .int()
+      .nonnegative()
+      .max(24)
+      .optional(),
+    minutes: z.number()
+      .int()
+      .min(0)
+      .max(59)
+      .optional(),
+  })
     .optional()
-    .describe("Interval in milliseconds for 'interval' schedule"),
-  offsetMinutes: z.number()
-    .int()
-    .nonnegative()
+    .describe("Updated interval in hours/minutes"),
+  offsetFromDayStart: z.object({
+    hours: z.number()
+      .int()
+      .min(0)
+      .max(23)
+      .optional(),
+    minutes: z.number()
+      .int()
+      .min(0)
+      .max(59)
+      .optional(),
+  })
     .optional()
-    .describe("Offset in minutes applied before each interval trigger"),
+    .describe("Updated day-start offset in hours/minutes"),
+  timezone: z.string()
+    .min(1)
+    .optional()
+    .describe("Updated IANA timezone for schedule anchoring"),
   notifyUser: z.boolean()
     .optional()
     .describe("Whether to send a Telegram notification"),
   enabled: z.boolean()
     .optional()
     .describe("Whether the task is enabled"),
+}).superRefine((data, ctx) => {
+  if (data.every && data.every.hours === 24 && (data.every.minutes ?? 0) !== 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["every", "minutes"],
+      message: "every.minutes must be 0 when every.hours is 24",
+    });
+  }
+
+  if (data.every && (data.every.hours ?? 0) === 0 && (data.every.minutes ?? 0) === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["every"],
+      message: "every patch cannot be 0h 0m",
+    });
+  }
 });
 
 export const editInstructionsToolInputSchema = z.object({
@@ -858,11 +933,23 @@ export const listCronsToolOutputSchema = z.object({
       type: z.string(),
       expression: z.string()
         .optional(),
-      intervalMs: z.number()
+      every: z.object({
+        hours: z.number()
+          .optional(),
+        minutes: z.number()
+          .optional(),
+      })
         .optional(),
       runAt: z.string()
         .optional(),
-      offsetMinutes: z.number()
+      offsetFromDayStart: z.object({
+        hours: z.number()
+          .optional(),
+        minutes: z.number()
+          .optional(),
+      })
+        .optional(),
+      timezone: z.string()
         .optional(),
     }),
     enabled: z.boolean(),
@@ -882,9 +969,23 @@ export const setJobScheduleToolInputSchema = z.object({
     type: z.enum(["once", "interval", "cron"]),
     runAt: z.string()
       .optional(),
-    intervalMs: z.number()
+    every: z.object({
+      hours: z.number()
+        .optional(),
+      minutes: z.number()
+        .optional(),
+    })
       .optional(),
     expression: z.string()
+      .optional(),
+    offsetFromDayStart: z.object({
+      hours: z.number()
+        .optional(),
+      minutes: z.number()
+        .optional(),
+    })
+      .optional(),
+    timezone: z.string()
       .optional(),
   })
     .describe("Schedule configuration (same format as add_once or add_interval)"),
@@ -900,11 +1001,18 @@ export const setJobScheduleToolInputSchema = z.object({
   }
 
   if (data.schedule.type === "interval") {
-    if (data.schedule.intervalMs === undefined || !Number.isFinite(data.schedule.intervalMs) || data.schedule.intervalMs <= 0) {
+    const every = data.schedule.every;
+    const hours = every?.hours;
+    const minutes = every?.minutes;
+    const hasPositiveEvery =
+      (typeof hours === "number" && Number.isFinite(hours) && hours > 0)
+      || (typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0);
+
+    if (!every || !hasPositiveEvery) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["schedule", "intervalMs"],
-        message: "schedule.intervalMs is required and must be > 0 when schedule.type is 'interval'",
+        path: ["schedule", "every"],
+        message: "schedule.every is required and must be > 0 when schedule.type is 'interval'",
       });
     }
   }

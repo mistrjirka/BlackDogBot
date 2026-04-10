@@ -25,9 +25,21 @@ interface IEditIntervalResult {
 const TOOL_NAME: string = "edit_interval";
 const TOOL_DESCRIPTION: string =
   "Modify an existing interval-based scheduled task. " +
-  "You can patch non-instruction fields (name, description, tools, intervalMs, notifyUser, enabled). " +
+  "You can patch non-instruction fields (name, description, tools, every, offsetFromDayStart, timezone, notifyUser, enabled). " +
   "send_message performs internal deduplication against previous cron messages. " +
   "IMPORTANT: You MUST call 'get_timed' first to retrieve the current task configuration before using this tool.";
+
+function _normalizeTimeParts(
+  parts: { hours: number; minutes: number },
+): { hours: number; minutes: number } {
+  const safeHours: number = Math.max(0, parts.hours);
+  const safeMinutes: number = Math.max(0, parts.minutes);
+  const totalMinutes: number = (safeHours * 60) + safeMinutes;
+  return {
+    hours: Math.floor(totalMinutes / 60),
+    minutes: totalMinutes % 60,
+  };
+}
 
 //#endregion Const
 
@@ -39,8 +51,9 @@ const executeEditInterval = async (
     name,
     description,
     tools,
-    intervalMs,
-    offsetMinutes,
+    every,
+    offsetFromDayStart,
+    timezone,
     notifyUser,
     enabled,
   }: {
@@ -48,8 +61,9 @@ const executeEditInterval = async (
     name?: string;
     description?: string;
     tools?: string[];
-    intervalMs?: number;
-    offsetMinutes?: number;
+    every?: { hours?: number; minutes?: number };
+    offsetFromDayStart?: { hours?: number; minutes?: number };
+    timezone?: string;
     notifyUser?: boolean;
     enabled?: boolean;
   },
@@ -57,7 +71,7 @@ const executeEditInterval = async (
 ): Promise<IEditIntervalResult> => {
   const logger: LoggerService = LoggerService.getInstance();
   const scheduler: SchedulerService = SchedulerService.getInstance();
-  const timezone: string | undefined = ConfigService.getInstance().getConfig().scheduler.timezone;
+  const schedulerTimezone: string | undefined = ConfigService.getInstance().getConfig().scheduler.timezone;
 
   try {
     if (tools !== undefined) {
@@ -89,12 +103,40 @@ const executeEditInterval = async (
     if (notifyUser !== undefined) patch.notifyUser = notifyUser;
     if (enabled !== undefined) patch.enabled = enabled;
 
-    if (intervalMs !== undefined || offsetMinutes !== undefined) {
+    if (every !== undefined || offsetFromDayStart !== undefined || timezone !== undefined) {
       const currentSchedule = existingTask.schedule;
+
+      const currentEvery = currentSchedule.type === "interval"
+        ? currentSchedule.every
+        : { hours: 0, minutes: 0 };
+      const currentOffset = currentSchedule.type === "interval"
+        ? currentSchedule.offsetFromDayStart
+        : { hours: 0, minutes: 0 };
+
+      const requestedTimezone: string =
+        timezone
+        ?? (currentSchedule.type === "interval" ? currentSchedule.timezone : (ConfigService.getInstance().getConfig().scheduler.timezone ?? "UTC"));
+
+      const effectiveScheduleTimezone: string = (() => {
+        try {
+          Intl.DateTimeFormat("en-US", { timeZone: requestedTimezone }).format(new Date());
+          return requestedTimezone;
+        } catch {
+          return "UTC";
+        }
+      })();
+
       patch.schedule = {
         type: "interval",
-        intervalMs: intervalMs ?? currentSchedule.intervalMs,
-        offsetMinutes: offsetMinutes ?? (currentSchedule.type === "interval" ? currentSchedule.offsetMinutes : 0),
+        every: _normalizeTimeParts({
+          hours: every?.hours ?? currentEvery.hours,
+          minutes: every?.minutes ?? currentEvery.minutes,
+        }),
+        offsetFromDayStart: _normalizeTimeParts({
+          hours: offsetFromDayStart?.hours ?? currentOffset.hours,
+          minutes: offsetFromDayStart?.minutes ?? currentOffset.minutes,
+        }),
+        timezone: effectiveScheduleTimezone,
       };
     }
 
@@ -125,13 +167,13 @@ const executeEditInterval = async (
     return {
       success: true,
       task: updatedTask,
-      display: updatedTask ? formatScheduledTask(updatedTask, timezone) : undefined,
+      display: updatedTask ? formatScheduledTask(updatedTask, schedulerTimezone) : undefined,
     };
   } catch (error: unknown) {
     const errorMessage: string = extractErrorMessage(error);
     logger.error(`[${TOOL_NAME}] Failed to edit task: ${errorMessage}`, {
       taskId,
-      patch: { name, description, tools, intervalMs, offsetMinutes, notifyUser, enabled },
+      patch: { name, description, tools, every, offsetFromDayStart, timezone, notifyUser, enabled },
       error: errorMessage,
     });
 

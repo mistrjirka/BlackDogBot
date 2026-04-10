@@ -9,13 +9,20 @@ export interface ICronMessageHistory {
 export interface IScheduleOnce {
   type: "once";
   runAt: string;
-  offsetMinutes: number;
+  offsetFromDayStart: ITimeParts;
+  timezone: string;
 }
 
 export interface IScheduleInterval {
   type: "interval";
-  intervalMs: number;
-  offsetMinutes: number;
+  every: ITimeParts;
+  offsetFromDayStart: ITimeParts;
+  timezone: string;
+}
+
+export interface ITimeParts {
+  hours: number;
+  minutes: number;
 }
 
 export type Schedule = IScheduleOnce | IScheduleInterval;

@@ -4,20 +4,41 @@ import { scheduleSchema, scheduleOnceSchema, scheduleIntervalSchema, scheduleCro
 
 describe("Schedule Types", () => {
   it("should allow once type with runAt", () => {
-    const schedule: IScheduleOnce = { type: "once", runAt: "2026-04-08T10:00:00Z" };
+    const schedule: IScheduleOnce = {
+      type: "once",
+      runAt: "2026-04-08T10:00:00Z",
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+      timezone: "UTC",
+    };
     expect(schedule.type).toBe("once");
     expect(schedule.runAt).toBeDefined();
   });
 
-  it("should allow interval type with intervalMs", () => {
-    const schedule: IScheduleInterval = { type: "interval", intervalMs: 3600000 };
+  it("should allow interval type with every", () => {
+    const schedule: IScheduleInterval = {
+      type: "interval",
+      every: { hours: 1, minutes: 0 },
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+      timezone: "UTC",
+    };
     expect(schedule.type).toBe("interval");
-    expect(schedule.intervalMs).toBe(3600000);
+    expect(schedule.every.hours).toBe(1);
+    expect(schedule.every.minutes).toBe(0);
   });
 
   it("should be a union of only once and interval", () => {
-    const onceSchedule: IScheduleOnce = { type: "once", runAt: "2026-04-08T10:00:00Z" };
-    const intervalSchedule: IScheduleInterval = { type: "interval", intervalMs: 3600000 };
+    const onceSchedule: IScheduleOnce = {
+      type: "once",
+      runAt: "2026-04-08T10:00:00Z",
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+      timezone: "UTC",
+    };
+    const intervalSchedule: IScheduleInterval = {
+      type: "interval",
+      every: { hours: 1, minutes: 0 },
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+      timezone: "UTC",
+    };
     const schedule: Schedule = onceSchedule;
     const schedule2: Schedule = intervalSchedule;
     expect(schedule.type).toBe("once");
@@ -27,12 +48,22 @@ describe("Schedule Types", () => {
 
 describe("Schedule Schema", () => {
   it("should accept once schedule with runAt", () => {
-    const result = scheduleOnceSchema.safeParse({ type: "once", runAt: "2026-04-08T10:00:00Z" });
+    const result = scheduleOnceSchema.safeParse({
+      type: "once",
+      runAt: "2026-04-08T10:00:00Z",
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+      timezone: "UTC",
+    });
     expect(result.success).toBe(true);
   });
 
-  it("should accept interval schedule with intervalMs", () => {
-    const result = scheduleIntervalSchema.safeParse({ type: "interval", intervalMs: 3600000 });
+  it("should accept interval schedule with every", () => {
+    const result = scheduleIntervalSchema.safeParse({
+      type: "interval",
+      every: { hours: 1, minutes: 0 },
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+      timezone: "UTC",
+    });
     expect(result.success).toBe(true);
   });
 
@@ -46,8 +77,18 @@ describe("Schedule Schema", () => {
   });
 
   it("should only accept once and interval types in scheduleSchema", () => {
-    const onceResult = scheduleSchema.safeParse({ type: "once", runAt: "2026-04-08T10:00:00Z" });
-    const intervalResult = scheduleSchema.safeParse({ type: "interval", intervalMs: 3600000 });
+    const onceResult = scheduleSchema.safeParse({
+      type: "once",
+      runAt: "2026-04-08T10:00:00Z",
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+      timezone: "UTC",
+    });
+    const intervalResult = scheduleSchema.safeParse({
+      type: "interval",
+      every: { hours: 1, minutes: 0 },
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+      timezone: "UTC",
+    });
     expect(onceResult.success).toBe(true);
     expect(intervalResult.success).toBe(true);
   });

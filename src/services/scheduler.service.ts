@@ -13,6 +13,7 @@ import { LoggerService } from "./logger.service.js";
 import { ConfigService } from "./config.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
+import type { ITimeParts } from "../shared/types/index.js";
 
 //#region Const
 
@@ -34,6 +35,19 @@ interface ILegacyWriteToolMigrationResult {
   changed: boolean;
   replacedTools: string[];
   addedWriteTableTools: number;
+}
+
+interface IIntervalScheduleLegacy {
+  type: "interval";
+  intervalMs?: number;
+  offsetMinutes?: number;
+  every?: ITimeParts;
+  offsetFromDayStart?: ITimeParts;
+  timezone?: string;
+}
+
+interface IEveryGridParts {
+  minutes: number;
 }
 
 //#endregion Interfaces
@@ -324,13 +338,13 @@ export class SchedulerService {
       try {
         const content: string = await fs.readFile(filePath, "utf-8");
         const parsed: unknown = JSON.parse(content);
-        let task: IScheduledTask = scheduledTaskSchema.parse(parsed);
 
-        // Migrate legacy offsetMinutes (normalize missing to 0 and persist)
-        const migrationResult = await this._migrateLegacyOffsetMinutes(parsed, task, filePath);
+        // Migrate legacy interval/offset format to every/offsetFromDayStart format.
+        const migrationResult = await this._migrateLegacyTimedScheduleFields(parsed, filePath);
+        let task: IScheduledTask = scheduledTaskSchema.parse(migrationResult.task);
+
         if (migrationResult.migrated) {
-          task = migrationResult.task;
-          this._logger.info("Migrated legacy timed task offsetMinutes", {
+          this._logger.info("Migrated legacy timed task schedule fields", {
             taskId: task.taskId,
             name: task.name,
           });
@@ -426,23 +440,184 @@ export class SchedulerService {
     };
   }
 
-  private async _migrateLegacyOffsetMinutes(
-    rawParsed: unknown,
-    task: IScheduledTask,
-    filePath: string,
-  ): Promise<{ task: IScheduledTask; migrated: boolean }> {
-    const raw = rawParsed as Record<string, unknown>;
-    const schedule = raw.schedule as Record<string, unknown> | undefined;
+  private _parseLegacyEvery(intervalMs: number): ITimeParts {
+    const totalMinutes: number = Math.max(1, Math.floor(intervalMs / 60000));
+    return {
+      hours: Math.floor(totalMinutes / 60),
+      minutes: totalMinutes % 60,
+    };
+  }
 
-    if (!schedule || schedule.offsetMinutes !== undefined) {
-      return { task, migrated: false };
+  private _parseLegacyOffset(offsetMinutes: number): ITimeParts {
+    const safeOffset: number = Math.max(0, Math.floor(offsetMinutes));
+    return {
+      hours: Math.floor(safeOffset / 60),
+      minutes: safeOffset % 60,
+    };
+  }
+
+  private _normalizeEvery(parts: ITimeParts): IEveryGridParts {
+    const totalMinutes: number = (parts.hours * 60) + parts.minutes;
+    return {
+      minutes: Math.max(1, totalMinutes),
+    };
+  }
+
+  private _normalizeOffsetFromDayStart(parts: ITimeParts): ITimeParts {
+    const totalMinutes: number = Math.max(0, (parts.hours * 60) + parts.minutes);
+    const withinDayMinutes: number = totalMinutes % (24 * 60);
+    return {
+      hours: Math.floor(withinDayMinutes / 60),
+      minutes: withinDayMinutes % 60,
+    };
+  }
+
+  private _resolveScheduleTimezone(rawTimezone?: unknown): string {
+    if (typeof rawTimezone === "string" && rawTimezone.trim().length > 0) {
+      return rawTimezone;
     }
 
-    const migratedTask: IScheduledTask = {
-      ...task,
+    const configuredTimezone: string = ConfigService.getInstance().getConfig().scheduler.timezone ?? "UTC";
+
+    try {
+      Intl.DateTimeFormat("en-US", { timeZone: configuredTimezone }).format(new Date());
+      return configuredTimezone;
+    } catch {
+      return "UTC";
+    }
+  }
+
+  private _resolveNextIntervalSlotMs(task: IScheduledTask): number {
+    if (task.schedule.type !== "interval") {
+      return 0;
+    }
+
+    const schedule = task.schedule;
+    const normalizedEvery: IEveryGridParts = this._normalizeEvery(schedule.every);
+    const normalizedOffset: ITimeParts = this._normalizeOffsetFromDayStart(schedule.offsetFromDayStart);
+    const everyMinutes: number = normalizedEvery.minutes;
+    const everyMs: number = everyMinutes * 60000;
+    const offsetMinutes: number = (normalizedOffset.hours * 60) + normalizedOffset.minutes;
+    const offsetMs: number = offsetMinutes * 60000;
+
+    const timezone: string = schedule.timezone || this._resolveScheduleTimezone(undefined);
+    const nowMs: number = Date.now();
+
+    let formatter: Intl.DateTimeFormat;
+
+    try {
+      formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+    } catch {
+      formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "UTC",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+    }
+
+    const nowLocalDate: string = formatter.format(new Date(nowMs));
+    const dayStartUtcMs: number = Date.parse(`${nowLocalDate}T00:00:00Z`);
+
+    if (!Number.isFinite(dayStartUtcMs)) {
+      return nowMs + everyMs;
+    }
+
+    const dayMs: number = 24 * 60 * 60 * 1000;
+    const firstSlotMs: number = dayStartUtcMs + offsetMs;
+
+    if (nowMs <= firstSlotMs) {
+      return firstSlotMs;
+    }
+
+    const elapsedSinceFirst: number = nowMs - firstSlotMs;
+    const increments: number = Math.floor(elapsedSinceFirst / everyMs) + 1;
+    const nextSlotSameDay: number = firstSlotMs + (increments * everyMs);
+
+    if (nextSlotSameDay < dayStartUtcMs + dayMs) {
+      return nextSlotSameDay;
+    }
+
+    return firstSlotMs + dayMs;
+  }
+
+  private async _migrateLegacyTimedScheduleFields(
+    rawParsed: unknown,
+    filePath: string,
+  ): Promise<{ task: unknown; migrated: boolean }> {
+    const raw = rawParsed as Record<string, unknown>;
+    const rawSchedule = raw.schedule as IIntervalScheduleLegacy | undefined;
+
+    if (!rawSchedule || (rawSchedule.type !== "interval" && rawSchedule.type !== "once")) {
+      return { task: rawParsed, migrated: false };
+    }
+
+    if (rawSchedule.type === "interval") {
+      const hasModernIntervalFields: boolean =
+        rawSchedule.every !== undefined
+        && rawSchedule.offsetFromDayStart !== undefined
+        && typeof rawSchedule.timezone === "string"
+        && rawSchedule.timezone.length > 0;
+
+      if (hasModernIntervalFields) {
+        return { task: rawParsed, migrated: false };
+      }
+
+      const intervalMs: number = typeof rawSchedule.intervalMs === "number" && rawSchedule.intervalMs > 0
+        ? rawSchedule.intervalMs
+        : 60000;
+
+      const offsetMinutes: number = typeof rawSchedule.offsetMinutes === "number" && rawSchedule.offsetMinutes >= 0
+        ? rawSchedule.offsetMinutes
+        : 0;
+
+      const migratedTask: Record<string, unknown> = {
+        ...raw,
+        schedule: {
+          type: "interval",
+          every: this._parseLegacyEvery(intervalMs),
+          offsetFromDayStart: this._parseLegacyOffset(offsetMinutes),
+          timezone: this._resolveScheduleTimezone(rawSchedule.timezone),
+        },
+        updatedAt: new Date().toISOString(),
+      };
+
+      const normalizedSchedule = migratedTask.schedule as {
+        every: ITimeParts;
+        offsetFromDayStart: ITimeParts;
+      };
+
+      normalizedSchedule.every = this._parseLegacyEvery(intervalMs);
+      normalizedSchedule.offsetFromDayStart = this._normalizeOffsetFromDayStart(this._parseLegacyOffset(offsetMinutes));
+
+      await fs.writeFile(filePath, JSON.stringify(migratedTask, null, 2), "utf-8");
+      return { task: migratedTask, migrated: true };
+    }
+
+    const onceSchedule = rawSchedule as { offsetFromDayStart?: ITimeParts; timezone?: string };
+    const hasModernOnceFields: boolean =
+      onceSchedule.offsetFromDayStart !== undefined
+      && typeof onceSchedule.timezone === "string"
+      && onceSchedule.timezone.length > 0;
+
+    if (hasModernOnceFields) {
+      return { task: rawParsed, migrated: false };
+    }
+
+    const migratedTask: Record<string, unknown> = {
+      ...raw,
       schedule: {
-        ...task.schedule,
-        offsetMinutes: 0,
+        ...(rawSchedule as unknown as Record<string, unknown>),
+        offsetFromDayStart: {
+          hours: 0,
+          minutes: 0,
+        },
+        timezone: this._resolveScheduleTimezone(rawSchedule.timezone),
       },
       updatedAt: new Date().toISOString(),
     };
@@ -606,37 +781,27 @@ export class SchedulerService {
 
     switch (schedule.type) {
       case "interval": {
-        const offsetMs: number = (schedule.offsetMinutes ?? 0) * 60000;
+        const scheduleNextRun = (): void => {
+          const nextRunAtMs: number = this._resolveNextIntervalSlotMs(task);
+          const delayMs: number = Math.max(0, nextRunAtMs - Date.now());
 
-        if (offsetMs > 0) {
           const timeoutId: NodeJS.Timeout = setTimeout(() => {
             this._dispatchOrEnqueue(task, executeCallback);
-
-            const intervalId: NodeJS.Timeout = setInterval(() => {
-              this._dispatchOrEnqueue(task, executeCallback);
-            }, schedule.intervalMs);
-
-            this._intervals.set(task.taskId, intervalId);
             this._timeouts.delete(task.taskId);
-          }, offsetMs);
+            scheduleNextRun();
+          }, delayMs);
 
           this._timeouts.set(task.taskId, timeoutId);
-          this._logger.debug("Scheduled interval task with offset", {
-            taskId: task.taskId,
-            intervalMs: schedule.intervalMs,
-            offsetMs,
-          });
-        } else {
-          const intervalId: NodeJS.Timeout = setInterval(() => {
-            this._dispatchOrEnqueue(task, executeCallback);
-          }, schedule.intervalMs);
+        };
 
-          this._intervals.set(task.taskId, intervalId);
-          this._logger.debug("Scheduled interval task", {
-            taskId: task.taskId,
-            intervalMs: schedule.intervalMs,
-          });
-        }
+        scheduleNextRun();
+
+        this._logger.debug("Scheduled interval task", {
+          taskId: task.taskId,
+          every: schedule.every,
+          offsetFromDayStart: schedule.offsetFromDayStart,
+          timezone: schedule.timezone,
+        });
         break;
       }
 

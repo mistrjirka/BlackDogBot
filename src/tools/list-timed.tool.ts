@@ -13,9 +13,16 @@ interface IListTimedTaskSummary {
   schedule: {
     type: string;
     expression?: string;
-    intervalMs?: number;
+    every?: {
+      hours?: number;
+      minutes?: number;
+    };
     runAt?: string;
-    offsetMinutes?: number;
+    offsetFromDayStart?: {
+      hours?: number;
+      minutes?: number;
+    };
+    timezone?: string;
   };
   enabled: boolean;
   lastRunAt: string | null;
@@ -43,12 +50,14 @@ function _mapTaskToSummary(task: IScheduledTask): IListTimedTaskSummary {
 
   switch (task.schedule.type) {
     case "interval":
-      scheduleSummary.intervalMs = task.schedule.intervalMs;
-      scheduleSummary.offsetMinutes = task.schedule.offsetMinutes;
+      scheduleSummary.every = task.schedule.every;
+      scheduleSummary.offsetFromDayStart = task.schedule.offsetFromDayStart;
+      scheduleSummary.timezone = task.schedule.timezone;
       break;
     case "once":
       scheduleSummary.runAt = task.schedule.runAt;
-      scheduleSummary.offsetMinutes = task.schedule.offsetMinutes;
+      scheduleSummary.offsetFromDayStart = task.schedule.offsetFromDayStart;
+      scheduleSummary.timezone = task.schedule.timezone;
       break;
   }
 
