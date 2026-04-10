@@ -290,15 +290,14 @@ export class MainAgent extends BaseAgentBase {
     }
 
     // Merge per-table write tools (generated from database schemas)
-    try {
-      const perTableTools: ToolSet = await buildPerTableToolsAsync();
-      for (const [toolName, toolDef] of Object.entries(perTableTools)) {
-        tools[toolName] = toolDef;
-      }
-    } catch (err: unknown) {
-      this._logger.warn("Failed to build per-table tools at startup", {
-        error: extractErrorMessage(err),
+    const perTableResult = await buildPerTableToolsAsync();
+    if (perTableResult.dbStatus === "corrupt") {
+      this._logger.error("Database corrupt - per-table tools unavailable at startup", {
+        dbStatus: perTableResult.dbStatus,
       });
+    }
+    for (const [toolName, toolDef] of Object.entries(perTableResult.tools)) {
+      tools[toolName] = toolDef;
     }
 
     // Filter tools based on channel permission
@@ -433,8 +432,15 @@ export class MainAgent extends BaseAgentBase {
     // Register hot-reload callback for per-table tools
     const currentFilteredTools: ToolSet = filteredTools;
     ToolHotReloadService.getInstance().registerRebuildCallback(chatId, async () => {
-      const { write, update } = await buildPerTableToolsWithUpdatesAsync();
-      const perTableTools: ToolSet = { ...write, ...update };
+      const logger: LoggerService = LoggerService.getInstance();
+      const { write: writeResult, update: updateResult } = await buildPerTableToolsWithUpdatesAsync();
+      if (writeResult.dbStatus === "corrupt" || updateResult.dbStatus === "corrupt") {
+        logger.error("Database corrupt - per-table tools unavailable during hot-reload", {
+          writeDbStatus: writeResult.dbStatus,
+          updateDbStatus: updateResult.dbStatus,
+        });
+      }
+      const perTableTools: ToolSet = { ...writeResult.tools, ...updateResult.tools };
       const mergedTools: ToolSet = { ...currentFilteredTools, ...perTableTools };
 
       // Re-filter based on permission

@@ -7,25 +7,29 @@ export async function buildCronToolContextBlockAsync(tools: string[]): Promise<s
   const dynamicWriteToolDescriptions: Map<string, string> = new Map();
   const dynamicUpdateToolDescriptions: Map<string, string> = new Map();
 
-  try {
-    const [perTableTools, updateTableTools] = await Promise.all([
-      buildPerTableToolsAsync(),
-      buildUpdateTableToolsAsync(),
-    ]);
-    for (const [toolName, toolDef] of Object.entries(perTableTools)) {
-      if (typeof toolDef.description === "string" && toolDef.description.trim().length > 0) {
-        dynamicWriteToolDescriptions.set(toolName, toolDef.description);
-      }
-    }
-    for (const [toolName, toolDef] of Object.entries(updateTableTools)) {
-      if (typeof toolDef.description === "string" && toolDef.description.trim().length > 0) {
-        dynamicUpdateToolDescriptions.set(toolName, toolDef.description);
-      }
-    }
-  } catch (err) {
-    logger.warn("[cron-tool-context] Failed to build dynamic table tool descriptions, using fallbacks", {
-      error: err instanceof Error ? err.message : String(err),
+  const [writeResult, updateResult] = await Promise.all([
+    buildPerTableToolsAsync(),
+    buildUpdateTableToolsAsync(),
+  ]);
+
+  if (writeResult.dbStatus === "corrupt" || updateResult.dbStatus === "corrupt") {
+    logger.error("[cron-tool-context] Database corrupt - using fallback descriptions", {
+      writeDbStatus: writeResult.dbStatus,
+      updateDbStatus: updateResult.dbStatus,
     });
+  }
+
+  const perTableTools = writeResult.tools;
+  const updateTableTools = updateResult.tools;
+  for (const [toolName, toolDef] of Object.entries(perTableTools)) {
+    if (typeof toolDef.description === "string" && toolDef.description.trim().length > 0) {
+      dynamicWriteToolDescriptions.set(toolName, toolDef.description);
+    }
+  }
+  for (const [toolName, toolDef] of Object.entries(updateTableTools)) {
+    if (typeof toolDef.description === "string" && toolDef.description.trim().length > 0) {
+      dynamicUpdateToolDescriptions.set(toolName, toolDef.description);
+    }
   }
 
   const toolContextLines: string[] = tools.map((toolName: string) => {

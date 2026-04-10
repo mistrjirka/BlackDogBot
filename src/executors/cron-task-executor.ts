@@ -1,5 +1,6 @@
 import type { IScheduledTask, IExecutionContext } from "../shared/types/index.js";
 import { generateId } from "../utils/id.js";
+import { getSafeTimestamp } from "../utils/timestamp.js";
 
 /**
  * Result returned by the cron agent after executing a task.
@@ -59,7 +60,7 @@ export async function executeCronTaskAsync(
     return generateId();
   };
 
-  const safeTimestamp: string = new Date().toISOString().replace(/[:.]/g, "-");
+  const safeTimestamp: string = getSafeTimestamp();
   const jobLogPath: string = deps.getJobLogPath(task.name, safeTimestamp);
   const jobLogKey: string = task.taskId;
 

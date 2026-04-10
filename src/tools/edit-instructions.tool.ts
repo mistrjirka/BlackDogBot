@@ -103,13 +103,13 @@ const executeEditInstructions = async (
 
     const toolsToVerify: string[] = tools ?? existingTask.tools;
 
-    const [allWriteTableTools, allUpdateTableTools] = await Promise.all([
+    const [writeResult, updateResult] = await Promise.all([
       buildPerTableToolsAsync(),
       buildUpdateTableToolsAsync(),
     ]);
     const allDynamicTableTools: string[] = [
-      ...Object.keys(allWriteTableTools),
-      ...Object.keys(allUpdateTableTools),
+      ...Object.keys(writeResult.tools),
+      ...Object.keys(updateResult.tools),
     ];
     const expandedToolsToVerify: string[] = [...new Set([...toolsToVerify, ...allDynamicTableTools])];
 

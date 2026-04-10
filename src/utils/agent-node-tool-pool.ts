@@ -88,6 +88,12 @@ export function createAgentNodeToolPool(
 }
 
 export async function getAgentNodeToolNamesAsync(): Promise<string[]> {
-  const perTableTools: ToolSet = await buildPerTableToolsAsync();
+  const perTableResult = await buildPerTableToolsAsync();
+  if (perTableResult.dbStatus === "corrupt") {
+    LoggerService.getInstance().error("Database corrupt - per-table tools unavailable for agent node", {
+      dbStatus: perTableResult.dbStatus,
+    });
+  }
+  const perTableTools: ToolSet = perTableResult.tools;
   return Object.keys(createAgentNodeToolPool(LoggerService.getInstance(), undefined, perTableTools));
 }

@@ -9,7 +9,6 @@ import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
 import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { ConfigService } from "../services/config.service.js";
-import { extractErrorMessage } from "../utils/error.js";
 import { getCurrentDateTime } from "../utils/time.js";
 import {
   thinkTool,
@@ -337,21 +336,34 @@ export class CronAgent extends BaseAgentBase {
     }
 
     // Merge per-table write tools
-    try {
-      const [writeTools, updateTools] = await Promise.all([
-        buildPerTableToolsAsync(),
-        buildUpdateTableToolsAsync(),
-      ]);
-      for (const [name, toolDef] of Object.entries(writeTools)) {
-        availableTools[name] = toolDef;
-      }
-      for (const [name, toolDef] of Object.entries(updateTools)) {
-        availableTools[name] = toolDef;
-      }
-    } catch (err: unknown) {
-      this._logger.warn("Failed to build per-table tools for cron agent", {
-        error: extractErrorMessage(err),
+    const [writeResult, updateResult] = await Promise.all([
+      buildPerTableToolsAsync(),
+      buildUpdateTableToolsAsync(),
+    ]);
+
+    if (writeResult.dbStatus === "corrupt" || updateResult.dbStatus === "corrupt") {
+      this._logger.error("Database corrupt - per-table tools unavailable", {
+        writeDbStatus: writeResult.dbStatus,
+        updateDbStatus: updateResult.dbStatus,
       });
+      try {
+        const { MessagingService } = await import("../services/messaging.service.js");
+        await MessagingService.getInstance().sendMessageAsync({
+          platform: "telegram",
+          userId: "SYSTEM",
+          text: "⚠️ Database is corrupted. Per-table tools are unavailable until the database is repaired.",
+          replyToMessageId: null,
+        });
+      } catch {
+        // Don't fail if notification fails
+      }
+    }
+
+    for (const [name, toolDef] of Object.entries(writeResult.tools)) {
+      availableTools[name] = toolDef;
+    }
+    for (const [name, toolDef] of Object.entries(updateResult.tools)) {
+      availableTools[name] = toolDef;
     }
 
     // Only include skill tools if skills are loaded
@@ -411,7 +423,9 @@ function _wrapCronCreateTableTool(
 
   return {
     ...originalTool,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK execute callback options are untyped; tool input schema is the source of truth
     execute: async (input: unknown, options: any): Promise<unknown> => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK execute callback result is untyped; tool output schema is the source of truth
       const result: any = await originalExecute(input, options);
 
       if (result?.success === true && onCreateTableRebuild) {

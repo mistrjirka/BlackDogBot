@@ -15,6 +15,7 @@ const turndownService = new TurndownService({
 // Add custom rule for Telegram links (e.g., ?q=%23Breaking -> #Breaking)
 turndownService.addRule("telegramLinks", {
   filter: "a",
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- turndownService callback node param is untyped; DOM node behavior is well-known
   replacement: function (content, node: any) {
     const href = node.getAttribute("href");
     if (href && href.startsWith("?q=")) {

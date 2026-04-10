@@ -68,8 +68,14 @@ export class ToolHotReloadService {
 
     try {
       const { buildPerTableToolsWithUpdatesAsync } = await import("../utils/per-table-tools.js");
-      const { write, update } = await buildPerTableToolsWithUpdatesAsync();
-      const perTableTools: ToolSet = { ...write, ...update };
+      const { write: writeResult, update: updateResult } = await buildPerTableToolsWithUpdatesAsync();
+      if (writeResult.dbStatus === "corrupt" || updateResult.dbStatus === "corrupt") {
+        this._logger.error("Database corrupt - per-table tools unavailable during hot-reload", {
+          writeDbStatus: writeResult.dbStatus,
+          updateDbStatus: updateResult.dbStatus,
+        });
+      }
+      const perTableTools: ToolSet = { ...writeResult.tools, ...updateResult.tools };
 
       this._logger.info("Triggering tool hot-reload", {
         chatId,

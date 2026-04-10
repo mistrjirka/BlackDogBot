@@ -6,7 +6,7 @@ import type { IColumnInfo } from "../helpers/litesql.js";
 import * as litesqlValidation from "../helpers/litesql-validation.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
-import { COMMON_TIMESTAMP_COLUMNS, DATE_LIKE_TYPES, SQLITE_TO_ZOD_TYPE } from "../utils/per-table-tools.js";
+import { COMMON_TIMESTAMP_COLUMNS, DATE_LIKE_TYPES, SQLITE_TO_ZOD_TYPE } from "../utils/sqlite-type-mappings.js";
 
 const DEFAULT_DATABASE = "blackdog";
 

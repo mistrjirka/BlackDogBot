@@ -319,16 +319,15 @@ export class SchedulerService {
     // Build per-table write tool names once to migrate legacy generic write tools
     // in existing persisted timed tasks.
     let perTableWriteToolNames: string[] = [];
-    try {
-      const perTableTools = await buildPerTableToolsAsync();
-      perTableWriteToolNames = Object.keys(perTableTools)
-        .filter((name: string): boolean => name.startsWith("write_table_"))
-        .sort();
-    } catch (error: unknown) {
-      this._logger.warn("Failed to build per-table tools for timed migration", {
-        error: extractErrorMessage(error),
+    const perTableResult = await buildPerTableToolsAsync();
+    if (perTableResult.dbStatus === "corrupt") {
+      this._logger.warn("Database corrupt - per-table tools unavailable for timed migration", {
+        dbStatus: perTableResult.dbStatus,
       });
     }
+    perTableWriteToolNames = Object.keys(perTableResult.tools)
+      .filter((name: string): boolean => name.startsWith("write_table_"))
+      .sort();
 
     const migratedTasks: string[] = [];
 

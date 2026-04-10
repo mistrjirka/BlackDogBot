@@ -15,6 +15,7 @@ import {
   getCommitHashPath,
   ensureDirectoryExistsAsync,
 } from "../utils/paths.js";
+import { getSafeTimestamp } from "../utils/timestamp.js";
 import { LoggerService } from "./logger.service.js";
 
 //#region Interfaces
@@ -457,9 +458,13 @@ export class PromptService {
         .toString()
         .trim();
       return hash;
-    } catch (error) {
-      LoggerService.getInstance().warn("Failed to get git commit hash", { error });
-      return "";
+    } catch (error: unknown) {
+      const code = (error as { code?: string }).code;
+      if (code === "ENOENT") {
+        LoggerService.getInstance().warn("Git not available, using stored hash", { error });
+        return "";
+      }
+      throw error;
     }
   }
 
@@ -500,7 +505,7 @@ export class PromptService {
 
     const defaultFiles: string[] = await this._listFilesRecursiveAsync(this._defaultsDir);
     const defaultMdFiles: string[] = defaultFiles.filter((file: string) => file.endsWith(".md"));
-    const timestamp: string = new Date().toISOString().replace(/[:.]/g, "-");
+    const timestamp: string = getSafeTimestamp();
 
     for (const defaultFile of defaultMdFiles) {
       const relativePath: string = path.relative(this._defaultsDir, defaultFile);

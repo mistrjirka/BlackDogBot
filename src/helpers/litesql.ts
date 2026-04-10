@@ -29,6 +29,18 @@ export interface IColumnInfo {
   defaultValue: string | null;
 }
 
+export type DatabaseStatus = "ok" | "missing" | "corrupt";
+
+export interface ISafeListTablesResult {
+  tables: string[];
+  status: DatabaseStatus;
+}
+
+export interface ISafeGetTableSchemaResult {
+  schema: ITableInfo | null;
+  status: DatabaseStatus;
+}
+
 //#region Types and Validation
 
 export interface IInsertResult {
@@ -92,6 +104,60 @@ export async function listDatabasesAsync(): Promise<IDatabaseInfo[]> {
   }
 
   return databases;
+}
+
+export async function safeListTablesAsync(databaseName: string): Promise<ISafeListTablesResult> {
+  try {
+    const tables = await listTablesAsync(databaseName);
+    return { tables, status: "ok" };
+  } catch (error: unknown) {
+    const err = error as { code?: string; message?: string };
+    const dbPath = getDatabasePath(databaseName);
+    
+    if (err.code === "ENOENT" || !fs.existsSync(dbPath)) {
+      return { tables: [], status: "missing" };
+    }
+    
+    const message = err.message?.toLowerCase() ?? "";
+    const isCorrupt = message.includes("corrupt") || 
+                       message.includes("not a database") ||
+                       message.includes("file is not a database") ||
+                       err.code === "SQLITE_CORRUPT" ||
+                       err.code === "SQLITE_NOTADB";
+    
+    if (isCorrupt) {
+      return { tables: [], status: "corrupt" };
+    }
+    
+    throw error;
+  }
+}
+
+export async function safeGetTableSchemaAsync(databaseName: string, tableName: string): Promise<ISafeGetTableSchemaResult> {
+  try {
+    const schema = await getTableSchemaAsync(databaseName, tableName);
+    return { schema, status: "ok" };
+  } catch (error: unknown) {
+    const err = error as { code?: string; message?: string };
+    const dbPath = getDatabasePath(databaseName);
+    
+    if (err.code === "ENOENT" || !fs.existsSync(dbPath)) {
+      return { schema: null, status: "missing" };
+    }
+    
+    const message = err.message?.toLowerCase() ?? "";
+    const isCorrupt = message.includes("corrupt") || 
+                       message.includes("not a database") ||
+                       message.includes("file is not a database") ||
+                       err.code === "SQLITE_CORRUPT" ||
+                       err.code === "SQLITE_NOTADB";
+    
+    if (isCorrupt) {
+      return { schema: null, status: "corrupt" };
+    }
+    
+    throw error;
+  }
 }
 
 export async function listTablesAsync(databaseName: string): Promise<string[]> {

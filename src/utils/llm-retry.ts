@@ -102,43 +102,6 @@ function createLinkedAbortSignal(
   return controller.signal;
 }
 
-function tryParseJsonFromText(text: string): unknown | null {
-  const trimmedText: string = text.trim();
-  if (trimmedText.length === 0) {
-    return null;
-  }
-
-  const candidates: string[] = [trimmedText];
-
-  const fencedMatch: RegExpMatchArray | null = trimmedText.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fencedMatch && fencedMatch[1]) {
-    candidates.push(fencedMatch[1].trim());
-  }
-
-  const firstBraceIndex: number = trimmedText.indexOf("{");
-  const lastBraceIndex: number = trimmedText.lastIndexOf("}");
-  if (firstBraceIndex >= 0 && lastBraceIndex > firstBraceIndex) {
-    candidates.push(trimmedText.slice(firstBraceIndex, lastBraceIndex + 1));
-  }
-
-  const seen = new Set<string>();
-
-  for (const candidate of candidates) {
-    if (candidate.length === 0 || seen.has(candidate)) {
-      continue;
-    }
-    seen.add(candidate);
-
-    try {
-      return JSON.parse(candidate) as unknown;
-    } catch {
-      // Continue trying candidates.
-    }
-  }
-
-  return null;
-}
-
 function estimateTokensFromTextByBytes(text: string): number {
   return Math.ceil(Buffer.byteLength(text, "utf8") / 4);
 }
@@ -436,8 +399,6 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
           }
 
           const maxToolAutoRounds: number = 3;
-          let lastText: string = "";
-          let shouldFallbackToTextOnly: boolean = false;
 
           for (let round: number = 1; round <= maxToolAutoRounds; round++) {
             const roundSuffix: string = round === 1
@@ -470,7 +431,6 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
                 return { object: parsed };
               }
 
-              lastText = toolResult.text ?? "";
             } catch (toolAutoError: unknown) {
               const details = extractAiErrorDetails(toolAutoError);
               const errorText: string = details.message.toLowerCase();
@@ -484,45 +444,11 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
               if (!isRoutingParameterMismatch) {
                 throw toolAutoError;
               }
-
-              shouldFallbackToTextOnly = true;
-              break;
-            }
-          }
-
-          const maxTextOnlyRounds: number = shouldFallbackToTextOnly ? 3 : 1;
-          for (let textRound: number = 1; textRound <= maxTextOnlyRounds; textRound++) {
-            if (textRound > 1 || shouldFallbackToTextOnly) {
-              const textRoundSuffix: string = textRound === 1
-                ? ""
-                : "\n\nPrevious output was invalid. Return only a valid JSON object matching the schema.";
-
-              const textOnlyResult = await generateText({
-                model: options.model,
-                prompt: options.prompt,
-                ...(options.system ? {
-                  system:
-                    `${options.system}\n\nReturn only valid JSON object matching the requested schema. Do not call tools. Do not include markdown.${textRoundSuffix}`,
-                } : {
-                  system: `Return only valid JSON object matching the requested schema. Do not call tools. Do not include markdown.${textRoundSuffix}`,
-                }),
-                ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}),
-                maxRetries: 0,
-                abortSignal: linkedSignal,
-              });
-
-              lastText = textOnlyResult.text ?? "";
-            }
-
-            const parsedFromText: unknown | null = tryParseJsonFromText(lastText);
-            if (parsedFromText !== null) {
-              const parsed = options.schema.parse(parsedFromText) as z.infer<T>;
-              return { object: parsed };
             }
           }
 
           throw new Error(
-            "Tool-auto structured output failed: no emit_structured_output result and no parseable JSON text after retries.",
+            "Tool-auto structured output failed: no emit_structured_output result after retries.",
           );
         };
 

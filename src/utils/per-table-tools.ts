@@ -2,12 +2,15 @@ import { dynamicTool, type ToolSet } from "ai";
 import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
-import type { IColumnInfo, ITableInfo } from "../helpers/litesql.js";
+import type { DatabaseStatus, IColumnInfo } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
-import { extractErrorMessage } from "./error.js";
 import { createUpdateTableTool } from "../tools/update-table.tool.js";
 
-//#region Constants
+import {
+  COMMON_TIMESTAMP_COLUMNS,
+  DATE_LIKE_TYPES,
+  SQLITE_TO_ZOD_TYPE,
+} from "./sqlite-type-mappings.js";
 
 const DEFAULT_DATABASE = "blackdog";
 
@@ -20,47 +23,10 @@ const WRITE_TO_TABLE_DESCRIPTION: string =
   "Auto-fills required date-like columns if missing. " +
   "Omit auto-increment primary key columns (they are assigned automatically).";
 
-export const SQLITE_TO_ZOD_TYPE: Record<string, z.ZodType> = {
-  // Text types
-  TEXT: z.string(),
-  VARCHAR: z.string(),
-  CHAR: z.string(),
-  CLOB: z.string(),
-  STRING: z.string(),
-  // Integer types
-  INTEGER: z.number().int(),
-  INT: z.number().int(),
-  SMALLINT: z.number().int(),
-  TINYINT: z.number().int(),
-  BIGINT: z.number().int(),
-  // Floating point types
-  REAL: z.number(),
-  FLOAT: z.number(),
-  DOUBLE: z.number(),
-  NUMERIC: z.number(),
-  DECIMAL: z.number(),
-  // Binary
-  BLOB: z.string(),
-  // Boolean
-  BOOLEAN: z.union([z.literal(0), z.literal(1), z.boolean()]),
-  BOOL: z.union([z.literal(0), z.literal(1), z.boolean()]),
-  // Date/time types
-  DATE: z.string(),
-  DATETIME: z.string(),
-  TIMESTAMP: z.string(),
-};
-
-export const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
-  "created_at",
-  "updated_at",
-  "timestamp",
-  "created",
-  "updated",
-]);
-
-export const DATE_LIKE_TYPES: Set<string> = new Set(["DATE", "DATETIME", "TIMESTAMP"]);
-
-//#endregion Constants
+export interface IPerTableToolsResult {
+  tools: ToolSet;
+  dbStatus: DatabaseStatus;
+}
 
 //#region Public Functions
 
@@ -71,35 +37,48 @@ export const DATE_LIKE_TYPES: Set<string> = new Set(["DATE", "DATETIME", "TIMEST
  * Zod schema derived from the table's column definitions. This prevents the
  * model from inserting data with wrong column names or missing required columns.
  */
-export async function buildPerTableToolsAsync(): Promise<ToolSet> {
+export async function buildPerTableToolsAsync(): Promise<IPerTableToolsResult> {
   const logger: LoggerService = LoggerService.getInstance();
   const tools: ToolSet = {};
 
-  let tableNames: string[];
-  try {
-    tableNames = await litesql.listTablesAsync(DEFAULT_DATABASE);
-  } catch (err: unknown) {
-    logger.warn("Failed to list tables for per-table tool generation", {
+  const listResult = await litesql.safeListTablesAsync(DEFAULT_DATABASE);
+
+  if (listResult.status === "missing") {
+    logger.debug("Database not found for per-table write tool generation, returning empty tools", {
       database: DEFAULT_DATABASE,
-      error: extractErrorMessage(err),
     });
-    return tools;
+    return { tools, dbStatus: "missing" };
   }
 
+  if (listResult.status === "corrupt") {
+    logger.error("Database is corrupt for per-table write tool generation, returning empty tools", {
+      database: DEFAULT_DATABASE,
+    });
+    return { tools, dbStatus: "corrupt" };
+  }
+
+  const tableNames = listResult.tables;
+
   for (const tableName of tableNames) {
-    let schema: ITableInfo;
-    try {
-      schema = await litesql.getTableSchemaAsync(DEFAULT_DATABASE, tableName);
-    } catch (err: unknown) {
-      logger.warn("Failed to get table schema for per-table tool generation", {
+    const schemaResult = await litesql.safeGetTableSchemaAsync(DEFAULT_DATABASE, tableName);
+
+    if (schemaResult.status === "corrupt") {
+      logger.error("Database became corrupt during per-table write tool generation", {
         database: DEFAULT_DATABASE,
         table: tableName,
-        error: extractErrorMessage(err),
+      });
+      return { tools, dbStatus: "corrupt" };
+    }
+
+    if (schemaResult.status === "missing") {
+      logger.warn("Table disappeared between list and schema call", {
+        database: DEFAULT_DATABASE,
+        table: tableName,
       });
       continue;
     }
 
-    const perTableTool = _buildWriteToolForTable(DEFAULT_DATABASE, tableName, schema.columns);
+    const perTableTool = _buildWriteToolForTable(DEFAULT_DATABASE, tableName, schemaResult.schema!.columns);
     tools[`write_table_${tableName}`] = perTableTool;
   }
 
@@ -109,42 +88,55 @@ export async function buildPerTableToolsAsync(): Promise<ToolSet> {
     toolNames: Object.keys(tools),
   });
 
-  return tools;
+  return { tools, dbStatus: "ok" };
 }
 
 /**
  * Scans the single default database and creates per-table update tools.
  * For each table found, creates a tool named `update_table_<tableName>`.
  */
-export async function buildUpdateTableToolsAsync(): Promise<ToolSet> {
+export async function buildUpdateTableToolsAsync(): Promise<IPerTableToolsResult> {
   const logger: LoggerService = LoggerService.getInstance();
   const tools: ToolSet = {};
 
-  let tableNames: string[];
-  try {
-    tableNames = await litesql.listTablesAsync(DEFAULT_DATABASE);
-  } catch (err: unknown) {
-    logger.warn("Failed to list tables for per-table update tool generation", {
+  const listResult = await litesql.safeListTablesAsync(DEFAULT_DATABASE);
+
+  if (listResult.status === "missing") {
+    logger.debug("Database not found for per-table update tool generation, returning empty tools", {
       database: DEFAULT_DATABASE,
-      error: extractErrorMessage(err),
     });
-    return tools;
+    return { tools, dbStatus: "missing" };
   }
 
+  if (listResult.status === "corrupt") {
+    logger.error("Database is corrupt for per-table update tool generation, returning empty tools", {
+      database: DEFAULT_DATABASE,
+    });
+    return { tools, dbStatus: "corrupt" };
+  }
+
+  const tableNames = listResult.tables;
+
   for (const tableName of tableNames) {
-    let schema: ITableInfo;
-    try {
-      schema = await litesql.getTableSchemaAsync(DEFAULT_DATABASE, tableName);
-    } catch (err: unknown) {
-      logger.warn("Failed to get table schema for per-table update tool generation", {
+    const schemaResult = await litesql.safeGetTableSchemaAsync(DEFAULT_DATABASE, tableName);
+
+    if (schemaResult.status === "corrupt") {
+      logger.error("Database became corrupt during per-table update tool generation", {
         database: DEFAULT_DATABASE,
         table: tableName,
-        error: extractErrorMessage(err),
+      });
+      return { tools, dbStatus: "corrupt" };
+    }
+
+    if (schemaResult.status === "missing") {
+      logger.warn("Table disappeared between list and schema call", {
+        database: DEFAULT_DATABASE,
+        table: tableName,
       });
       continue;
     }
 
-    tools[`update_table_${tableName}`] = createUpdateTableTool(tableName, schema.columns);
+    tools[`update_table_${tableName}`] = createUpdateTableTool(tableName, schemaResult.schema!.columns);
   }
 
   logger.info("Per-table update tools built", {
@@ -153,22 +145,22 @@ export async function buildUpdateTableToolsAsync(): Promise<ToolSet> {
     toolNames: Object.keys(tools),
   });
 
-  return tools;
+  return { tools, dbStatus: "ok" };
 }
 
 /**
  * Build both write and update per-table tools for the single database.
  */
 export async function buildPerTableToolsWithUpdatesAsync(): Promise<{
-  write: ToolSet;
-  update: ToolSet;
+  write: IPerTableToolsResult;
+  update: IPerTableToolsResult;
 }> {
-  const [writeTools, updateTools] = await Promise.all([
+  const [writeResult, updateResult] = await Promise.all([
     buildPerTableToolsAsync(),
     buildUpdateTableToolsAsync(),
   ]);
 
-  return { write: writeTools, update: updateTools };
+  return { write: writeResult, update: updateResult };
 }
 
 /**

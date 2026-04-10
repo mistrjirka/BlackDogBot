@@ -11,6 +11,7 @@ import { AiProviderService } from "../../../src/services/ai-provider.service.js"
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { compactMessagesSummaryOnlyAsync } from "../../../src/utils/summarization-compaction.js";
 import { generateTextWithRetryAsync } from "../../../src/utils/llm-retry.js";
+import { getSafeTimestamp } from "../../../src/utils/timestamp.js";
 
 //#region Types
 
@@ -215,7 +216,7 @@ function toSlug(value: string): string {
 }
 
 async function createArtifactRunDirAsync(testName: string): Promise<string> {
-  const stamp: string = new Date().toISOString().replace(/[:.]/g, "-");
+  const stamp: string = getSafeTimestamp();
   const dirName: string = `${stamp}-${toSlug(testName)}`;
   const runDir: string = path.join(artifactsRootDir, dirName);
   await fs.mkdir(runDir, { recursive: true });
