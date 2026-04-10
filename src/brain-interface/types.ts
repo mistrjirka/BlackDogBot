@@ -1,5 +1,4 @@
-import type { INode, IJob } from "../shared/types/index.js";
-import type { INodeTestCase, INodeTestResult } from "../shared/types/job.types.js";
+import type { INode } from "../shared/types/index.js";
 
 export type BrainCommandType =
   | "start_conversation"
@@ -9,15 +8,10 @@ export type BrainCommandType =
   | "stop"
   | "steer"
   | "get_graph"
-  | "list_jobs"
-  | "load_job"
-  | "run_job"
   | "list_schedules"
   | "toggle_schedule"
   | "subscribe_logs"
   | "unsubscribe_logs"
-  | "get_node_tests"
-  | "run_node_test"
   | "query_database"
   | "factory_reset";
 
@@ -25,28 +19,10 @@ export interface IBrainCommand {
   type: string;
 }
 
-export interface IRunJobCommand extends IBrainCommand {
-  type: "run_job";
-  jobId: string;
-}
-
 export interface IToggleScheduleCommand extends IBrainCommand {
   type: "toggle_schedule";
   taskId: string;
   enabled: boolean;
-}
-
-export interface IGetNodeTestsCommand extends IBrainCommand {
-  type: "get_node_tests";
-  jobId: string;
-  nodeId?: string;
-}
-
-export interface IRunNodeTestCommand extends IBrainCommand {
-  type: "run_node_test";
-  testId: string;
-  jobId: string;
-  nodeId: string;
 }
 
 export interface IQueryDatabaseCommand extends IBrainCommand {
@@ -61,19 +37,19 @@ export interface IQueryDatabaseCommand extends IBrainCommand {
 }
 
 export type BrainCommand =
-  | {
-      type: Exclude<BrainCommandType, "run_job" | "toggle_schedule" | "get_node_tests" | "run_node_test" | "query_database" | "factory_reset">;
-      chatId?: string;
-      message?: string;
-      jobId?: string;
-    }
-  | IRunJobCommand
+  | { type: "start_conversation"; chatId: string }
+  | { type: "send_message"; chatId: string; message: string }
+  | { type: "pause"; chatId: string }
+  | { type: "resume"; chatId: string }
+  | { type: "stop"; chatId: string }
+  | { type: "steer"; chatId: string; message: string }
+  | { type: "get_graph"; chatId: string }
+  | { type: "list_schedules" }
   | IToggleScheduleCommand
-  | IGetNodeTestsCommand
-  | IRunNodeTestCommand
+  | { type: "subscribe_logs" }
+  | { type: "unsubscribe_logs" }
   | IQueryDatabaseCommand
-  | { type: "factory_reset" }
-  | { type: "steer"; chatId: string; message: string };
+  | { type: "factory_reset" };
 
 export interface BrainCommandResponse {
   success: boolean;
@@ -93,49 +69,11 @@ export type BrainEventType =
   | "agent_resumed"
   | "agent_stopped"
   | "error"
-  | "job_execution_started"
-  | "job_execution_completed"
-  | "job_execution_failed"
   | "log_entry"
   | "cron_message";
 
 export interface IBrainEvent {
   type: string;
-}
-
-export interface IJobExecutionStartedEvent extends IBrainEvent {
-  type: "job_execution_started";
-  jobId: string;
-  startedAt: number;
-}
-
-export interface IJobExecutionCompletedEvent extends IBrainEvent {
-  type: "job_execution_completed";
-  jobId: string;
-  result: Record<string, unknown>;
-  timing: {
-    startedAt: number;
-    completedAt: number;
-    durationMs: number;
-  };
-  nodesExecuted: number;
-  nodeResults: {
-    nodeId: string;
-    nodeName: string;
-    duration: number;
-  }[];
-}
-
-export interface IJobExecutionFailedEvent extends IBrainEvent {
-  type: "job_execution_failed";
-  jobId: string;
-  error: string;
-  timing?: {
-    startedAt: number;
-    completedAt: number;
-    durationMs: number;
-  };
-  nodesExecuted: number;
 }
 
 export interface ILogEntryEvent extends IBrainEvent {
@@ -229,30 +167,8 @@ export type BrainEvent =
   | { type: "agent_resumed"; data: AgentResumedEvent }
   | { type: "agent_stopped"; data: AgentStoppedEvent }
   | { type: "error"; data: ErrorEvent }
-  | IJobExecutionStartedEvent
-  | IJobExecutionCompletedEvent
-  | IJobExecutionFailedEvent
   | ILogEntryEvent
   | ICronMessageEvent;
-
-export interface StoredJobInfo {
-  jobId: string;
-  name: string;
-  description: string;
-  status: string;
-  entrypointNodeId: string | null;
-  createdAt: string;
-  updatedAt: string;
-  nodeCount: number;
-}
-
-export interface FullJobData {
-  job: IJob;
-  nodes: INode[];
-}
-
-// Re-export test types for frontend convenience
-export type { INodeTestCase, INodeTestResult };
 
 export interface IBrainInterfaceEmitter {
   emitStepStartedAsync(chatId: string, stepNumber: number): Promise<void>;

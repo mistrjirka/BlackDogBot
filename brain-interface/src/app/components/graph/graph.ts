@@ -5,11 +5,10 @@ import {
   OnDestroy,
   computed,
   signal,
-  effect,
 } from "@angular/core";
 import { CommonModule } from "@angular/common";
 import { FormsModule } from "@angular/forms";
-import type { GraphUpdatedEvent, INode, INodeTestCase, INodeTestResult, IStatusState } from "../../models/brain.types";
+import type { GraphUpdatedEvent, INode, IStatusState } from "../../models/brain.types";
 import { BrainSocketService } from "../../services/brain-socket.service";
 import { NodeDetailComponent } from "../node-detail/node-detail";
 
@@ -38,11 +37,7 @@ export class GraphComponent implements OnDestroy {
 
   //#region Public members
 
-  protected readonly jobs = this._socket.jobs;
-  protected readonly selectedJobId = this._socket.lastJobId;
   protected readonly graph = this._socket.graph;
-  protected readonly currentJobId = this._socket.lastJobId;
-  protected readonly isExecuting = this._socket.isExecuting;
   protected readonly status = this._socket.status;
 
   // Extract context tokens from status (persists even when status clears)
@@ -83,14 +78,6 @@ export class GraphComponent implements OnDestroy {
     return "context--ok";
   });
 
-  // Test-related signals
-  protected readonly nodeTests = signal<Map<string, INodeTestCase[]>>(new Map());
-  protected readonly selectedNodeTests = signal<INodeTestCase[]>([]);
-  protected readonly selectedNodeForTests = signal<INode | null>(null);
-  protected readonly testResults = signal<Map<string, INodeTestResult>>(new Map());
-  protected readonly isRunningTest = signal<string | null>(null);
-  protected readonly showTestPanel = signal(false);
-
   // Node detail panel signals
   protected readonly selectedNodeId = signal<string | null>(null);
   protected readonly showNodeDetail = signal(false);
@@ -104,14 +91,6 @@ export class GraphComponent implements OnDestroy {
     }
 
     return graphData.nodes.find((n: INode): boolean => n.nodeId === nodeId) ?? null;
-  });
-
-  protected readonly selectedNodeTestList = computed((): INodeTestCase[] => {
-    const nodeId = this.selectedNodeId();
-    if (!nodeId) {
-      return [];
-    }
-    return this.nodeTests().get(nodeId) ?? [];
   });
 
   protected readonly nodePositions = computed((): Map<string, { x: number; y: number }> => {
@@ -136,30 +115,11 @@ export class GraphComponent implements OnDestroy {
     return maxY + 60;
   });
 
-  // Computed signal for node test counts
-  protected readonly nodeTestCounts = computed((): Map<string, number> => {
-    const tests = this.nodeTests();
-    const counts = new Map<string, number>();
-    for (const [nodeId, nodeTests] of tests) {
-      counts.set(nodeId, nodeTests.length);
-    }
-    return counts;
-  });
-
   //#endregion Public members
 
   //#region Constructor
 
   public constructor() {
-    // Load tests when graph changes
-    effect(() => {
-      const graphData = this.graph();
-      const jobId = this.currentJobId();
-
-      if (graphData && jobId) {
-        this._loadTestsForJobAsync(jobId);
-      }
-    });
   }
 
   //#endregion Constructor
@@ -173,20 +133,6 @@ export class GraphComponent implements OnDestroy {
   //#endregion Angular Lifecycle
 
   //#region Public methods
-
-  protected async onSelectJobAsync(jobId: string): Promise<void> {
-    await this._socket.loadJobAsync(jobId);
-  }
-
-  protected async runCurrentJobAsync(): Promise<void> {
-    const jobId: string | null = this.currentJobId();
-
-    if (!jobId) {
-      return;
-    }
-
-    await this._socket.runJobAsync(jobId);
-  }
 
   protected getNodePos(nodeId: string): { x: number; y: number } {
     return this.nodePositions().get(nodeId) ?? { x: 0, y: 0 };
@@ -232,53 +178,6 @@ export class GraphComponent implements OnDestroy {
       default:
         return "";
     }
-  }
-
-  protected getTestCount(nodeId: string): number {
-    return this.nodeTestCounts().get(nodeId) ?? 0;
-  }
-
-  protected hasTests(nodeId: string): boolean {
-    return this.getTestCount(nodeId) > 0;
-  }
-
-  protected async openTestPanelAsync(node: INode): Promise<void> {
-    const jobId = this.currentJobId();
-    if (!jobId) return;
-
-    const tests = await this._socket.getNodeTestsAsync(jobId, node.nodeId);
-    this.selectedNodeTests.set(tests);
-    this.selectedNodeForTests.set(node);
-    this.showTestPanel.set(true);
-  }
-
-  protected closeTestPanel(): void {
-    this.showTestPanel.set(false);
-    this.selectedNodeTests.set([]);
-    this.selectedNodeForTests.set(null);
-  }
-
-  protected async runTestAsync(test: INodeTestCase): Promise<void> {
-    const jobId = this.currentJobId();
-    if (!jobId) return;
-
-    this.isRunningTest.set(test.testId);
-
-    try {
-      const result = await this._socket.runNodeTestAsync(test.testId, jobId, test.nodeId);
-
-      if (result) {
-        const results = this.testResults();
-        results.set(test.testId, result);
-        this.testResults.set(new Map(results));
-      }
-    } finally {
-      this.isRunningTest.set(null);
-    }
-  }
-
-  protected getTestResult(testId: string): INodeTestResult | undefined {
-    return this.testResults().get(testId);
   }
 
   protected onNodeClick(nodeId: string): void {
@@ -382,24 +281,6 @@ export class GraphComponent implements OnDestroy {
   //#endregion Public methods
 
   //#region Private methods
-
-  private async _loadTestsForJobAsync(jobId: string): Promise<void> {
-    try {
-      const tests = await this._socket.getNodeTestsAsync(jobId);
-
-      const testMap = new Map<string, INodeTestCase[]>();
-
-      for (const test of tests) {
-        const existing = testMap.get(test.nodeId) ?? [];
-        existing.push(test);
-        testMap.set(test.nodeId, existing);
-      }
-
-      this.nodeTests.set(testMap);
-    } catch (error) {
-      console.error("Failed to load tests:", error);
-    }
-  }
 
   private _computeNodePositions(nodes: INode[], entrypointId: string | null): Map<string, { x: number; y: number }> {
     const levels = new Map<string, number>();

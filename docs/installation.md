@@ -63,9 +63,6 @@ discord:
 scheduler:
   enabled: true
 
-jobCreation:
-  enabled: true
-
 knowledge:
   embeddingProvider: local
   embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
@@ -170,7 +167,7 @@ curl 'http://localhost:18731/search?q=test&format=json'
 ### 4. Create Required Directories
 
 ```bash
-mkdir -p ~/.blackdogbot/{prompts/prompt-fragments,jobs,cron,knowledge/lancedb,skills,logs/jobs,workspace,databases,rss-state,model-profiles,sessions,models}
+mkdir -p ~/.blackdogbot/{prompts/prompt-fragments,cron,knowledge/lancedb,skills,logs,workspace,databases,rss-state,model-profiles,sessions,models}
 ```
 
 ### 5. Start the Daemon

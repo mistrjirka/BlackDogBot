@@ -8,9 +8,6 @@ import {
   getConfigPath,
   getSkillsDir,
   getJobsDir,
-  getJobDir,
-  getJobNodesDir,
-  getJobTestsDir,
   getKnowledgeDir,
   getLanceDbDir,
   getTimedDir,
@@ -21,8 +18,6 @@ import {
   getSkillDir,
   getSkillFilePath,
   getSkillStatePath,
-  getNodeFilePath,
-  getNodeTestFilePath,
   getTimedFilePath,
   getPromptFilePath,
   getWorkspaceDir,
@@ -85,28 +80,6 @@ describe("paths utility", () => {
 
     expect(jobsDir).toContain("jobs");
   });
-
-  it("should return job-specific directory", () => {
-    const jobDir: string = getJobDir("job-123");
-
-    expect(jobDir).toContain("job-123");
-    expect(jobDir).toContain("jobs");
-  });
-
-  it("should return job nodes directory", () => {
-    const nodesDir: string = getJobNodesDir("job-123");
-
-    expect(nodesDir).toContain("nodes");
-    expect(nodesDir).toContain("job-123");
-  });
-
-  it("should return job tests directory", () => {
-    const testsDir: string = getJobTestsDir("job-123");
-
-    expect(testsDir).toContain("tests");
-    expect(testsDir).toContain("job-123");
-  });
-
   it("should return knowledge and lance directories", () => {
     const knowledgeDir: string = getKnowledgeDir();
     const lanceDir: string = getLanceDbDir();
@@ -163,17 +136,6 @@ describe("paths utility", () => {
     expect(skillFilePath).toContain("SKILL.md");
     expect(skillStatePath).toContain("state.json");
   });
-
-  it("should return node file paths", () => {
-    const nodeFilePath: string = getNodeFilePath("job-1", "node-1");
-    const nodeTestFilePath: string = getNodeTestFilePath("job-1", "node-1");
-
-    expect(nodeFilePath).toContain("node-1.json");
-    expect(nodeTestFilePath).toContain("node-1.json");
-    expect(nodeFilePath).toContain("nodes");
-    expect(nodeTestFilePath).toContain("tests");
-  });
-
   it("should return timed and prompt file paths", () => {
     const timedFilePath: string = getTimedFilePath("task-1");
     const promptFilePath: string = getPromptFilePath("main-agent");

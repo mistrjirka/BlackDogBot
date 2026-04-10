@@ -110,7 +110,7 @@ export const createTableTool = tool({
         message:
           `Table "${tableName}" created with columns: ${columns.map((c) => c.name).join(", ")}.\n` +
           `To insert rows, use the tool: write_table_${tableName}\n` +
-          `For LITESQL nodes inserting into this table, use this inputSchema (pass as inputSchemaHint to add_litesql_node):\n` +
+          `Use the inputSchema below when inserting rows:\n` +
           schemaJson,
       };
     } catch (err: unknown) {

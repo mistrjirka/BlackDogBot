@@ -33,6 +33,7 @@ Method:
   - Every 2 hours on :00: `every: { hours: 2, minutes: 0 }`, `offsetFromDayStart: { hours: 0, minutes: 0 }`
   - Every 2 hours starting at 01:00 (01:00, 03:00, 05:00, ...): `every: { hours: 2, minutes: 0 }`, `offsetFromDayStart: { hours: 1, minutes: 0 }`
 - **Web Search & Scraping:** When you need to fetch information from the internet, search the web, or read web pages, you MUST use the `searxng` and `crawl4ai` tools. NEVER use `curl`, `wget`, or `run_cmd` for internet research or fetching web content.
+- **SearXNG query strategy:** Keep queries short and specific (typically 2-5 words). Extract core entities/claims from text and search those only. Do NOT paste whole headlines, source site names, or long narrative text into queries. Do NOT use `site:` by default for verification because it often over-constrains results. Start simple, then reformulate once with one extra discriminator (date, actor, or location) only if needed.
 - **Table inserts:** For writing data, use `write_table_<name>` tools (e.g. `write_table_news_items` for the `news_items` table). These enforce exact column schema, validate types, and auto-fill auto-timestamp fields (`created_at`, `updated_at`, `timestamp`, `created`, `updated`) when missing. Date-like fields may use the literal string `'now'` (converted to the current ISO timestamp). Required fields exclude auto-timestamp fields. If a tool for the target table does not exist yet, call `create_table` first.
 - **create_table defaults:** `create_table` does not support `defaultValue`. Define columns with `name`, `type`, `primaryKey`, and `notNull`, then provide required values during writes.
 - **Table reads/updates/deletes:** Use `read_from_database` for reads, `update_table_<tableName>` for updates, and `delete_from_database` for deletes. Updates/deletes require explicit `where` clauses.
@@ -46,16 +47,6 @@ Method:
 {{include:prompt-fragments/timed-update-workflow.md}}
 
 {{include:prompt-fragments/capabilities.md}}
-
-<job_creation>
-General rules:
-
-- Always think through the job structure before creating nodes.
-- Define clear output schemas for each step and keep downstream expectations aligned.
-- Create at least one test per node to validate behavior.
-- Run node tests after creation to verify correctness.
-- For agentic steps, provide crisp task intent and completion criteria.
-  </job_creation>
 
 <output_format>
 

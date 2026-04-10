@@ -30,17 +30,6 @@ export function getJobsDir(): string {
   return path.join(getBaseDir(), "jobs");
 }
 
-export function getJobDir(jobId: string): string {
-  return path.join(getJobsDir(), jobId);
-}
-
-export function getJobNodesDir(jobId: string): string {
-  return path.join(getJobDir(jobId), "nodes");
-}
-
-export function getJobTestsDir(jobId: string): string {
-  return path.join(getJobDir(jobId), "tests");
-}
 
 export function getKnowledgeDir(): string {
   return path.join(getBaseDir(), "knowledge");
@@ -106,13 +95,6 @@ export function getSkillStatePath(skillName: string): string {
   return path.join(getSkillDir(skillName), "state.json");
 }
 
-export function getNodeFilePath(jobId: string, nodeId: string): string {
-  return path.join(getJobNodesDir(jobId), `${nodeId}.json`);
-}
-
-export function getNodeTestFilePath(jobId: string, nodeId: string): string {
-  return path.join(getJobTestsDir(jobId), `${nodeId}.json`);
-}
 
 export function getTimedFilePath(taskId: string): string {
   return path.join(getTimedDir(), `${taskId}.json`);

@@ -19,28 +19,6 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
   "edit_interval",
   "edit_instructions",
   "remove_timed",
-  "add_job",
-  "edit_job",
-  "remove_job",
-  "add_node_test",
-  "add_agent_node",
-  "add_python_code_node",
-  "add_litesql_node",
-  "add_litesql_reader_node",
-  "add_curl_fetcher_node",
-  "add_rss_fetcher_node",
-  "add_searxng_node",
-  "add_crawl4ai_node",
-  "add_output_to_ai_node",
-  "edit_node",
-  "remove_node",
-  "connect_nodes",
-  "disconnect_nodes",
-  "set_entrypoint",
-  "clear_job_graph",
-  "set_job_schedule",
-  "remove_job_schedule",
-  "finish_job",
 ]);
 
 export const TIMED_VALID_TOOL_NAMES = [
@@ -54,23 +32,6 @@ export const TIMED_VALID_TOOL_NAMES = [
   "get_timed",
   "run_timed",
 ] as const;
-
-const JOB_CREATION_TOOLS: Set<string> = new Set([
-  "start_job_creation",
-  "finish_job_creation",
-  "create_output_schema",
-  "add_node_test",
-  "run_node_test",
-  "add_agent_node",
-  "add_python_code_node",
-  "add_litesql_node",
-  "add_litesql_reader_node",
-  "add_curl_fetcher_node",
-  "add_rss_fetcher_node",
-  "add_searxng_node",
-  "add_crawl4ai_node",
-  "add_output_to_ai_node",
-]);
 
 const CORE_TOOL_NAMES: string[] = [
   "think",
@@ -98,8 +59,6 @@ const CORE_TOOL_NAMES: string[] = [
   "edit_once",
   "edit_interval",
   "edit_instructions",
-  "set_job_schedule",
-  "remove_job_schedule",
   "searxng",
   "crawl4ai",
   "list_tables",
@@ -111,20 +70,6 @@ const CORE_TOOL_NAMES: string[] = [
   "list_prompts",
   "modify_prompt",
   "get_skill_file",
-  "add_job",
-  "edit_job",
-  "remove_job",
-  "get_jobs",
-  "run_job",
-  "finish_job",
-  "get_nodes",
-  "edit_node",
-  "remove_node",
-  "connect_nodes",
-  "disconnect_nodes",
-  "set_entrypoint",
-  "clear_job_graph",
-  "render_graph",
 ];
 
 //#endregion Constants
@@ -132,7 +77,6 @@ const CORE_TOOL_NAMES: string[] = [
 //#region Types
 
 export interface IToolFilterOptions {
-  jobCreationEnabled?: boolean;
   skillNames?: string[];
 }
 
@@ -164,7 +108,7 @@ export function getAllowedToolNames(
     }
   }
 
-  const coreTools: string[] = getCoreToolNames(options?.jobCreationEnabled ?? false);
+  const coreTools: string[] = getCoreToolNames();
 
   for (const toolName of coreTools) {
     if (permission === "read_only" && READ_ONLY_BLOCKED_TOOLS.has(toolName)) {
@@ -202,10 +146,6 @@ export function isToolAllowed(
     return true;
   }
 
-  if (JOB_CREATION_TOOLS.has(toolName) && !options?.jobCreationEnabled) {
-    return false;
-  }
-
   if (permission === "read_only" && READ_ONLY_BLOCKED_TOOLS.has(toolName)) {
     return false;
   }
@@ -221,37 +161,12 @@ export function isToolBlockedInReadOnly(toolName: string): boolean {
   return READ_ONLY_BLOCKED_TOOLS.has(toolName);
 }
 
-export function getJobCreationToolNames(): string[] {
-  return [];
-}
-
 //#endregion Public Functions
 
 //#region Private Functions
 
-function getCoreToolNames(jobCreationEnabled: boolean): string[] {
-  const tools: string[] = [...CORE_TOOL_NAMES];
-
-  if (jobCreationEnabled) {
-    tools.push(
-      "start_job_creation",
-      "finish_job_creation",
-      "create_output_schema",
-      "add_node_test",
-      "run_node_test",
-      "add_agent_node",
-      "add_python_code_node",
-      "add_litesql_node",
-      "add_litesql_reader_node",
-      "add_curl_fetcher_node",
-      "add_rss_fetcher_node",
-      "add_searxng_node",
-      "add_crawl4ai_node",
-      "add_output_to_ai_node"
-    );
-  }
-
-  return tools;
+function getCoreToolNames(): string[] {
+  return [...CORE_TOOL_NAMES];
 }
 
 //#endregion Private Functions

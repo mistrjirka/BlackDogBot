@@ -167,18 +167,6 @@ const schedulerConfigSchema = z.object({
     .describe("Maximum tasks queued when concurrency limit is reached. Tasks arriving when queue is full are skipped. Default: 3."),
 });
 
-const jobCreationConfigSchema = z.object({
-  enabled: z.boolean()
-    .default(true)
-    .describe("Whether the job creation feature is enabled"),
-  requirePassingNodeTests: z.boolean()
-    .default(true)
-    .describe("Whether all node tests must pass before finish_job_creation"),
-  requireSuccessfulRunBeforeFinish: z.boolean()
-    .default(true)
-    .describe("Whether finish_job_creation must execute the job successfully before marking it ready"),
-});
-
 const knowledgeConfigSchema = z.object({
   embeddingProvider: z.enum(["local", "openrouter"])
     .optional()
@@ -274,8 +262,6 @@ export const configSchema = z.object({
     .optional(),
   scheduler: schedulerConfigSchema
     .default({ enabled: true }),
-  jobCreation: jobCreationConfigSchema
-    .default({}),
   knowledge: knowledgeConfigSchema
     .default({}),
   skills: skillsConfigSchema

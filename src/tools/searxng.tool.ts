@@ -41,7 +41,8 @@ function formatResultsAsMarkdown(
 export const searxngTool = tool({
   description:
     "Search the web using SearXNG. Returns search results formatted as markdown for easy reading. " +
-    "Supports categories (general, news, images, videos, etc.) and safe search levels.",
+    "Supports categories (general, news, images, videos, etc.) and safe search levels. " +
+    "For better recall, keep queries short and specific (typically 2-5 words); avoid pasting full headlines or source domain names.",
   inputSchema: searxngToolInputSchema,
   execute: async ({
     query,

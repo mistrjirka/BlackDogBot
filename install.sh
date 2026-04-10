@@ -116,7 +116,7 @@ check_dependencies() {
     fi
     
     if ! command -v dot &> /dev/null; then
-        print_warning "Graphviz (dot) not found. Job graph rendering will not work."
+        print_warning "Graphviz (dot) not found. Graph rendering will not work."
         print_warning "Install with: sudo pacman -S graphviz (Arch) or sudo apt install graphviz (Debian/Ubuntu)"
     else
         print_success "Graphviz $(dot -V 2>&1 | cut -d' ' -f5)"
@@ -584,18 +584,6 @@ create_config() {
     fi
     
     echo ""
-    # NOTE: Job creation toggle temporarily disabled in installer.
-    # The feature is currently unstable, so we force-disable it here.
-    # Keep this block as comments so it can be re-enabled later.
-    # echo -e "${BLUE}Job Creation Feature${NC}"
-    # if prompt_yesno "Enable Job Creation feature?" "y"; then
-    #     JOB_CREATION_ENABLED="true"
-    # else
-    #     JOB_CREATION_ENABLED="false"
-    # fi
-    JOB_CREATION_ENABLED="false"
-    
-    echo ""
     echo -e "${BLUE}Embedding Configuration${NC}"
     echo "Embeddings are used for knowledge search (RAG)."
     echo ""
@@ -707,9 +695,6 @@ scheduler:
   enabled: ${SCHEDULER_ENABLED}
   timezone: ${SCHEDULER_TZ}
 
-jobCreation:
-  enabled: ${JOB_CREATION_ENABLED}
-
 knowledge:
   embeddingProvider: ${EMBEDDING_PROVIDER}
 EOF
@@ -755,11 +740,9 @@ create_directories() {
     echo -e "${YELLOW}Creating directories...${NC}"
     
     mkdir -p "$CONFIG_DIR/skills"
-    mkdir -p "$CONFIG_DIR/jobs"
     mkdir -p "$CONFIG_DIR/knowledge/lancedb"
     mkdir -p "$CONFIG_DIR/cron"
     mkdir -p "$CONFIG_DIR/logs"
-    mkdir -p "$CONFIG_DIR/logs/jobs"
     mkdir -p "$CONFIG_DIR/workspace"
     mkdir -p "$CONFIG_DIR/prompts/prompt-fragments"
     mkdir -p "$CONFIG_DIR/model-profiles"

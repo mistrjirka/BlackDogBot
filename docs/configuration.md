@@ -97,15 +97,6 @@ scheduler:
   timezone: Europe/Prague
 ```
 
-## Job Creation
-
-```yaml
-jobCreation:
-  enabled: true
-  requirePassingNodeTests: true
-  requireSuccessfulRunBeforeFinish: true
-```
-
 ## Skills
 
 ```yaml
@@ -149,14 +140,12 @@ Persistent runtime data lives in `~/.blackdogbot/`:
 |- mcp-servers.json
 |- known-telegram-chats.json
 |- brain-interface.token
-|- prompts/
-|  \- prompt-fragments/
-|- jobs/
-|- cron/
-|- knowledge/lancedb/
-|- skills/
-|- logs/
-|  \- jobs/
+ |- prompts/
+ |  \- prompt-fragments/
+ |- cron/
+ |- knowledge/lancedb/
+ |- skills/
+ |- logs/
 |- workspace/
 |- databases/
 |- rss-state/

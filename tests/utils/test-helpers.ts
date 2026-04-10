@@ -8,7 +8,6 @@ import { LoggerService } from "../../src/services/logger.service.js";
 import { EmbeddingService } from "../../src/services/embedding.service.js";
 import { VectorStoreService } from "../../src/services/vector-store.service.js";
 import { AiProviderService } from "../../src/services/ai-provider.service.js";
-import { JobStorageService } from "../../src/services/job-storage.service.js";
 import { SchedulerService } from "../../src/services/scheduler.service.js";
 import { ChannelRegistryService } from "../../src/services/channel-registry.service.js";
 import { MessagingService } from "../../src/services/messaging.service.js";
@@ -26,7 +25,6 @@ export type SingletonClass =
   | typeof EmbeddingService
   | typeof VectorStoreService
   | typeof AiProviderService
-  | typeof JobStorageService
   | typeof SchedulerService
   | typeof ChannelRegistryService
   | typeof MessagingService
@@ -44,7 +42,6 @@ export function resetSingletons(services: SingletonClass[] = []): void {
     EmbeddingService,
     VectorStoreService,
     AiProviderService,
-    JobStorageService,
     SchedulerService,
     ChannelRegistryService,
     MessagingService,

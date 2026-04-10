@@ -71,6 +71,8 @@ You do NOT need to specify a destination — just call send_message and the syst
 
 **Web search & scraping:** Use `searxng` for web search and `crawl4ai` for fetching specific web pages. Both return results formatted as markdown for easy reading.
 
+**SearXNG query strategy:** Keep verification queries short and concrete (typically 2-5 words). Do NOT paste full headlines, story text, or source domain names into the query. Do NOT use `site:` by default. If the first query is weak, reformulate once with one extra discriminator (date, actor, or location), then continue.
+
 {{include:prompt-fragments/safety-rules.md}}
 
 (End of file)

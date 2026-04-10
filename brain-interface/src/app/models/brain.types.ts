@@ -10,9 +10,6 @@ export type BrainEventType =
   | "agent_resumed"
   | "agent_stopped"
   | "error"
-  | "job_execution_started"
-  | "job_execution_completed"
-  | "job_execution_failed"
   | "log_entry"
   | "status_update"
   | "user_message"
@@ -25,55 +22,15 @@ export type BrainCommandType =
   | "resume"
   | "stop"
   | "get_graph"
-  | "list_jobs"
-  | "load_job"
-  | "run_job"
   | "list_schedules"
   | "toggle_schedule"
   | "subscribe_logs"
   | "unsubscribe_logs"
-  | "get_node_tests"
-  | "run_node_test"
   | "query_database"
   | "factory_reset";
 
 export interface IBrainEvent {
   type: string;
-}
-
-export interface IJobExecutionStartedEvent extends IBrainEvent {
-  type: "job_execution_started";
-  jobId: string;
-  startedAt: number;
-}
-
-export interface IJobExecutionCompletedEvent extends IBrainEvent {
-  type: "job_execution_completed";
-  jobId: string;
-  result: Record<string, unknown>;
-  timing: {
-    startedAt: number;
-    completedAt: number;
-    durationMs: number;
-  };
-  nodesExecuted: number;
-  nodeResults: {
-    nodeId: string;
-    nodeName: string;
-    duration: number;
-  }[];
-}
-
-export interface IJobExecutionFailedEvent extends IBrainEvent {
-  type: "job_execution_failed";
-  jobId: string;
-  error: string;
-  timing?: {
-    startedAt: number;
-    completedAt: number;
-    durationMs: number;
-  };
-  nodesExecuted: number;
 }
 
 export interface ILogEntryEvent extends IBrainEvent {
@@ -197,9 +154,6 @@ export type BrainEvent =
   | { type: "agent_resumed"; data: AgentResumedEvent }
   | { type: "agent_stopped"; data: AgentStoppedEvent }
   | { type: "error"; data: ErrorEvent }
-  | IJobExecutionStartedEvent
-  | IJobExecutionCompletedEvent
-  | IJobExecutionFailedEvent
   | ILogEntryEvent
   | IStatusUpdateEvent
   | ICronMessageEvent;
@@ -208,28 +162,10 @@ export interface IBrainCommand {
   type: string;
 }
 
-export interface IRunJobCommand extends IBrainCommand {
-  type: "run_job";
-  jobId: string;
-}
-
 export interface IToggleScheduleCommand extends IBrainCommand {
   type: "toggle_schedule";
   taskId: string;
   enabled: boolean;
-}
-
-export interface IGetNodeTestsCommand extends IBrainCommand {
-  type: "get_node_tests";
-  jobId: string;
-  nodeId?: string;
-}
-
-export interface IRunNodeTestCommand extends IBrainCommand {
-  type: "run_node_test";
-  testId: string;
-  jobId: string;
-  nodeId: string;
 }
 
 //#region Database Types
@@ -283,31 +219,6 @@ export interface IQueryDatabaseResult {
 
 //#endregion Database Types
 
-//#region Test Types
-
-export interface INodeTestCase {
-  testId: string;
-  nodeId: string;
-  jobId: string;
-  name: string;
-  description: string;
-  inputData: Record<string, unknown>;
-  expectedOutputSchema: Record<string, unknown> | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface INodeTestResult {
-  testId: string;
-  passed: boolean;
-  output: Record<string, unknown> | null;
-  error: string | null;
-  validationErrors: string[];
-  executionTimeMs: number;
-}
-
-//#endregion Test Types
-
 //#region Status Types
 
 export type StatusType =
@@ -336,21 +247,16 @@ export interface IStatusState {
 //#endregion Status Types
 
 export type BrainCommand =
-  | {
-      type: Exclude<
-        BrainCommandType,
-        "run_job" | "toggle_schedule" | "subscribe_logs" | "unsubscribe_logs" | "get_node_tests" | "run_node_test" | "query_database"
-      >;
-      chatId?: string;
-      message?: string;
-      jobId?: string;
-    }
-  | IRunJobCommand
+  | { type: "start_conversation"; chatId: string }
+  | { type: "send_message"; chatId: string; message: string }
+  | { type: "pause"; chatId: string }
+  | { type: "resume"; chatId: string }
+  | { type: "stop"; chatId: string }
+  | { type: "get_graph"; chatId: string }
+  | { type: "list_schedules" }
   | IToggleScheduleCommand
   | { type: "subscribe_logs" }
   | { type: "unsubscribe_logs" }
-  | IGetNodeTestsCommand
-  | IRunNodeTestCommand
   | IQueryDatabaseCommand
   | { type: "factory_reset" };
 
@@ -403,32 +309,6 @@ export interface IScheduleTask {
   lastRunError: string | null;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface StoredJobInfo {
-  jobId: string;
-  name: string;
-  description: string;
-  status: string;
-  entrypointNodeId: string | null;
-  createdAt: string;
-  updatedAt: string;
-  nodeCount: number;
-}
-
-export interface ILoadedJob {
-  jobId: string;
-  name: string;
-  description: string;
-  status: string;
-  entrypointNodeId: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface FullJobData {
-  job: ILoadedJob;
-  nodes: INode[];
 }
 
 export interface UserMessageEntry {

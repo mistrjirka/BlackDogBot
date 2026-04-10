@@ -100,12 +100,6 @@ export interface ISchedulerConfig {
   cronQueueSize?: number; // Max tasks queued when at concurrency limit. Default 3. Overflow is skipped.
 }
 
-export interface IJobCreationConfig {
-  enabled: boolean;
-  requirePassingNodeTests: boolean;
-  requireSuccessfulRunBeforeFinish: boolean;
-}
-
 export interface IKnowledgeConfig {
   embeddingProvider?: EmbeddingProvider;
   embeddingModelPath: string;
@@ -149,7 +143,6 @@ export interface IConfig {
   telegram?: ITelegramConfig;
   discord?: IDiscordConfig;
   scheduler: ISchedulerConfig;
-  jobCreation: IJobCreationConfig;
   knowledge: IKnowledgeConfig;
   skills: ISkillsConfig;
   logging: ILoggingConfig;

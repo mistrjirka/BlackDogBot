@@ -76,14 +76,6 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Find-and-replace text inside a file. Does not require reading first. " +
     "Args: filePath (string, default ''); oldString (string, required); newString (string, required); replaceAll (boolean, default false).",
 
-  run_job:
-    "Execute a preconfigured job by its ID with optional input data. The job must be in 'ready' status. " +
-    "Args: jobId (string, required); input (object, default {}).",
-
-  get_jobs:
-    "List all jobs, optionally filtered by status (creating | ready | running | completed | failed). " +
-    "Args: status (enum, optional).",
-
   list_timed:
     "List all scheduled tasks managed by the scheduler. " +
     "Args: enabledOnly (boolean, default false).",
@@ -94,6 +86,7 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
 
   searxng:
     "Search the web using SearXNG. Returns search results formatted as markdown for easy reading. " +
+    "Use short specific queries (typically 2-5 words); do not paste full headlines or source domain names. " +
     "Args: query (string, required); categories (string[], optional); maxResults (number, default 10); safesearch (0|1|2, optional); language (string, optional).",
 
   crawl4ai:

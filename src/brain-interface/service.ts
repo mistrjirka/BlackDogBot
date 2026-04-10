@@ -8,26 +8,20 @@ import type {
   BrainCommandResponse,
   BrainEvent,
   GraphUpdatedEvent,
-  StoredJobInfo,
-  FullJobData,
 } from "./types.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { StatusService, type IStatusState } from "../services/status.service.js";
 import { verifyJwtToken } from "../utils/jwt.js";
 import * as litesql from "../helpers/litesql.js";
 import type { IQueryResult } from "../helpers/litesql.js";
-import type { IJob, INode } from "../shared/types/index.js";
-import type { INodeProgressEvent, INodeTestCase, INodeTestResult } from "../shared/types/job.types.js";
 import type { IQueryDatabaseCommand } from "./types.js";
-import { JobStorageService } from "../services/job-storage.service.js";
-import { JobExecutorService } from "../services/job-executor.service.js";
 
 export class BrainInterfaceService {
   private static _instance: BrainInterfaceService | null = null;
   private _io: SocketIOServer | null = null;
   private _logger: LoggerService;
   private _activeChats: Map<string, { paused: boolean }>;
-  private _currentGraphs: Map<string, { jobId: string; nodes: INode[]; entrypointNodeId: string | null }>;
+  private _currentGraphs: Map<string, unknown>;
   private _logSubscribers: Set<Socket> = new Set<Socket>();
   private _jwtSecret: string | null = null;
   private _jwtIssuer: string | null = null;
@@ -77,29 +71,6 @@ export class BrainInterfaceService {
           error: errorMessage,
         });
         next(new Error("Unauthorized: invalid token"));
-      }
-    });
-
-    JobStorageService.getInstance().events.on("graph_changed", async ({ jobId }) => {
-      // We need to broadcast this graph update to all active chats that might be looking at it.
-      for (const chatId of this._activeChats.keys()) {
-        try {
-          const storage = JobStorageService.getInstance();
-          const job = await storage.getJobAsync(jobId);
-          if (job) {
-            const nodes = await storage.listNodesAsync(jobId);
-            await this.emitGraphUpdatedAsync(chatId, {
-              chatId,
-              jobId,
-              jobName: job.name,
-              nodes,
-              entrypointNodeId: job.entrypointNodeId,
-            });
-          }
-        } catch (err: unknown) {
-          const errorMessage: string = extractErrorMessage(err);
-          this._logger.debug("Graph changed event skipped for chat", { chatId, jobId, error: errorMessage });
-        }
       }
     });
 
@@ -180,11 +151,7 @@ export class BrainInterfaceService {
   }
 
   public async emitGraphUpdatedAsync(chatId: string, graphData: GraphUpdatedEvent): Promise<void> {
-    this._currentGraphs.set(chatId, {
-      jobId: graphData.jobId,
-      nodes: graphData.nodes,
-      entrypointNodeId: graphData.entrypointNodeId,
-    });
+    this._currentGraphs.set(chatId, graphData);
 
     this._emit({
       type: "graph_updated",
@@ -238,7 +205,7 @@ export class BrainInterfaceService {
     });
   }
 
-  public getCurrentGraph(chatId: string): { jobId: string; nodes: INode[]; entrypointNodeId: string | null } | undefined {
+  public getCurrentGraph(chatId: string): unknown {
     return this._currentGraphs.get(chatId);
   }
 
@@ -321,61 +288,6 @@ export class BrainInterfaceService {
           break;
         }
 
-        case "list_jobs": {
-          const storage: JobStorageService = JobStorageService.getInstance();
-          const jobs: IJob[] = await storage.listJobsAsync();
-
-          const jobInfos: StoredJobInfo[] = await Promise.all(
-            jobs.map(async (job: IJob): Promise<StoredJobInfo> => {
-              const nodes: INode[] = await storage.listNodesAsync(job.jobId);
-
-              return {
-                jobId: job.jobId,
-                name: job.name,
-                description: job.description,
-                status: job.status,
-                entrypointNodeId: job.entrypointNodeId,
-                createdAt: job.createdAt,
-                updatedAt: job.updatedAt,
-                nodeCount: nodes.length,
-              };
-            }),
-          );
-
-          response.success = true;
-          response.data = jobInfos;
-          break;
-        }
-
-        case "load_job": {
-          if (!command.jobId) {
-            response.error = "jobId is required";
-            break;
-          }
-
-          const storage: JobStorageService = JobStorageService.getInstance();
-          const job: IJob | null = await storage.getJobAsync(command.jobId);
-
-          if (!job) {
-            response.error = "Job not found";
-            break;
-          }
-
-          const nodes: INode[] = await storage.listNodesAsync(command.jobId);
-
-          await this.emitGraphUpdatedAsync("", {
-            chatId: "",
-            jobId: job.jobId,
-            jobName: job.name,
-            nodes,
-            entrypointNodeId: job.entrypointNodeId,
-          });
-
-          response.success = true;
-          response.data = { job, nodes } as FullJobData;
-          break;
-        }
-
         case "pause": {
           if (!command.chatId) {
             response.error = "chatId is required";
@@ -442,14 +354,6 @@ export class BrainInterfaceService {
           break;
         }
 
-        case "run_job":
-          if (!command.jobId) {
-            throw new Error("jobId is required for run_job command");
-          }
-          await this._handleRunJobAsync(_socket, command.jobId);
-          response.success = true;
-          break;
-
         case "list_schedules":
           response.data = SchedulerService.getInstance().getAllTasks();
           response.success = true;
@@ -471,68 +375,6 @@ export class BrainInterfaceService {
           this._logSubscribers.delete(_socket);
           response.success = true;
           break;
-
-        case "get_node_tests": {
-          if (!command.jobId) {
-            response.error = "jobId is required";
-            break;
-          }
-
-          const storage: JobStorageService = JobStorageService.getInstance();
-          
-          // If nodeId is provided, get tests for that specific node
-          // Otherwise, get all nodes and their tests
-          let tests: INodeTestCase[];
-          
-          if (command.nodeId) {
-            tests = await storage.getTestCasesAsync(command.jobId, command.nodeId);
-          } else {
-            // Get all nodes for the job and collect all tests
-            const nodes: INode[] = await storage.listNodesAsync(command.jobId);
-            const allTests: INodeTestCase[][] = await Promise.all(
-              nodes.map((n: INode) => storage.getTestCasesAsync(command.jobId, n.nodeId)),
-            );
-            tests = allTests.flat();
-          }
-
-          response.success = true;
-          response.data = tests;
-          break;
-        }
-
-        case "run_node_test": {
-          if (!command.testId) {
-            response.error = "testId is required";
-            break;
-          }
-
-          if (!command.jobId || !command.nodeId) {
-            response.error = "jobId and nodeId are required";
-            break;
-          }
-
-          const executor: JobExecutorService = JobExecutorService.getInstance();
-
-          try {
-            // Run all tests for the node and find the specific one
-            const { results } = await executor.runNodeTestsAsync(command.jobId, command.nodeId);
-            const result: INodeTestResult | undefined = results.find(
-              (r: INodeTestResult) => r.testId === command.testId,
-            );
-
-            if (!result) {
-              response.error = "Test not found";
-              break;
-            }
-
-            response.success = true;
-            response.data = result;
-          } catch (err: unknown) {
-            const errorMessage: string = extractErrorMessage(err);
-            response.error = errorMessage;
-          }
-          break;
-        }
 
         case "query_database": {
           const dbCommand: IQueryDatabaseCommand = command as IQueryDatabaseCommand;
@@ -728,62 +570,5 @@ export class BrainInterfaceService {
     ack(response);
   }
 
-  private async _handleRunJobAsync(_socket: Socket, jobId: string): Promise<void> {
-    const storage: JobStorageService = JobStorageService.getInstance();
-    const nodeStatuses: Record<string, string> = {};
-    const startedAt: number = Date.now();
-
-    this._emit({ type: "job_execution_started", jobId, startedAt });
-
-    try {
-      const result = await JobExecutorService.getInstance().executeJobAsync(
-        jobId,
-        {},
-        async (progress: INodeProgressEvent): Promise<void> => {
-          nodeStatuses[progress.nodeId] = progress.status;
-
-          const job: IJob | null = await storage.getJobAsync(jobId);
-          const nodes: INode[] = await storage.listNodesAsync(jobId);
-
-          if (job) {
-            await this.emitGraphUpdatedAsync("", {
-              chatId: "",
-              jobId: job.jobId,
-              jobName: job.name,
-              nodes,
-              entrypointNodeId: job.entrypointNodeId,
-              activeNodeId: progress.nodeId,
-              nodeStatuses: { ...nodeStatuses },
-            });
-          }
-        },
-      );
-
-      this._emit({ 
-        type: "job_execution_completed", 
-        jobId, 
-        result: (result.output ?? {}) as Record<string, unknown>,
-        timing: {
-          startedAt,
-          completedAt: Date.now(),
-          durationMs: Date.now() - startedAt,
-        },
-        nodesExecuted: result.nodesExecuted ?? 0,
-        nodeResults: (result.nodeResults ?? []) as { nodeId: string; nodeName: string; duration: number }[],
-      });
-    } catch (err: unknown) {
-      const errorMessage: string = extractErrorMessage(err);
-      this._emit({ 
-        type: "job_execution_failed", 
-        jobId, 
-        error: errorMessage,
-        timing: {
-          startedAt,
-          completedAt: Date.now(),
-          durationMs: Date.now() - startedAt,
-        },
-        nodesExecuted: Object.keys(nodeStatuses).length,
-      });
-    }
-  }
+  //#endregion
 }

@@ -8,3 +8,4 @@
 
 8. **Verifier rejections:** If `add_interval` or `add_once` rejects your instructions as ambiguous, always fix by embedding more context (schema, URLs, criteria) into `instructions`. NEVER fix by creating separate files.
 9. **Reasoning field behavior:** Tool calls do not fail due to missing `reasoning`. The `reasoning` argument is optional metadata; do not treat it as required for successful tool execution.
+10. **No jobs/pipelines:** The job/pipeline system is removed. Do not reference or attempt any job tools (e.g., add_job/run_job/start_job_creation/set_job_schedule).

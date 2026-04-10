@@ -14,10 +14,6 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
 
   let basePrompt: string = await promptService.getPromptAsync(PROMPT_MAIN_AGENT);
 
-  if (!config.jobCreation.enabled) {
-    basePrompt = basePrompt.replace(/<job_creation>[\s\S]*?<\/job_creation>\n?/g, "");
-  }
-
   const dateString: string = getCurrentDateTime(config.scheduler?.timezone);
 
   // Build dynamic context about capabilities

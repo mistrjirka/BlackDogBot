@@ -32,7 +32,6 @@ export class LoggerService {
   private static _instance: LoggerService | null;
   private _logLevel: LogLevel;
   private _logFilePath: string | null;
-  private _jobLogStreams: Map<string, fsSync.WriteStream> = new Map();
   public readonly events: EventEmitter = new EventEmitter();
 
   //#endregion Data members
@@ -76,18 +75,12 @@ export class LoggerService {
     this._logLevel = level;
   }
 
-  public async openJobLogAsync(key: string, filePath: string): Promise<void> {
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    const stream: fsSync.WriteStream = fsSync.createWriteStream(filePath, { flags: "a", encoding: "utf-8" });
-    this._jobLogStreams.set(key, stream);
+  public async openJobLogAsync(_key: string, _filePath: string): Promise<void> {
+    // Stubbed: job logging disabled
   }
 
-  public closeJobLog(key: string): void {
-    const stream: fsSync.WriteStream | undefined = this._jobLogStreams.get(key);
-    if (stream) {
-      stream.end();
-      this._jobLogStreams.delete(key);
-    }
+  public closeJobLog(_key: string): void {
+    // Stubbed: job logging disabled
   }
 
   public debug(message: string, context?: Record<string, unknown>): void {
@@ -158,15 +151,6 @@ export class LoggerService {
   private async _writeToFileAsync(line: string): Promise<void> {
     if (this._logFilePath) {
       await fs.appendFile(this._logFilePath, line + "\n", "utf-8");
-    }
-
-    for (const stream of this._jobLogStreams.values()) {
-      await new Promise<void>((resolve, reject): void => {
-        stream.write(line + "\n", (err): void => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
     }
   }
 

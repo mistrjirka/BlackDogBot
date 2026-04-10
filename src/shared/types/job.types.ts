@@ -1,7 +1,5 @@
 //#region Job Types
 
-export type JobStatus = "creating" | "ready" | "running" | "completed" | "failed";
-
 export type NodeType =
   | "start"
   | "curl_fetcher"
@@ -13,16 +11,6 @@ export type NodeType =
   | "agent"
   | "litesql"
   | "litesql_reader";
-
-export interface IJob {
-  jobId: string;
-  name: string;
-  description: string;
-  status: JobStatus;
-  entrypointNodeId: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
 
 export interface IAgentNodeConfig {
   systemPrompt: string;
@@ -118,67 +106,6 @@ export interface INode {
   config: NodeConfig;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface IJobExecutionResult {
-  success: boolean;
-  output: unknown;
-  error: string | null;
-  nodesExecuted: number;
-  failedNodeId: string | null;
-  failedNodeName: string | null;
-  timing?: {
-    startedAt: number;
-    completedAt: number;
-    durationMs: number;
-  };
-  nodeResults?: {
-    nodeId: string;
-    nodeName: string;
-    duration: number;
-    status?: "completed" | "failed";
-    input?: Record<string, unknown>;
-    output?: unknown;
-    passedToNodeIds?: string[];
-    error?: string;
-  }[];
-}
-
-export type NodeExecutionStatus = "executing" | "completed" | "failed" | "skipped";
-
-export interface INodeProgressEvent {
-  jobId: string;
-  nodeId: string;
-  nodeName: string;
-  status: NodeExecutionStatus;
-}
-
-export type OnNodeProgressCallback = (event: INodeProgressEvent) => Promise<void>;
-
-export interface INodeTestCase {
-  testId: string;
-  nodeId: string;
-  jobId: string;
-  name: string;
-  inputData: Record<string, unknown>;
-  expectedOutputSchema: Record<string, unknown> | null;
-  createdAt: string;
-}
-
-export interface IAgentToolCall {
-  toolName: string;
-  input: Record<string, unknown>;
-  output: unknown;
-}
-
-export interface INodeTestResult {
-  testId: string;
-  passed: boolean;
-  output: unknown;
-  error: string | null;
-  validationErrors: string[];
-  executionTimeMs: number;
-  toolCallHistory?: IAgentToolCall[];
 }
 
 //#endregion Job Types

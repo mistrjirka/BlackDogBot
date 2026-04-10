@@ -6,7 +6,7 @@ import {
   signal,
 } from "@angular/core";
 import { CommonModule } from "@angular/common";
-import type { INode, INodeTestCase, INodeTestResult } from "../../models/brain.types";
+import type { INode } from "../../models/brain.types";
 
 @Component({
   selector: "app-node-detail",
@@ -26,11 +26,7 @@ export class NodeDetailComponent {
   //#region Public members
 
   public readonly node = input.required<INode>();
-  public readonly testCases = input<INodeTestCase[]>([]);
-  public readonly testResults = input<Map<string, INodeTestResult>>(new Map());
-  public readonly isRunningTest = input<string | null>(null);
   public readonly closed = output<void>();
-  public readonly runTest = output<INodeTestCase>();
 
   //#endregion Public members
 
@@ -88,16 +84,8 @@ export class NodeDetailComponent {
     }
   }
 
-  protected getTestResult(testId: string): INodeTestResult | undefined {
-    return this.testResults().get(testId);
-  }
-
   protected onClose(): void {
     this.closed.emit();
-  }
-
-  protected onRunTest(test: INodeTestCase): void {
-    this.runTest.emit(test);
   }
 
   //#endregion Public methods

@@ -4,7 +4,6 @@ export const BASE_DIR_NAME: string = ".blackdogbot";
 export const CONFIG_FILE_NAME: string = "config.yaml";
 export const SKILL_FILE_NAME: string = "SKILL.md";
 export const SKILL_STATE_FILE_NAME: string = "state.json";
-export const JOB_FILE_NAME: string = "job.json";
 
 //#endregion Path Constants
 
@@ -44,10 +43,7 @@ export const ID_LENGTH: number = 12;
 
 export const PROMPT_MAIN_AGENT: string = "main-agent";
 export const PROMPT_CRON_AGENT: string = "cron-agent";
-export const PROMPT_JOB_AGENT: string = "job-agent";
-export const PROMPT_AGENT_NODE_GUIDE: string = "agent-node-guide";
 export const PROMPT_SKILL_SETUP: string = "skill-setup";
-export const PROMPT_JOB_CREATION_GUIDE: string = "job-creation-guide";
 export const PROMPT_TOOL_PREAMBLES: string = "tool-preambles";
 export const PROMPT_CONTEXT_GATHERING: string = "context-gathering";
 export const PROMPT_PERSISTENCE: string = "persistence";
