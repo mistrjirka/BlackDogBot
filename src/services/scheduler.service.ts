@@ -487,6 +487,43 @@ export class SchedulerService {
     }
   }
 
+  private _getLocalMidnightUtcMs(localDate: string, timezone: string): number {
+    const referenceMs: number = Date.parse(`${localDate}T00:00:00Z`);
+
+    if (!Number.isFinite(referenceMs)) {
+      return referenceMs;
+    }
+
+    const formatter: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      timeZoneName: "shortOffset",
+    });
+
+    const parts: Intl.DateTimeFormatPart[] = formatter.formatToParts(new Date(referenceMs));
+    const timeZonePart: Intl.DateTimeFormatPart | undefined = parts.find(
+      (p: Intl.DateTimeFormatPart) => p.type === "timeZoneName",
+    );
+
+    if (!timeZonePart || !timeZonePart.value) {
+      return referenceMs;
+    }
+
+    const offsetStr: string = timeZonePart.value;
+    const offsetMatch: RegExpMatchArray | null = offsetStr.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+
+    if (!offsetMatch) {
+      return referenceMs;
+    }
+
+    const sign: number = offsetMatch[1] === "+" ? 1 : -1;
+    const offsetHours: number = parseInt(offsetMatch[2], 10);
+    const offsetMinutes: number = offsetMatch[3] ? parseInt(offsetMatch[3], 10) : 0;
+    const totalOffsetMinutes: number = sign * ((offsetHours * 60) + offsetMinutes);
+    const offsetMs: number = totalOffsetMinutes * 60 * 1000;
+
+    return referenceMs - offsetMs;
+  }
+
   private _resolveNextIntervalSlotMs(task: IScheduledTask): number {
     if (task.schedule.type !== "interval") {
       return 0;
@@ -522,7 +559,7 @@ export class SchedulerService {
     }
 
     const nowLocalDate: string = formatter.format(new Date(nowMs));
-    const dayStartUtcMs: number = Date.parse(`${nowLocalDate}T00:00:00Z`);
+    const dayStartUtcMs: number = this._getLocalMidnightUtcMs(nowLocalDate, timezone);
 
     if (!Number.isFinite(dayStartUtcMs)) {
       return nowMs + everyMs;
