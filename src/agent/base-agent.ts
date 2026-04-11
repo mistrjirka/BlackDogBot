@@ -9,7 +9,12 @@ import {
 import { LoggerService } from "../services/logger.service.js";
 import { StatusService } from "../services/status.service.js";
 import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
-import { getDuplicateToolCallDirective } from "../utils/prepare-step.js";
+import {
+  getDuplicateToolCallLoopInfo,
+  type IDuplicateToolCallLoopInfo,
+} from "../utils/prepare-step.js";
+
+export type { IDuplicateToolCallLoopInfo };
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
@@ -116,9 +121,46 @@ export interface IToolCallSummary {
 
 export type OnStepCallback = (stepNumber: number, toolCalls: IToolCallSummary[]) => Promise<void>;
 
+/**
+ * Error thrown when duplicate tool call escalation exhausts all attempts
+ * and the model cannot break out of a loop.
+ */
+export class DuplicateToolLoopHardStopError extends Error {
+  public readonly loopInfo: IDuplicateToolCallLoopInfo;
+
+  constructor(loopInfo: IDuplicateToolCallLoopInfo) {
+    super(`Duplicate tool call loop hard stop: ${loopInfo.summaryString}`);
+    this.name = "DuplicateToolLoopHardStopError";
+    this.loopInfo = loopInfo;
+  }
+}
+
+/**
+ * Result of a duplicate tool call loop escalation callback.
+ */
+export enum EDuplicateLoopAction {
+  /** Force the model to call the think tool to break the loop. */
+  ForceThink = "force_think",
+  /** Allow normal tool execution to continue. */
+  Continue = "continue",
+  /** Throw a hard-stop error to terminate the run. */
+  HardStop = "hard_stop",
+}
+
+/**
+ * Callback invoked when a duplicate tool call loop is detected.
+ * Receives the loop info and returns an action to take.
+ */
+export type OnDuplicateToolLoopCallback = (
+  loopInfo: IDuplicateToolCallLoopInfo,
+  stepNumber: number,
+  messages: ModelMessage[],
+) => Promise<EDuplicateLoopAction>;
+
 export interface IBaseAgentOptions {
   maxSteps?: number;
-  contextWindow?: number;  // Optional, defaults to DEFAULT_CONTEXT_WINDOW
+  contextWindow?: number;
+  onDuplicateToolLoop?: OnDuplicateToolLoopCallback;
 }
 
 //#endregion Interfaces
@@ -143,6 +185,7 @@ export abstract class BaseAgentBase {
   protected _providerInputTokens: number | null = null;
   protected _rawEstimatedInputTokens: number = 0;
   protected _shouldTerminateRunCallback: (() => boolean) | null;
+  protected _onDuplicateToolLoop: OnDuplicateToolLoopCallback | null;
 
   //#endregion Data members
 
@@ -159,6 +202,7 @@ export abstract class BaseAgentBase {
     this._tokenEstimateCorrectionFactor = INITIAL_TOKEN_ESTIMATE_CORRECTION_FACTOR;
     this._lastPrepareStepEstimatedTokens = null;
     this._shouldTerminateRunCallback = null;
+    this._onDuplicateToolLoop = options?.onDuplicateToolLoop ?? null;
   }
 
   //#endregion Constructors
@@ -462,8 +506,11 @@ export abstract class BaseAgentBase {
     getCreationModePrompt?: () => string | null,
     getAbortSignal?: () => AbortSignal | null,
     shouldTerminateRun?: () => boolean,
+    onDuplicateToolLoop?: OnDuplicateToolLoopCallback | null,
   ): void {
     this._shouldTerminateRunCallback = shouldTerminateRun ?? null;
+    const effectiveDuplicateCallback: OnDuplicateToolLoopCallback | null =
+      onDuplicateToolLoop ?? this._onDuplicateToolLoop;
 
     const self = this; // Capture this for use in callbacks
     const maxSteps: number = this._maxSteps;
@@ -561,17 +608,46 @@ export abstract class BaseAgentBase {
 
         // Detect duplicate tool calls (loop prevention) early to break
         // repeated non-productive tool loops with a forced think step.
-        const hasDuplicateToolLoop: boolean = getDuplicateToolCallDirective(stepNumber, messages);
+        const loopInfo: IDuplicateToolCallLoopInfo = getDuplicateToolCallLoopInfo(stepNumber, messages);
 
-        if (hasDuplicateToolLoop) {
-          logger.warn("Duplicate tool call pattern detected, restricting to think", {
-            stepNumber,
-            action: "restrict_tools",
-          });
+        if (loopInfo.isLoopDetected) {
+          if (effectiveDuplicateCallback) {
+            const action: EDuplicateLoopAction = await effectiveDuplicateCallback(loopInfo, stepNumber, messages);
 
-          return {
-            activeTools: ["think"] as (keyof typeof allTools)[],
-          };
+            if (action === EDuplicateLoopAction.HardStop) {
+              throw new DuplicateToolLoopHardStopError(loopInfo);
+            }
+
+            if (action === EDuplicateLoopAction.ForceThink) {
+              logger.warn("Duplicate tool call pattern detected, restricting to think", {
+                stepNumber,
+                action: "restrict_tools",
+                loopInfo: loopInfo.summaryString,
+              });
+
+              return {
+                activeTools: ["think"] as (keyof typeof allTools)[],
+              };
+            }
+
+            // EDuplicateLoopAction.Continue — fall through to allow normal tools
+            logger.info("Duplicate tool call pattern detected, continuing with normal tools via callback", {
+              stepNumber,
+              action: "continue",
+              loopInfo: loopInfo.summaryString,
+            });
+          } else {
+            // Fallback to legacy behavior when no callback is provided
+            logger.warn("Duplicate tool call pattern detected, restricting to think", {
+              stepNumber,
+              action: "restrict_tools",
+              loopInfo: loopInfo.summaryString,
+            });
+
+            return {
+              activeTools: ["think"] as (keyof typeof allTools)[],
+            };
+          }
         }
 
         // Check for pause — await the promise if the agent has been paused

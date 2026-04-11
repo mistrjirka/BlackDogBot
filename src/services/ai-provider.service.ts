@@ -1514,6 +1514,10 @@ export class AiProviderService {
 
       if (json.choices && Array.isArray(json.choices)) {
         let modified = false;
+        let choicesWithReasoning: number = 0;
+        let choicesWithThinkTags: number = 0;
+        let totalThinkTagCount: number = 0;
+        let choicesWithReasoningContentField: number = 0;
 
         for (const choice of json.choices) {
           const hasReasoningContent = choice.message?.reasoning_content;
@@ -1527,8 +1531,28 @@ export class AiProviderService {
             ? choice.message.reasoning_content
             : "";
 
+          const thinkTagMatches: RegExpMatchArray[] = typeof rawContent === "string"
+            ? Array.from(rawContent.matchAll(/<think>[\s\S]*?<\/think>/g))
+            : [];
+          const hasThinkBoundary: boolean =
+            typeof rawContent === "string" &&
+            (thinkTagMatches.length > 0 || rawContent.includes("</think>"));
+          const hasReasoningField: boolean = reasoningContent.trim().length > 0;
+
+          if (thinkTagMatches.length > 0) {
+            choicesWithThinkTags += 1;
+            totalThinkTagCount += thinkTagMatches.length;
+          }
+
+          if (hasReasoningField) {
+            choicesWithReasoningContentField += 1;
+          }
+
+          if (hasReasoningField || hasThinkBoundary) {
+            choicesWithReasoning += 1;
+          }
+
           if (this._llmResponseDiagnosticsEnabled && typeof rawContent === "string") {
-            const thinkTagMatches: RegExpMatchArray[] = Array.from(rawContent.matchAll(/<think>[\s\S]*?<\/think>/g));
             if (thinkTagMatches.length > 0) {
               logger.debug("Detected think tags in LLM response", {
                 thinkTagCount: thinkTagMatches.length,
@@ -1580,6 +1604,16 @@ export class AiProviderService {
             delete choice.message!.reasoning_content;
             modified = true;
           }
+        }
+
+        if (choicesWithReasoning > 0) {
+          logger.info("Detected reasoning in LLM response", {
+            choicesCount: json.choices.length,
+            choicesWithReasoning,
+            choicesWithThinkTags,
+            totalThinkTagCount,
+            choicesWithReasoningContentField,
+          });
         }
 
         if (modified) {

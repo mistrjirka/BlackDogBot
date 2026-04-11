@@ -46,15 +46,52 @@ export function getDuplicateToolCallDirective(
   stepNumber: number,
   messages: ModelMessage[],
 ): boolean {
+  return getDuplicateToolCallLoopInfo(stepNumber, messages).isLoopDetected;
+}
+
+/**
+ * Structured information about a detected duplicate tool call loop.
+ */
+export interface IDuplicateToolCallLoopInfo {
+  /** Whether a duplicate loop is currently detected. */
+  isLoopDetected: boolean;
+  /** Canonical signature of the repeated tool call(s). */
+  canonicalSignature: string;
+  /** Number of consecutive duplicate steps detected. */
+  duplicateCount: number;
+  /** Human-readable summary string for the loop. */
+  summaryString: string;
+}
+
+/**
+ * Returns structured information about any duplicate tool call loop detected
+ * at the current step.
+ *
+ * @param stepNumber - The current step number (1-based).
+ * @param messages - The full message history.
+ * @returns Object with loop detection details including canonical signature,
+ *          duplicate count, and a summary string suitable for logging/debugging.
+ */
+export function getDuplicateToolCallLoopInfo(
+  stepNumber: number,
+  messages: ModelMessage[],
+): IDuplicateToolCallLoopInfo {
   if (stepNumber < DUPLICATE_CONSECUTIVE_STEPS - 1) {
-    return false;
+    return {
+      isLoopDetected: false,
+      canonicalSignature: "",
+      duplicateCount: 0,
+      summaryString: "",
+    };
   }
 
-  // If the most recent assistant step was already a think call, skip detection.
-  // This means we already forced a think to break the loop — now let the model
-  // proceed freely so it can make a different tool call instead of re-triggering.
   if (_lastAssistantStepIsThink(messages)) {
-    return false;
+    return {
+      isLoopDetected: false,
+      canonicalSignature: "",
+      duplicateCount: 0,
+      summaryString: "",
+    };
   }
 
   const steps: IToolStepWithIndex[] = _extractLastNonThinkStepsWithIndices(
@@ -63,23 +100,47 @@ export function getDuplicateToolCallDirective(
   );
 
   if (steps.length < DUPLICATE_CONSECUTIVE_STEPS) {
-    return false;
+    return {
+      isLoopDetected: false,
+      canonicalSignature: "",
+      duplicateCount: 0,
+      summaryString: "",
+    };
   }
 
   for (let i: number = 1; i < steps.length; i++) {
     if (!_areAssistantMessagesConsecutive(messages, steps[i - 1].index, steps[i].index)) {
-      return false;
+      return {
+        isLoopDetected: false,
+        canonicalSignature: "",
+        duplicateCount: 0,
+        summaryString: "",
+      };
     }
   }
 
   const base: IToolCallSignature[] = steps[0].signatures;
   for (let i: number = 1; i < steps.length; i++) {
     if (!_areToolStepsIdenticalUnordered(base, steps[i].signatures)) {
-      return false;
+      return {
+        isLoopDetected: false,
+        canonicalSignature: "",
+        duplicateCount: 0,
+        summaryString: "",
+      };
     }
   }
 
-  return true;
+  const canonicalSignature: string = _canonicalSignatureFromSignatures(base);
+  const duplicateCount: number = _countConsecutiveDuplicateSteps(messages, base);
+  const summaryString: string = _formatLoopSummary(base, duplicateCount);
+
+  return {
+    isLoopDetected: true,
+    canonicalSignature,
+    duplicateCount,
+    summaryString,
+  };
 }
 
 //#endregion Public functions
@@ -342,6 +403,88 @@ function _canonicalizeValue(value: unknown): unknown {
   }
 
   return value;
+}
+
+function _canonicalSignatureFromSignatures(signatures: IToolCallSignature[]): string {
+  const sorted: IToolCallSignature[] = [...signatures].sort((a, b) => {
+    const keyA: string = `${a.toolName}\u0000${a.argsJson}`;
+    const keyB: string = `${b.toolName}\u0000${b.argsJson}`;
+    return keyA.localeCompare(keyB);
+  });
+
+  return sorted
+    .map((s: IToolCallSignature): string => `${s.toolName}(${s.argsJson})`)
+    .join("|");
+}
+
+function _formatLoopSummary(signatures: IToolCallSignature[], count: number): string {
+  const details: string = signatures
+    .map((s: IToolCallSignature): string => `${s.toolName}(${s.argsJson})`)
+    .join("; ");
+
+  return `${count}x(${details})`;
+}
+
+function _countConsecutiveDuplicateSteps(
+  messages: ModelMessage[],
+  signatureBase: IToolCallSignature[],
+): number {
+  let count: number = 0;
+  const reversedMessages: ModelMessage[] = [...messages].reverse();
+
+  for (const message of reversedMessages) {
+    if (message.role !== "assistant" || !Array.isArray(message.content)) {
+      continue;
+    }
+
+    const signatures: IToolCallSignature[] = [];
+    let hasAssistantToolCall: boolean = false;
+
+    for (const part of message.content) {
+      if (
+        typeof part === "object" &&
+        part !== null &&
+        "type" in part &&
+        (part as { type: string }).type === "tool-call"
+      ) {
+        hasAssistantToolCall = true;
+
+        if (!("toolName" in part)) {
+          continue;
+        }
+
+        const toolName: string = (part as { toolName: string }).toolName;
+        if (toolName === "think") {
+          return count;
+        }
+
+        const args: unknown =
+          "args" in part ? (part as { args: unknown }).args :
+          "input" in part ? (part as { input: unknown }).input :
+          {};
+
+        signatures.push({ toolName, argsJson: _toCanonicalJson(args) });
+      }
+    }
+
+    // Assistant step with no tool call (e.g. text) breaks the duplicate streak.
+    if (!hasAssistantToolCall) {
+      return count;
+    }
+
+    // Assistant step that only contained think should not be counted and breaks streak.
+    if (signatures.length === 0) {
+      return count;
+    }
+
+    if (!_areToolStepsIdenticalUnordered(signatureBase, signatures)) {
+      return count;
+    }
+
+    count++;
+  }
+
+  return count;
 }
 
 //#endregion Private functions

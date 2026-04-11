@@ -125,6 +125,42 @@ describe("AiProviderService reasoning diagnostics", () => {
       expect.anything(),
     );
   });
+
+  it("emits info log when reasoning is detected even if diagnostics flag is disabled", async () => {
+    const service: AiProviderService = AiProviderService.getInstance();
+    (service as unknown as { _llmResponseDiagnosticsEnabled: boolean })._llmResponseDiagnosticsEnabled = false;
+    const loggerService: LoggerService = LoggerService.getInstance();
+    const infoSpy = vi.spyOn(loggerService, "info").mockImplementation((): void => {});
+
+    const response: Response = new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: "<think>hidden thought</think>answer",
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+
+    await (service as unknown as {
+      _fixReasoningContentResponse(input: Response): Promise<Response>;
+    })._fixReasoningContentResponse(response);
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "Detected reasoning in LLM response",
+      expect.objectContaining({
+        choicesWithReasoning: 1,
+        choicesWithThinkTags: 1,
+      }),
+    );
+  });
 });
 
 //#endregion Tests

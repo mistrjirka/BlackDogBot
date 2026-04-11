@@ -4,6 +4,11 @@ import path from "node:path";
 import os from "node:os";
 
 import { MainAgent } from "../../../src/agent/main-agent.js";
+import {
+  DuplicateToolLoopHardStopError,
+  EDuplicateLoopAction,
+  type IDuplicateToolCallLoopInfo,
+} from "../../../src/agent/base-agent.js";
 import { resetSingletons } from "../../utils/test-helpers.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
@@ -250,6 +255,154 @@ describe("MainAgent unit", () => {
     expect(result.text).not.toBe("Operation was stopped.");
     expect(generateCallCount).toBeGreaterThanOrEqual(2);
     expect(session?.steeringQueue.length).toBe(0);
+  });
+
+  it("should include tool results in adviser history slice", async () => {
+    await initializeServicesAsync();
+
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    await mainAgent.initializeForChatAsync("chat-history", messageSender, photoSender);
+
+    const messages = [
+      { role: "user", content: [{ type: "text", text: "please update interval schedule" }] },
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolName: "edit_interval", toolCallId: "call_1", args: { taskId: "t1" } }],
+      },
+      {
+        role: "tool",
+        content: [{ type: "tool-result", toolCallId: "call_1", output: { success: true, changed: 1 } }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolName: "edit_interval", toolCallId: "call_2", args: { taskId: "t1" } }],
+      },
+      {
+        role: "tool",
+        content: [{ type: "tool-result", toolCallId: "call_2", output: { success: true, changed: 0 } }],
+      },
+    ];
+
+    const slice = (mainAgent as unknown as {
+      _buildHistorySliceForAdviser: (messages: unknown[], userTask: string) => unknown[];
+    })._buildHistorySliceForAdviser(messages as unknown[], "please update interval schedule");
+
+    expect(slice.length).toBeGreaterThan(0);
+    expect(slice[0]).toMatchObject({ role: "user" });
+    expect(slice[slice.length - 1]).toMatchObject({ role: "tool" });
+  });
+
+  it("should force think on first duplicate detection", async () => {
+    await initializeServicesAsync();
+
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    await mainAgent.initializeForChatAsync("chat-dup-first", messageSender, photoSender);
+
+    const callback = (mainAgent as unknown as {
+      _createDuplicateToolLoopCallback: (
+        chatId: string,
+      ) => (loopInfo: IDuplicateToolCallLoopInfo, stepNumber: number, messages: unknown[]) => Promise<EDuplicateLoopAction>;
+    })._createDuplicateToolLoopCallback("chat-dup-first");
+
+    const loopInfo: IDuplicateToolCallLoopInfo = {
+      isLoopDetected: true,
+      canonicalSignature: "edit_interval({\"taskId\":\"t1\"})",
+      duplicateCount: 3,
+      summaryString: "3x(edit_interval({\"taskId\":\"t1\"}))",
+    };
+
+    const action = await callback(loopInfo, 2, []);
+
+    expect(action).toBe(EDuplicateLoopAction.ForceThink);
+  });
+
+  it("should hard stop when adviser attempts are exhausted", async () => {
+    await initializeServicesAsync();
+
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    await mainAgent.initializeForChatAsync("chat-dup-stop", messageSender, photoSender);
+
+    const session = (mainAgent as unknown as {
+      _sessions: Map<string, { duplicateLoopEscalation: { activeSignature: string | null; adviserAttemptsRemaining: number } }>;
+    })._sessions.get("chat-dup-stop");
+
+    expect(session).toBeDefined();
+    session!.duplicateLoopEscalation.activeSignature = "edit_interval({\"taskId\":\"t1\"})";
+    session!.duplicateLoopEscalation.adviserAttemptsRemaining = 0;
+
+    const callback = (mainAgent as unknown as {
+      _createDuplicateToolLoopCallback: (
+        chatId: string,
+      ) => (loopInfo: IDuplicateToolCallLoopInfo, stepNumber: number, messages: unknown[]) => Promise<EDuplicateLoopAction>;
+    })._createDuplicateToolLoopCallback("chat-dup-stop");
+
+    const loopInfo: IDuplicateToolCallLoopInfo = {
+      isLoopDetected: true,
+      canonicalSignature: "edit_interval({\"taskId\":\"t1\"})",
+      duplicateCount: 4,
+      summaryString: "4x(edit_interval({\"taskId\":\"t1\"}))",
+    };
+
+    const action = await callback(loopInfo, 3, []);
+
+    expect(action).toBe(EDuplicateLoopAction.HardStop);
+  });
+
+  it("should return duplicate hard-stop message when loop hard stop error is thrown", async () => {
+    await initializeServicesAsync();
+
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    await mainAgent.initializeForChatAsync("chat-hard-stop", messageSender, photoSender);
+
+    const loopInfo: IDuplicateToolCallLoopInfo = {
+      isLoopDetected: true,
+      canonicalSignature: "edit_interval({\"taskId\":\"t1\"})",
+      duplicateCount: 6,
+      summaryString: "6x(edit_interval({\"taskId\":\"t1\"}))",
+    };
+
+    (mainAgent as unknown as { _agent: unknown })._agent = {
+      generate: vi.fn(async () => {
+        throw new DuplicateToolLoopHardStopError(loopInfo);
+      }),
+    };
+
+    const result = await mainAgent.processMessageForChatAsync("chat-hard-stop", "do the task");
+
+    expect(result.text).toContain("model wasnt able to complete request reason: duplicate tool calls");
+    expect(result.text).toContain("/clear");
+  });
+
+  it("should reset duplicate escalation state after final user answer", async () => {
+    await initializeServicesAsync();
+
+    const mainAgent: MainAgent = MainAgent.getInstance();
+    await mainAgent.initializeForChatAsync("chat-reset", messageSender, photoSender);
+
+    const session = (mainAgent as unknown as {
+      _sessions: Map<string, { duplicateLoopEscalation: { activeSignature: string | null; adviserAttemptsRemaining: number } }>;
+    })._sessions.get("chat-reset");
+
+    expect(session).toBeDefined();
+    session!.duplicateLoopEscalation.activeSignature = "edit_interval({\"taskId\":\"t1\"})";
+    session!.duplicateLoopEscalation.adviserAttemptsRemaining = 0;
+
+    (mainAgent as unknown as { _agent: unknown })._agent = {
+      generate: vi.fn(async () => {
+        return {
+          text: "Done, updated schedule.",
+          steps: [{ type: "text" }],
+          usage: { inputTokens: 10, outputTokens: 4 },
+          response: { messages: [] },
+        };
+      }),
+    };
+
+    const result = await mainAgent.processMessageForChatAsync("chat-reset", "please update schedule");
+
+    expect(result.text).toBe("Done, updated schedule.");
+    expect(session!.duplicateLoopEscalation.activeSignature).toBeNull();
+    expect(session!.duplicateLoopEscalation.adviserAttemptsRemaining).toBe(3);
   });
 });
 

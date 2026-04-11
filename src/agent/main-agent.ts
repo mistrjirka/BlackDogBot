@@ -1,12 +1,22 @@
 import fs from "node:fs/promises";
 import { ToolSet, LanguageModel, type ModelMessage } from "ai";
+import { z } from "zod";
 
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildMainAgentPromptAsync } from "./system-prompt.js";
-import { BaseAgentBase, AGENT_EMPTY_RESPONSE_RETRIES, CONTEXT_EXCEEDED_RETRIES, type IAgentResult, type OnStepCallback } from "./base-agent.js";
+import {
+  BaseAgentBase,
+  AGENT_EMPTY_RESPONSE_RETRIES,
+  CONTEXT_EXCEEDED_RETRIES,
+  type IAgentResult,
+  type OnStepCallback,
+  DuplicateToolLoopHardStopError,
+  EDuplicateLoopAction,
+  type IDuplicateToolCallLoopInfo,
+} from "./base-agent.js";
 import { McpService } from "../services/mcp.service.js";
 import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
 import {
@@ -73,6 +83,7 @@ import { ChannelRegistryService } from "../services/channel-registry.service.js"
 import * as toolRegistry from "../helpers/tool-registry.js";
 import type { IToolCallSummary } from "./base-agent.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
+import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 
 //#region Constants
 
@@ -80,10 +91,16 @@ const MAX_TOOL_REBUILD_RESTARTS: number = 2;
 const MAX_429_RETRIES: number = 8;
 const MAX_GENERIC_RETRIES: number = 3;
 const SESSION_COMPACTION_HEADROOM_TOKENS: number = 4000;
+const MAX_DUPLICATE_LOOP_ADVISER_ATTEMPTS: number = 3;
 
 //#endregion Constants
 
 //#region Interfaces
+
+interface IDuplicateLoopEscalationState {
+  activeSignature: string | null;
+  adviserAttemptsRemaining: number;
+}
 
 interface IChatSession {
   messages: ModelMessage[];
@@ -100,6 +117,8 @@ interface IChatSession {
   terminateCurrentRun: boolean;
   steeringQueue: string[];
   isSteeringAbort: boolean;
+  duplicateLoopEscalation: IDuplicateLoopEscalationState;
+  currentUserTask: string;
 }
 
 interface IPersistedSession {
@@ -127,7 +146,71 @@ interface IBufferMarker {
 
 const _BufferMarkerType: IBufferMarker["__type"] = "Buffer";
 
-//#endregion Interfaces
+const DuplicateLoopAdviserSchema = z.object({
+  reasoning: z.string().describe("Analysis of why the duplicate loop is occurring and what the model should do differently"),
+  recommendation: z.string().describe("Concrete recommendation for the model to break the loop and complete the user task"),
+});
+
+//#region Private functions
+
+function _createDuplicateLoopAdviserPrompt(
+  userTask: string,
+  historySlice: ModelMessage[],
+  loopSignature: string,
+  duplicateCount: number,
+): string {
+  const historyJson: string = JSON.stringify(historySlice, null, 2);
+
+  return `You are an expert AI assistant helping a model break out of a duplicate tool call loop.
+
+## User's Original Task
+${userTask}
+
+## The Problem
+The model is stuck calling the same tool(s) with identical arguments ${duplicateCount} times in a row:
+${loopSignature}
+
+## Recent Conversation History (user task to last tool call, with tool results)
+\`\`\`json
+${historyJson}
+\`\`\`
+
+## Your Analysis
+Analyze the conversation history and explain:
+1. Why the model might be stuck in this loop
+2. What the model should do differently to complete the user's task
+3. A concrete recommendation for the next action to take
+
+Provide your reasoning and recommendation in the specified format.`;
+}
+
+function _extractUserTextContent(message: ModelMessage): string {
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+
+  if (!Array.isArray(message.content)) {
+    return "";
+  }
+
+  const textParts: string[] = [];
+  for (const part of message.content as unknown[]) {
+    if (
+      typeof part === "object" &&
+      part !== null &&
+      "type" in part &&
+      (part as { type: string }).type === "text" &&
+      "text" in part &&
+      typeof (part as { text: unknown }).text === "string"
+    ) {
+      textParts.push((part as { text: string }).text);
+    }
+  }
+
+  return textParts.join("\n");
+}
+
+//#endregion Private functions
 
 //#region MainAgent
 
@@ -207,6 +290,11 @@ export class MainAgent extends BaseAgentBase {
         terminateCurrentRun: false,
         steeringQueue: [],
         isSteeringAbort: false,
+        duplicateLoopEscalation: {
+          activeSignature: null,
+          adviserAttemptsRemaining: MAX_DUPLICATE_LOOP_ADVISER_ATTEMPTS,
+        },
+        currentUserTask: "",
       });
 
       if (saved !== null) {
@@ -422,6 +510,7 @@ export class MainAgent extends BaseAgentBase {
       (): string | null => null,
       (): AbortSignal | null => session.abortController?.signal ?? null,
       undefined,
+      this._createDuplicateToolLoopCallback(chatId),
     );
 
     this._logger.debug("MainAgent _buildAgent completed", {
@@ -469,6 +558,7 @@ export class MainAgent extends BaseAgentBase {
         (): string | null => null,
         (): AbortSignal | null => session.abortController?.signal ?? null,
         undefined,
+        this._createDuplicateToolLoopCallback(chatId),
       );
 
       this._logger.debug("MainAgent _buildAgent completed after hot-reload", {
@@ -547,6 +637,7 @@ export class MainAgent extends BaseAgentBase {
     session.pendingToolRebuild = null;
     session.toolRebuildCount = 0;
     session.terminateCurrentRun = false;
+    session.currentUserTask = userMessage;
 
     this._logger.debug("Processing user message", { chatId, messageLength: userMessage.length });
 
@@ -873,6 +964,16 @@ export class MainAgent extends BaseAgentBase {
           } else {
             return { text: "Operation was stopped.", stepsCount: 0 };
           }
+        } else if (error instanceof DuplicateToolLoopHardStopError) {
+          this._logger.warn("Duplicate tool loop hard stop triggered", {
+            chatId,
+            loopInfo: error.loopInfo.summaryString,
+          });
+          this._resetDuplicateLoopEscalation(chatId);
+          return {
+            text: "model wasnt able to complete request reason: duplicate tool calls\n\nrecommendation: run /clear",
+            stepsCount: 0,
+          };
         } else {
           throw error;
         }
@@ -929,6 +1030,7 @@ export class MainAgent extends BaseAgentBase {
       break;
     }
 
+    this._resetDuplicateLoopEscalation(chatId);
     return finalResult;
   }
 
@@ -1125,6 +1227,186 @@ export class MainAgent extends BaseAgentBase {
       const message: string = error instanceof Error ? error.message : String(error);
       this._logger.warn("Failed to load session from disk, starting fresh.", { chatId, error: message });
       return null;
+    }
+  }
+
+  private _createDuplicateToolLoopCallback(
+    chatId: string,
+  ): (loopInfo: IDuplicateToolCallLoopInfo, stepNumber: number, messages: ModelMessage[]) => Promise<EDuplicateLoopAction> {
+    return async (
+      loopInfo: IDuplicateToolCallLoopInfo,
+      stepNumber: number,
+      messages: ModelMessage[],
+    ): Promise<EDuplicateLoopAction> => {
+      const session: IChatSession | undefined = this._sessions.get(chatId);
+
+      if (!session) {
+        this._logger.warn("Duplicate loop callback: session not found", { chatId });
+        return EDuplicateLoopAction.ForceThink;
+      }
+
+      const userTask: string = session.currentUserTask;
+      const escalation: IDuplicateLoopEscalationState = session.duplicateLoopEscalation;
+
+      if (escalation.activeSignature === null) {
+        escalation.activeSignature = loopInfo.canonicalSignature;
+        escalation.adviserAttemptsRemaining = MAX_DUPLICATE_LOOP_ADVISER_ATTEMPTS;
+        this._logger.info("Duplicate loop: first detection, forcing think", {
+          chatId,
+          stepNumber,
+          signature: loopInfo.canonicalSignature,
+          summary: loopInfo.summaryString,
+        });
+        return EDuplicateLoopAction.ForceThink;
+      }
+
+      if (escalation.activeSignature !== loopInfo.canonicalSignature) {
+        const previousSignature: string | null = escalation.activeSignature;
+        escalation.activeSignature = loopInfo.canonicalSignature;
+        escalation.adviserAttemptsRemaining = MAX_DUPLICATE_LOOP_ADVISER_ATTEMPTS;
+        this._logger.info("Duplicate loop: new signature detected, forcing think", {
+          chatId,
+          stepNumber,
+          previousSignature,
+          newSignature: loopInfo.canonicalSignature,
+          summary: loopInfo.summaryString,
+        });
+        return EDuplicateLoopAction.ForceThink;
+      }
+
+      if (escalation.adviserAttemptsRemaining <= 0) {
+        this._logger.warn("Duplicate loop: adviser attempts exhausted, hard stop", {
+          chatId,
+          stepNumber,
+          signature: loopInfo.canonicalSignature,
+          summary: loopInfo.summaryString,
+        });
+        return EDuplicateLoopAction.HardStop;
+      }
+
+      escalation.adviserAttemptsRemaining--;
+
+      const historySlice: ModelMessage[] = this._buildHistorySliceForAdviser(messages, userTask);
+
+      this._logger.info("Duplicate loop: calling adviser model", {
+        chatId,
+        stepNumber,
+        signature: loopInfo.canonicalSignature,
+        summary: loopInfo.summaryString,
+        adviserAttemptsRemaining: escalation.adviserAttemptsRemaining,
+        historySliceLength: historySlice.length,
+      });
+
+      try {
+        const adviserResult = await generateObjectWithRetryAsync({
+          model: AiProviderService.getInstance().getModel(),
+          prompt: _createDuplicateLoopAdviserPrompt(
+            userTask,
+            historySlice,
+            loopInfo.summaryString,
+            loopInfo.duplicateCount,
+          ),
+          schema: DuplicateLoopAdviserSchema,
+          system: "You are an expert AI assistant helping a model break out of a duplicate tool call loop.",
+          retryOptions: {
+            maxAttempts: 2,
+            timeoutMs: 60000,
+            callType: "agent_primary",
+          },
+        });
+
+        this._logger.info("Duplicate loop adviser recommendation", {
+          chatId,
+          stepNumber,
+          signature: loopInfo.canonicalSignature,
+          adviserAttemptsRemaining: escalation.adviserAttemptsRemaining,
+          reasoning: adviserResult.object.reasoning,
+          recommendation: adviserResult.object.recommendation,
+        });
+
+        session.steeringQueue.push(
+          `Duplicate-loop adviser recommendation: ${adviserResult.object.recommendation}`,
+        );
+      } catch (adviserError: unknown) {
+        this._logger.warn("Duplicate loop adviser call failed, forcing think", {
+          chatId,
+          stepNumber,
+          signature: loopInfo.canonicalSignature,
+          error: adviserError instanceof Error ? adviserError.message : String(adviserError),
+        });
+      }
+
+      return EDuplicateLoopAction.ForceThink;
+    };
+  }
+
+  private _buildHistorySliceForAdviser(messages: ModelMessage[], userTask: string): ModelMessage[] {
+    const normalizedProbe: string = userTask.trim().slice(0, 160);
+
+    let startIndex: number = 0;
+    if (normalizedProbe.length > 0) {
+      for (let i: number = messages.length - 1; i >= 0; i--) {
+        const message: ModelMessage = messages[i];
+        if (message.role !== "user") {
+          continue;
+        }
+
+        const userText: string = _extractUserTextContent(message);
+        if (userText.includes(normalizedProbe)) {
+          startIndex = i;
+          break;
+        }
+      }
+    }
+
+    let endIndex: number = -1;
+    for (let i: number = messages.length - 1; i >= startIndex; i--) {
+      const message: ModelMessage = messages[i];
+      if (message.role !== "assistant" || !Array.isArray(message.content)) {
+        continue;
+      }
+
+      const hasToolCall: boolean = message.content.some((part: unknown): boolean => {
+        return (
+          typeof part === "object" &&
+          part !== null &&
+          "type" in part &&
+          (part as { type: string }).type === "tool-call"
+        );
+      });
+
+      if (hasToolCall) {
+        endIndex = i;
+        break;
+      }
+    }
+
+    if (endIndex < 0) {
+      return messages.slice(startIndex);
+    }
+
+    // Include tool-result messages that belong to that final tool call step.
+    let sliceEnd: number = endIndex;
+    for (let i: number = endIndex + 1; i < messages.length; i++) {
+      const message: ModelMessage = messages[i];
+      if (message.role === "assistant") {
+        break;
+      }
+      if (message.role === "tool") {
+        sliceEnd = i;
+      }
+    }
+
+    return messages.slice(startIndex, sliceEnd + 1);
+  }
+
+  private _resetDuplicateLoopEscalation(chatId: string): void {
+    const session: IChatSession | undefined = this._sessions.get(chatId);
+    if (session) {
+      session.duplicateLoopEscalation = {
+        activeSignature: null,
+        adviserAttemptsRemaining: MAX_DUPLICATE_LOOP_ADVISER_ATTEMPTS,
+      };
     }
   }
 

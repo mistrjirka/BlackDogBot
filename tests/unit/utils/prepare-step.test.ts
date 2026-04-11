@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { ModelMessage } from "ai";
 
 import { FORCE_THINK_INTERVAL } from "../../../src/shared/constants.js";
-import { getDuplicateToolCallDirective, isReasoningRequired } from "../../../src/utils/prepare-step.js";
+import {
+  getDuplicateToolCallDirective,
+  getDuplicateToolCallLoopInfo,
+  isReasoningRequired,
+} from "../../../src/utils/prepare-step.js";
 
 //#region Helpers
 
@@ -238,5 +242,30 @@ describe("prepare-step duplicate tool-call detection", () => {
     ];
 
     expect(getDuplicateToolCallDirective(2, messages)).toBe(false);
+  });
+
+  it("should return loop info with signature and duplicate summary", () => {
+    const messages: ModelMessage[] = [
+      _assistantToolCallMessage("edit_interval", {
+        taskId: "t-1",
+        schedule: { type: "cron", expression: "0 * * * *" },
+      }),
+      _assistantToolCallMessage("edit_interval", {
+        schedule: { expression: "0 * * * *", type: "cron" },
+        taskId: "t-1",
+      }),
+      _assistantToolCallMessage("edit_interval", {
+        taskId: "t-1",
+        schedule: { type: "cron", expression: "0 * * * *" },
+      }),
+    ];
+
+    const loopInfo = getDuplicateToolCallLoopInfo(2, messages);
+
+    expect(loopInfo.isLoopDetected).toBe(true);
+    expect(loopInfo.canonicalSignature.length).toBeGreaterThan(0);
+    expect(loopInfo.duplicateCount).toBe(3);
+    expect(loopInfo.summaryString).toContain("3x(");
+    expect(loopInfo.summaryString).toContain("edit_interval");
   });
 });
