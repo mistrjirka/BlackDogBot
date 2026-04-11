@@ -98,6 +98,7 @@ export interface ISchedulerConfig {
   timezone?: string;
   maxParallelCrons?: number; // Max concurrent cron tasks. Default 1.
   cronQueueSize?: number; // Max tasks queued when at concurrency limit. Default 3. Overflow is skipped.
+  telegramOutboxMaxPerChat?: number; // Max queued unsent Telegram messages per chat. Default 10.
 }
 
 export interface IKnowledgeConfig {
@@ -125,6 +126,7 @@ export interface ILoggingConfig {
   level: LogLevel;
   fullToolArgs?: boolean;
   fullToolArgsMaxBytes?: number;
+  llmResponseDiagnostics?: boolean;
 }
 
 export interface IServicesConfig {

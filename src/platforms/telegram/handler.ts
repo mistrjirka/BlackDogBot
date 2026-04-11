@@ -394,16 +394,16 @@ export class TelegramHandler {
               const errorMsg: string = replyError instanceof Error ? replyError.message : String(replyError);
 
               // If the replied-to message was deleted (e.g. by /cancel), retry without reply_parameters
-              if (errorMsg.includes("message to be replied not found") && options.reply_parameters) {
-                delete options.reply_parameters;
-                try {
-                  await ctx.reply(chunks[i], options);
-                } catch {
-                  // Last resort: try plain text without reply
-                  const plainText: string = stripAllHtml(chunks[i]);
-                  await ctx.reply(plainText).catch(() => {});
-                }
-              } else {
+                if (errorMsg.includes("message to be replied not found") && options.reply_parameters) {
+                  delete options.reply_parameters;
+                  try {
+                    await ctx.reply(chunks[i], options);
+                  } catch {
+                    // Last resort: try plain text without reply
+                    const plainText: string = stripAllHtml(chunks[i]);
+                    await this._queueTelegramMessageFallbackAsync(chatId, plainText, "final-response-reply-missing");
+                  }
+                } else {
                 // HTML parse error or other issue — fall back to plain text
                 this._logger.warn("Telegram HTML parse error, falling back to plain text", {
                   error: errorMsg,
@@ -416,8 +416,12 @@ export class TelegramHandler {
                   await ctx.reply(plainText, fallbackOptions);
                 } catch {
                   // If even fallback fails (deleted message), send without reply
-                  await ctx.reply("⚠️ Formatting error, showing plain text:").catch(() => {});
-                  await ctx.reply(plainText).catch(() => {});
+                  await this._queueTelegramMessageFallbackAsync(
+                    chatId,
+                    "⚠️ Formatting error, showing plain text:",
+                    "formatting-fallback-notice",
+                  );
+                  await this._queueTelegramMessageFallbackAsync(chatId, plainText, "formatting-fallback-plain");
                 }
               }
             }
@@ -474,6 +478,8 @@ export class TelegramHandler {
           chatId,
           error: replyError instanceof Error ? replyError.message : String(replyError),
         });
+        const userMessage: string = formatAiErrorForUser(errorDetails);
+        await this._queueTelegramMessageFallbackAsync(chatId, userMessage, "error-reply");
       }
     } finally {
       await this._drainQueuedMessagesAsync(chatId);
@@ -506,9 +512,11 @@ export class TelegramHandler {
       }
 
       if (!AiProviderService.getInstance().getSupportsVision()) {
-        await ctx.reply(
+        await this._safeReplyOrQueueAsync(
+          ctx,
+          chatId,
           "Image analysis is currently unavailable because the active model does not support vision. " +
-          "Switch to a vision-capable model/provider and try again.",
+            "Switch to a vision-capable model/provider and try again.",
         );
         return;
       }
@@ -531,7 +539,9 @@ export class TelegramHandler {
       }
 
       if (imageBuffer.length > maxImageBytes) {
-        await ctx.reply(
+        await this._safeReplyOrQueueAsync(
+          ctx,
+          chatId,
           `Image is too large (${imageBuffer.length} bytes) and could not be compressed below ${maxImageBytes} bytes.`,
         );
         return;
@@ -598,7 +608,11 @@ export class TelegramHandler {
         chatId,
         error: extractErrorMessage(error),
       });
-      await ctx.reply(`Failed to process image: ${extractErrorMessage(error)}`).catch((): void => {});
+      await this._queueTelegramMessageFallbackAsync(
+        chatId,
+        `Failed to process image: ${extractErrorMessage(error)}`,
+        "image-error",
+      );
     }
   }
 
@@ -652,7 +666,7 @@ export class TelegramHandler {
     });
 
     const responseText: string = _buildCancelResponseText(stopped, deletedInFlightMessage, droppedQueuedMessages);
-    await ctx.reply(responseText);
+    await this._safeReplyOrQueueAsync(ctx, chatId, responseText);
   }
 
   //#endregion Public Methods
@@ -701,11 +715,62 @@ export class TelegramHandler {
       }
 
       this._promptUpdateNoticeSentToChatIds.add(chatId);
-      await ctx.reply(PROMPT_UPDATE_NOTICE_TEXT);
+      await this._safeReplyOrQueueAsync(ctx, chatId, PROMPT_UPDATE_NOTICE_TEXT);
     } catch (error: unknown) {
       this._logger.warn("Failed to evaluate prompt update recommendation", {
         chatId,
         error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async _safeReplyOrQueueAsync(
+    ctx: Context,
+    chatId: string,
+    message: string,
+    options?: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await ctx.reply(message, options);
+    } catch {
+      await this._queueTelegramMessageFallbackAsync(chatId, message, "safe-reply");
+    }
+  }
+
+  private async _queueTelegramMessageFallbackAsync(
+    chatId: string,
+    message: string,
+    source: string,
+  ): Promise<void> {
+    try {
+      const fallbackMessageId: string | null = await this._messagingService.sendMessageAsync({
+        text: message,
+        platform: "telegram",
+        userId: chatId,
+        replyToMessageId: null,
+      });
+
+      const queuedForRetry: boolean =
+        typeof fallbackMessageId === "string" && fallbackMessageId.startsWith("tgout-");
+
+      if (queuedForRetry) {
+        this._logger.warn("Direct Telegram reply failed; queued for retry", {
+          chatId,
+          source,
+          queuedId: fallbackMessageId,
+        });
+      } else {
+        this._logger.info("Direct Telegram reply failed; fallback sent immediately", {
+          chatId,
+          source,
+          messageId: fallbackMessageId,
+        });
+      }
+    } catch (queueError: unknown) {
+      this._logger.error("Failed to queue Telegram fallback message", {
+        chatId,
+        source,
+        error: extractErrorMessage(queueError),
       });
     }
   }

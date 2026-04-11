@@ -177,6 +177,7 @@ async function mainAsync(): Promise<void> {
 
   // 7. Initialize messaging service
   const messagingService: MessagingService = MessagingService.getInstance();
+  await messagingService.initializeTelegramOutboxAsync(config.scheduler.telegramOutboxMaxPerChat ?? 10);
 
   logger.info("Messaging service initialized.");
 
@@ -494,6 +495,7 @@ async function mainAsync(): Promise<void> {
     logger.info("Shutdown signal received. Stopping BlackDogBot...");
 
     await McpService.getInstance().closeAsync().catch(() => {});
+    messagingService.shutdownTelegramOutbox();
     await telegramPlatform.stop();
     await discordPlatform.stop();
 

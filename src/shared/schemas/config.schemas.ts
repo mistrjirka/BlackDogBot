@@ -165,6 +165,11 @@ const schedulerConfigSchema = z.object({
     .nonnegative()
     .optional()
     .describe("Maximum tasks queued when concurrency limit is reached. Tasks arriving when queue is full are skipped. Default: 3."),
+  telegramOutboxMaxPerChat: z.number()
+    .int()
+    .positive()
+    .default(10)
+    .describe("Maximum queued unsent Telegram messages retained per chat before older pending messages are dropped."),
 });
 
 const knowledgeConfigSchema = z.object({
@@ -228,6 +233,9 @@ const loggingConfigSchema = z.object({
     .positive()
     .default(200000)
     .describe("Maximum serialized bytes for full tool argument logs before truncation"),
+  llmResponseDiagnostics: z.boolean()
+    .default(false)
+    .describe("Log diagnostics for think tags/reasoning_content in raw LLM responses"),
 });
 
 const servicesConfigSchema = z.object({

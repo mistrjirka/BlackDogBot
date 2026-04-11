@@ -147,6 +147,10 @@ export function getDatabasePath(databaseName: string): string {
   return path.join(getDatabasesDir(), `${databaseName}.db`);
 }
 
+export function getTelegramOutboxDbPath(): string {
+  return getDatabasePath("telegram-outbox");
+}
+
 export async function ensureDirectoryExistsAsync(dirPath: string): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });
 }

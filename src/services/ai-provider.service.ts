@@ -121,6 +121,7 @@ export class AiProviderService {
   private _resolvedStructuredOutputMode: ResolvedStructuredOutputMode = "native_json_schema";
   private _requestTimeoutMs: number;
   private _activeProfileName: string | null;
+  private _llmResponseDiagnosticsEnabled: boolean;
   private _persistedAiConfig: IAiConfig | null;
   private _primaryProvider: AiProvider | null;
   private _activeRuntimeProvider: AiProvider | null;
@@ -140,6 +141,7 @@ export class AiProviderService {
     this._contextWindow = 128000; // Default context window
     this._requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS;
     this._activeProfileName = null;
+    this._llmResponseDiagnosticsEnabled = false;
     this._persistedAiConfig = null;
     this._primaryProvider = null;
     this._activeRuntimeProvider = null;
@@ -176,6 +178,8 @@ export class AiProviderService {
     const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
       this._getActiveProviderConfig();
     const logger = LoggerService.getInstance();
+
+    this._llmResponseDiagnosticsEnabled = this._resolveLlmResponseDiagnosticsEnabled();
 
     const profilesDir: string | undefined = activeConfig.profilesDir;
     await this._modelProfileService.initializeAsync(profilesDir);
@@ -416,6 +420,8 @@ export class AiProviderService {
     const activeConfig: IOpenRouterConfig | IOpenAiCompatibleConfig | ILmStudioConfig =
       this._getActiveProviderConfig();
     const logger = LoggerService.getInstance();
+
+    this._llmResponseDiagnosticsEnabled = this._resolveLlmResponseDiagnosticsEnabled();
 
     this._activeProfileName = activeConfig.activeProfile ?? null;
 
@@ -1458,6 +1464,7 @@ export class AiProviderService {
     if (!response.ok) return response;
 
     try {
+      const logger: LoggerService = LoggerService.getInstance();
       const parseToolCallReasoningFromContent = (originalContent: string): {
         reasoningContent: string | null;
         cleanedContent: string;
@@ -1516,6 +1523,31 @@ export class AiProviderService {
             choice.message.tool_calls.length > 0;
 
           const rawContent: string | undefined = choice.message?.content;
+          const reasoningContent: string = typeof choice.message?.reasoning_content === "string"
+            ? choice.message.reasoning_content
+            : "";
+
+          if (this._llmResponseDiagnosticsEnabled && typeof rawContent === "string") {
+            const thinkTagMatches: RegExpMatchArray[] = Array.from(rawContent.matchAll(/<think>[\s\S]*?<\/think>/g));
+            if (thinkTagMatches.length > 0) {
+              logger.debug("Detected think tags in LLM response", {
+                thinkTagCount: thinkTagMatches.length,
+                hasToolCalls,
+                contentLength: rawContent.length,
+                reasoningContentLength: reasoningContent.trim().length,
+                contentPreview: rawContent.slice(0, 200),
+              });
+            }
+          }
+
+          if (this._llmResponseDiagnosticsEnabled && hasEmptyContent && reasoningContent.trim().length > 0) {
+            logger.debug("Detected reasoning_content without visible content in LLM response", {
+              hasToolCalls,
+              reasoningContentLength: reasoningContent.trim().length,
+              reasoningPreview: reasoningContent.slice(0, 200),
+            });
+          }
+
           if (hasToolCalls && typeof rawContent === "string" && rawContent.trim().length > 0) {
             const parsed = parseToolCallReasoningFromContent(rawContent);
             const existingReasoning: string = choice.message?.reasoning_content?.trim() ?? "";
@@ -1536,7 +1568,6 @@ export class AiProviderService {
 
           if (hasReasoningContent && hasEmptyContent && !hasToolCalls) {
             if (!modified) {
-              const logger = LoggerService.getInstance();
               logger.warn(
                 "JSON structured output was found inside reasoning_content instead of content. " +
                 "This is usually caused by LM Studio artificially dividing reasoning content and content. " +
@@ -2957,6 +2988,14 @@ export class AiProviderService {
     }
 
     return (message?.reasoning_content ?? "").trim();
+  }
+
+  private _resolveLlmResponseDiagnosticsEnabled(): boolean {
+    try {
+      return ConfigService.getInstance().getLoggingConfig().llmResponseDiagnostics === true;
+    } catch {
+      return false;
+    }
   }
 
   //#endregion Private methods
