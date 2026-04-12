@@ -8,7 +8,11 @@ When the user asks to modify a timed/scheduled task, follow this workflow:
    - If the new instructions require different tools, include `tools` in the same `edit_instructions` call.
 3. Use `edit_once` for non-instruction changes to one-time tasks (name, description, tools, runAt, notifyUser, enabled, messageDedupEnabled).
    Use `edit_interval` for non-instruction changes to interval tasks (name, description, tools, every, offsetFromDayStart, timezone, notifyUser, enabled, messageDedupEnabled). When patching `every` or `offsetFromDayStart`, always provide both `hours` and `minutes`, including zero values (for example, use `{ hours: 2, minutes: 0 }`, not `{ hours: 2 }`).
-4. If the user reports missing periodic notifications (for example "the cron didn't send the morning summary"), treat dedup suppression as a likely cause: inspect with `get_timed`, and consider setting `messageDedupEnabled` to `false` for periodic deliverables. Keep dedup enabled for event/incident alerts unless the user asks otherwise.
+4. If the user reports missing periodic notifications (for example "the cron didn't send the morning summary"), dedup suppression is a likely cause:
+   - Inspect current config with `get_timed`.
+   - For periodic deliverables (daily summaries, weekly reports), set `messageDedupEnabled` to `false` so each run can send even when similar to previous runs.
+   - For event/incident alerts, keep dedup enabled unless the user explicitly asks for every notification regardless of similarity.
+   - `run_timed` uses current stored config and never auto-edits settings. If dedup needs changing, edit first, then run.
 5. Optionally call `get_timed` again to verify the update.
 
 **Why `edit_instructions` requires COMPLETE text:**

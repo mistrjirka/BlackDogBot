@@ -46,7 +46,8 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
   send_message:
     "Send a Telegram message directly to the user who owns this agent. " +
     "No chat ID, token, or destination config is needed — it always reaches the correct user automatically. " +
-    "The tool automatically checks previous cron messages and silently skips sending when the message does not add new information. " +
+    "For scheduled tasks, two checks run before sending: (1) dispatch policy evaluates whether the message is a required deliverable vs. operational chatter (always runs), and (2) if dispatch policy says to send, novelty checking suppresses near-duplicates by comparing against previously sent messages via vector similarity + LLM reasoning. " +
+    "Set messageDedupEnabled=false on the task to skip novelty suppression for periodic deliverables; dispatch policy still applies. " +
     "Args: message (string, required).",
 
   get_previous_message:

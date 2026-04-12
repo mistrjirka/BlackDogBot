@@ -121,12 +121,12 @@ const executeEditInstructions = async (
     if (mentionsRunCmd && mentionsSqlite) {
       const recommendedWriter: string | undefined = toolsToVerify.find((toolName: string) => toolName.startsWith("write_table_"));
       const guidance: string = recommendedWriter
-        ? `Use ${recommendedWriter} for inserts and table tools (read_from_database/update_table_<tableName>/delete_from_database) for mutations instead of run_cmd/sqlite3.`
-        : "Use write_table_<tableName> for inserts and table tools (read_from_database/update_table_<tableName>/delete_from_database) instead of run_cmd/sqlite3.";
+        ? `Use ${recommendedWriter} for inserts and table tools (read_from_database/update_table_<tableName>/delete_from_database) for mutations.`
+        : "Use write_table_<tableName> for inserts and table tools (read_from_database/update_table_<tableName>/delete_from_database).";
 
       return {
         success: false,
-        error: `EDIT REJECTED. Instructions must not use run_cmd with sqlite/sqlite3 for internal database work. ${guidance}`,
+        error: `EDIT REJECTED. Instructions must not use shell commands for internal database work. ${guidance}`,
       };
     }
 
@@ -168,10 +168,10 @@ RULES:
    - The send_message tool ALWAYS sends to Telegram regardless of notifyUser — notifyUser only gates the automatic forwarding of the agent's final text output.
 
 7. Database rules are strict:
-   - NEVER use run_cmd with sqlite/sqlite3 for internal database work.
-   - For inserts, prefer write_table_<tableName> tools when available.
-    - Use read_from_database/update_table_<tableName>/delete_from_database for table access and mutation.
-    - Do not reference database names or .db file paths; tables are in the default internal database.
+   - Use only table tools for all database operations — do not use shell commands for database access.
+   - For inserts, use write_table_<tableName> tools.
+   - Use read_from_database/update_table_<tableName>/delete_from_database for table access and mutation.
+   - Do not reference database names or .db file paths; tables are in the default internal database.
 
 8. If instructions mention tools not present in the tool list, they are invalid unless those tools are being added in this same update.
 
