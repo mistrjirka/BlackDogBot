@@ -78,6 +78,16 @@ describe("send_message tool with validation", () => {
     expect(context.toolCallHistory).toContain("send_message");
   });
 
+  it("documents dispatch policy and novelty checks in tool description", () => {
+    const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
+    const description: string = (tool as any).description ?? "";
+
+    expect(description).toContain("dispatch policy");
+    expect(description).toContain("novelty checking");
+    expect(description).toContain("messageDedupEnabled");
+    expect(description).toContain("LLM judgment");
+  });
+
   it("checks novelty before sending", async () => {
     const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
 

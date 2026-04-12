@@ -44,7 +44,8 @@ export function createSendMessageToolWithHistory(
   return tool({
     description:
       "Send a message to the user. Use this to communicate progress, ask clarifying questions, or deliver results. " +
-      "This tool performs automatic deduplication against previous cron messages and silently skips sending when the message does not add new information.",
+      "For scheduled tasks, two checks run before sending: (1) dispatch policy always evaluates whether the message is required deliverable output vs. operational chatter, and (2) if dispatch policy allows sending and messageDedupEnabled is true, novelty checking compares the candidate message with previously sent messages from the same task and uses LLM judgment to decide whether it is new enough to send. " +
+      "When messageDedupEnabled is false, novelty suppression is skipped but dispatch policy still applies.",
     inputSchema: sendMessageToolInputSchema,
     execute: async ({
       message,
