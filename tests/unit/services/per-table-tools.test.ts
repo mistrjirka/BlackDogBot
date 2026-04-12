@@ -116,6 +116,36 @@ describe("buildPerTableToolsAsync", () => {
     expect((insertedRows[0].updated_at as string)).toContain("T");
     expect(insertedRows[0].updated_at).not.toBe("now");
   });
+
+  it("auto-fills required DATETIME columns even when column name is not a common timestamp name", async () => {
+    vi.mocked(litesql.safeListTablesAsync).mockResolvedValue({ tables: ["events"], status: "ok" });
+    vi.mocked(litesql.safeGetTableSchemaAsync).mockResolvedValue({
+      schema: {
+        name: "events",
+        columns: [
+          { name: "id", type: "INTEGER", notNull: true, primaryKey: true, defaultValue: null },
+          { name: "title", type: "TEXT", notNull: true, primaryKey: false, defaultValue: null },
+          { name: "logged_when", type: "DATETIME", notNull: true, primaryKey: false, defaultValue: null },
+        ],
+      },
+      status: "ok",
+    });
+
+    vi.mocked(litesql.insertIntoTableAsync).mockResolvedValue({ insertedCount: 1, lastRowId: 1 });
+
+    const result = await buildPerTableToolsAsync();
+    const tool = result.tools["write_table_events"] as any;
+
+    await tool.execute({
+      data: [
+        { title: "hello" },
+      ],
+    });
+
+    const insertedRows = vi.mocked(litesql.insertIntoTableAsync).mock.calls[0][2] as Record<string, unknown>[];
+    expect(typeof insertedRows[0].logged_when).toBe("string");
+    expect((insertedRows[0].logged_when as string)).toContain("T");
+  });
 });
 
 describe("buildUpdateTableToolsAsync", () => {

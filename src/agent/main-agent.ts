@@ -721,10 +721,11 @@ export class MainAgent extends BaseAgentBase {
           // Inject steering messages if any are queued
           while (session.steeringQueue.length > 0) {
             const steeringMessage = session.steeringQueue.shift()!;
-            messagesForCall.push({
+            const steeringModelMessage: ModelMessage = {
               role: "user",
               content: `[STEER] ${steeringMessage}`,
-            } as unknown as ModelMessage);
+            };
+            messagesForCall.push(steeringModelMessage);
             this._logger.info("Injected steering message", { chatId, message: steeringMessage.substring(0, 100) });
           }
 

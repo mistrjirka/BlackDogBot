@@ -1,4 +1,3 @@
-import { generateTextWithRetryAsync } from "../utils/llm-retry.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { LoggerService } from "./logger.service.js";
 import { AiProviderService } from "./ai-provider.service.js";
@@ -6,7 +5,10 @@ import { EmbeddingService } from "./embedding.service.js";
 import { VectorStoreService } from "./vector-store.service.js";
 import { generateId } from "../utils/id.js";
 import type { ICronMessageHistory } from "../shared/types/index.js";
+import { compactMessagesSummaryOnlyAsync, type ISummarizationResult } from "../utils/summarization-compaction.js";
+import { type LanguageModel, type ModelMessage, APICallError } from "ai";
 import { z } from "zod";
+import { isRetryableApiError, isConnectionError, isContextExceededApiError } from "../utils/context-error.js";
 
 //#region Constants
 
@@ -180,7 +182,7 @@ export class CronMessageHistoryService {
         threshold: MAX_SUMMARY_CHARS,
       });
 
-      await this._summarizeAndCompactAsync(taskId);
+      await this._compactWithDagAsync(taskId);
     }
 
     return messageId;
@@ -414,12 +416,23 @@ ${candidateMessage}`;
     } catch (error: unknown) {
       const details: string = error instanceof Error ? error.message : String(error);
 
+      const isTransientError: boolean = isRetryableApiError(error) || isConnectionError(error);
+      const isDeterministicError: boolean = !isTransientError && (
+        isContextExceededApiError(error) ||
+        this._isAuthOrValidationError(error)
+      );
+
+      const shouldDispatch: boolean = !isDeterministicError;
+
       this._logger.warn("Cron message dispatch policy check failed", {
         error: details,
+        isTransient: isTransientError,
+        isDeterministic: isDeterministicError,
+        shouldDispatch,
       });
 
       return {
-        shouldDispatch: true,
+        shouldDispatch,
         error: details,
       };
     }
@@ -443,53 +456,105 @@ ${candidateMessage}`;
     return messagesChars + summaryChars;
   }
 
-  private async _summarizeAndCompactAsync(taskId: string): Promise<void> {
+  private _mapToModelMessages(history: ICronMessageHistory[]): ModelMessage[] {
+    return history.map((msg: ICronMessageHistory): ModelMessage => ({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: `[${msg.sentAt}]: ${msg.content}`,
+        },
+      ],
+    }));
+  }
+
+  private _mapFromModelMessages(messages: ModelMessage[]): ICronMessageHistory[] {
+    return messages.map((msg: ModelMessage): ICronMessageHistory => {
+      const textContent: string = this._extractTextFromModelMessage(msg);
+      const sentAtMatch: RegExpMatchArray | null = textContent.match(/^\[([^\]]+)\]/);
+      const sentAt: string = sentAtMatch ? sentAtMatch[1] : new Date().toISOString();
+      const contentMatch: RegExpMatchArray | null = textContent.match(/^\[[^\]]+\]:\s*(.*)$/);
+      const content: string = contentMatch ? contentMatch[1] : textContent;
+
+      return {
+        messageId: generateId(),
+        content,
+        sentAt,
+      };
+    });
+  }
+
+  private _extractTextFromModelMessage(message: ModelMessage): string {
+    if (typeof message.content === "string") {
+      return message.content;
+    }
+
+    if (!Array.isArray(message.content)) {
+      return "";
+    }
+
+    const parts: string[] = [];
+    for (const part of message.content) {
+      if ("text" in part && typeof part.text === "string") {
+        parts.push(part.text);
+      }
+    }
+
+    return parts.join(" ");
+  }
+
+  private _countTokensForMessages(messages: ModelMessage[]): number {
+    return JSON.stringify(messages).length;
+  }
+
+  private async _compactWithDagAsync(taskId: string): Promise<void> {
     if (CronMessageHistoryService._sharedHistory.length <= MAX_KEEP_MESSAGES) {
       return;
     }
 
-    const messagesToSummarize: ICronMessageHistory[] = CronMessageHistoryService._sharedHistory.slice(0, -MAX_KEEP_MESSAGES);
-    const recentMessages: ICronMessageHistory[] = CronMessageHistoryService._sharedHistory.slice(-MAX_KEEP_MESSAGES);
+    const messagesToCompact: ICronMessageHistory[] = CronMessageHistoryService._sharedHistory.slice(0, -MAX_KEEP_MESSAGES);
 
-    if (messagesToSummarize.length === 0) {
+    if (messagesToCompact.length === 0) {
       return;
     }
 
-    const historyText: string = messagesToSummarize
-      .map((msg: ICronMessageHistory) => `[${msg.sentAt}]: ${msg.content}`)
-      .join("\n\n");
-
-    const prompt: string = `Summarize the following cron message history. Focus on key information sent to the user. Be concise but preserve important details. The summary should help the agent avoid sending duplicate or repetitive messages.
-
-Messages:
-${historyText}
-
-Output a single concise summary paragraph.`;
-
     try {
-      const model = AiProviderService.getInstance().getModel();
+      const model: LanguageModel = AiProviderService.getInstance().getModel();
+      const modelMessages: ModelMessage[] = this._mapToModelMessages(messagesToCompact);
+      const targetTokenCount: number = Math.floor(MAX_SUMMARY_CHARS / 4);
 
-      const result = await generateTextWithRetryAsync({
+      const compactionResult: ISummarizationResult = await compactMessagesSummaryOnlyAsync(
+        modelMessages,
         model,
-        prompt,
-        retryOptions: { callType: "cron_history" },
-      });
+        this._logger,
+        targetTokenCount,
+        (msgs: ModelMessage[]): number => this._countTokensForMessages(msgs),
+        false,
+      );
 
-      const newSummary: string = result.text ?? "";
+      const recentMessages: ICronMessageHistory[] = CronMessageHistoryService._sharedHistory.slice(-MAX_KEEP_MESSAGES);
+      const compactedHistory: ICronMessageHistory[] = this._mapFromModelMessages(compactionResult.messages);
+      CronMessageHistoryService._sharedHistory = [...compactedHistory, ...recentMessages].slice(-MAX_KEEP_MESSAGES);
 
-      CronMessageHistoryService._sharedHistory = recentMessages;
-
-      this._logger.info("Compacted cron message history", {
+      this._logger.info("Cron message history compacted via DAG", {
         taskId,
-        summarizedCount: messagesToSummarize.length,
-        keptCount: recentMessages.length,
-        summaryLength: newSummary.length,
+        originalCount: messagesToCompact.length,
+        compactedCount: compactionResult.messages.length,
+        passes: compactionResult.passes,
+        converged: compactionResult.converged,
+        dagPath: compactionResult.dagPath,
+        dagNodeVisitCounts: compactionResult.dagNodeVisitCounts,
+        dagTerminationReason: compactionResult.dagTerminationReason,
+        maxLevelReached: compactionResult.maxLevelReached,
       });
     } catch (error: unknown) {
-      this._logger.error("Failed to compact message history", {
+      this._logger.error("Cron message history DAG compaction failed, using bounded fallback", {
         taskId,
         error: error instanceof Error ? error.message : String(error),
       });
+
+      const recentMessages: ICronMessageHistory[] = CronMessageHistoryService._sharedHistory.slice(-MAX_KEEP_MESSAGES);
+      CronMessageHistoryService._sharedHistory = recentMessages;
     }
   }
 
@@ -509,6 +574,29 @@ Output a single concise summary paragraph.`;
     }
 
     return `${normalized.slice(0, SEARCH_LOG_PREVIEW_LENGTH)}...`;
+  }
+
+  private _isAuthOrValidationError(error: unknown): boolean {
+    if (error instanceof Error) {
+      const messageLower: string = error.message.toLowerCase();
+      if (
+        messageLower.includes("unauthorized") ||
+        messageLower.includes("forbidden") ||
+        messageLower.includes("invalid api key") ||
+        messageLower.includes("authentication")
+      ) {
+        return true;
+      }
+    }
+
+    if (APICallError.isInstance(error)) {
+      const statusCode: number | undefined = error.statusCode;
+      if (statusCode === 401 || statusCode === 403 || statusCode === 422) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   //#endregion Private methods

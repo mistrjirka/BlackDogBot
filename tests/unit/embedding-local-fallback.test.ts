@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EmbeddingService } from "../../src/services/embedding.service.js";
 import { DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL } from "../../src/shared/constants.js";
+import { env } from "@huggingface/transformers";
 
 //#region Helpers
 
@@ -44,6 +45,27 @@ describe("EmbeddingService (local fallback)", () => {
     expect(loadCallCount).toBe(3);
     expect(service.getModelPath()).toBe(DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL);
     expect(service.getDimension()).toBe(3);
+  });
+
+  it("configures ONNX executionProviders to cpu for local cpu device", async () => {
+    const service: EmbeddingService = EmbeddingService.getInstance();
+    (env as unknown as { backends?: unknown }).backends = undefined;
+
+    vi.spyOn(service as unknown as { _resolveDeviceAsync(device: unknown): Promise<"cpu" | "cuda"> }, "_resolveDeviceAsync")
+      .mockResolvedValue("cpu");
+    vi.spyOn(service as unknown as { _loadPipelineAsync(): Promise<void> }, "_loadPipelineAsync")
+      .mockImplementation(async (): Promise<void> => {
+        (service as unknown as { _pipeline: unknown })._pipeline = (async (): Promise<{ tolist(): number[][] }> => ({
+          tolist: (): number[][] => [[0.1, 0.2, 0.3]],
+        })) as unknown;
+      });
+
+    await service.initializeAsync(undefined, undefined, "cpu", "local");
+
+    const configuredBackends = (env as unknown as { backends?: { onnx?: { executionProviders?: string[] } } }).backends;
+    expect(configuredBackends).toBeDefined();
+    expect(configuredBackends?.onnx).toBeDefined();
+    expect(configuredBackends?.onnx?.executionProviders).toEqual(["cpu"]);
   });
 });
 

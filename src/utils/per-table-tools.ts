@@ -7,9 +7,8 @@ import { LoggerService } from "../services/logger.service.js";
 import { createUpdateTableTool } from "../tools/update-table.tool.js";
 
 import {
-  COMMON_TIMESTAMP_COLUMNS,
-  DATE_LIKE_TYPES,
   SQLITE_TO_ZOD_TYPE,
+  isDateLikeColumn,
 } from "./sqlite-type-mappings.js";
 
 const DEFAULT_DATABASE = "blackdog";
@@ -222,7 +221,7 @@ function _buildWriteToolForTable(
 
       // Auto-fill timestamp columns if missing
       for (const col of columns) {
-        if (_isDateLikeColumn(col) && col.notNull && !col.primaryKey) {
+        if (isDateLikeColumn(col) && col.notNull && !col.primaryKey) {
           timestampColumns[col.name] = new Date().toISOString();
         }
       }
@@ -236,7 +235,7 @@ function _buildWriteToolForTable(
           }
 
           const value: unknown = enriched[col.name];
-          if (_isDateLikeColumn(col) && typeof value === "string" && value.trim().toLowerCase() === "now") {
+          if (isDateLikeColumn(col) && typeof value === "string" && value.trim().toLowerCase() === "now") {
             enriched[col.name] = new Date().toISOString();
           }
         }
@@ -292,10 +291,10 @@ function _buildZodSchemaForColumns(columns: IColumnInfo[]): z.ZodArray<z.ZodObje
     const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
     const baseType = SQLITE_TO_ZOD_TYPE[normalizedType] ?? z.string();
 
-    if (col.notNull && !_isDateLikeColumn(col)) {
+    if (col.notNull && !isDateLikeColumn(col)) {
       shape[col.name] = baseType.describe(`${col.type} NOT NULL`);
     } else {
-      const dateNowHint: string = _isDateLikeColumn(col)
+      const dateNowHint: string = isDateLikeColumn(col)
         ? " (accepts 'now' for current ISO timestamp)"
         : "";
       shape[col.name] = baseType.optional().describe(
@@ -305,12 +304,6 @@ function _buildZodSchemaForColumns(columns: IColumnInfo[]): z.ZodArray<z.ZodObje
   }
 
   return z.object(shape).array().min(1);
-}
-
-function _isDateLikeColumn(col: IColumnInfo): boolean {
-  const normalizedName: string = col.name.toLowerCase();
-  const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
-  return COMMON_TIMESTAMP_COLUMNS.has(normalizedName) || DATE_LIKE_TYPES.has(normalizedType);
 }
 
 //#endregion Private Functions

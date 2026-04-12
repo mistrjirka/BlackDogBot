@@ -76,7 +76,8 @@ const HARD_GATE_THRESHOLD_PERCENTAGE: number = 0.85;
 const LM_STUDIO_MODEL_RECOVERY_RETRIES: number = 3;
 const CAPABILITY_PROBE_TIMEOUT_MS: number = 300_000;
 const PARALLEL_TOOL_CALL_PROBE_TIMEOUT_MS: number = CAPABILITY_PROBE_TIMEOUT_MS;
-const DEFAULT_REQUEST_TIMEOUT_MS: number = 500_000; // 500 seconds
+const MIN_GENERATION_TIMEOUT_FLOOR_MS: number = 600_000;
+const DEFAULT_REQUEST_TIMEOUT_MS: number = 600_000; // 600 seconds (10 minutes)
 const REQUEST_TIMEOUT_RETRY_MULTIPLIER: number = 2;
 const REQUEST_TIMEOUT_MAX_ATTEMPTS: number = 2; // initial + 1 retry
 const OPENROUTER_FREE_MODEL_RPM_LIMIT: number = 20;
@@ -381,7 +382,13 @@ export class AiProviderService {
       const configuredTimeout: number | undefined = this._isOpenAiCompatible(providerKey)
         ? aiConfig.openaiCompatible?.requestTimeout
         : aiConfig.lmStudio?.requestTimeout;
-      this._requestTimeoutMs = configuredTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS;
+      const generationTimeoutFloor: number = Math.max(
+        aiConfig.generationTimeoutMs ?? MIN_GENERATION_TIMEOUT_FLOOR_MS,
+        MIN_GENERATION_TIMEOUT_FLOOR_MS,
+      );
+      this._requestTimeoutMs = configuredTimeout
+        ? Math.max(configuredTimeout, generationTimeoutFloor)
+        : DEFAULT_REQUEST_TIMEOUT_MS;
       logger.info(`Per-request timeout: ${this._requestTimeoutMs / 1000}s (retry at ${(this._requestTimeoutMs * REQUEST_TIMEOUT_RETRY_MULTIPLIER) / 1000}s)`);
     }
 
@@ -799,6 +806,11 @@ export class AiProviderService {
 
   public getContextWindow(): number {
     return this._contextWindow;
+  }
+
+  public getGenerationTimeoutFloorMs(): number {
+    const configuredTimeout: number | undefined = this._aiConfig?.generationTimeoutMs;
+    return Math.max(configuredTimeout ?? MIN_GENERATION_TIMEOUT_FLOOR_MS, MIN_GENERATION_TIMEOUT_FLOOR_MS);
   }
 
   public get supportsParallelToolCalls(): boolean {

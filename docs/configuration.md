@@ -13,6 +13,7 @@ Primary configuration path:
 ```yaml
 ai:
   provider: openrouter
+  generationTimeoutMs: 600000  # 10 min floor for all generation paths (default: 600000, min: 600000)
   openrouter:
     apiKey: sk-or-v1-xxx
     model: anthropic/claude-sonnet-4
@@ -26,6 +27,7 @@ ai:
 ```yaml
 ai:
   provider: openai-compatible
+  generationTimeoutMs: 600000  # 10 min floor, min 600000
   openaiCompatible:
     baseUrl: http://localhost:11434/v1
     apiKey: ollama
@@ -41,6 +43,7 @@ ai:
 ```yaml
 ai:
   provider: lm-studio
+  generationTimeoutMs: 600000  # 10 min floor, min 600000
   lmStudio:
     baseUrl: http://localhost:1234/v1
     apiKey: lm-studio

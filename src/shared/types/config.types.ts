@@ -36,7 +36,7 @@ export interface IOpenAiCompatibleConfig {
   contextWindow?: number; // Optional, defaults to 128000 if not specified
   supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
   structuredOutputMode?: StructuredOutputMode;
-  requestTimeout?: number; // Per-request timeout in ms, default 500000. Retries once at 2x on timeout.
+  requestTimeout?: number; // Per-request timeout in ms, default 600000. Retries once at 2x on timeout.
   activeProfile?: string;
   profilesDir?: string;
 }
@@ -49,7 +49,7 @@ export interface ILmStudioConfig {
   contextWindow?: number;
   supportsStructuredOutputs?: boolean; // Whether endpoint supports response_format: json_schema
   structuredOutputMode?: StructuredOutputMode;
-  requestTimeout?: number; // Per-request timeout in ms, default 500000. Retries once at 2x on timeout.
+  requestTimeout?: number; // Per-request timeout in ms, default 600000. Retries once at 2x on timeout.
   activeProfile?: string;
   profilesDir?: string;
 }
@@ -83,6 +83,7 @@ export interface IProviderCapabilitySummary {
 export interface IAiConfig {
   provider: AiProvider;
   fallbacks?: IAiFallbackEntry[];
+  generationTimeoutMs?: number;
   openrouter?: IOpenRouterConfig;
   openaiCompatible?: IOpenAiCompatibleConfig;
   lmStudio?: ILmStudioConfig;

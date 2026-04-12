@@ -65,6 +65,12 @@ function getRetryPolicy(callType?: LlmCallType): { maxAttempts: number; timeoutM
   return { maxAttempts: DEFAULT_MAX_ATTEMPTS, timeoutMs: DEFAULT_TIMEOUT_MS };
 }
 
+function getEffectiveTimeout(requestedTimeoutMs: number | undefined, policyTimeoutMs: number): number {
+  const floor: number = AiProviderService.getInstance().getGenerationTimeoutFloorMs();
+  const effectiveRequested: number = requestedTimeoutMs ?? policyTimeoutMs;
+  return Math.max(effectiveRequested, floor);
+}
+
 function createLinkedAbortSignal(
   abortSignal: AbortSignal | undefined,
   timeoutMs: number,
@@ -128,7 +134,7 @@ export async function generateTextWithRetryAsync(
   const callType = retryOptions.callType ?? "agent_primary";
   const policy = getRetryPolicy(callType);
   const maxAttempts = retryOptions.maxAttempts ?? policy.maxAttempts;
-  const timeoutMs = retryOptions.timeoutMs ?? policy.timeoutMs;
+  const timeoutMs = getEffectiveTimeout(retryOptions.timeoutMs, policy.timeoutMs);
 
   const llmCallId = randomUUID();
   let lastError: unknown;
@@ -311,7 +317,7 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
   const callType = retryOptions.callType ?? "schema_extraction";
   const policy = getRetryPolicy(callType);
   const maxAttempts = retryOptions.maxAttempts ?? policy.maxAttempts;
-  const timeoutMs = retryOptions.timeoutMs ?? policy.timeoutMs;
+  const timeoutMs = getEffectiveTimeout(retryOptions.timeoutMs, policy.timeoutMs);
 
   const llmCallId = randomUUID();
   let lastError: unknown;

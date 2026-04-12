@@ -6,15 +6,9 @@ import type { IColumnInfo } from "../helpers/litesql.js";
 import * as litesqlValidation from "../helpers/litesql-validation.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
-import { COMMON_TIMESTAMP_COLUMNS, DATE_LIKE_TYPES, SQLITE_TO_ZOD_TYPE } from "../utils/sqlite-type-mappings.js";
+import { SQLITE_TO_ZOD_TYPE, isDateLikeColumn } from "../utils/sqlite-type-mappings.js";
 
 const DEFAULT_DATABASE = "blackdog";
-
-function _isDateLikeColumn(col: IColumnInfo): boolean {
-  const normalizedName: string = col.name.toLowerCase();
-  const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
-  return COMMON_TIMESTAMP_COLUMNS.has(normalizedName) || DATE_LIKE_TYPES.has(normalizedType);
-}
 
 export interface IUpdateTableResult {
   success: boolean;
@@ -38,7 +32,7 @@ export function createUpdateTableTool(
   for (const col of settableColumns) {
     const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
     const baseType = SQLITE_TO_ZOD_TYPE[normalizedType] ?? z.string();
-    const isDateLike: boolean = _isDateLikeColumn(col);
+    const isDateLike: boolean = isDateLikeColumn(col);
     const dateNowHint: string = isDateLike ? " (accepts 'now' for current ISO timestamp)" : "";
     const typeDescription = `${col.type}${col.notNull ? " NOT NULL" : " NULLABLE"}${dateNowHint}`;
     columnSchemas[col.name] = baseType.optional().describe(`Value for column '${col.name}' (${typeDescription})`);
@@ -56,7 +50,7 @@ export function createUpdateTableTool(
   );
 
   const dateLikeColumns: Set<string> = new Set(
-    settableColumns.filter(_isDateLikeColumn).map((col) => col.name),
+    settableColumns.filter(isDateLikeColumn).map((col) => col.name),
   );
 
   return dynamicTool({
