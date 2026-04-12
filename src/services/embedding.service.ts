@@ -12,6 +12,16 @@ import {
 // transformers.js ONNX backend only exposes "cpu" and "cuda" as device options.
 type PipelineDevice = "cpu" | "cuda";
 
+function configureOnnxExecutionProvider(device: PipelineDevice): void {
+  if (!env.backends) {
+    env.backends = {} as typeof env.backends;
+  }
+  if (!env.backends.onnx) {
+    env.backends.onnx = {};
+  }
+  env.backends.onnx.executionProviders = device === "cuda" ? ["cuda", "cpu"] : ["cpu"];
+}
+
 const _execAsync = promisify(exec);
 
 import {
@@ -228,21 +238,7 @@ export class EmbeddingService {
 
     env.cacheDir = getModelsDir();
     
-    // Explicitly configure ONNX execution providers to prevent onnxruntime-node from 
-    // crashing when probing for missing CUDA libraries on CPU fallback.
-    // Ensure env.backends.onnx exists first.
-    const backends = env.backends as any;
-    if (!backends) (env as any).backends = {};
-    if (!(env.backends as any).onnx) (env.backends as any).onnx = {};
-    
-    // Onnxruntime-node attempts to load all available providers (including CUDA) by default.
-    // When CUDA libraries are missing, this causes a fatal crash even if device='cpu' is passed to pipeline.
-    // By strictly limiting the executionProviders, we bypass this issue.
-    if (this._device === "cuda") {
-        (env.backends as any).onnx.executionProviders = ['cuda', 'cpu'];
-    } else {
-        (env.backends as any).onnx.executionProviders = ['cpu'];
-    }
+    configureOnnxExecutionProvider(this._device);
 
     logger.info("Loading embedding model...", {
       modelPath: this._modelPath,

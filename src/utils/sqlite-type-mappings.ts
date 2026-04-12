@@ -41,3 +41,14 @@ export const COMMON_TIMESTAMP_COLUMNS: Set<string> = new Set([
 ]);
 
 export const DATE_LIKE_TYPES: Set<string> = new Set(["DATE", "DATETIME", "TIMESTAMP"]);
+
+export interface IDateLikeColumnShape {
+  name: string;
+  type: string;
+}
+
+export function isDateLikeColumn(col: IDateLikeColumnShape): boolean {
+  const normalizedName: string = col.name.toLowerCase();
+  const normalizedType: string = col.type.toUpperCase().replace(/\(.*\)/, "").trim();
+  return COMMON_TIMESTAMP_COLUMNS.has(normalizedName) || DATE_LIKE_TYPES.has(normalizedType);
+}

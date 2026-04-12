@@ -216,6 +216,105 @@ describe("AiProviderService unit", () => {
 
       expect(service.getActiveProvider()).toBe("openai-compatible");
     });
+
+    it("clamps local provider requestTimeout below 10-minute floor to 600000", async () => {
+      const modelInfoService: ModelInfoService = ModelInfoService.getInstance();
+      vi.spyOn(modelInfoService, "fetchContextWindowAsync").mockResolvedValue(32768);
+      vi.spyOn(modelInfoService, "fetchSupportsImagesAsync").mockResolvedValue(false);
+      vi.spyOn(modelInfoService, "fetchSupportedParametersAsync").mockResolvedValue(new Set<string>());
+
+      const service: AiProviderService = AiProviderService.getInstance();
+      vi.spyOn(service, "testResponseFormatAsync").mockResolvedValue({ ok: false, reason: "skipped" });
+
+      await service.initializeAsync({
+        provider: "openai-compatible",
+        generationTimeoutMs: 600000,
+        openaiCompatible: {
+          baseUrl: "http://localhost:11434/v1",
+          apiKey: "local-key",
+          model: "llama3",
+          structuredOutputMode: "tool_auto",
+          requestTimeout: 30_000,
+          rateLimits: { rpm: 30, tpm: 50000 },
+        },
+      });
+
+      expect((service as unknown as { _requestTimeoutMs: number })._requestTimeoutMs).toBe(600000);
+    });
+
+    it("uses default 10-minute request timeout when local provider timeout is unset", async () => {
+      const modelInfoService: ModelInfoService = ModelInfoService.getInstance();
+      vi.spyOn(modelInfoService, "fetchContextWindowAsync").mockResolvedValue(32768);
+      vi.spyOn(modelInfoService, "fetchSupportsImagesAsync").mockResolvedValue(false);
+      vi.spyOn(modelInfoService, "fetchSupportedParametersAsync").mockResolvedValue(new Set<string>());
+
+      const service: AiProviderService = AiProviderService.getInstance();
+      vi.spyOn(service, "testResponseFormatAsync").mockResolvedValue({ ok: false, reason: "skipped" });
+
+      await service.initializeAsync({
+        provider: "openai-compatible",
+        generationTimeoutMs: 600000,
+        openaiCompatible: {
+          baseUrl: "http://localhost:11434/v1",
+          apiKey: "local-key",
+          model: "llama3",
+          structuredOutputMode: "tool_auto",
+          rateLimits: { rpm: 30, tpm: 50000 },
+        },
+      });
+
+      expect((service as unknown as { _requestTimeoutMs: number })._requestTimeoutMs).toBe(600000);
+    });
+
+    it("honors generationTimeoutMs above 10-minute minimum for local providers", async () => {
+      const modelInfoService: ModelInfoService = ModelInfoService.getInstance();
+      vi.spyOn(modelInfoService, "fetchContextWindowAsync").mockResolvedValue(32768);
+      vi.spyOn(modelInfoService, "fetchSupportsImagesAsync").mockResolvedValue(false);
+      vi.spyOn(modelInfoService, "fetchSupportedParametersAsync").mockResolvedValue(new Set<string>());
+
+      const service: AiProviderService = AiProviderService.getInstance();
+      vi.spyOn(service, "testResponseFormatAsync").mockResolvedValue({ ok: false, reason: "skipped" });
+
+      await service.initializeAsync({
+        provider: "openai-compatible",
+        generationTimeoutMs: 720000,
+        openaiCompatible: {
+          baseUrl: "http://localhost:11434/v1",
+          apiKey: "local-key",
+          model: "llama3",
+          structuredOutputMode: "tool_auto",
+          requestTimeout: 650_000,
+          rateLimits: { rpm: 30, tpm: 50000 },
+        },
+      });
+
+      expect((service as unknown as { _requestTimeoutMs: number })._requestTimeoutMs).toBe(720000);
+    });
+
+    it("preserves local provider requestTimeout above configured generation floor", async () => {
+      const modelInfoService: ModelInfoService = ModelInfoService.getInstance();
+      vi.spyOn(modelInfoService, "fetchContextWindowAsync").mockResolvedValue(32768);
+      vi.spyOn(modelInfoService, "fetchSupportsImagesAsync").mockResolvedValue(false);
+      vi.spyOn(modelInfoService, "fetchSupportedParametersAsync").mockResolvedValue(new Set<string>());
+
+      const service: AiProviderService = AiProviderService.getInstance();
+      vi.spyOn(service, "testResponseFormatAsync").mockResolvedValue({ ok: false, reason: "skipped" });
+
+      await service.initializeAsync({
+        provider: "openai-compatible",
+        generationTimeoutMs: 600000,
+        openaiCompatible: {
+          baseUrl: "http://localhost:11434/v1",
+          apiKey: "local-key",
+          model: "llama3",
+          structuredOutputMode: "tool_auto",
+          requestTimeout: 900_000,
+          rateLimits: { rpm: 30, tpm: 50000 },
+        },
+      });
+
+      expect((service as unknown as { _requestTimeoutMs: number })._requestTimeoutMs).toBe(900000);
+    });
   });
 
   describe("error paths", () => {

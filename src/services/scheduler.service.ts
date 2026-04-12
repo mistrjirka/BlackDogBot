@@ -585,7 +585,10 @@ export class SchedulerService {
     const migratedTask: Record<string, unknown> = {
       ...raw,
       schedule: {
-        ...(rawSchedule as unknown as Record<string, unknown>),
+        type: rawSchedule.type,
+        intervalMs: rawSchedule.intervalMs,
+        offsetMinutes: rawSchedule.offsetMinutes,
+        every: rawSchedule.every,
         offsetFromDayStart: {
           hours: 0,
           minutes: 0,

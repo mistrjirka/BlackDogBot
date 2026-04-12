@@ -74,7 +74,7 @@ const openAiCompatibleSchema = z.object({
     .int()
     .positive()
     .optional()
-    .describe("Per-request timeout in milliseconds. On timeout, retries once at 2x. Default: 500000 (500s)."),
+    .describe("Per-request timeout in milliseconds. On timeout, retries once at 2x. Default: 600000 (600s)."),
   activeProfile: z.string()
     .min(1)
     .optional()
@@ -112,7 +112,7 @@ const lmStudioSchema = z.object({
     .int()
     .positive()
     .optional()
-    .describe("Per-request timeout in milliseconds. On timeout, retries once at 2x. Default: 500000 (500s)."),
+    .describe("Per-request timeout in milliseconds. On timeout, retries once at 2x. Default: 600000 (600s)."),
   activeProfile: z.string()
     .min(1)
     .optional()
@@ -126,6 +126,12 @@ const lmStudioSchema = z.object({
 const aiConfigSchema = z.object({
   provider: z.enum(["openrouter", "openai-compatible", "lm-studio"])
     .describe("Active AI provider"),
+  generationTimeoutMs: z.number()
+    .int()
+    .positive()
+    .min(600_000)
+    .optional()
+    .describe("Global generation timeout floor in milliseconds. Requests wait at least this long before timing out. Default: 600000 (10 minutes). Minimum: 600000."),
   fallbacks: z.object({
     provider: z.enum(["openrouter", "openai-compatible", "lm-studio"]),
     model: z.string().min(1).optional(),

@@ -132,6 +132,26 @@ describe("send_message tool with validation", () => {
     expect(mockHistoryService.checkMessageNoveltyAsync).not.toHaveBeenCalled();
   });
 
+  it("suppresses message when dispatch policy returns deterministic error (shouldDispatch: false with error)", async () => {
+    mockHistoryService.checkMessageDispatchPolicyAsync.mockResolvedValue({
+      shouldDispatch: false,
+      error: "Authentication failed: Invalid API key",
+    });
+
+    const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
+
+    const result = await execTool(tool, "Status update");
+
+    expect(result.sent).toBe(false);
+    expect(result.messageId).toBeNull();
+    expect(result.suppressedReason).toBe("policy");
+    expect(result.suppressedAt).toBeDefined();
+    expect(mockSender).not.toHaveBeenCalled();
+    expect(mockHistoryService.checkMessageNoveltyAsync).not.toHaveBeenCalled();
+    expect(mockHistoryService.recordMessageAsync).not.toHaveBeenCalled();
+    expect(context.toolCallHistory).toContain("send_message");
+  });
+
   it("returns sent:false with suppression metadata for duplicate messages", async () => {
     mockHistoryService.checkMessageNoveltyAsync.mockResolvedValue({
       isNewInformation: false,
