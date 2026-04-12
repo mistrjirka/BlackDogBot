@@ -196,6 +196,29 @@ describe("PromptService", () => {
     expect(content).not.toContain("{{include:");
   });
 
+  it("should include timed workflow guidance for dedup troubleshooting", async () => {
+    const service: PromptService = PromptService.getInstance();
+
+    await service.initializeAsync();
+
+    const content: string = await service.getPromptAsync("main-agent");
+
+    expect(content).toContain("messageDedupEnabled");
+    expect(content).toContain("missing periodic notifications");
+    expect(content).toContain("get_timed");
+  });
+
+  it("should include cron-agent note about messageDedupEnabled behavior", async () => {
+    const service: PromptService = PromptService.getInstance();
+
+    await service.initializeAsync();
+
+    const content: string = await service.getPromptAsync("cron-agent");
+
+    expect(content).toContain("messageDedupEnabled");
+    expect(content).toContain("When disabled");
+  });
+
   it("should throw when loading non-existent prompt", async () => {
     const service: PromptService = PromptService.getInstance();
 

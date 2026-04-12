@@ -10,20 +10,26 @@ vi.mock("../../../src/shared/constants/cron-descriptions.js", () => ({
 
 vi.mock("../../../src/utils/per-table-tools.js", () => ({
   buildPerTableToolsAsync: vi.fn().mockResolvedValue({
-    write_table_users: {
-      description: "Insert rows into the 'users' table.",
+    tools: {
+      write_table_users: {
+        description: "Insert rows into the 'users' table.",
+      },
+      write_table_orders: {
+        description: "Insert rows into the 'orders' table.",
+      },
     },
-    write_table_orders: {
-      description: "Insert rows into the 'orders' table.",
-    },
+    dbStatus: "ok" as const,
   }),
   buildUpdateTableToolsAsync: vi.fn().mockResolvedValue({
-    update_table_users: {
-      description: "Update rows in the 'users' table.",
+    tools: {
+      update_table_users: {
+        description: "Update rows in the 'users' table.",
+      },
+      update_table_products: {
+        description: "Update rows in the 'products' table.",
+      },
     },
-    update_table_products: {
-      description: "Update rows in the 'products' table.",
-    },
+    dbStatus: "ok" as const,
   }),
 }));
 

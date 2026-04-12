@@ -190,6 +190,14 @@ export const sendMessageToolOutputSchema = z.object({
   sent: z.boolean(),
   messageId: z.string()
     .nullable(),
+  suppressedReason: z.string()
+    .nullable()
+    .optional()
+    .describe("Reason why message was suppressed (policy|duplicate)"),
+  suppressedAt: z.string()
+    .nullable()
+    .optional()
+    .describe("ISO timestamp when message was suppressed"),
 });
 
 //#endregion Send Message Tool
@@ -435,6 +443,10 @@ export const addOnceToolInputSchema = z
     ...requiredDatetimeFields,
     notifyUser: z.boolean()
       .describe("Whether to send a Telegram notification when this task completes (required)"),
+    messageDedupEnabled: z.boolean()
+      .default(true)
+      .optional()
+      .describe("Whether message deduplication is enabled for this task (default: true)"),
   })
   .refine(
     (data) => _validateDate({ year: data.year, month: data.month, day: data.day }),
@@ -485,6 +497,10 @@ export const addIntervalToolInputSchema = z.object({
     .describe("IANA timezone for schedule anchoring (e.g., Europe/Prague)"),
   notifyUser: z.boolean()
     .describe("Whether to send a Telegram notification when this task completes (required)"),
+  messageDedupEnabled: z.boolean()
+    .default(true)
+    .optional()
+    .describe("Whether message deduplication is enabled for this task (default: true)"),
 }).superRefine((data, ctx) => {
   if (data.every.hours === 24 && data.every.minutes !== 0) {
     ctx.addIssue({
@@ -527,6 +543,9 @@ export const editOnceToolInputSchema = z
     enabled: z.boolean()
       .optional()
       .describe("Whether the task is enabled"),
+    messageDedupEnabled: z.boolean()
+      .optional()
+      .describe("Whether message deduplication is enabled for this task"),
   })
   .refine(
     (data) => {
@@ -590,6 +609,9 @@ export const editIntervalToolInputSchema = z.object({
   enabled: z.boolean()
     .optional()
     .describe("Whether the task is enabled"),
+  messageDedupEnabled: z.boolean()
+    .optional()
+    .describe("Whether message deduplication is enabled for this task"),
 }).superRefine((data, ctx) => {
   if (data.every && data.every.hours === 24 && data.every.minutes !== 0) {
     ctx.addIssue({
@@ -702,6 +724,8 @@ export const listCronsToolOutputSchema = z.object({
       .nullable(),
     lastRunStatus: z.string()
       .nullable(),
+    messageDedupEnabled: z.boolean()
+      .describe("Whether message deduplication is enabled for this task"),
   })
     .array(),
 });

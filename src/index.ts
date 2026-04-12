@@ -404,6 +404,7 @@ async function mainAsync(): Promise<void> {
         taskName: task.name,
         taskDescription: task.description,
         taskInstructions: task.instructions,
+        messageDedupEnabled: task.messageDedupEnabled,
       };
 
       await executeCronTaskAsync(task, {

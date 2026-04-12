@@ -27,6 +27,7 @@ interface IListTimedTaskSummary {
   enabled: boolean;
   lastRunAt: string | null;
   lastRunStatus: string | null;
+  messageDedupEnabled: boolean;
 }
 
 interface IListTimedResult {
@@ -70,6 +71,7 @@ function _mapTaskToSummary(task: IScheduledTask): IListTimedTaskSummary {
     enabled: task.enabled,
     lastRunAt: task.lastRunAt,
     lastRunStatus: task.lastRunStatus,
+    messageDedupEnabled: task.messageDedupEnabled,
   };
 }
 

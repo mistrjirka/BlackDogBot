@@ -12,6 +12,8 @@ interface ISendMessageResult {
   sent: boolean;
   messageId: string | null;
   error?: string;
+  suppressedReason?: string;
+  suppressedAt?: string;
 }
 
 async function execTool(
@@ -30,6 +32,7 @@ describe("send_message tool with validation", () => {
     taskName?: string;
     taskDescription?: string;
     taskInstructions?: string;
+    messageDedupEnabled?: boolean;
   };
   let mockSender: ReturnType<typeof vi.fn>;
   let mockHistoryService: {
@@ -46,6 +49,7 @@ describe("send_message tool with validation", () => {
       taskName: "fetch_rageintel_feed",
       taskDescription: "Fetch and process feed updates",
       taskInstructions: "Process feed in silent mode; only send critical alerts.",
+      messageDedupEnabled: true,
     };
     mockSender = vi.fn().mockResolvedValue("msg-123");
     mockHistoryService = {
@@ -101,7 +105,7 @@ describe("send_message tool with validation", () => {
     );
   });
 
-  it("silently skips when task policy forbids dispatch", async () => {
+  it("returns sent:false with suppression metadata when task policy forbids dispatch", async () => {
     mockHistoryService.checkMessageDispatchPolicyAsync.mockResolvedValue({
       shouldDispatch: false,
     });
@@ -110,13 +114,15 @@ describe("send_message tool with validation", () => {
 
     const result = await execTool(tool, "Status update only");
 
-    expect(result.sent).toBe(true);
+    expect(result.sent).toBe(false);
     expect(result.messageId).toBeNull();
+    expect(result.suppressedReason).toBe("policy");
+    expect(result.suppressedAt).toBeDefined();
     expect(mockSender).not.toHaveBeenCalled();
     expect(mockHistoryService.checkMessageNoveltyAsync).not.toHaveBeenCalled();
   });
 
-  it("silently skips duplicate messages", async () => {
+  it("returns sent:false with suppression metadata for duplicate messages", async () => {
     mockHistoryService.checkMessageNoveltyAsync.mockResolvedValue({
       isNewInformation: false,
       similarCount: 10,
@@ -126,8 +132,10 @@ describe("send_message tool with validation", () => {
 
     const result = await execTool(tool, "Duplicate update");
 
-    expect(result.sent).toBe(true);
+    expect(result.sent).toBe(false);
     expect(result.messageId).toBeNull();
+    expect(result.suppressedReason).toBe("duplicate");
+    expect(result.suppressedAt).toBeDefined();
     expect(mockSender).not.toHaveBeenCalled();
     expect(mockHistoryService.recordMessageAsync).not.toHaveBeenCalled();
     expect(mockHistoryService.recordToVectorStoreAsync).not.toHaveBeenCalled();
@@ -142,6 +150,34 @@ describe("send_message tool with validation", () => {
     expect(result.sent).toBe(true);
     expect(result.messageId).toBe("msg-123");
     expect(mockHistoryService.checkMessageNoveltyAsync).not.toHaveBeenCalled();
+  });
+
+  it("skips novelty check when messageDedupEnabled is false", async () => {
+    context.messageDedupEnabled = false;
+    const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
+
+    const result = await execTool(tool, "Hello");
+
+    expect(result.sent).toBe(true);
+    expect(result.messageId).toBe("msg-123");
+    expect(mockHistoryService.checkMessageNoveltyAsync).not.toHaveBeenCalled();
+    expect(mockHistoryService.checkMessageDispatchPolicyAsync).toHaveBeenCalled();
+  });
+
+  it("still runs dispatch policy when messageDedupEnabled is false", async () => {
+    context.messageDedupEnabled = false;
+    mockHistoryService.checkMessageDispatchPolicyAsync.mockResolvedValue({
+      shouldDispatch: false,
+    });
+    const tool = createSendMessageToolWithHistory(mockSender, () => "task-123", context);
+
+    const result = await execTool(tool, "Status update");
+
+    expect(result.sent).toBe(false);
+    expect(result.suppressedReason).toBe("policy");
+    expect(mockHistoryService.checkMessageDispatchPolicyAsync).toHaveBeenCalled();
+    expect(mockHistoryService.checkMessageNoveltyAsync).not.toHaveBeenCalled();
+    expect(mockSender).not.toHaveBeenCalled();
   });
 
   it("tracks send_message in tool call history on success", async () => {

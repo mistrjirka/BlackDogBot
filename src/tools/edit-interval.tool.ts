@@ -56,6 +56,7 @@ const executeEditInterval = async (
     timezone,
     notifyUser,
     enabled,
+    messageDedupEnabled,
   }: {
     taskId: string;
     name?: string;
@@ -66,6 +67,7 @@ const executeEditInterval = async (
     timezone?: string;
     notifyUser?: boolean;
     enabled?: boolean;
+    messageDedupEnabled?: boolean;
   },
   _context: ToolExecuteContext,
 ): Promise<IEditIntervalResult> => {
@@ -102,6 +104,7 @@ const executeEditInterval = async (
     if (tools !== undefined) patch.tools = tools;
     if (notifyUser !== undefined) patch.notifyUser = notifyUser;
     if (enabled !== undefined) patch.enabled = enabled;
+    if (messageDedupEnabled !== undefined) patch.messageDedupEnabled = messageDedupEnabled;
 
     if (every !== undefined || offsetFromDayStart !== undefined || timezone !== undefined) {
       const currentSchedule = existingTask.schedule;

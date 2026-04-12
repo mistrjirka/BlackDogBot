@@ -82,6 +82,7 @@ export const addIntervalTool = tool({
     offsetFromDayStart,
     timezone,
     notifyUser,
+    messageDedupEnabled,
   }: {
     name: string;
     description: string;
@@ -91,6 +92,7 @@ export const addIntervalTool = tool({
     offsetFromDayStart: { hours: number; minutes: number };
     timezone?: string;
     notifyUser: boolean;
+    messageDedupEnabled?: boolean;
   }): Promise<IAddIntervalResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
@@ -215,6 +217,7 @@ Output a JSON object with:
         messageHistory: [],
         messageSummary: null,
         summaryGeneratedAt: null,
+        messageDedupEnabled: messageDedupEnabled ?? true,
       };
 
       await SchedulerService.getInstance().addTaskAsync(task);

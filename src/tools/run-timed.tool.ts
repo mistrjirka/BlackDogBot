@@ -93,6 +93,7 @@ export const runTimedTool = tool({
         taskName: task.name,
         taskDescription: task.description,
         taskInstructions: task.instructions,
+        messageDedupEnabled: task.messageDedupEnabled,
       };
 
       const taskIdProvider = (): string | null => task.taskId;

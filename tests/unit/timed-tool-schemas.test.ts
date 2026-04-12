@@ -463,3 +463,102 @@ describe("editIntervalToolInputSchema - every and offsetFromDayStart", () => {
     expect(missingMinutes.success).toBe(false);
   });
 });
+
+describe("messageDedupEnabled field in add/edit schemas", () => {
+  it("addOnceToolInputSchema accepts messageDedupEnabled true", () => {
+    const result = addOnceToolInputSchema.safeParse({
+      name: "Test",
+      description: "Test task",
+      instructions: "Do something",
+      tools: ["send_message"],
+      notifyUser: true,
+      year: 2026,
+      month: 4,
+      day: 8,
+      hour: 14,
+      minute: 30,
+      messageDedupEnabled: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("addOnceToolInputSchema accepts messageDedupEnabled false", () => {
+    const result = addOnceToolInputSchema.safeParse({
+      name: "Test",
+      description: "Test task",
+      instructions: "Do something",
+      tools: ["send_message"],
+      notifyUser: true,
+      year: 2026,
+      month: 4,
+      day: 8,
+      hour: 14,
+      minute: 30,
+      messageDedupEnabled: false,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("addOnceToolInputSchema defaults messageDedupEnabled to true when not provided", () => {
+    const result = addOnceToolInputSchema.safeParse({
+      name: "Test",
+      description: "Test task",
+      instructions: "Do something",
+      tools: ["send_message"],
+      notifyUser: true,
+      year: 2026,
+      month: 4,
+      day: 8,
+      hour: 14,
+      minute: 30,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.messageDedupEnabled ?? true).toBe(true);
+    }
+  });
+
+  it("addIntervalToolInputSchema accepts messageDedupEnabled true", () => {
+    const result = addIntervalToolInputSchema.safeParse({
+      name: "Test",
+      description: "Test task",
+      instructions: "Do something",
+      tools: ["send_message"],
+      every: { hours: 1, minutes: 0 },
+      notifyUser: true,
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+      messageDedupEnabled: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("addIntervalToolInputSchema accepts messageDedupEnabled false", () => {
+    const result = addIntervalToolInputSchema.safeParse({
+      name: "Test",
+      description: "Test task",
+      instructions: "Do something",
+      tools: ["send_message"],
+      every: { hours: 1, minutes: 0 },
+      notifyUser: true,
+      offsetFromDayStart: { hours: 0, minutes: 0 },
+      messageDedupEnabled: false,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("editOnceToolInputSchema accepts messageDedupEnabled", () => {
+    const result = editOnceToolInputSchema.safeParse({
+      taskId: "abc123",
+      messageDedupEnabled: false,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("editIntervalToolInputSchema accepts messageDedupEnabled", () => {
+    const result = editIntervalToolInputSchema.safeParse({
+      taskId: "abc123",
+      messageDedupEnabled: false,
+    });
+    expect(result.success).toBe(true);
+  });
+});

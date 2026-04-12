@@ -73,6 +73,7 @@ export const addOnceTool = tool({
     hour,
     minute,
     notifyUser,
+    messageDedupEnabled,
   }: {
     name: string;
     description: string;
@@ -84,6 +85,7 @@ export const addOnceTool = tool({
     hour: number;
     minute: number;
     notifyUser: boolean;
+    messageDedupEnabled?: boolean;
   }): Promise<IAddOnceResult> => {
     const logger: LoggerService = LoggerService.getInstance();
 
@@ -202,6 +204,7 @@ Output a JSON object with:
         messageHistory: [],
         messageSummary: null,
         summaryGeneratedAt: null,
+        messageDedupEnabled: messageDedupEnabled ?? true,
       };
 
       await SchedulerService.getInstance().addTaskAsync(task);

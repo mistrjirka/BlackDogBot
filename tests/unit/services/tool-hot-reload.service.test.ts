@@ -81,8 +81,8 @@ describe("ToolHotReloadService", () => {
       };
 
       mockBuildPerTableToolsWithUpdatesAsync.mockResolvedValue({
-        write: mockWriteTools,
-        update: mockUpdateTools,
+        write: { tools: mockWriteTools, dbStatus: "ok" },
+        update: { tools: mockUpdateTools, dbStatus: "ok" },
       });
 
       service.registerRebuildCallback("chat-123", mockCallback);
@@ -121,13 +121,13 @@ describe("ToolHotReloadService", () => {
       // First call returns initial tools
       mockBuildPerTableToolsWithUpdatesAsync
         .mockResolvedValueOnce({
-          write: initialWriteTools,
-          update: initialUpdateTools,
+          write: { tools: initialWriteTools, dbStatus: "ok" },
+          update: { tools: initialUpdateTools, dbStatus: "ok" },
         })
         // Subsequent calls return updated tools (simulating new table creation)
         .mockResolvedValueOnce({
-          write: updatedWriteTools,
-          update: updatedUpdateTools,
+          write: { tools: updatedWriteTools, dbStatus: "ok" },
+          update: { tools: updatedUpdateTools, dbStatus: "ok" },
         });
 
       service.registerRebuildCallback("chat-123", mockCallback);

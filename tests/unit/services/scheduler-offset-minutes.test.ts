@@ -323,9 +323,17 @@ describe("SchedulerService interval scheduling", () => {
 
       const loadedTask = await scheduler.getTaskAsync("legacy-evening");
       expect(loadedTask).toBeDefined();
+      expect(loadedTask!.messageDedupEnabled).toBe(true);
       const loadedSchedule = loadedTask!.schedule as IScheduleInterval;
       expect(loadedSchedule.every).toEqual({ hours: 24, minutes: 0 });
       expect(loadedSchedule.offsetFromDayStart).toEqual({ hours: 18, minutes: 0 });
+
+      const persistedContent = await fs.readFile(
+        path.join(timedDir, "legacy-evening.json"),
+        "utf-8",
+      );
+      const persistedTask = JSON.parse(persistedContent) as { messageDedupEnabled?: boolean };
+      expect(persistedTask.messageDedupEnabled).toBe(true);
     });
 
     it("should resolve next slot using day-start anchor semantics", async () => {

@@ -73,69 +73,45 @@ interface IBuildNoveltyPromptInput {
 //#region Prompt builders
 
 export function buildCronNoveltyPrompt(input: IBuildNoveltyPromptInput): string {
-  return `You are a strict deduplication checker for cron notifications.
+  return `You are a strict notification novelty classifier.
 
-Your job: determine whether the CANDIDATE MESSAGE describes genuinely new information that users have not already been notified about.
+Goal: decide whether the CANDIDATE MESSAGE should be treated as new information for this task.
 
-RULES:
-- If the candidate and any previous message describe the SAME CORE EVENT, classify as DUPLICATE (isNewInformation=false).
-- "Same core event" means same real-world incident/alert subject, even if the candidate adds new context, extra details, statistics, or stronger wording.
-- Added details about an already-known event are NOT new information.
-- Rephrasing, different tone, reordered wording, timestamp formatting, or style changes are NOT new information.
-- Status/progress chatter ("task done", "fetched X", "processed Y") is NOT new information.
-- Only classify as NEW when the core event itself is different (different incident/entity/location/outcome), not just richer description of the same incident.
-- When uncertain, choose isNewInformation=false.
+Return JSON fields:
+- reasoning: string
+- isNewInformation: boolean
 
-EXCEPTIONS - Always classify as NEW (isNewInformation=true):
-1) TIME-SENSITIVE DATA: Weather, stock prices, market data, system metrics, sensor readings, current values - the current value IS the information, regardless of task type
-2) PERIODIC DELIVERABLES: Tasks that explicitly deliver current state on schedule (e.g., "daily weather", "hourly metrics", "daily digest")
-3) STATE-CHANGING DATA: Numbers, measurements, counts, values that differ each run regardless of wording
-4) DATA WITH NUMERIC CHANGES: Any message containing new/different numbers, temperatures, prices, counts, percentages
+Decision precedence (highest to lowest):
+1) TASK MODE RULE
+   - If task mode indicates periodic deliverable (scheduled summaries/reports), treat each scheduled run as new by default.
+   - For periodic deliverables, classify as duplicate ONLY when candidate is a near-paraphrase of an already sent message for the SAME reporting window/run.
+2) EXPLICIT IDENTIFIER RULE
+   - If candidate and a previous message share the same explicit event identifier (e.g., same commit SHA / issue ID / alert ID), classify duplicate.
+3) CORE EVENT RULE (event-alert tasks)
+   - If candidate describes the same real-world incident already sent, classify duplicate.
+4) DELIVERY SAFETY RULE
+   - If uncertain, prefer delivery for periodic deliverables.
+   - If uncertain for event alerts, prefer duplicate suppression.
 
-ASK YOURSELF FIRST: "Does this message contain new numeric values, current readings, or data that changes per execution?" If yes, it's NEW - do NOT deduplicate.
+Important constraints:
+- Do NOT use wording/style overlap alone as evidence.
+- Do NOT infer from hidden metadata; you only have message text.
+- Do NOT treat “task completed”/operational chatter as new information.
 
-CORE EVENT TEST (apply only to event-based messages, not time-sensitive data):
-1) Identify the core event in the candidate.
-2) Check whether that same core event appears in any previous message.
-3) If yes, isNewInformation MUST be false.
-4) Only if core event is absent from all previous messages may isNewInformation be true.
+Periodic deliverable guidance:
+- If candidate contains a reporting window marker (date/day/time range) different from prior messages, classify NEW.
+- If window marker is absent, default to NEW unless it is clearly the same run retried.
 
-EXAMPLE A (duplicate -> false - event-based):
-Candidate: "ENERGY ALERT: Trump threatens Iranian power plants; US weighs Kharg Island seizure"
-Previous:  "ENERGY ALERT: Trump's ultimatum threatens Iranian power infrastructure; US considers seizing Kharg Island"
-Reason: same core event, different wording.
-
-EXAMPLE B (duplicate -> false - same event with extra context):
-Candidate: "ENERGY ALERT: Czech factory arson verified; IEA says crisis worse than 1970s"
-Previous:  "ENERGY ALERT: Czech thermal imaging factory arson attack confirmed"
-Reason: same core event (Czech factory arson). Added IEA context does not create a new event.
-
-EXAMPLE C (new -> true - different event):
-Candidate: "ENERGY ALERT: Slovenia starts fuel rationing at 50L/day"
-Previous:  "ENERGY ALERT: Trump threatens Iranian power plants; Kharg Island risk"
-Reason: different core event.
-
-EXAMPLE D (new -> true - time-sensitive data):
-Candidate: "Weather: 15°C, partly cloudy, Prague"
-Previous:  "Weather: 18°C, sunny, Prague"
-Reason: same location but different conditions - current weather value is the information.
-
-EXAMPLE E (new -> true - periodic with numeric changes):
-Candidate: "Daily summary: 5 articles processed, 2 new"
-Previous:  "Daily summary: 3 articles processed, 1 new"
-Reason: periodic report - each run delivers its own current snapshot with different numbers.
-
-OUTPUT REQUIREMENTS:
-1) In \`reasoning\`, first check if message contains time-sensitive data (numeric values, current readings).
-2) If time-sensitive, reasoning should explain what changed and why it's new information.
-3) If event-based, explicitly state the candidate core event and whether it already exists in previous messages.
+Event-alert guidance:
+- Same identifier or same incident entity+outcome => DUPLICATE.
+- Different identifier or different incident => NEW.
 
 ${input.taskContextBlock}
 
 Candidate message:
 ${input.candidateMessage}
 
-Top similar previous messages:
+Previous sent messages (same task, text only):
 ${input.similarMessagesBlock}`;
 }
 
@@ -311,12 +287,8 @@ export class CronMessageHistoryService {
       const candidateMessage: string = message.trim();
       const similarMessagesBlock: string = sameTaskSimilarMessages
         .map((item: ISimilarMessage, index: number): string => {
-          const score: number = Number(item.score.toFixed(4));
           return [
             `#${index + 1}`,
-            `score: ${score}`,
-            `taskId: ${item.taskId}`,
-            `sentAt: ${item.sentAt || "unknown"}`,
             `content: ${item.content}`,
           ].join("\n");
         })
@@ -391,34 +363,26 @@ export class CronMessageHistoryService {
       const model = AiProviderService.getInstance().getModel();
       const candidateMessage: string = message.trim();
 
-      const prompt: string = `You are a strict cron notification policy checker.
+      const prompt: string = `You are a strict dispatch-policy classifier for cron notifications.
 
-Decide whether the candidate message should be dispatched to the user based on task instructions.
+Return JSON fields:
+- reasoning: string
+- shouldDispatch: boolean
 
-Rule: If task instructions indicate silent/background execution or say not to send status/progress updates, then status/progress messages must NOT be dispatched.
+Decision precedence (highest to lowest):
+1) REQUIRED DELIVERABLE
+   - If candidate is the requested final deliverable content (actual report/summary/alert body), shouldDispatch=true.
+2) CRITICAL ACTIONABLE ALERT
+   - If candidate contains critical warning/error requiring user action, shouldDispatch=true.
+3) OPERATIONAL/COMPLETION CHATTER
+   - Pure status/progress/completion receipts (e.g., "task completed", "generated summary", "fetched X") shouldDispatch=false unless explicitly required by instructions.
+4) SILENT MODE
+   - If instructions require silence when no change/no alert, enforce suppression for non-deliverable chatter.
 
-Allow dispatch only when at least one is true:
-1) Task instructions explicitly require sending this kind of update, or
-2) Candidate message contains a critical error/warning requiring user action, or
-3) Candidate message is the requested final deliverable/output.
-
-Status/progress messages include: "task complete", "fetched X", "processed Y", "stored records", "silent operation complete", and similar operational summaries.
-
-If unsure, prefer shouldDispatch=false.
-
-EXAMPLE A (dispatch=false):
-Task instructions: "Run silently. Send only critical alerts."
-Candidate: "Task complete: fetched 16 articles, stored in DB."
-Reason: routine status update, not a critical alert, must be suppressed.
-
-EXAMPLE B (dispatch=true):
-Task instructions: "Run silently. Send only critical alerts."
-Candidate: "ENERGY ALERT: Strait disruption now impacting Czechia-relevant supply routes."
-Reason: this is a critical alert class explicitly allowed by instructions.
-
-OUTPUT REQUIREMENTS:
-1) In \`reasoning\`, cite which instruction lines allow or forbid this message type.
-2) Decide shouldDispatch accordingly.
+Important:
+- Distinguish "deliverable body" from "completion receipt".
+- A message that only says output was generated is NOT the deliverable.
+- If uncertain, prefer shouldDispatch=false for non-deliverable chatter.
 
 Task context:
 taskName: ${taskName ?? "unknown"}

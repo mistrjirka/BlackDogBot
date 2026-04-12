@@ -50,6 +50,7 @@ export async function executeCronTaskAsync(
     taskName: task.name,
     taskDescription: task.description,
     taskInstructions: task.instructions,
+    messageDedupEnabled: task.messageDedupEnabled,
   } as IExecutionContext;
   const taskIdProvider = (): string | null => task.taskId;
 

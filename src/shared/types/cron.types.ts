@@ -44,6 +44,7 @@ export interface IScheduledTask {
   messageHistory: ICronMessageHistory[];
   messageSummary: string | null;
   summaryGeneratedAt: string | null;
+  messageDedupEnabled: boolean;
 }
 
 export interface IExecutionContext {
@@ -51,6 +52,7 @@ export interface IExecutionContext {
   taskName?: string;
   taskDescription?: string;
   taskInstructions?: string;
+  messageDedupEnabled?: boolean;
 }
 
 //#endregion Cron Types

@@ -7,6 +7,14 @@ import { IExecutionContext } from "../shared/types/index.js";
 export type MessageSender = (message: string) => Promise<string | null>;
 export type TaskIdProvider = () => string | null;
 
+interface ISendMessageResult {
+  sent: boolean;
+  messageId: string | null;
+  error?: string;
+  suppressedReason?: string;
+  suppressedAt?: string;
+}
+
 export function createSendMessageTool(sender: MessageSender) {
   return tool({
     description:
@@ -42,7 +50,9 @@ export function createSendMessageToolWithHistory(
       message,
     }: {
       message: string;
-    }): Promise<{ sent: boolean; messageId: string | null; error?: string }> => {
+    }): Promise<ISendMessageResult> => {
+      const suppressedAt: string = new Date().toISOString();
+
       try {
         const taskId: string | null = taskIdProvider();
         const historyService: CronMessageHistoryService = CronMessageHistoryService.getInstance();
@@ -56,10 +66,12 @@ export function createSendMessageToolWithHistory(
 
         if (!dispatchPolicy.shouldDispatch) {
           context.toolCallHistory.push("send_message");
-          return { sent: true, messageId: null };
+          return { sent: false, messageId: null, suppressedReason: "policy", suppressedAt };
         }
 
-        if (taskId) {
+        const messageDedupEnabled: boolean = context.messageDedupEnabled !== false;
+
+        if (taskId && messageDedupEnabled) {
           const novelty = await historyService.checkMessageNoveltyAsync(
             taskId,
             message,
@@ -71,7 +83,7 @@ export function createSendMessageToolWithHistory(
           if (!novelty.isNewInformation) {
             context.toolCallHistory.push("send_message");
 
-            return { sent: true, messageId: null };
+            return { sent: false, messageId: null, suppressedReason: "duplicate", suppressedAt };
           }
         }
 

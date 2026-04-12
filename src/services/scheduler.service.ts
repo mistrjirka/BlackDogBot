@@ -325,7 +325,19 @@ export class SchedulerService {
         dbStatus: perTableResult.dbStatus,
       });
     }
-    perTableWriteToolNames = Object.keys(perTableResult.tools)
+
+    const perTableTools: Record<string, unknown> =
+      perTableResult.tools && typeof perTableResult.tools === "object"
+        ? perTableResult.tools as Record<string, unknown>
+        : {};
+
+    if (!perTableResult.tools || typeof perTableResult.tools !== "object") {
+      this._logger.warn("Per-table tool build returned unexpected shape, continuing with empty write tools", {
+        dbStatus: perTableResult.dbStatus,
+      });
+    }
+
+    perTableWriteToolNames = Object.keys(perTableTools)
       .filter((name: string): boolean => name.startsWith("write_table_"))
       .sort();
 
@@ -341,6 +353,8 @@ export class SchedulerService {
         // Migrate legacy interval/offset format to every/offsetFromDayStart format.
         const migrationResult = await this._migrateLegacyTimedScheduleFields(parsed, filePath);
         let task: IScheduledTask = scheduledTaskSchema.parse(migrationResult.task);
+        const hasMessageDedupEnabledField: boolean = this._hasOwnProperty(migrationResult.task, "messageDedupEnabled");
+        let shouldPersistTask: boolean = migrationResult.migrated || !hasMessageDedupEnabledField;
 
         if (migrationResult.migrated) {
           this._logger.info("Migrated legacy timed task schedule fields", {
@@ -351,17 +365,28 @@ export class SchedulerService {
 
         const writeToolsMigration = this._migrateLegacyWriteTools(task, perTableWriteToolNames);
         if (writeToolsMigration.changed) {
-          await fs.writeFile(filePath, JSON.stringify(writeToolsMigration.task, null, 2), "utf-8");
-
           this._logger.info("Migrated legacy write timed tools to per-table tools", {
             taskId: writeToolsMigration.task.taskId,
             name: writeToolsMigration.task.name,
             replacedTools: writeToolsMigration.replacedTools,
             addedWriteTableTools: writeToolsMigration.addedWriteTableTools,
           });
+          shouldPersistTask = true;
+        }
+
+        if (!hasMessageDedupEnabledField) {
+          this._logger.info("Backfilled timed task default fields", {
+            taskId: task.taskId,
+            name: task.name,
+            fields: ["messageDedupEnabled"],
+          });
         }
 
         const effectiveTask: IScheduledTask = writeToolsMigration.task;
+
+        if (shouldPersistTask) {
+          await fs.writeFile(filePath, JSON.stringify(effectiveTask, null, 2), "utf-8");
+        }
 
         // Check for deprecated tool names
         const deprecatedTools: string[] = effectiveTask.tools.filter(
@@ -437,6 +462,14 @@ export class SchedulerService {
       replacedTools,
       addedWriteTableTools: perTableWriteToolNames.length,
     };
+  }
+
+  private _hasOwnProperty(target: unknown, key: string): boolean {
+    if (!target || typeof target !== "object") {
+      return false;
+    }
+
+    return Object.prototype.hasOwnProperty.call(target, key);
   }
 
   private _parseLegacyEvery(intervalMs: number): ITimeParts {

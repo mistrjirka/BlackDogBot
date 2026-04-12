@@ -57,6 +57,7 @@ export function formatScheduledTask(task: IScheduledTask, timezone?: string): st
   lines.push(`Tools: [${task.tools.join(", ")}]`);
   lines.push(`Enabled: ${task.enabled}`);
   lines.push(`Notify User: ${task.notifyUser}`);
+  lines.push(`Message Dedup Enabled: ${task.messageDedupEnabled}`);
   lines.push("");
   lines.push("Instructions:");
   lines.push(task.instructions);

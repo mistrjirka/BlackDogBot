@@ -132,6 +132,9 @@ export const scheduledTaskSchema = z.object({
     .datetime()
     .nullable()
     .default(null),
+  messageDedupEnabled: z.boolean()
+    .default(true)
+    .describe("Whether message deduplication is enabled for this task"),
 });
 
 //#endregion Cron Schemas

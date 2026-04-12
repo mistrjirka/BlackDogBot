@@ -33,6 +33,7 @@ describe("cron-format", () => {
         messageHistory: [],
         messageSummary: null,
         summaryGeneratedAt: null,
+        messageDedupEnabled: true,
         ...overrides,
       };
     }
@@ -94,6 +95,18 @@ describe("cron-format", () => {
       const result = formatScheduledTask(task, "UTC");
       expect(result).toContain("once: Sat 2024-06-15 10:00:00 (UTC)");
       expect(result).not.toContain("offset");
+    });
+
+    it("should include messageDedupEnabled field in output", () => {
+      const task = createTask({ messageDedupEnabled: true });
+      const result = formatScheduledTask(task);
+      expect(result).toContain("Message Dedup Enabled: true");
+    });
+
+    it("should show messageDedupEnabled false when disabled", () => {
+      const task = createTask({ messageDedupEnabled: false });
+      const result = formatScheduledTask(task);
+      expect(result).toContain("Message Dedup Enabled: false");
     });
   });
 });

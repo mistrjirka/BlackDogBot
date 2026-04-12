@@ -46,6 +46,7 @@ const executeEditOnce = async (
     minute,
     notifyUser,
     enabled,
+    messageDedupEnabled,
   }: {
     taskId: string;
     name?: string;
@@ -58,6 +59,7 @@ const executeEditOnce = async (
     minute?: number;
     notifyUser?: boolean;
     enabled?: boolean;
+    messageDedupEnabled?: boolean;
   },
   _context: ToolExecuteContext,
 ): Promise<IEditOnceResult> => {
@@ -104,6 +106,7 @@ const executeEditOnce = async (
     if (tools !== undefined) patch.tools = tools;
     if (notifyUser !== undefined) patch.notifyUser = notifyUser;
     if (enabled !== undefined) patch.enabled = enabled;
+    if (messageDedupEnabled !== undefined) patch.messageDedupEnabled = messageDedupEnabled;
 
     if (year !== undefined || month !== undefined || day !== undefined || hour !== undefined || minute !== undefined) {
       const existingSchedule = existingTask.schedule;
