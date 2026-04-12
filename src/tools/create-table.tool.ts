@@ -42,7 +42,6 @@ export const createTableTool = tool({
     columns: z.infer<typeof columnDefinitionSchema>[];
   }): Promise<{
     success: boolean;
-    databaseName: string;
     tableName: string;
     columns: IColumnInfo[];
     inputSchema: IJsonSchema;
@@ -59,7 +58,6 @@ export const createTableTool = tool({
       if (hasDefaultValueInRawInput) {
         return {
           success: false,
-          databaseName: DEFAULT_DATABASE,
           tableName,
           columns: [],
           inputSchema: { type: "object", properties: {}, required: [] },
@@ -78,12 +76,11 @@ export const createTableTool = tool({
       if (tableExists) {
         return {
           success: false,
-          databaseName: DEFAULT_DATABASE,
           tableName,
           columns: [],
           inputSchema: { type: "object", properties: {}, required: [] },
           message: "",
-          error: `Table "${tableName}" already exists in database "${DEFAULT_DATABASE}".\nUse drop_table first if you want to recreate it.`,
+          error: `Table "${tableName}" already exists.\nUse drop_table first if you want to recreate it.`,
         };
       }
 
@@ -103,7 +100,6 @@ export const createTableTool = tool({
 
       return {
         success: true,
-        databaseName: DEFAULT_DATABASE,
         tableName,
         columns: columnInfos,
         inputSchema,
@@ -118,7 +114,6 @@ export const createTableTool = tool({
       logger.error("create-table tool error", { error: errorMsg });
       return {
         success: false,
-        databaseName: DEFAULT_DATABASE,
         tableName,
         columns: [],
         inputSchema: { type: "object", properties: {}, required: [] },

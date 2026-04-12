@@ -6,10 +6,7 @@ export async function validateDatabaseExistsAsync(databaseName: string): Promise
   const exists: boolean = await litesql.databaseExistsAsync(databaseName);
 
   if (!exists) {
-    const allDbs = await litesql.listDatabasesAsync();
-    const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
-    throw new Error(`Database "${databaseName}" does not exist.\nAvailable databases: ${available}`);
+    throw new Error("Internal database is not initialized.");
   }
 }
 

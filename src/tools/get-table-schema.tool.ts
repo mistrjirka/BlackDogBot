@@ -23,7 +23,6 @@ export const getTableSchemaTool = tool({
       .describe("Name of the table"),
   }),
   execute: async ({ tableName }: { tableName: string }): Promise<{
-    databaseName: string;
     tableName: string;
     columns: z.infer<typeof columnSchema>[];
     error?: string;
@@ -33,14 +32,10 @@ export const getTableSchemaTool = tool({
     try {
       const exists: boolean = await litesql.databaseExistsAsync(DEFAULT_DATABASE);
       if (!exists) {
-        const allDbs = await litesql.listDatabasesAsync();
-        const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
         return {
-          databaseName: DEFAULT_DATABASE,
           tableName,
           columns: [],
-          error: `Database "${DEFAULT_DATABASE}" does not exist.\nAvailable databases: ${available}`,
+          error: "Internal database is not initialized.",
         };
       }
 
@@ -50,17 +45,15 @@ export const getTableSchemaTool = tool({
         const available: string = tables.join(", ") || "(none)";
 
         return {
-          databaseName: DEFAULT_DATABASE,
           tableName,
           columns: [],
-          error: `Table "${tableName}" does not exist in database "${DEFAULT_DATABASE}".\nAvailable tables: ${available}`,
+          error: `Table "${tableName}" does not exist.\nAvailable tables: ${available}`,
         };
       }
 
       const schema = await litesql.getTableSchemaAsync(DEFAULT_DATABASE, tableName);
 
       return {
-        databaseName: DEFAULT_DATABASE,
         tableName: schema.name,
         columns: schema.columns,
       };
@@ -68,7 +61,6 @@ export const getTableSchemaTool = tool({
       const errorMsg = extractErrorMessage(err);
       logger.error("get-table-schema tool error", { error: errorMsg });
       return {
-        databaseName: DEFAULT_DATABASE,
         tableName,
         columns: [],
         error: errorMsg,

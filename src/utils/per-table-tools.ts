@@ -212,7 +212,6 @@ function _buildWriteToolForTable(
     }),
     execute: async (input: unknown): Promise<{
       success: boolean;
-      databaseName: string;
       tableName: string;
       insertedCount: number;
       lastRowId: number;
@@ -262,7 +261,6 @@ function _buildWriteToolForTable(
 
       return {
         success: true,
-        databaseName: DEFAULT_DATABASE,
         tableName,
         insertedCount: result.insertedCount,
         lastRowId: result.lastRowId,

@@ -41,7 +41,6 @@ export const readFromDatabaseTool = tool({
     limit?: number;
     columns?: string[];
   }): Promise<{
-    databaseName: string;
     tableName: string;
     rows: Record<string, unknown>[];
     totalCount: number;
@@ -49,12 +48,8 @@ export const readFromDatabaseTool = tool({
   }> => {
     const dbExists: boolean = await litesql.databaseExistsAsync(DEFAULT_DATABASE);
     if (!dbExists) {
-      const allDbs = await litesql.listDatabasesAsync();
-      const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
       throw new Error(
-        `Database "${DEFAULT_DATABASE}" does not exist.\n` +
-          `Available databases: ${available}`,
+        "Internal database is not initialized.",
       );
     }
 
@@ -77,7 +72,6 @@ export const readFromDatabaseTool = tool({
     });
 
     return {
-      databaseName: DEFAULT_DATABASE,
       tableName,
       rows: result.rows,
       totalCount: result.totalCount,

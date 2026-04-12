@@ -5,44 +5,35 @@ import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 
+const DEFAULT_DATABASE = "blackdog";
+
 export const listTablesTool = tool({
-  description: "List all tables in a specific database",
-  inputSchema: z.object({
-    databaseName: z.string()
-      .min(1)
-      .describe("Name of the database"),
-  }),
-  execute: async ({ databaseName }: { databaseName: string }): Promise<{
-    databaseName: string;
+  description: "List all tables in the internal database",
+  inputSchema: z.object({}).strict(),
+  execute: async (): Promise<{
     tables: string[];
     error?: string;
   }> => {
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const exists: boolean = await litesql.databaseExistsAsync(databaseName);
+      const exists: boolean = await litesql.databaseExistsAsync(DEFAULT_DATABASE);
       if (!exists) {
-        const allDbs = await litesql.listDatabasesAsync();
-        const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
         return {
-          databaseName,
           tables: [],
-          error: `Database "${databaseName}" does not exist.\nAvailable databases: ${available}`,
+          error: "Internal database is not initialized.",
         };
       }
 
-      const tables: string[] = await litesql.listTablesAsync(databaseName);
+      const tables: string[] = await litesql.listTablesAsync(DEFAULT_DATABASE);
 
       return {
-        databaseName,
         tables,
       };
     } catch (err: unknown) {
       const errorMsg = extractErrorMessage(err);
-      logger.error("list_tables tool error", { databaseName, error: errorMsg });
+      logger.error("list_tables tool error", { error: errorMsg });
       return {
-        databaseName,
         tables: [],
         error: errorMsg,
       };

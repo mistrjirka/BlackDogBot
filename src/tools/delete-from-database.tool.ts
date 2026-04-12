@@ -12,7 +12,6 @@ const DEFAULT_DATABASE = "blackdog";
 
 interface IDeleteFromDatabaseResult {
   success: boolean;
-  databaseName: string;
   tableName: string;
   deletedCount?: number;
   error?: string;
@@ -48,7 +47,6 @@ export const deleteFromDatabaseTool = tool({
       } catch (error: unknown) {
         return {
           success: false,
-          databaseName: DEFAULT_DATABASE,
           tableName,
           error: extractErrorMessage(error),
         };
@@ -59,7 +57,6 @@ export const deleteFromDatabaseTool = tool({
       } catch (error: unknown) {
         return {
           success: false,
-          databaseName: DEFAULT_DATABASE,
           tableName,
           error: extractErrorMessage(error),
         };
@@ -69,7 +66,6 @@ export const deleteFromDatabaseTool = tool({
 
       return {
         success: true,
-        databaseName: DEFAULT_DATABASE,
         tableName,
         deletedCount: result.deletedCount,
       };
@@ -78,7 +74,6 @@ export const deleteFromDatabaseTool = tool({
       logger.error("delete-from-database tool error", { error: errorMsg });
       return {
         success: false,
-        databaseName: DEFAULT_DATABASE,
         tableName,
         error: errorMsg,
       };

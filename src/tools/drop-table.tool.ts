@@ -16,7 +16,6 @@ export const dropTableTool = tool({
   }),
   execute: async ({ tableName }: { tableName: string }): Promise<{
     success: boolean;
-    databaseName: string;
     tableName: string;
     message: string;
     error?: string;
@@ -26,15 +25,11 @@ export const dropTableTool = tool({
     try {
       const exists: boolean = await litesql.databaseExistsAsync(DEFAULT_DATABASE);
       if (!exists) {
-        const allDbs = await litesql.listDatabasesAsync();
-        const available: string = allDbs.map((d) => d.name).join(", ") || "(none)";
-
         return {
           success: false,
-          databaseName: DEFAULT_DATABASE,
           tableName,
           message: "",
-          error: `Database "${DEFAULT_DATABASE}" does not exist.\nAvailable databases: ${available}`,
+          error: "Internal database is not initialized.",
         };
       }
 
@@ -42,16 +37,14 @@ export const dropTableTool = tool({
 
       return {
         success: true,
-        databaseName: DEFAULT_DATABASE,
         tableName,
-        message: `Table "${tableName}" dropped from database "${DEFAULT_DATABASE}"`,
+        message: `Table "${tableName}" dropped`,
       };
     } catch (err: unknown) {
       const errorMsg = extractErrorMessage(err);
       logger.error("drop-table tool error", { error: errorMsg });
       return {
         success: false,
-        databaseName: DEFAULT_DATABASE,
         tableName,
         message: "",
         error: errorMsg,

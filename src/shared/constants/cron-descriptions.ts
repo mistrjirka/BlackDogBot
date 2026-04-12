@@ -94,32 +94,29 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Args: url (string, required); selector (string, optional, CSS selector to extract specific content).",
 
   get_table_schema:
-    "Get the schema (columns and types) of a specific table in the default internal database. " +
+    "Get the schema (columns and types) of a specific table. " +
     "Args: tableName (string, required).",
 
   create_table:
-    "Create a new table in the default internal database. " +
+    "Create a new table. " +
     "Args: tableName (string, required); " +
     "columns (array of {name, type: TEXT|INTEGER|REAL|BLOB, primaryKey?, notNull?}, required).",
 
   drop_table:
-    "Drop (permanently delete) a table from the default internal database. " +
+    "Drop (permanently delete) a table. " +
     "Args: tableName (string, required).",
 
   read_from_database:
     "Read rows from a table with optional filtering, ordering, and column selection. " +
-    "Tables live in the default internal database. " +
     "Args: tableName (string, required); " +
     "where (string, optional SQL WHERE); orderBy (string, optional); limit (number, optional, default 100); columns (string[], optional).",
 
   "update_table_<tableName>":
     "Update rows in a specific table using the table-specific tool. " +
-    "Tables live in the default internal database. " +
     "Args: set (object of column-value pairs, required); where (string, required).",
 
   delete_from_database:
     "Delete rows from a table. Requires a WHERE clause for safety. " +
-    "Tables live in the default internal database. " +
     "Args: tableName (string, required); where (string, required).",
 
   call_skill:

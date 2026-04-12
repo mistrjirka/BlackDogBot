@@ -27,7 +27,6 @@ describe("create_table tool", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.databaseName).toBe("blackdog");
     expect(result.tableName).toBe("messages");
     expect(litesql.createDatabaseAsync).toHaveBeenCalledWith("blackdog");
     expect(litesql.createTableAsync).toHaveBeenCalledWith("blackdog", "messages", expect.any(Array));
