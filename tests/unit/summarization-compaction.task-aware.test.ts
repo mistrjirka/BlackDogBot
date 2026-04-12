@@ -325,4 +325,82 @@ describe("summarization compaction task-aware", () => {
     const resultText: string = JSON.stringify(result.messages);
     expect(resultText.includes("[COMPACTION COUNT: 2]")).toBe(true);
   });
+
+  it("skips latest-user stage when latest user is below 10% of context window", async () => {
+    const messages: ModelMessage[] = buildConversation();
+
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    } as unknown as LoggerService;
+
+    await compactMessagesSummaryOnlyAsync(
+      messages,
+      {} as unknown as LanguageModel,
+      logger,
+      Math.floor(countApprox(messages) * 0.25),
+      countApprox,
+      true,
+      {
+        contextWindow: 100000,
+        latestUserCompactionMinContextRatio: 0.1,
+      },
+    );
+
+    expect(logger.info).toHaveBeenCalledWith(
+      "Compaction stage skipped",
+      expect.objectContaining({
+        stage: "latest_user_message",
+        reason: "below_context_ratio_threshold",
+      }),
+    );
+  });
+
+  it("keeps latest-user stage eligible when latest user is at least 10% of context window", async () => {
+    const largeLatestUser: string = "LATEST USER: " + "Z".repeat(1800);
+    const messages: ModelMessage[] = [
+      { role: "system", content: "System anchor" } as ModelMessage,
+      { role: "user", content: "Old request " + "A".repeat(2000) } as ModelMessage,
+      { role: "assistant", content: [{ type: "text", text: "processing" }] } as ModelMessage,
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "t1", output: { type: "text", value: "tool output ".repeat(300) } }] } as ModelMessage,
+      { role: "user", content: largeLatestUser } as ModelMessage,
+      { role: "assistant", content: [{ type: "text", text: "working" }] } as ModelMessage,
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "t2", output: { type: "text", value: "latest tool output ".repeat(320) } }] } as ModelMessage,
+    ];
+
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    } as unknown as LoggerService;
+
+    await compactMessagesSummaryOnlyAsync(
+      messages,
+      {} as unknown as LanguageModel,
+      logger,
+      Math.floor(countApprox(messages) * 0.25),
+      countApprox,
+      true,
+      {
+        contextWindow: 200,
+        latestUserCompactionMinContextRatio: 0.1,
+      },
+    );
+
+    const skippedCalls: unknown[] = vi.mocked(logger.info).mock.calls
+      .filter((call: unknown[]) => call[0] === "Compaction stage skipped");
+
+    const skippedForRatio: boolean = skippedCalls.some((call: unknown[]) => {
+      const payload: unknown = call[1];
+      return typeof payload === "object"
+        && payload !== null
+        && "reason" in payload
+        && (payload as { reason?: string }).reason === "below_context_ratio_threshold";
+    });
+
+    expect(skippedForRatio).toBe(false);
+  });
 });

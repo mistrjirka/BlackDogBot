@@ -792,6 +792,9 @@ export abstract class BaseAgentBase {
             compactionTargetTokens,
             (msgs: ModelMessage[]): number => countTokens(msgs),
             forcedCompaction || aggressiveCompaction,
+            {
+              contextWindow: self._contextWindow,
+            },
           );
 
           logger.info("Summary-only compaction completed", {

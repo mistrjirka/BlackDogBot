@@ -38,6 +38,11 @@ interface ICompactionDagResult {
   maxLevelReached: TCompactionNode;
 }
 
+interface ICompactionOptions {
+  contextWindow?: number;
+  latestUserCompactionMinContextRatio?: number;
+}
+
 //#endregion Interfaces
 
 //#region Public functions
@@ -49,6 +54,7 @@ export async function compactMessagesSummaryOnlyAsync(
   targetTokenCount: number,
   countTokens: (msgs: ModelMessage[]) => number,
   forced: boolean = false,
+  options: ICompactionOptions = {},
 ): Promise<ISummarizationResult> {
   const originalTokens: number = countTokens(messages);
 
@@ -73,6 +79,7 @@ export async function compactMessagesSummaryOnlyAsync(
     targetTokenCount,
     countTokens,
     forced,
+    options,
   );
 
   let finalDagResult: ICompactionDagResult = dagResult;
@@ -120,6 +127,7 @@ async function _compactSinglePassAsync(
   logger: LoggerService,
   targetTokenCount: number,
   countTokens: (msgs: ModelMessage[]) => number,
+  options: ICompactionOptions,
 ): Promise<ModelMessage[]> {
   if (messages.length <= 2) {
     return messages;
@@ -143,6 +151,7 @@ async function _compactSinglePassAsync(
     logger,
     targetTokenCount,
     countTokens,
+    options,
   );
 
   if (countTokens(stageBResult) <= targetTokenCount) {
@@ -167,6 +176,7 @@ async function _compactViaDagAsync(
   targetTokenCount: number,
   countTokens: (msgs: ModelMessage[]) => number,
   forced: boolean,
+  options: ICompactionOptions,
 ): Promise<ICompactionDagResult> {
   let currentMessages: ModelMessage[] = messages;
   let node: TCompactionNode = messages.length <= 2 ? "L2" : "L1";
@@ -220,6 +230,7 @@ async function _compactViaDagAsync(
         logger,
         targetTokenCount,
         countTokens,
+        options,
       );
     } else if (node === "L2") {
       nextMessages = await _compactToolResultsIndividuallyAsync(
@@ -418,6 +429,7 @@ async function _compactLatestUserMessageAsync(
   logger: LoggerService,
   targetTokenCount: number,
   countTokens: (msgs: ModelMessage[]) => number,
+  options: ICompactionOptions,
 ): Promise<ModelMessage[]> {
   const lastUserIndex: number = _findLastUserIndex(messages);
 
@@ -426,6 +438,33 @@ async function _compactLatestUserMessageAsync(
   }
 
   const lastUserMessage: ModelMessage = messages[lastUserIndex];
+  const originalTokens: number = countTokens([lastUserMessage]);
+  const contextWindow: number | undefined = options.contextWindow;
+  const minContextRatio: number = options.latestUserCompactionMinContextRatio ?? 0.10;
+  const hasValidContextWindow: boolean =
+    typeof contextWindow === "number"
+    && Number.isFinite(contextWindow)
+    && contextWindow > 0;
+  const hasValidRatio: boolean = Number.isFinite(minContextRatio) && minContextRatio > 0 && minContextRatio <= 1;
+
+  if (hasValidContextWindow && hasValidRatio) {
+    const normalizedContextWindow: number = contextWindow as number;
+    const minRequiredTokens: number = Math.ceil(normalizedContextWindow * minContextRatio);
+    if (originalTokens < minRequiredTokens) {
+      logger.info("Compaction stage skipped", {
+        stage: "latest_user_message",
+        reason: "below_context_ratio_threshold",
+        originalTokens,
+        minRequiredTokens,
+        contextWindow: normalizedContextWindow,
+        minContextRatio,
+        lastUserIndex,
+      });
+
+      return messages;
+    }
+  }
+
   const userText: string = _extractTextContent(lastUserMessage).trim();
   if (userText.length === 0) {
     return messages;
@@ -460,7 +499,6 @@ async function _compactLatestUserMessageAsync(
   };
 
   const replacementTokens: number = countTokens([replacement]);
-  const originalTokens: number = countTokens([lastUserMessage]);
   if (replacementTokens >= originalTokens) {
     logger.info("Compaction stage skipped", {
       stage: "latest_user_message",

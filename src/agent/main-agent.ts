@@ -783,6 +783,7 @@ export class MainAgent extends BaseAgentBase {
                 compactionModel,
                 this._logger,
                 this._compactionTokenThreshold,
+                this._contextWindow,
               );
 
               this._logger.info("Tool rebuild requested, terminating current run and restarting", {
@@ -809,6 +810,7 @@ export class MainAgent extends BaseAgentBase {
                 compactionModel,
                 this._logger,
                 this._compactionTokenThreshold,
+                this._contextWindow,
               );
 
               result = { text, stepsCount };
@@ -845,6 +847,7 @@ export class MainAgent extends BaseAgentBase {
               compactionModel,
               this._logger,
               this._compactionTokenThreshold,
+              this._contextWindow,
             );
 
             this._logger.error("Model returned empty response after all retries", { chatId, attempts: attempt });
@@ -869,6 +872,7 @@ export class MainAgent extends BaseAgentBase {
                 compactionModel,
                 this._logger,
                 this._compactionTokenThreshold,
+                this._contextWindow,
               );
               const afterSessionCompactionTokens: number = countTokens(session.messages);
 
@@ -1051,6 +1055,7 @@ export class MainAgent extends BaseAgentBase {
       compactionModel,
       this._logger,
       this._compactionTokenThreshold,
+      this._contextWindow,
     );
 
     const nextTokens: number = countTokens(session.messages);
@@ -1558,6 +1563,7 @@ async function _compactSessionMessagesAsync(
   model: LanguageModel,
   logger: LoggerService,
   compactionThreshold: number,
+  contextWindow: number,
 ): Promise<ModelMessage[]> {
   const targetTokens: number = Math.max(
     1200,
@@ -1575,6 +1581,10 @@ async function _compactSessionMessagesAsync(
     logger,
     targetTokens,
     (msgs: ModelMessage[]): number => countTokens(msgs),
+    false,
+    {
+      contextWindow,
+    },
   );
 
   return compactionResult.messages;
