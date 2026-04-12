@@ -974,4 +974,7 @@ export const TOOL_PREREQUISITES: Record<string, { tool: string; args: Record<str
   edit_instructions: [
     { tool: "get_timed", args: { taskId: TASK_ID_PLACEHOLDER } },
   ],
+  run_timed: [
+    { tool: "get_timed", args: { taskId: TASK_ID_PLACEHOLDER } },
+  ],
 };

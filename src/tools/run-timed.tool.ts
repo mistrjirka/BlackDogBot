@@ -7,6 +7,8 @@ import type { IExecutionContext } from "../shared/types/index.js";
 import { summarizeJson } from "../utils/json-summarize.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { generateId } from "../utils/id.js";
+import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
+import { TOOL_PREREQUISITES } from "../shared/schemas/tool-schemas.js";
 
 //#region Interfaces
 
@@ -48,6 +50,7 @@ class SimpleTraceCollector implements ITraceCollector {
 export const runTimedTool = tool({
   description:
     "Execute a scheduled task immediately. " +
+    "IMPORTANT: You MUST call 'get_timed' first for the same taskId; this pre-check is enforced. " +
     "**Note:** Users may refer to these as 'cron', 'timed', 'scheduled', or 'task'. The system determines intent from context. " +
     "**Call ONCE per task** - it runs to completion. " +
     "Returns tool call trace and messages. " +
@@ -72,101 +75,106 @@ export const runTimedTool = tool({
       .default(false)
       .describe("If true, send messages to notification channels. If false (default), only show in output (dry-run)"),
   }),
-  execute: async (input: IRunTimedInput): Promise<IRunTimedResult> => {
-    const logger = LoggerService.getInstance();
-    const scheduler = SchedulerService.getInstance();
-    const cronAgent = CronAgent.getInstance();
+  execute: createToolWithPrerequisites(
+    "run_timed",
+    TOOL_PREREQUISITES["run_timed"] || [],
+    async (input: IRunTimedInput, _context: ToolExecuteContext): Promise<IRunTimedResult> => {
+      const logger = LoggerService.getInstance();
+      const scheduler = SchedulerService.getInstance();
+      const cronAgent = CronAgent.getInstance();
 
-    try {
-      const task = await scheduler.getTaskAsync(input.taskId);
-      if (!task) {
+      try {
+        const task = await scheduler.getTaskAsync(input.taskId);
+        if (!task) {
+          return {
+            success: false,
+            markdown: `## Task Not Found\n\nTask with ID \`${input.taskId}\` does not exist.`,
+          };
+        }
+
+        const traceCollector = new SimpleTraceCollector();
+        const sentMessages: ISentMessage[] = [];
+        const executionContext: IExecutionContext = {
+          toolCallHistory: [],
+          taskName: task.name,
+          taskDescription: task.description,
+          taskInstructions: task.instructions,
+          messageDedupEnabled: task.messageDedupEnabled,
+        };
+
+        const taskIdProvider = (): string | null => task.taskId;
+
+        let messageSender: (message: string) => Promise<string | null>;
+
+        if (!input.sendToUser) {
+          messageSender = async (message: string): Promise<string | null> => {
+            sentMessages.push({
+              text: message,
+              timestamp: new Date().toISOString(),
+            });
+            return generateId();
+          };
+        } else {
+          const { MessagingService } = await import("../services/messaging.service.js");
+          const { ChannelRegistryService } = await import("../services/channel-registry.service.js");
+
+          const messagingService = MessagingService.getInstance();
+          const channelRegistry = ChannelRegistryService.getInstance();
+          const notificationChannels = channelRegistry.getNotificationChannels();
+
+          messageSender = async (message: string): Promise<string | null> => {
+            for (const channel of notificationChannels) {
+              try {
+                if (!messagingService.hasAdapter(channel.platform)) {
+                  continue;
+                }
+                const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
+                await sender(message);
+              } catch (sendError) {
+                logger.error(`Failed to send message to ${channel.platform}:${channel.channelId}`, {
+                  error: extractErrorMessage(sendError),
+                });
+              }
+            }
+            return generateId();
+          };
+        }
+
+        const result = await cronAgent.executeTaskAsync(
+          task,
+          messageSender,
+          taskIdProvider,
+          executionContext,
+          traceCollector,
+        );
+
+        const traces = traceCollector.getTraces();
+        const sendMode = input.sendToUser === true;
+        const markdown = formatResultMarkdown(
+          task.name,
+          task.taskId,
+          result.text,
+          traces,
+          sentMessages,
+          sendMode,
+        );
+
+        return {
+          success: true,
+          markdown,
+        };
+      } catch (error: unknown) {
+        const errorMessage = extractErrorMessage(error);
+        logger.error(`[run_timed] Failed to execute task`, { error: errorMessage });
+
         return {
           success: false,
-          markdown: `## Task Not Found\n\nTask with ID \`${input.taskId}\` does not exist.`,
+          markdown: `## Error\n\nFailed to execute task: ${errorMessage}`,
         };
       }
-
-      const traceCollector = new SimpleTraceCollector();
-      const sentMessages: ISentMessage[] = [];
-      const executionContext: IExecutionContext = {
-        toolCallHistory: [],
-        taskName: task.name,
-        taskDescription: task.description,
-        taskInstructions: task.instructions,
-        messageDedupEnabled: task.messageDedupEnabled,
-      };
-
-      const taskIdProvider = (): string | null => task.taskId;
-
-      let messageSender: (message: string) => Promise<string | null>;
-
-      if (!input.sendToUser) {
-        messageSender = async (message: string): Promise<string | null> => {
-          sentMessages.push({
-            text: message,
-            timestamp: new Date().toISOString(),
-          });
-          return generateId();
-        };
-      } else {
-        const { MessagingService } = await import("../services/messaging.service.js");
-        const { ChannelRegistryService } = await import("../services/channel-registry.service.js");
-
-        const messagingService = MessagingService.getInstance();
-        const channelRegistry = ChannelRegistryService.getInstance();
-        const notificationChannels = channelRegistry.getNotificationChannels();
-
-        messageSender = async (message: string): Promise<string | null> => {
-          for (const channel of notificationChannels) {
-            try {
-              if (!messagingService.hasAdapter(channel.platform)) {
-                continue;
-              }
-              const sender = messagingService.createSenderForChat(channel.platform, channel.channelId);
-              await sender(message);
-            } catch (sendError) {
-              logger.error(`Failed to send message to ${channel.platform}:${channel.channelId}`, {
-                error: extractErrorMessage(sendError),
-              });
-            }
-          }
-          return generateId();
-        };
-      }
-
-      const result = await cronAgent.executeTaskAsync(
-        task,
-        messageSender,
-        taskIdProvider,
-        executionContext,
-        traceCollector,
-      );
-
-      const traces = traceCollector.getTraces();
-      const sendMode = input.sendToUser === true;
-      const markdown = formatResultMarkdown(
-        task.name,
-        task.taskId,
-        result.text,
-        traces,
-        sentMessages,
-        sendMode,
-      );
-
-      return {
-        success: true,
-        markdown,
-      };
-    } catch (error: unknown) {
-      const errorMessage = extractErrorMessage(error);
-      logger.error(`[run_timed] Failed to execute task`, { error: errorMessage });
-
-      return {
-        success: false,
-        markdown: `## Error\n\nFailed to execute task: ${errorMessage}`,
-      };
-    }
   },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wrapper type is compatible at runtime
+  ) as any,
 });
 
 //#endregion Tool

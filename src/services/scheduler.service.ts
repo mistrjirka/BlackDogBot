@@ -12,14 +12,12 @@ import {
 import { LoggerService } from "./logger.service.js";
 import { ConfigService } from "./config.service.js";
 import { extractErrorMessage } from "../utils/error.js";
-import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 import type { ITimeParts } from "../shared/types/index.js";
 
 //#region Const
 
 const DEFAULT_MAX_PARALLEL_CRONS: number = 1;
 const DEFAULT_CRON_QUEUE_SIZE: number = 3;
-const LEGACY_WRITE_TOOL_NAMES: readonly string[] = ["write_to_database", "write_database"];
 
 //#endregion Const
 
@@ -28,13 +26,6 @@ const LEGACY_WRITE_TOOL_NAMES: readonly string[] = ["write_to_database", "write_
 interface IQueuedTask {
   task: IScheduledTask;
   executeCallback: () => Promise<void>;
-}
-
-interface ILegacyWriteToolMigrationResult {
-  task: IScheduledTask;
-  changed: boolean;
-  replacedTools: string[];
-  addedWriteTableTools: number;
 }
 
 interface IIntervalScheduleLegacy {
@@ -316,31 +307,6 @@ export class SchedulerService {
       entry.endsWith(".json"),
     );
 
-    // Build per-table write tool names once to migrate legacy generic write tools
-    // in existing persisted timed tasks.
-    let perTableWriteToolNames: string[] = [];
-    const perTableResult = await buildPerTableToolsAsync();
-    if (perTableResult.dbStatus === "corrupt") {
-      this._logger.warn("Database corrupt - per-table tools unavailable for timed migration", {
-        dbStatus: perTableResult.dbStatus,
-      });
-    }
-
-    const perTableTools: Record<string, unknown> =
-      perTableResult.tools && typeof perTableResult.tools === "object"
-        ? perTableResult.tools as Record<string, unknown>
-        : {};
-
-    if (!perTableResult.tools || typeof perTableResult.tools !== "object") {
-      this._logger.warn("Per-table tool build returned unexpected shape, continuing with empty write tools", {
-        dbStatus: perTableResult.dbStatus,
-      });
-    }
-
-    perTableWriteToolNames = Object.keys(perTableTools)
-      .filter((name: string): boolean => name.startsWith("write_table_"))
-      .sort();
-
     const migratedTasks: string[] = [];
 
     for (const fileName of jsonFiles) {
@@ -363,17 +329,6 @@ export class SchedulerService {
           });
         }
 
-        const writeToolsMigration = this._migrateLegacyWriteTools(task, perTableWriteToolNames);
-        if (writeToolsMigration.changed) {
-          this._logger.info("Migrated legacy write timed tools to per-table tools", {
-            taskId: writeToolsMigration.task.taskId,
-            name: writeToolsMigration.task.name,
-            replacedTools: writeToolsMigration.replacedTools,
-            addedWriteTableTools: writeToolsMigration.addedWriteTableTools,
-          });
-          shouldPersistTask = true;
-        }
-
         if (!hasMessageDedupEnabledField) {
           this._logger.info("Backfilled timed task default fields", {
             taskId: task.taskId,
@@ -382,7 +337,7 @@ export class SchedulerService {
           });
         }
 
-        const effectiveTask: IScheduledTask = writeToolsMigration.task;
+        const effectiveTask: IScheduledTask = task;
 
         if (shouldPersistTask) {
           await fs.writeFile(filePath, JSON.stringify(effectiveTask, null, 2), "utf-8");
@@ -411,57 +366,6 @@ export class SchedulerService {
         { tasks: migratedTasks },
       );
     }
-  }
-
-  private _migrateLegacyWriteTools(
-    task: IScheduledTask,
-    perTableWriteToolNames: readonly string[],
-  ): ILegacyWriteToolMigrationResult {
-    const replacedTools: string[] = task.tools.filter((name: string): boolean =>
-      LEGACY_WRITE_TOOL_NAMES.includes(name),
-    );
-
-    if (replacedTools.length === 0) {
-      return {
-        task,
-        changed: false,
-        replacedTools: [],
-        addedWriteTableTools: 0,
-      };
-    }
-
-    if (perTableWriteToolNames.length === 0) {
-      this._logger.warn("Legacy write timed tools detected but no write_table_* tools exist yet", {
-        taskId: task.taskId,
-        name: task.name,
-        replacedTools,
-      });
-
-      return {
-        task,
-        changed: false,
-        replacedTools,
-        addedWriteTableTools: 0,
-      };
-    }
-
-    const withoutLegacy: string[] = task.tools.filter((name: string): boolean =>
-      !LEGACY_WRITE_TOOL_NAMES.includes(name),
-    );
-    const mergedTools: string[] = Array.from(new Set([...withoutLegacy, ...perTableWriteToolNames]));
-
-    const migratedTask: IScheduledTask = {
-      ...task,
-      tools: mergedTools,
-      updatedAt: new Date().toISOString(),
-    };
-
-    return {
-      task: migratedTask,
-      changed: true,
-      replacedTools,
-      addedWriteTableTools: perTableWriteToolNames.length,
-    };
   }
 
   private _hasOwnProperty(target: unknown, key: string): boolean {

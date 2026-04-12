@@ -8,8 +8,10 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Args: thought (string, required).",
 
   run_cmd:
-    "Execute a shell command and return stdout, stderr, and exit code. " +
-    "Args: command (string, required); cwd (string, default ~/.blackdogbot); timeout (ms, default 30000).",
+    "Execute a shell command and return a structured result object. " +
+    "Modes: foreground waits for terminal status (or awaiting_input); background returns immediately with status=running and handleId for follow-up tools. " +
+    "Output fields include: status, stdout, stderr, exitCode, handleId, timedOut, durationMs, signal, deterministic, error. stdout/stderr are separate channels and both matter for diagnostics. " +
+    "Args: command (string, required); cwd (string, default ~/.blackdogbot); timeout (ms, default 30000); mode (foreground|background, default foreground); deterministicInputDetection (boolean, default true).",
 
   run_cmd_input:
     "Send input to a running command waiting for stdin. " +
@@ -46,7 +48,7 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
   send_message:
     "Send a Telegram message directly to the user who owns this agent. " +
     "No chat ID, token, or destination config is needed — it always reaches the correct user automatically. " +
-    "For scheduled tasks, two checks run before sending: (1) dispatch policy evaluates whether the message is a required deliverable vs. operational chatter (always runs), and (2) if dispatch policy says to send, novelty checking suppresses near-duplicates by comparing against previously sent messages via vector similarity + LLM reasoning. " +
+    "For scheduled tasks, two checks run before sending: (1) dispatch policy evaluates whether the message is a required deliverable vs. operational chatter (always runs), and (2) if dispatch policy says to send, novelty checking compares the candidate message with previously sent messages from the same task and uses LLM judgment to decide whether it is new enough to send. " +
     "Set messageDedupEnabled=false on the task to skip novelty suppression for periodic deliverables; dispatch policy still applies. " +
     "Args: message (string, required).",
 
