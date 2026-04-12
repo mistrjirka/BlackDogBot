@@ -829,11 +829,13 @@ export abstract class BaseAgentBase {
             postCompactionEstimate?.estimatedTokens ??
             countTokens(compactionResult.messages);
           self._lastPrepareStepEstimatedTokens = postCompactionRawTokenCount;
+          self._rawEstimatedInputTokens = postCompactionRawTokenCount;
 
           const postCompactionTokenCount: number = Math.ceil(
             postCompactionRawTokenCount * self._tokenEstimateCorrectionFactor,
           );
           self._totalInputTokens = postCompactionTokenCount;
+          self._estimatedInputTokens = postCompactionTokenCount;
           statusService.setContextTokensWithThreshold(
             postCompactionTokenCount,
             compactionTokenThreshold,
