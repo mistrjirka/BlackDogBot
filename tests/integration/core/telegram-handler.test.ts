@@ -350,6 +350,39 @@ describe("TelegramHandler", () => {
     );
   }, 600000);
 
+  it("should split long responses without cropping and include split notice", async () => {
+    const mainAgent: MainAgent = MainAgent.getInstance();
+
+    vi.spyOn(mainAgent, "initializeForChatAsync").mockResolvedValue(undefined);
+
+    const tailMarker: string = "TAIL_MARKER_123";
+    const longResponse: string = "A".repeat(7000) + tailMarker;
+    vi.spyOn(mainAgent, "processMessageForChatAsync").mockResolvedValue({
+      text: longResponse,
+      stepsCount: 1,
+    });
+
+    const replySpy: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue({ message_id: 6001 });
+    const ctx: Context = makeCtx({
+      chatId: 100,
+      text: "send a very long answer",
+      replyImpl: replySpy,
+    });
+    (ctx as unknown as { api?: unknown }).api = {
+      editMessageText: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const handler: TelegramHandler = TelegramHandler.getInstance();
+    await handler.handleMessageAsync(ctx);
+
+    const sentTexts: string[] = replySpy.mock.calls.map((call: unknown[]): string => String(call[0]));
+    const mergedOutput: string = sentTexts.join("\n");
+
+    expect(mergedOutput).toContain("Response split into multiple messages");
+    expect(mergedOutput).toContain(tailMarker);
+    expect(mergedOutput).not.toContain("Response truncated (");
+  }, 600000);
+
   it("should escape HTML in progress trace tool calls", async () => {
     const mainAgent: MainAgent = MainAgent.getInstance();
 

@@ -379,7 +379,7 @@ export class TelegramHandler {
             });
           }
 
-          const htmlText: string = markdownToTelegramHtml(_truncateResponse(result.text));
+          const htmlText: string = markdownToTelegramHtml(_withSplitNotice(result.text));
           const chunks: string[] = splitTelegramMessage(htmlText);
           for (let i: number = 0; i < chunks.length; i++) {
             const options: Record<string, unknown> = {
@@ -1222,13 +1222,13 @@ function _formatToolCall(name: string, input: Record<string, unknown>): string {
     : `${escapedName}${formattedArgs}`;
 }
 
-function _truncateResponse(text: string): string {
+function _withSplitNotice(text: string): string {
   if (text.length <= RESPONSE_TRUNCATE_LENGTH) {
     return text;
   }
-  const truncated: string = text.slice(0, RESPONSE_TRUNCATE_LENGTH);
-  const notice: string = `\n\n<i>⚠️ Response truncated (${text.length} → ${RESPONSE_TRUNCATE_LENGTH} chars)</i>`;
-  return truncated + notice;
+
+  const notice: string = `\n\n<i>⚠️ Response split into multiple messages (${text.length} chars)</i>`;
+  return text + notice;
 }
 
 function _buildCancelResponseText(
