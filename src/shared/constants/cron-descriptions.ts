@@ -129,4 +129,8 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
   get_skill_file:
     "Read a file from a skill's directory. " +
     "Args: skillName (string, required); filePath (string, default 'SKILL.md').",
+
+  search_timed:
+    "Search timed/scheduled tasks using fuzzy matching. Searches across task names, descriptions, instructions, task IDs, and tools. " +
+    "Args: query (string, required); enabledOnly (boolean, default false); limit (number, default 5, max 20); threshold (number, default 0.4).",
 };

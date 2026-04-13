@@ -208,6 +208,18 @@ describe("PromptService", () => {
     expect(content).toContain("get_timed");
   });
 
+  it("should include search_timed-first workflow guidance for timed task lookup", async () => {
+    const service: PromptService = PromptService.getInstance();
+
+    await service.initializeAsync();
+
+    const content: string = await service.getPromptAsync("main-agent");
+
+    expect(content).toContain("search_timed");
+    expect(content).toContain("get_timed");
+    expect(content).toContain("edit_instructions");
+  });
+
   it("should include cron-agent note about messageDedupEnabled behavior", async () => {
     const service: PromptService = PromptService.getInstance();
 

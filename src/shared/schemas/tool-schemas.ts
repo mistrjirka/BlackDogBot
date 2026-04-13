@@ -343,6 +343,7 @@ export const CRON_VALID_TOOL_NAMES = [
   "list_timed",
   "fetch_rss",
   "searxng",
+  "search_timed",
   "crawl4ai",
   "list_tables",
   "get_table_schema",
@@ -930,6 +931,63 @@ export const searxngToolOutputSchema = z.object({
 });
 
 //#endregion Searxng Tool
+
+//#region Search Timed Tool
+
+export const searchTimedToolInputSchema = z.object({
+  query: z.string()
+    .min(1)
+    .trim()
+    .describe("The search query"),
+  enabledOnly: z.boolean()
+    .default(false)
+    .describe("Only search enabled tasks"),
+  limit: z.number()
+    .int()
+    .positive()
+    .min(1)
+    .max(20)
+    .default(5)
+    .describe("Maximum number of results to return"),
+  threshold: z.number()
+    .min(0)
+    .max(1)
+    .default(0.4)
+    .describe("Fuzzy match threshold (0-1, lower is stricter)"),
+});
+
+export const searchTimedToolOutputSchema = z.object({
+  query: z.string(),
+  totalMatches: z.number()
+    .int()
+    .nonnegative(),
+  matches: z.object({
+    taskId: z.string(),
+    name: z.string(),
+    description: z.string(),
+    enabled: z.boolean(),
+    schedule: z.object({
+      type: z.string(),
+      every: z.object({
+        hours: z.number(),
+        minutes: z.number(),
+      }).optional(),
+      offsetFromDayStart: z.object({
+        hours: z.number(),
+        minutes: z.number(),
+      }).optional(),
+      runAt: z.string().optional(),
+      timezone: z.string().optional(),
+    }),
+    score: z.number(),
+    matchedFields: z.string().array(),
+    preview: z.object({
+      instructions: z.string(),
+    }),
+  }).array(),
+});
+
+//#endregion Search Timed Tool
 
 //#region Crawl4ai Tool
 
