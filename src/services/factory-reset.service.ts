@@ -5,7 +5,26 @@ import { SchedulerService } from "./scheduler.service.js";
 import { PromptService } from "./prompt.service.js";
 import { MainAgent } from "../agent/main-agent.js";
 import { McpService } from "./mcp.service.js";
-import { getRssStateDir, getTimedDir, getSkillsDir, getLogsDir, getWorkspaceDir, getDatabasesDir, getKnowledgeDir, getTelegramChatsFilePath, getSessionsDir, getMcpServersFilePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
+import {
+  getRssStateDir,
+  getTimedDir,
+  getSkillsDir,
+  getLogsDir,
+  getWorkspaceDir,
+  getDatabasesDir,
+  getKnowledgeDir,
+  getTelegramChatsFilePath,
+  getSessionsDir,
+  getMcpServersFilePath,
+  getJobsDir,
+  getUploadsDir,
+  getCacheDir,
+  getChannelsFilePath,
+  getBrainInterfaceTokenFilePath,
+  getOldDatumBackupDir,
+  getCommitHashPath,
+  ensureDirectoryExistsAsync,
+} from "../utils/paths.js";
 import { extractErrorMessage } from "../utils/error.js";
 
 //#region Interfaces
@@ -91,9 +110,43 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
     await fs.rm(mcpConfigPath, { recursive: true, force: true });
   });
 
+  await _safeStepAsync("Delete channels config", errors, async (): Promise<void> => {
+    const channelsFilePath: string = getChannelsFilePath();
+    await fs.rm(channelsFilePath, { recursive: true, force: true });
+  });
+
+  await _safeStepAsync("Delete brain interface token", errors, async (): Promise<void> => {
+    const tokenFilePath: string = getBrainInterfaceTokenFilePath();
+    await fs.rm(tokenFilePath, { recursive: true, force: true });
+  });
+
+  await _safeStepAsync("Delete prompt commit hash", errors, async (): Promise<void> => {
+    const commitHashPath: string = getCommitHashPath();
+    await fs.rm(commitHashPath, { recursive: true, force: true });
+  });
+
+  await _safeStepAsync("Wipe prompt backups", errors, async (): Promise<void> => {
+    await _wipeDirAsync(getOldDatumBackupDir());
+  });
+
   // 7. Wipe workspace
   await _safeStepAsync("Wipe workspace", errors, async (): Promise<void> => {
     await _wipeDirAsync(getWorkspaceDir());
+  });
+
+  // 7b. Wipe jobs
+  await _safeStepAsync("Wipe jobs", errors, async (): Promise<void> => {
+    await _wipeDirAsync(getJobsDir());
+  });
+
+  // 7c. Wipe uploads
+  await _safeStepAsync("Wipe uploads", errors, async (): Promise<void> => {
+    await _wipeDirAsync(getUploadsDir());
+  });
+
+  // 7d. Wipe cache
+  await _safeStepAsync("Wipe cache", errors, async (): Promise<void> => {
+    await _wipeDirAsync(getCacheDir());
   });
 
   // 8. Wipe logs

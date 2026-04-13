@@ -26,6 +26,9 @@ describe("factoryResetAsync", () => {
 
     await fs.mkdir(path.join(blackdogbotDir, "timed"), { recursive: true });
     await fs.mkdir(path.join(blackdogbotDir, "workspace"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "jobs"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "cache"), { recursive: true });
+    await fs.mkdir(path.join(blackdogbotDir, "uploads"), { recursive: true });
     await fs.mkdir(path.join(blackdogbotDir, "databases"), { recursive: true });
     await fs.mkdir(path.join(blackdogbotDir, "rss-state"), { recursive: true });
     await fs.mkdir(path.join(blackdogbotDir, "logs"), { recursive: true });
@@ -35,11 +38,19 @@ describe("factoryResetAsync", () => {
 
     await fs.writeFile(path.join(blackdogbotDir, "timed", "test-task.json"), JSON.stringify({ taskId: "test", name: "Test" }));
     await fs.writeFile(path.join(blackdogbotDir, "workspace", "testfile.txt"), "hello");
+    await fs.writeFile(path.join(blackdogbotDir, "jobs", "test-job.json"), JSON.stringify({ id: "job-1" }));
+    await fs.writeFile(path.join(blackdogbotDir, "cache", "capabilities.json"), "{}");
+    await fs.writeFile(path.join(blackdogbotDir, "uploads", "uploaded.txt"), "payload");
     await fs.writeFile(path.join(blackdogbotDir, "databases", "test.db"), "");
     await fs.writeFile(path.join(blackdogbotDir, "rss-state", "somehash.json"), "{}");
     await fs.writeFile(path.join(blackdogbotDir, "logs", "blackdogbot-2026-01-01.log"), "log entry");
     await fs.writeFile(path.join(blackdogbotDir, "knowledge", "lancedb", "knowledge.lance", "data", "test.lance"), "data");
     await fs.writeFile(path.join(blackdogbotDir, "known-telegram-chats.json"), '["123456"]');
+    await fs.writeFile(path.join(blackdogbotDir, "channels.yaml"), "channels: []\n");
+    await fs.writeFile(path.join(blackdogbotDir, "brain-interface.token"), "test-token");
+    await fs.writeFile(path.join(blackdogbotDir, ".commit-hash"), "abcdef");
+    await fs.mkdir(path.join(blackdogbotDir, ".old.datumofthesave"), { recursive: true });
+    await fs.writeFile(path.join(blackdogbotDir, ".old.datumofthesave", "._saved_at_123_prompt.md"), "backup");
     await fs.writeFile(path.join(blackdogbotDir, "prompts", "system-prompt.md"), "default prompt");
     await fs.writeFile(path.join(blackdogbotDir, "skills", "test-skill", "state.json"), "{}");
     await fs.writeFile(path.join(blackdogbotDir, "skills", "test-skill", "SKILL.md"), "# Test Skill");
@@ -91,6 +102,30 @@ describe("factoryResetAsync", () => {
     expect(files.length).toBe(0);
   });
 
+  it("should wipe the jobs directory", async () => {
+    await factoryResetAsync();
+
+    const jobsDir: string = path.join(tempDir, ".blackdogbot", "jobs");
+    const files: string[] = await fs.readdir(jobsDir);
+    expect(files.length).toBe(0);
+  });
+
+  it("should wipe the uploads directory", async () => {
+    await factoryResetAsync();
+
+    const uploadsDir: string = path.join(tempDir, ".blackdogbot", "uploads");
+    const files: string[] = await fs.readdir(uploadsDir);
+    expect(files.length).toBe(0);
+  });
+
+  it("should wipe the cache directory", async () => {
+    await factoryResetAsync();
+
+    const cacheDir: string = path.join(tempDir, ".blackdogbot", "cache");
+    const files: string[] = await fs.readdir(cacheDir);
+    expect(files.length).toBe(0);
+  });
+
   it("should wipe the databases directory", async () => {
     await factoryResetAsync();
 
@@ -129,6 +164,35 @@ describe("factoryResetAsync", () => {
 
     const chatsFile: string = path.join(tempDir, ".blackdogbot", "known-telegram-chats.json");
     await expect(fs.access(chatsFile)).rejects.toThrow();
+  });
+
+  it("should delete channels.yaml", async () => {
+    await factoryResetAsync();
+
+    const channelsFile: string = path.join(tempDir, ".blackdogbot", "channels.yaml");
+    await expect(fs.access(channelsFile)).rejects.toThrow();
+  });
+
+  it("should delete brain-interface.token", async () => {
+    await factoryResetAsync();
+
+    const tokenFile: string = path.join(tempDir, ".blackdogbot", "brain-interface.token");
+    await expect(fs.access(tokenFile)).rejects.toThrow();
+  });
+
+  it("should delete .commit-hash", async () => {
+    await factoryResetAsync();
+
+    const commitHashFile: string = path.join(tempDir, ".blackdogbot", ".commit-hash");
+    await expect(fs.access(commitHashFile)).rejects.toThrow();
+  });
+
+  it("should wipe the old prompt backup directory", async () => {
+    await factoryResetAsync();
+
+    const backupDir: string = path.join(tempDir, ".blackdogbot", ".old.datumofthesave");
+    const files: string[] = await fs.readdir(backupDir);
+    expect(files.length).toBe(0);
   });
 
   it("should delete skill state files but preserve skill definitions", async () => {
