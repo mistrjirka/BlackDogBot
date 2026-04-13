@@ -60,6 +60,7 @@ import {
   FileReadTracker,
   searxngTool,
   crawl4aiTool,
+  searchTimedTool,
 } from "../tools/index.js";
 import { BrainInterfaceService } from "../brain-interface/service.js";
 import type { IBrainInterfaceEmitter } from "../brain-interface/types.js";
@@ -350,6 +351,7 @@ export class MainAgent extends BaseAgentBase {
       delete_from_database: deleteFromDatabaseTool,
       searxng: searxngTool,
       crawl4ai: crawl4aiTool,
+      search_timed: searchTimedTool,
     };
 
     tools.add_once = addOnceTool;
