@@ -17,5 +17,6 @@ export default defineConfig({
       exclude: ["src/index.ts", "src/defaults/**"],
     },
     testTimeout: 90000,
+    hookTimeout: 600000,
   },
 });

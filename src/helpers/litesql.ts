@@ -52,6 +52,7 @@ export interface IQueryOptions {
   where?: string;
   orderBy?: string;
   limit?: number;
+  offset?: number;
   columns?: string[];
 }
 
@@ -376,6 +377,10 @@ export async function queryTableAsync(databaseName: string, tableName: string, o
 
     if (options?.limit !== undefined) {
       selectSql += ` LIMIT ${options.limit}`;
+    }
+
+    if (options?.offset !== undefined) {
+      selectSql += ` OFFSET ${options.offset}`;
     }
 
     const rows: Record<string, unknown>[] = db.prepare(selectSql).all() as Record<string, unknown>[];
