@@ -150,10 +150,6 @@ afterAll(async () => {
 
 describe.sequential("Summarization DAG compaction E2E", () => {
   it("uses L1 as first node for standard multi-message history", async () => {
-    if (process.env.BLACKDOGBOT_RUN_SUMMARIZATION_E2E !== "1") {
-      return;
-    }
-
     if (!endpointReachable) {
       return;
     }
@@ -187,10 +183,6 @@ describe.sequential("Summarization DAG compaction E2E", () => {
   }, 900000);
 
   it("uses L2 first when history has only system + oversized tool result", async () => {
-    if (process.env.BLACKDOGBOT_RUN_SUMMARIZATION_E2E !== "1") {
-      return;
-    }
-
     if (!endpointReachable) {
       return;
     }

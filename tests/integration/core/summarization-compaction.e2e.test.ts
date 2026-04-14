@@ -385,11 +385,6 @@ async function initializeLocalOpenAiCompatibleAsync(): Promise<LanguageModel | n
 
 describe.sequential("Summarization compaction E2E", () => {
   it("should summarize ~20k context in a single request path without stalling", async () => {
-    if (process.env.BLACKDOGBOT_RUN_SUMMARIZATION_E2E !== "1") {
-      console.log("Skipping: set BLACKDOGBOT_RUN_SUMMARIZATION_E2E=1 to run slow live summarization E2E");
-      return;
-    }
-
     if (!endpointReachable) {
       console.log(`Skipping: local OpenAI-compatible endpoint is not reachable at ${localBaseUrl}`);
       return;
@@ -455,11 +450,6 @@ describe.sequential("Summarization compaction E2E", () => {
   }, 900000);
 
   it("should compact medium history around 20k tokens without think tags", async () => {
-    if (process.env.BLACKDOGBOT_RUN_SUMMARIZATION_E2E !== "1") {
-      console.log("Skipping: set BLACKDOGBOT_RUN_SUMMARIZATION_E2E=1 to run slow live summarization E2E");
-      return;
-    }
-
     if (!endpointReachable) {
       console.log(`Skipping: local OpenAI-compatible endpoint is not reachable at ${localBaseUrl}`);
       return;
