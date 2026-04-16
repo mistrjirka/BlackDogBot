@@ -505,18 +505,32 @@ export class SchedulerService {
     const firstSlotMs: number = dayStartUtcMs + offsetMs;
 
     if (nowMs <= firstSlotMs) {
+      const prevDayStartUtcMs: number = dayStartUtcMs - dayMs;
+
+      if (!Number.isFinite(prevDayStartUtcMs)) {
+        return firstSlotMs;
+      }
+
+      const prevFirstSlotMs: number = prevDayStartUtcMs + offsetMs;
+
+      if (nowMs > prevFirstSlotMs) {
+        const elapsedSincePrevFirst: number = nowMs - prevFirstSlotMs;
+        const prevIncrements: number = Math.floor(elapsedSincePrevFirst / everyMs) + 1;
+        const prevNextSlotMs: number = prevFirstSlotMs + (prevIncrements * everyMs);
+
+        if (prevNextSlotMs <= firstSlotMs) {
+          return prevNextSlotMs;
+        }
+      }
+
       return firstSlotMs;
     }
 
     const elapsedSinceFirst: number = nowMs - firstSlotMs;
     const increments: number = Math.floor(elapsedSinceFirst / everyMs) + 1;
-    const nextSlotSameDay: number = firstSlotMs + (increments * everyMs);
+    const nextSlotMs: number = firstSlotMs + (increments * everyMs);
 
-    if (nextSlotSameDay < dayStartUtcMs + dayMs) {
-      return nextSlotSameDay;
-    }
-
-    return firstSlotMs + dayMs;
+    return nextSlotMs;
   }
 
   private async _migrateLegacyTimedScheduleFields(

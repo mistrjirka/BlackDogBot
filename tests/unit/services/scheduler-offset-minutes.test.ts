@@ -509,6 +509,52 @@ describe("SchedulerService interval scheduling", () => {
 
       expect(nextSlot).toBe(Date.parse("2026-04-10T16:00:00.000Z"));
     });
+
+    it("should resolve 3h interval across midnight for 20:45 offset (Prague)", () => {
+      // At 23:49 UTC (April 10), Prague time is 01:49 CEST (Apr 11)
+      // The 23:45 Prague slot is active (21:45 UTC). Next natural slot is 02:45 CEST (00:45 UTC Apr 11).
+      // Bug: code rejects this and returns firstSlotMs + 24h = 20:45 next day UTC.
+      const fixedNow = Date.parse("2026-04-10T23:49:00.000Z");
+      Date.now = vi.fn(() => fixedNow);
+
+      const task = createIntervalTask({
+        taskId: "prague-3h-midnight",
+        name: "Prague 3h Midnight",
+        every: { hours: 3, minutes: 0 },
+        offsetFromDayStart: { hours: 20, minutes: 45 },
+        timezone: "Europe/Prague",
+      });
+
+      const nextSlot = (scheduler as unknown as {
+        _resolveNextIntervalSlotMs: (task: IScheduledTask) => number;
+      })._resolveNextIntervalSlotMs(task);
+
+      // Expected: 02:45 CEST on Apr 11 = 00:45 UTC on Apr 11
+      expect(nextSlot).toBe(Date.parse("2026-04-11T00:45:00.000Z"));
+    });
+
+    it("should resolve 3h interval across midnight at 00:10 UTC (Prague)", () => {
+      // At 00:10 UTC (April 11), Prague time is 02:10 CEST
+      // The 23:45 slot has passed (21:45 UTC Apr 10), next slot is 02:45 CEST (00:45 UTC Apr 11)
+      // Bug: same clamping issue returns 20:45 next day instead
+      const fixedNow = Date.parse("2026-04-11T00:10:00.000Z");
+      Date.now = vi.fn(() => fixedNow);
+
+      const task = createIntervalTask({
+        taskId: "prague-3h-after-midnight",
+        name: "Prague 3h After Midnight",
+        every: { hours: 3, minutes: 0 },
+        offsetFromDayStart: { hours: 20, minutes: 45 },
+        timezone: "Europe/Prague",
+      });
+
+      const nextSlot = (scheduler as unknown as {
+        _resolveNextIntervalSlotMs: (task: IScheduledTask) => number;
+      })._resolveNextIntervalSlotMs(task);
+
+      // Expected: 02:45 CEST on Apr 11 = 00:45 UTC on Apr 11
+      expect(nextSlot).toBe(Date.parse("2026-04-11T00:45:00.000Z"));
+    });
   });
 
   //#endregion timezone-aware interval slot resolution
