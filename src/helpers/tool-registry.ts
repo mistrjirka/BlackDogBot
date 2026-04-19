@@ -19,6 +19,8 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
   "edit_interval",
   "edit_instructions",
   "remove_timed",
+  "delete_from_database",
+  "drop_table",
 ]);
 
 export const TIMED_VALID_TOOL_NAMES = [

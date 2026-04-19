@@ -6,6 +6,10 @@ import { configSchema, ConfigSchemaType } from "../shared/schemas/index.js";
 import { IConfig } from "../shared/types/index.js";
 import { getConfigPath, ensureDirectoryExistsAsync } from "../utils/paths.js";
 
+/**
+ * Singleton - application-wide configuration. Correct singleton because config is initialized
+ * once at startup and shared globally. Multiple instances would lead to config drift.
+ */
 export class ConfigService {
   //#region Data members
 

@@ -10,6 +10,7 @@ import { generateId } from "../utils/id.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
+import { buildCronTaskVerifierPrompt } from "../utils/cron-task-verifier.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 
 //#region Interfaces
@@ -101,58 +102,13 @@ export const addOnceTool = tool({
 
       logger.debug(`[${TOOL_NAME}] Verifying instructions for: ${name}`);
 
-      const toolContextBlock: string = await buildCronToolContextBlockAsync(tools);
+     const toolContextBlock: string = await buildCronToolContextBlockAsync(tools);
 
-      const verifierPrompt = `
-You are a task instruction verifier for an autonomous AI agent.
-The agent runs periodically on a fixed schedule and has NO memory of past conversations when it wakes up.
-The agent executing these instructions is an intelligent AI (an LLM). It can read tool descriptions, reason about conventions, compose arguments, and derive values — it is NOT a dumb script that needs every value pre-computed.
-
-Your job: determine whether the instructions contain enough context for the agent to act independently WITHOUT guessing things that were only ever said in a prior conversation.
-
-DEFAULT TO VALID. Only mark instructions invalid if there is a genuine, unresolvable ambiguity that would cause the agent to fail or act incorrectly.
-
-${toolContextBlock}
-
-RULES:
-
-1. Schedule/timing is already encoded in the task schedule fields — do NOT require the instructions to re-state when or how often the task runs.
-
-2. Tools that handle routing or delivery implicitly do NOT need extra config in the instructions.
-   Example: "send_message" always reaches the correct user — instructions that say "send the results" or "notify the user" are VALID without specifying a chat ID or destination.
-   send_message performs internal deduplication and skips notifications that do not add new information.
-
-3. The agent can derive values from tool descriptions and standard conventions — do NOT flag these as missing:
-
-   - Workspace file paths derived from a filename (e.g. "notes.txt" → ~/.blackdogbot/workspace/notes.txt)
-   - Any argument value that is directly stated in the tool description above
-
-4. Criteria and rules do NOT need to be exhaustively rigid. An LLM agent can interpret general descriptions sensibly.
-   Example: "mark items as interesting if the title contains breaking-news keywords" is VALID — the agent can decide what counts as a keyword.
-   Example: "find recent news" is VALID if the agent can determine a reasonable time window from context.
-
-5. Instructions ARE invalid if they rely on implicit conversational context the agent cannot know at runtime:
-   - References to prior conversation: "fetch that feed", "do what we discussed", "the URL I mentioned"
-   - Truly unspecified external resources: an RSS URL, API endpoint, or file path that is not provided AND cannot be derived from tool conventions
-
-6. The "notifyUser" flag controls whether the agent's final text response is automatically forwarded to Telegram.
-   - Set notifyUser=true when the user wants the agent's summary or results delivered to Telegram automatically (e.g. news digests, alerts, reports).
-   - Set notifyUser=false for background tasks where only explicit send_message tool calls should reach Telegram (e.g. cleanup, archival, internal data processing).
-   - The send_message tool ALWAYS sends to Telegram regardless of notifyUser — notifyUser only gates the automatic forwarding of the agent's final text output.
-
-7. **READ-ONLY vs. FETCH/WRITE TASK DISTINCTION:**
-   - If instructions only READ from a database (e.g., "summarize items", "generate report", "send notification based on stored data"), they do NOT require an external source URL. The database IS their source. Mark as VALID.
-   - If instructions FETCH from external sources (RSS, APIs, web) or WRITE to a database, they MUST specify source URLs AND target table schemas. Mark as INVALID if missing.
-
-Instructions to verify:
-"""
-${instructions}
-"""
-
-Output a JSON object with:
-- "isClear": boolean (true if valid, false if invalid)
-- "missingContext": string (if invalid, describe exactly what information is missing and why it cannot be derived; if valid, use empty string)
-`;
+      const verifierPrompt: string = buildCronTaskVerifierPrompt({
+        instructions,
+        toolContextBlock,
+        taskType: "once",
+      });
 
       const aiService = AiProviderService.getInstance();
       const model = aiService.getModel();

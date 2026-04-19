@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 
+import { rssStateSchema } from "../shared/schemas/index.js";
 import { IRssState } from "../shared/types/index.js";
 import { getRssStateFilePath, ensureDirectoryExistsAsync, getRssStateDir } from "../utils/paths.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -12,9 +13,14 @@ export async function loadRssStateAsync(feedUrl: string): Promise<IRssState | nu
 
   try {
     const content: string = await fs.readFile(filePath, "utf-8");
-    const state: IRssState = JSON.parse(content) as IRssState;
+    const result = rssStateSchema.safeParse(JSON.parse(content));
 
-    return state;
+    if (!result.success) {
+      logger.warn("Invalid RSS state file format", { feedUrl });
+      return null;
+    }
+
+    return result.data as IRssState;
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return null;

@@ -1,16 +1,13 @@
-import fs from "node:fs/promises";
-import { ToolSet, LanguageModel, type ModelMessage } from "ai";
-import { z } from "zod";
 
+import { ToolSet, LanguageModel, type ModelMessage } from "ai";
+
+import { assembleToolsForChat } from "./tool-assembly.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { extractErrorMessage } from "../utils/error.js";
 import { buildMainAgentPromptAsync } from "./system-prompt.js";
 import {
   BaseAgentBase,
-  AGENT_EMPTY_RESPONSE_RETRIES,
-  CONTEXT_EXCEEDED_RETRIES,
   type IAgentResult,
   type OnStepCallback,
   DuplicateToolLoopHardStopError,
@@ -19,80 +16,34 @@ import {
 } from "./base-agent.js";
 import { McpService } from "../services/mcp.service.js";
 import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
-import {
-  thinkTool,
-  runCmdTool,
-  runCmdInputTool,
-  getCmdStatusTool,
-  getCmdOutputTool,
-  waitForCmdTool,
-  stopCmdTool,
-  modifyPromptTool,
-  listPromptsTool,
-  searchKnowledgeTool,
-  addKnowledgeTool,
-  editKnowledgeTool,
-  createSendMessageTool,
-  type MessageSender,
-  createCallSkillTool,
-  getSkillFileTool,
-  addOnceTool,
-  addIntervalTool,
-  editOnceTool,
-  editIntervalTool,
-  editInstructionsTool,
-  removeTimedTool,
-  listTimedTool,
-  getTimedTool,
-  runTimedTool,
-  createReadFileTool,
-  createReadImageTool,
-  createWriteFileTool,
-  appendFileTool,
-  editFileTool,
-  fetchRssTool,
-  listTablesTool,
-  getTableSchemaTool,
-  createTableTool,
-  dropTableTool,
-  readFromDatabaseTool,
-  deleteFromDatabaseTool,
-  FileReadTracker,
-  searxngTool,
-  crawl4aiTool,
-  searchTimedTool,
-} from "../tools/index.js";
+import { FileReadTracker } from "../tools/index.js";
+import type { MessageSender } from "../tools/index.js";
+import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
 import { BrainInterfaceService } from "../brain-interface/service.js";
 import type { IBrainInterfaceEmitter } from "../brain-interface/types.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { ConfigService } from "../services/config.service.js";
-import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
-import {
-  getConnectionRetryDelayMs,
-  isConnectionError,
-  isContextExceededApiError,
-  isRetryableApiError,
-} from "../utils/context-error.js";
-import { ensureDirectoryExistsAsync, getSessionsDir, getSessionFilePath } from "../utils/paths.js";
-import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
-import { extractAiErrorDetails } from "../utils/ai-error.js";
-import { buildPerTableToolsAsync, buildPerTableToolsWithUpdatesAsync } from "../utils/per-table-tools.js";
+
+import { saveSessionAsync as _saveSessionAsync, loadSessionAsync as _loadSessionAsync, type IPersistedSession } from "./session-manager.js";
+import { AdminControl, createAdminControl } from "./admin-control.js";
+import { buildPerTableToolsWithUpdatesAsync } from "../utils/per-table-tools.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
 import { countTokens } from "../utils/token-tracker.js";
 import { redactSensitiveData } from "../utils/log-redaction.js";
-import { ChannelRegistryService } from "../services/channel-registry.service.js";
 import * as toolRegistry from "../helpers/tool-registry.js";
+import { ChannelRegistryService } from "../services/channel-registry.service.js";
 import type { IToolCallSummary } from "./base-agent.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
+
+import { DuplicateLoopHandler } from "./duplicate-loop-handler.js";
+import { RetryOrchestrator } from "./retry-orchestrator.js";
+
+type TGenerateFn = (input: { messages: ModelMessage[]; abortSignal: AbortSignal }) => Promise<{ text: string; steps?: unknown[]; totalUsage?: Record<string, number | undefined>; usage?: Record<string, number | undefined>; response?: { messages?: unknown[] } }>;
 
 //#region Constants
 
 const MAX_TOOL_REBUILD_RESTARTS: number = 2;
-const MAX_429_RETRIES: number = 8;
-const MAX_GENERIC_RETRIES: number = 3;
 const SESSION_COMPACTION_HEADROOM_TOKENS: number = 4000;
-const MAX_DUPLICATE_LOOP_ADVISER_ATTEMPTS: number = 3;
 
 //#endregion Constants
 
@@ -103,7 +54,7 @@ interface IDuplicateLoopEscalationState {
   adviserAttemptsRemaining: number;
 }
 
-interface IChatSession {
+export interface IChatSession {
   messages: ModelMessage[];
   lastActivityAt: number;
   messageSender: MessageSender;
@@ -122,11 +73,6 @@ interface IChatSession {
   currentUserTask: string;
 }
 
-interface IPersistedSession {
-  messages: ModelMessage[];
-  lastActivityAt: number;
-}
-
 //#endregion Interfaces
 
 export interface IChatImageAttachment {
@@ -140,87 +86,15 @@ export interface IRefreshSessionsResult {
   failedChatIds: string[];
 }
 
-interface IBufferMarker {
-  __type: "Buffer";
-  __data: string;
-}
-
-const _BufferMarkerType: IBufferMarker["__type"] = "Buffer";
-
-const DuplicateLoopAdviserSchema = z.object({
-  reasoning: z.string().describe("Analysis of why the duplicate loop is occurring and what the model should do differently"),
-  recommendation: z.string().describe("Concrete recommendation for the model to break the loop and complete the user task"),
-});
-
-//#region Private functions
-
-function _createDuplicateLoopAdviserPrompt(
-  userTask: string,
-  historySlice: ModelMessage[],
-  loopSignature: string,
-  duplicateCount: number,
-): string {
-  const historyJson: string = JSON.stringify(historySlice, null, 2);
-
-  return `You are an expert AI assistant helping a model break out of a duplicate tool call loop.
-
-## User's Original Task
-${userTask}
-
-## The Problem
-The model is stuck calling the same tool(s) with identical arguments ${duplicateCount} times in a row:
-${loopSignature}
-
-## Recent Conversation History (user task to last tool call, with tool results)
-\`\`\`json
-${historyJson}
-\`\`\`
-
-## Your Analysis
-Analyze the conversation history and explain:
-1. Why the model might be stuck in this loop
-2. What the model should do differently to complete the user's task
-3. A concrete recommendation for the next action to take
-
-Provide your reasoning and recommendation in the specified format.`;
-}
-
-function _extractUserTextContent(message: ModelMessage): string {
-  if (typeof message.content === "string") {
-    return message.content;
-  }
-
-  if (!Array.isArray(message.content)) {
-    return "";
-  }
-
-  const textParts: string[] = [];
-  for (const part of message.content as unknown[]) {
-    if (
-      typeof part === "object" &&
-      part !== null &&
-      "type" in part &&
-      (part as { type: string }).type === "text" &&
-      "text" in part &&
-      typeof (part as { text: unknown }).text === "string"
-    ) {
-      textParts.push((part as { text: string }).text);
-    }
-  }
-
-  return textParts.join("\n");
-}
-
-//#endregion Private functions
 
 //#region MainAgent
-
 export class MainAgent extends BaseAgentBase {
   //#region Data members
 
   private static _instance: MainAgent | null;
   private _sessions: Map<string, IChatSession>;
   private _currentChatId: string | null;
+  private _adminControl: AdminControl;
 
   //#endregion Data members
 
@@ -235,12 +109,17 @@ export class MainAgent extends BaseAgentBase {
     super({ maxSteps: isNaN(rawSteps) ? DEFAULT_AGENT_MAX_STEPS : rawSteps });
     this._sessions = new Map<string, IChatSession>();
     this._currentChatId = null;
+    this._adminControl = createAdminControl(this._sessions, this._logger);
   }
 
   //#endregion Constructors
 
   //#region Public methods
 
+  /**
+   * Returns the singleton instance of MainAgent.
+   * @returns The MainAgent singleton instance
+   */
   public static getInstance(): MainAgent {
     if (!MainAgent._instance) {
       MainAgent._instance = new MainAgent();
@@ -253,14 +132,34 @@ export class MainAgent extends BaseAgentBase {
     return this._currentChatId;
   }
 
+  /**
+   * Checks if the agent is initialized for a specific chat.
+   * @param chatId - The chat identifier to check
+   * @returns true if the agent is initialized and has a session for the chatId
+   */
   public isInitializedForChat(chatId: string): boolean {
     return this._initialized && this._sessions.has(chatId);
   }
 
+  /**
+   * Returns all active chat IDs that have initialized sessions.
+   * @returns Array of chat IDs with active sessions
+   */
   public getActiveChatIds(): string[] {
     return Array.from(this._sessions.keys());
   }
 
+  /**
+   * Initializes the agent for a specific chat session.
+   * Creates or restores a session, sets up the AI model, builds the system prompt,
+   * assembles available tools, and configures the agent for message processing.
+   * @param chatId - Unique identifier for the chat session
+   * @param messageSender - Callback function for sending text messages to the user
+   * @param photoSender - Callback function for sending photos; returns message ID or null
+   * @param onStepAsync - Optional callback invoked after each agent step with tool call summaries
+   * @param platform - Messaging platform identifier (default: "telegram")
+   * @returns Promise that resolves when initialization is complete
+   */
   public async initializeForChatAsync(
     chatId: string,
     messageSender: MessageSender,
@@ -293,7 +192,7 @@ export class MainAgent extends BaseAgentBase {
         isSteeringAbort: false,
         duplicateLoopEscalation: {
           activeSignature: null,
-          adviserAttemptsRemaining: MAX_DUPLICATE_LOOP_ADVISER_ATTEMPTS,
+          adviserAttemptsRemaining: DuplicateLoopHandler.MAX_ATTEMPTS,
         },
         currentUserTask: "",
       });
@@ -320,95 +219,20 @@ export class MainAgent extends BaseAgentBase {
     session.onStepAsync = onStepAsync;
     session.platform = platform;
 
-    const tools: ToolSet = {
-      think: thinkTool,
-      run_cmd: runCmdTool,
-      run_cmd_input: runCmdInputTool,
-      get_cmd_status: getCmdStatusTool,
-      get_cmd_output: getCmdOutputTool,
-      wait_for_cmd: waitForCmdTool,
-      stop_cmd: stopCmdTool,
-      modify_prompt: modifyPromptTool,
-      list_prompts: listPromptsTool,
-      search_knowledge: searchKnowledgeTool,
-      add_knowledge: addKnowledgeTool,
-      edit_knowledge: editKnowledgeTool,
-      send_message: createSendMessageTool(messageSender),
-      read_file: createReadFileTool(readTracker),
-      write_file: createWriteFileTool(readTracker),
-      append_file: appendFileTool,
-      edit_file: editFileTool,
-      remove_timed: removeTimedTool,
-      list_timed: listTimedTool,
-      get_timed: getTimedTool,
-      run_timed: runTimedTool,
-      fetch_rss: fetchRssTool,
-      list_tables: listTablesTool,
-      get_table_schema: getTableSchemaTool,
-      create_table: _wrapCreateTableWithHotReload(createTableTool, chatId, session),
-      drop_table: dropTableTool,
-      read_from_database: readFromDatabaseTool,
-      delete_from_database: deleteFromDatabaseTool,
-      searxng: searxngTool,
-      crawl4ai: crawl4aiTool,
-      search_timed: searchTimedTool,
-    };
+    // Assemble tools using the shared factory
+    const filteredTools: ToolSet = await assembleToolsForChat(
+      chatId,
+      messageSender,
+      readTracker,
+      AiProviderService.getInstance(),
+      McpService.getInstance(),
+      SkillLoaderService.getInstance(),
+      platform,
+    );
 
-    tools.add_once = addOnceTool;
-    tools.add_interval = addIntervalTool;
-    tools.edit_once = editOnceTool;
-    tools.edit_interval = editIntervalTool;
-    tools.edit_instructions = editInstructionsTool;
-
-    if (aiProviderService.getSupportsVision()) {
-      tools.read_image = createReadImageTool(readTracker);
-    }
-
-    // Only include skill tools if skills are actually loaded
-    const availableSkills = SkillLoaderService.getInstance().getAvailableSkills();
-    if (availableSkills.length > 0) {
-      const skillNames = availableSkills.map((s) => s.name);
-      tools.call_skill = createCallSkillTool(skillNames);
-      tools.get_skill_file = getSkillFileTool;
-    }
-
-    // Merge MCP tools from connected servers
-    const mcpService: McpService = McpService.getInstance();
-    const mcpTools: ToolSet = mcpService.getTools();
-    for (const [toolName, toolDef] of Object.entries(mcpTools)) {
-      tools[toolName] = toolDef;
-    }
-
-    // Merge per-table write tools (generated from database schemas)
-    const perTableResult = await buildPerTableToolsAsync();
-    if (perTableResult.dbStatus === "corrupt") {
-      this._logger.error("Database corrupt - per-table tools unavailable at startup", {
-        dbStatus: perTableResult.dbStatus,
-      });
-    }
-    for (const [toolName, toolDef] of Object.entries(perTableResult.tools)) {
-      tools[toolName] = toolDef;
-    }
-
-    // Filter tools based on channel permission
+    // Capture permission and skill names for hot-reload callback scope
     const channelRegistry = ChannelRegistryService.getInstance();
     const permission = channelRegistry.getPermission(platform, chatId);
-    const skillNames = availableSkills.map((s) => s.name);
-
-    const filteredTools: ToolSet = {};
-    for (const [toolName, tool] of Object.entries(tools)) {
-      if (toolRegistry.isToolAllowed(toolName, permission, { skillNames })) {
-        filteredTools[toolName] = tool;
-      }
-    }
-
-    // Log registered tools for diagnostics (especially useful for local models)
-    this._logger.info("Tools registered for agent", {
-      chatId,
-      toolCount: Object.keys(filteredTools).length,
-      toolNames: Object.keys(filteredTools),
-      permission,
-    });
 
     const combinedOnStepAsync = async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
       this._logger.debug("MainAgent combinedOnStep callback invoked", {
@@ -532,12 +356,14 @@ export class MainAgent extends BaseAgentBase {
         });
       }
       const perTableTools: ToolSet = { ...writeResult.tools, ...updateResult.tools };
-      const mergedTools: ToolSet = { ...currentFilteredTools, ...perTableTools };
+       const mergedTools: ToolSet = { ...currentFilteredTools, ...perTableTools };
 
-      // Re-filter based on permission
-      const reFilteredTools: ToolSet = {};
-      for (const [toolName, toolDef] of Object.entries(mergedTools)) {
-        if (toolRegistry.isToolAllowed(toolName, permission, { skillNames })) {
+       // Re-filter based on permission
+       const reFilteredTools: ToolSet = {};
+       const hotReloadSkillNames = SkillLoaderService.getInstance().getAvailableSkills()
+         .map((s) => s.name);
+       for (const [toolName, toolDef] of Object.entries(mergedTools)) {
+         if (toolRegistry.isToolAllowed(toolName, permission, { skillNames: hotReloadSkillNames })) {
           reFilteredTools[toolName] = toolDef;
         }
       }
@@ -578,6 +404,11 @@ export class MainAgent extends BaseAgentBase {
     this._logger.info("MainAgent initialized for chat.", { chatId, permission });
   }
 
+  /**
+   * Re-initializes all active chat sessions with current configuration.
+   * Useful after prompt updates or tool changes to propagate changes to all sessions.
+   * @returns Promise resolving to result object with counts of refreshed and failed sessions
+   */
   public async refreshAllSessionsAsync(): Promise<IRefreshSessionsResult> {
     const chatIds: string[] = Array.from(this._sessions.keys());
     let refreshedCount: number = 0;
@@ -621,6 +452,15 @@ export class MainAgent extends BaseAgentBase {
     return result;
   }
 
+  /**
+   * Processes a user message and generates an agent response.
+   * Handles message history management, token compaction, tool execution,
+   * and fallback provider activation on errors.
+   * @param chatId - The chat session identifier
+   * @param userMessage - The user's input message text
+   * @param imageAttachments - Optional array of image attachments with buffer and media type
+   * @returns Promise resolving to agent result with response text and step count
+   */
   public async processMessageForChatAsync(
     chatId: string,
     userMessage: string,
@@ -705,262 +545,74 @@ export class MainAgent extends BaseAgentBase {
       const statusService: StatusService = StatusService.getInstance();
 
       try {
-        // Set status to show AI is thinking (in-flight)
-        statusService.beginInFlight("llm_request", "Thinking...", { chatId });
-
-        let contextRetries: number = 0;
-        let _429Retries: number = 0;
-        let _genericRetries: number = 0;
-
-        for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
-          // Reset token count so prepareStep doesn't use stale values from a failed attempt
-          this._totalInputTokens = 0;
-          this._lastPrepareStepEstimatedTokens = null;
-
-          // Create messagesForCall inside the loop so retries use updated session messages
-          const messagesForCall: ModelMessage[] = [...session.messages, userModelMessage];
-
-          // Inject steering messages if any are queued
-          while (session.steeringQueue.length > 0) {
-            const steeringMessage = session.steeringQueue.shift()!;
-            const steeringModelMessage: ModelMessage = {
-              role: "user",
-              content: `[STEER] ${steeringMessage}`,
-            };
-            messagesForCall.push(steeringModelMessage);
-            this._logger.info("Injected steering message", { chatId, message: steeringMessage.substring(0, 100) });
-          }
-
-          const llmStartTime: number = Date.now();
-          try {
-            const generateResult = await this._agent!.generate({
-              messages: messagesForCall,
-              abortSignal: abortController.signal,
+        // Delegate generation loop with full retry logic to orchestrator.
+        // Returns a result (text, stepCount), whether fallback is needed,
+        // and the compaction model. Main-agent handles response appending,
+        // session saving, tool rebuild detection, and steering abort logic outside this block.
+        const genResult = await this._runGenerationCycleAsync(
+          chatId,
+          aiProviderService,
+          async (input): Promise<any> => {
+            const response = await this._agent!.generate({
+              messages: input.messages,
+              abortSignal: input.abortSignal,
             });
 
-            const latencyMs: number = Date.now() - llmStartTime;
-            const stepsCount: number = generateResult.steps?.length ?? 1;
-
-            const inputTokens = generateResult.totalUsage?.inputTokens ?? generateResult.usage?.inputTokens;
-            const completionTokens = generateResult.totalUsage?.outputTokens ?? generateResult.usage?.outputTokens;
-            if (inputTokens !== undefined) {
-              this._totalInputTokens = inputTokens;
-            } else {
-              this._totalInputTokens = 0;
-              this._logger.warn("Token usage missing from LLM response; using tiktoken fallback.");
-            }
-
-            // Structured LLM logging
-            const logger: LoggerService = LoggerService.getInstance();
-            logger.logStructured("llm", {
-              chatId,
-              providerInputTokens: inputTokens,
-              estimatedInputTokens: this._estimatedInputTokens,
-              completionTokens: completionTokens,
-              latencyMs,
-              stepsCount,
-            });
-
-            const brainInterfaceForOutput: IBrainInterfaceEmitter = BrainInterfaceService.getInstance();
-
-            if (generateResult.text) {
-              try {
-                await brainInterfaceForOutput.emitModelOutputAsync(chatId, stepsCount, generateResult.text);
-              } catch {
-                // Never let emit failures affect agent execution
-              }
-            }
-
-            this._logger.debug("Agent response generated", { chatId, stepsCount, historyLength: session.messages.length });
-
-            let text: string = generateResult.text ?? "";
-
-            // If create_table requested a tool rebuild, end this run immediately and restart.
-            // Do not treat missing text as an empty-response failure in this case.
-            if (session.pendingToolRebuild !== null) {
-              _appendResponseToSession(session.messages, userModelMessage, generateResult.response?.messages);
-
-              session.messages = await _compactSessionMessagesAsync(
-                session.messages,
-                compactionModel,
-                this._logger,
-                this._compactionTokenThreshold,
-                this._contextWindow,
-              );
-
-              this._logger.info("Tool rebuild requested, terminating current run and restarting", {
-                chatId,
-                stepCount: stepsCount,
-                hasText: text.trim().length > 0,
-              });
-
-              if (!text.trim()) {
-                text = "Table created. Continuing with the newly available write_table tool.";
-              }
-
-              result = { text, stepsCount };
-              await this._saveSessionAsync(chatId);
-              break;
-            }
-
-            // If we got text, persist conversation and return
-            if (text.trim()) {
-              _appendResponseToSession(session.messages, userModelMessage, generateResult.response?.messages);
-
-              session.messages = await _compactSessionMessagesAsync(
-                session.messages,
-                compactionModel,
-                this._logger,
-                this._compactionTokenThreshold,
-                this._contextWindow,
-              );
-
-              result = { text, stepsCount };
-              break;
-            }
-
-            // Empty response — retry if we have attempts left
-            if (attempt <= AGENT_EMPTY_RESPONSE_RETRIES) {
-              this._logger.warn("Model returned empty response for chat, retrying", {
-                chatId,
-                attempt,
-                maxRetries: AGENT_EMPTY_RESPONSE_RETRIES,
-              });
-              continue;
-            }
-
-            // All retries exhausted — persist conversation even on failure so history stays consistent
-            const fallbackFromEmpty: boolean = await this._activateFallbackAndReinitializeAsync(
-              chatId,
-              session,
-              "empty_response_exhausted",
-            );
-
-            if (fallbackFromEmpty) {
-              compactionModel = aiProviderService.getModel();
-              attempt--; // Retry current request on fallback model
-              continue;
-            }
-
-            _appendResponseToSession(session.messages, userModelMessage, generateResult.response?.messages);
-
-            session.messages = await _compactSessionMessagesAsync(
-              session.messages,
-              compactionModel,
-              this._logger,
-              this._compactionTokenThreshold,
-              this._contextWindow,
-            );
-
-            this._logger.error("Model returned empty response after all retries", { chatId, attempts: attempt });
-            result = {
-              text: "I was unable to complete your request — the model returned empty responses after multiple retries. Please try again.",
-              stepsCount,
+            return {
+              text: response.text ?? "",
+              steps: response.steps,
+              totalUsage: response.totalUsage,
+              usage: response.usage,
+              response: response.response?.messages ? { messages: response.response.messages } : undefined,
             };
-          } catch (genError: unknown) {
-            const aiErrorDetails = extractAiErrorDetails(genError);
-            const isRetriable429: boolean = aiErrorDetails.statusCode === 429 && _429Retries < MAX_429_RETRIES;
+          },
+          abortController.signal,
+        );
 
-            // Handle context size exceeded errors (from hard gate or real API errors)
-            // Covers: 400 (hard gate), 500 (provider), 413/422 (other providers)
-            if (
-              isContextExceededApiError(genError) &&
-              contextRetries < CONTEXT_EXCEEDED_RETRIES
-            ) {
-              contextRetries++;
-              const beforeSessionCompactionTokens: number = countTokens(session.messages);
-              session.messages = await _compactSessionMessagesAsync(
-                session.messages,
-                compactionModel,
-                this._logger,
-                this._compactionTokenThreshold,
-                this._contextWindow,
-              );
-              const afterSessionCompactionTokens: number = countTokens(session.messages);
+        result = genResult.result;
 
-              this._logger.warn("Context size exceeded, forcing compaction on next step", {
-                chatId,
-                contextRetry: contextRetries,
-                maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
-                statusCode: aiErrorDetails.statusCode,
-                sessionCompactionBeforeTokens: beforeSessionCompactionTokens,
-                sessionCompactionAfterTokens: afterSessionCompactionTokens,
-                sessionCompactionReducedBy: beforeSessionCompactionTokens - afterSessionCompactionTokens,
-              });
-              this._forceCompactionOnNextStep = true;
-              attempt--; // Don't count this against the empty-response retry limit
-              continue;
-            }
+        // Handle empty response or failed fallback — persist conversation even on failure
+        if (genResult.shouldFallback) {
+          const fallbackFromEmpty: boolean = await this._activateFallbackAndReinitializeAsync(
+            chatId,
+            session,
+            "empty_response_exhausted",
+          );
 
-            // Handle 429 rate limit errors with Retry-After wait
-            if (isRetriable429) {
-              _429Retries++;
-              await apply429BackoffAsync({
-                logger: this._logger,
-                error: genError,
-                retryAttempt: _429Retries,
-                logMessage: "Rate limited (429) in main agent loop, waiting before retry",
-                logContext: {
-                  chatId,
-                  attempt,
-                  emptyResponseAttempt: attempt,
-                  _429Retries,
-                  current429RetryCount: _429Retries,
-                  max429Retries: MAX_429_RETRIES,
-                },
-              });
-              attempt--; // Don't burn the empty-response retry budget
-              continue;
-            }
-
-            if (isRetryableApiError(genError) && _genericRetries < MAX_GENERIC_RETRIES) {
-              _genericRetries++;
-              const isConnectionRelatedError: boolean = isConnectionError(genError);
-              const retryDelayMs: number = isConnectionRelatedError
-                ? getConnectionRetryDelayMs(_genericRetries)
-                : 0;
-
-              this._logger.warn("Retryable API error in main agent loop, waiting before retry", {
-                chatId,
-                attempt,
-                emptyResponseAttempt: attempt,
-                genericRetryCount: _genericRetries,
-                maxGenericRetries: MAX_GENERIC_RETRIES,
-                retryType: isConnectionRelatedError ? "connection" : "generic",
-                retryDelayMs,
-                statusCode: aiErrorDetails.statusCode,
-                provider: aiErrorDetails.provider,
-                model: aiErrorDetails.model,
-                message: aiErrorDetails.message,
-                providerMessage: aiErrorDetails.providerMessage,
-              });
-
-              if (retryDelayMs > 0) {
-                await new Promise<void>((resolve: () => void): void => {
-                  setTimeout(resolve, retryDelayMs);
-                });
-              }
-
-              attempt--; // Don't burn the empty-response retry budget
-              continue;
-            }
-
-            const fallbackActivated: boolean = await this._activateFallbackAndReinitializeAsync(
-              chatId,
-              session,
-              "error_after_retries",
-              genError,
-            );
-
-            if (fallbackActivated) {
-              compactionModel = aiProviderService.getModel();
-              attempt--; // Retry current request on fallback model
-              continue;
-            }
-
-            // Re-throw non-context errors
-            throw genError;
+          // Only update compaction model if fallback was NOT activated (fallback already handles it)
+          if (!fallbackFromEmpty) {
+            compactionModel = genResult.compactionModel;
           }
+
+          // Append response to session and compact even on failure
+          _appendResponseToSession(session.messages, userModelMessage, undefined);
+
+          session.messages = await _compactSessionMessagesAsync(
+            session.messages,
+            compactionModel,
+            this._logger,
+            this._compactionTokenThreshold,
+            this._contextWindow,
+          );
+
+          if (!result.text.trim()) {
+            result = { text: "I was unable to complete your request — the model returned empty responses after multiple retries. Please try again.", stepsCount: 0 };
+          }
+
+          this._logger.error("Model returned error response after all retries", { chatId });
+        }
+
+        // On success with text — append response, compact, and return
+        if (result.text.trim() && result !== null) {
+          _appendResponseToSession(session.messages, userModelMessage, undefined);
+
+          session.messages = await _compactSessionMessagesAsync(
+            session.messages,
+            compactionModel,
+            this._logger,
+            this._compactionTokenThreshold,
+            this._contextWindow,
+          );
         }
       } catch (error: unknown) {
         if (error instanceof Error && error.name === "AbortError") {
@@ -1041,6 +693,12 @@ export class MainAgent extends BaseAgentBase {
     return finalResult;
   }
 
+  /**
+   * Manually compacts the message history for a chat session.
+   * Reduces token usage by summarizing older messages while preserving conversation context.
+   * @param chatId - The chat session identifier
+   * @returns Promise resolving to true if compaction was performed, false if session not found
+   */
   public async compactSessionMessagesForChatAsync(chatId: string): Promise<boolean> {
     const session: IChatSession | undefined = this._sessions.get(chatId);
     if (!session) {
@@ -1075,13 +733,56 @@ export class MainAgent extends BaseAgentBase {
     return true;
   }
 
-  private async _activateFallbackAndReinitializeAsync(
+private async _runGenerationCycleAsync(
+    chatId: string,
+    _aiProviderService: AiProviderService,
+    generateFn: TGenerateFn,
+    _abortSignal: AbortSignal,
+  ): Promise<{ result: IAgentResult; shouldFallback: boolean; compactionModel: LanguageModel }> {
+    // Note: status management (beginInFlight/endInFlight) is handled externally in processMessageForChatAsync
+    // to avoid double-calling. This method focuses purely on the generate-and-retry loop.
+
+    const orchestrationResult = await RetryOrchestrator.runCycle({
+      chatId,
+      logger: this._logger,
+      model: _aiProviderService.getModel(),
+      maxSteps: this._maxSteps,
+      compactionThreshold: this._compactionTokenThreshold,
+      contextWindow: this._contextWindow,
+      generateFn,
+      resetTokenCounters: () => {
+        this._totalInputTokens = 0;
+        this._lastPrepareStepEstimatedTokens = null;
+      },
+      totalInputTokensSink: (value: number) => {
+        this._totalInputTokens = value;
+      },
+      emitModelOutputAsync: async (_chatId2: string, _stepNumber: number, _text: string) => {
+        // TODO: Implement model output emission via BrainInterfaceService when integration is finalized
+      },
+    });
+
+    const resultCopy: IAgentResult = {
+      text: orchestrationResult.result.text,
+      stepsCount: orchestrationResult.result.stepsCount,
+    };
+
+    // Handle fallback when retries exhausted or non-retryable errors
+    if (orchestrationResult.shouldFallback) {
+      return { result: resultCopy, shouldFallback: true, compactionModel: _aiProviderService.getModel() };
+    }
+
+    return { result: resultCopy, shouldFallback: false, compactionModel: _aiProviderService.getModel() };
+  }
+
+private async _activateFallbackAndReinitializeAsync(
     chatId: string,
     session: IChatSession,
     reason: string,
     error?: unknown,
   ): Promise<boolean> {
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
+
     const fallback = await aiProviderService.activateNextFallbackProviderAsync();
 
     if (!fallback) {
@@ -1109,81 +810,56 @@ export class MainAgent extends BaseAgentBase {
     return true;
   }
 
+  /**
+   * Pauses an active chat session, halting message processing.
+   * @param chatId - The chat session identifier
+   * @returns true if the chat was paused, false if not found or already paused
+   */
   public pauseChat(chatId: string): boolean {
-    const session: IChatSession | undefined = this._sessions.get(chatId);
-
-    if (!session || session.paused) {
-      return false;
-    }
-
-    session.paused = true;
-    this._logger.info("Chat paused.", { chatId });
-    return true;
+    return this._adminControl.pauseChat(chatId);
   }
 
+  /**
+   * Resumes a paused chat session.
+   * @param chatId - The chat session identifier
+   * @returns true if the chat was resumed, false if not found or not paused
+   */
   public resumeChat(chatId: string): boolean {
-    const session: IChatSession | undefined = this._sessions.get(chatId);
-
-    if (!session || !session.paused) {
-      return false;
-    }
-
-    session.paused = false;
-
-    if (session.resumeResolve) {
-      session.resumeResolve();
-      session.resumeResolve = null;
-    }
-
-    this._logger.info("Chat resumed.", { chatId });
-    return true;
+    return this._adminControl.resumeChat(chatId);
   }
 
+  /**
+   * Stops an active chat session and aborts in-flight operations.
+   * @param chatId - The chat session identifier
+   * @returns true if the chat was stopped, false if not found or not active
+   */
   public stopChat(chatId: string): boolean {
-    const session: IChatSession | undefined = this._sessions.get(chatId);
-
-    if (!session || !session.abortController) {
-      return false;
-    }
-
-    session.isSteeringAbort = false;
-    session.abortController.abort();
-    this._logger.info("Chat stopped.", { chatId });
-    return true;
+    return this._adminControl.stopChat(chatId);
   }
 
+  /**
+   * Injects a steering message into a chat session to guide agent behavior.
+   * @param chatId - The chat session identifier
+   * @param message - The steering instruction to inject
+   * @returns true if the message was queued, false if session not found
+   */
   public steerChat(chatId: string, message: string): boolean {
-    const session: IChatSession | undefined = this._sessions.get(chatId);
-
-    if (!session) {
-      this._logger.warn("Cannot steer: session not found", { chatId });
-      return false;
-    }
-
-    session.steeringQueue.push(message);
-    this._logger.info("Steering message queued", { chatId, queueLength: session.steeringQueue.length });
-
-    if (session.abortController && !session.abortController.signal.aborted) {
-      session.isSteeringAbort = true;
-      session.abortController.abort();
-      this._logger.info("Aborted current LLM call for steering", { chatId });
-    }
-
-    return true;
+    return this._adminControl.steerChat(chatId, message);
   }
 
+  /**
+   * Clears the message history for a specific chat session.
+   * @param chatId - The chat session identifier
+   */
   public clearChatHistory(chatId: string): void {
-    this._sessions.delete(chatId);
-    ToolHotReloadService.getInstance().unregisterRebuildCallback(chatId);
-    fs.unlink(getSessionFilePath(chatId)).catch(() => {
-      // File may not exist, ignore
-    });
-    this._logger.info("Chat history cleared.", { chatId });
+    this._adminControl.clearChatHistory(chatId);
   }
 
+  /**
+   * Clears message history for all chat sessions.
+   */
   public clearAllChatHistory(): void {
-    this._sessions.clear();
-    this._logger.info("All chat history cleared.");
+    this._adminControl.clearAllChatHistory();
   }
 
   //#endregion Public methods
@@ -1191,56 +867,18 @@ export class MainAgent extends BaseAgentBase {
   //#region Private methods
 
   private async _saveSessionAsync(chatId: string): Promise<void> {
-    const session: IChatSession | undefined = this._sessions.get(chatId);
-
-    if (!session) {
-      return;
-    }
-
-    const persistable: IPersistedSession = {
-      messages: session.messages,
-      lastActivityAt: session.lastActivityAt,
-    };
-
-    try {
-      await ensureDirectoryExistsAsync(getSessionsDir());
-      const filePath: string = getSessionFilePath(chatId);
-      await fs.writeFile(filePath, JSON.stringify(persistable, _sessionStringifyReplacer, 2), "utf-8");
-      this._logger.debug("Session saved to disk.", { chatId, messageCount: persistable.messages.length });
-    } catch (error: unknown) {
-      const message: string = error instanceof Error ? error.message : String(error);
-      this._logger.warn("Failed to save session to disk, continuing without persistence.", { chatId, error: message });
-    }
+    await _saveSessionAsync(this._sessions, chatId);
   }
 
   private async _loadSessionAsync(chatId: string): Promise<IPersistedSession | null> {
-    const filePath: string = getSessionFilePath(chatId);
-
-    try {
-      const content: string = await fs.readFile(filePath, "utf-8");
-      const parsed: IPersistedSession = JSON.parse(content, _sessionParseReviver) as IPersistedSession;
-
-      if (!Array.isArray(parsed.messages)) {
-        this._logger.warn("Session file has invalid messages array, ignoring.", { chatId });
-        return null;
-      }
-
-      parsed.messages = _normalizeLoadedSessionMessages(parsed.messages, this._logger, chatId);
-
-      return parsed;
-    } catch (error: unknown) {
-      if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      const message: string = error instanceof Error ? error.message : String(error);
-      this._logger.warn("Failed to load session from disk, starting fresh.", { chatId, error: message });
-      return null;
-    }
+    return _loadSessionAsync<IPersistedSession & IChatSession>(chatId);
   }
 
   private _createDuplicateToolLoopCallback(
     chatId: string,
   ): (loopInfo: IDuplicateToolCallLoopInfo, stepNumber: number, messages: ModelMessage[]) => Promise<EDuplicateLoopAction> {
+    const handler = new DuplicateLoopHandler();
+
     return async (
       loopInfo: IDuplicateToolCallLoopInfo,
       stepNumber: number,
@@ -1249,172 +887,34 @@ export class MainAgent extends BaseAgentBase {
       const session: IChatSession | undefined = this._sessions.get(chatId);
 
       if (!session) {
-        this._logger.warn("Duplicate loop callback: session not found", { chatId });
         return EDuplicateLoopAction.ForceThink;
       }
 
-      const userTask: string = session.currentUserTask;
       const escalation: IDuplicateLoopEscalationState = session.duplicateLoopEscalation;
 
-      if (escalation.activeSignature === null) {
-        escalation.activeSignature = loopInfo.canonicalSignature;
-        escalation.adviserAttemptsRemaining = MAX_DUPLICATE_LOOP_ADVISER_ATTEMPTS;
-        this._logger.info("Duplicate loop: first detection, forcing think", {
-          chatId,
-          stepNumber,
-          signature: loopInfo.canonicalSignature,
-          summary: loopInfo.summaryString,
-        });
-        return EDuplicateLoopAction.ForceThink;
-      }
-
-      if (escalation.activeSignature !== loopInfo.canonicalSignature) {
-        const previousSignature: string | null = escalation.activeSignature;
-        escalation.activeSignature = loopInfo.canonicalSignature;
-        escalation.adviserAttemptsRemaining = MAX_DUPLICATE_LOOP_ADVISER_ATTEMPTS;
-        this._logger.info("Duplicate loop: new signature detected, forcing think", {
-          chatId,
-          stepNumber,
-          previousSignature,
-          newSignature: loopInfo.canonicalSignature,
-          summary: loopInfo.summaryString,
-        });
-        return EDuplicateLoopAction.ForceThink;
-      }
-
-      if (escalation.adviserAttemptsRemaining <= 0) {
-        this._logger.warn("Duplicate loop: adviser attempts exhausted, hard stop", {
-          chatId,
-          stepNumber,
-          signature: loopInfo.canonicalSignature,
-          summary: loopInfo.summaryString,
-        });
-        return EDuplicateLoopAction.HardStop;
-      }
-
-      escalation.adviserAttemptsRemaining--;
-
-      const historySlice: ModelMessage[] = this._buildHistorySliceForAdviser(messages, userTask);
-
-      this._logger.info("Duplicate loop: calling adviser model", {
+      const result = handler.handle(
         chatId,
+        loopInfo,
         stepNumber,
-        signature: loopInfo.canonicalSignature,
-        summary: loopInfo.summaryString,
-        adviserAttemptsRemaining: escalation.adviserAttemptsRemaining,
-        historySliceLength: historySlice.length,
-      });
+        messages,
+        escalation,
+        session.steeringQueue,
+        {
+          info: (msg: string): void => this._logger.info(msg),
+          warn: (msg: string): void => this._logger.warn(msg),
+        },
+      );
 
-      try {
-        const adviserResult = await generateObjectWithRetryAsync({
-          model: AiProviderService.getInstance().getModel(),
-          prompt: _createDuplicateLoopAdviserPrompt(
-            userTask,
-            historySlice,
-            loopInfo.summaryString,
-            loopInfo.duplicateCount,
-          ),
-          schema: DuplicateLoopAdviserSchema,
-          system: "You are an expert AI assistant helping a model break out of a duplicate tool call loop.",
-          retryOptions: {
-            maxAttempts: 2,
-            timeoutMs: 60000,
-            callType: "agent_primary",
-          },
-        });
 
-        this._logger.info("Duplicate loop adviser recommendation", {
-          chatId,
-          stepNumber,
-          signature: loopInfo.canonicalSignature,
-          adviserAttemptsRemaining: escalation.adviserAttemptsRemaining,
-          reasoning: adviserResult.object.reasoning,
-          recommendation: adviserResult.object.recommendation,
-        });
-
-        session.steeringQueue.push(
-          `Duplicate-loop adviser recommendation: ${adviserResult.object.recommendation}`,
-        );
-      } catch (adviserError: unknown) {
-        this._logger.warn("Duplicate loop adviser call failed, forcing think", {
-          chatId,
-          stepNumber,
-          signature: loopInfo.canonicalSignature,
-          error: adviserError instanceof Error ? adviserError.message : String(adviserError),
-        });
-      }
-
-      return EDuplicateLoopAction.ForceThink;
+      return result.action;
     };
   }
 
-  private _buildHistorySliceForAdviser(messages: ModelMessage[], userTask: string): ModelMessage[] {
-    const normalizedProbe: string = userTask.trim().slice(0, 160);
-
-    let startIndex: number = 0;
-    if (normalizedProbe.length > 0) {
-      for (let i: number = messages.length - 1; i >= 0; i--) {
-        const message: ModelMessage = messages[i];
-        if (message.role !== "user") {
-          continue;
-        }
-
-        const userText: string = _extractUserTextContent(message);
-        if (userText.includes(normalizedProbe)) {
-          startIndex = i;
-          break;
-        }
-      }
-    }
-
-    let endIndex: number = -1;
-    for (let i: number = messages.length - 1; i >= startIndex; i--) {
-      const message: ModelMessage = messages[i];
-      if (message.role !== "assistant" || !Array.isArray(message.content)) {
-        continue;
-      }
-
-      const hasToolCall: boolean = message.content.some((part: unknown): boolean => {
-        return (
-          typeof part === "object" &&
-          part !== null &&
-          "type" in part &&
-          (part as { type: string }).type === "tool-call"
-        );
-      });
-
-      if (hasToolCall) {
-        endIndex = i;
-        break;
-      }
-    }
-
-    if (endIndex < 0) {
-      return messages.slice(startIndex);
-    }
-
-    // Include tool-result messages that belong to that final tool call step.
-    let sliceEnd: number = endIndex;
-    for (let i: number = endIndex + 1; i < messages.length; i++) {
-      const message: ModelMessage = messages[i];
-      if (message.role === "assistant") {
-        break;
-      }
-      if (message.role === "tool") {
-        sliceEnd = i;
-      }
-    }
-
-    return messages.slice(startIndex, sliceEnd + 1);
-  }
-
-  private _resetDuplicateLoopEscalation(chatId: string): void {
-    const session: IChatSession | undefined = this._sessions.get(chatId);
+  private _resetDuplicateLoopEscalation(_chatId: string): void {
+    const session: IChatSession | undefined = this._sessions.get(_chatId);
     if (session) {
-      session.duplicateLoopEscalation = {
-        activeSignature: null,
-        adviserAttemptsRemaining: MAX_DUPLICATE_LOOP_ADVISER_ATTEMPTS,
-      };
+      const handler = new DuplicateLoopHandler();
+      handler.reset(session.duplicateLoopEscalation);
     }
   }
 
@@ -1441,123 +941,6 @@ function _appendResponseToSession(
   for (const responseMsg of responseMessages) {
     sessionMessages.push(responseMsg as ModelMessage);
   }
-}
-
-function _sessionStringifyReplacer(_key: string, value: unknown): unknown {
-  if (Buffer.isBuffer(value)) {
-    return {
-      __type: _BufferMarkerType,
-      __data: value.toString("base64"),
-    } satisfies IBufferMarker;
-  }
-
-  if (value instanceof Uint8Array) {
-    return {
-      __type: _BufferMarkerType,
-      __data: Buffer.from(value).toString("base64"),
-    } satisfies IBufferMarker;
-  }
-
-  return value;
-}
-
-function _sessionParseReviver(_key: string, value: unknown): unknown {
-  if (
-    value &&
-    typeof value === "object" &&
-    "__type" in value &&
-    (value as { __type?: unknown }).__type === _BufferMarkerType &&
-    "__data" in value &&
-    typeof (value as { __data?: unknown }).__data === "string"
-  ) {
-    try {
-      return Buffer.from((value as { __data: string }).__data, "base64");
-    } catch {
-      return value;
-    }
-  }
-
-  // Backward-compatible restore for Node's default Buffer JSON shape:
-  // { type: "Buffer", data: number[] }
-  if (
-    value &&
-    typeof value === "object" &&
-    "type" in value &&
-    (value as { type?: unknown }).type === "Buffer" &&
-    "data" in value &&
-    Array.isArray((value as { data?: unknown }).data)
-  ) {
-    try {
-      return Buffer.from((value as { data: number[] }).data);
-    } catch {
-      return value;
-    }
-  }
-
-  return value;
-}
-
-function _normalizeLoadedSessionMessages(
-  messages: ModelMessage[],
-  logger: LoggerService,
-  chatId: string,
-): ModelMessage[] {
-  const normalized: ModelMessage[] = [];
-
-  for (const message of messages) {
-    const clonedMessage: ModelMessage = { ...message };
-
-    if (Array.isArray(clonedMessage.content)) {
-      const normalizedParts: unknown[] = [];
-
-      for (const part of clonedMessage.content as unknown[]) {
-        if (
-          part &&
-          typeof part === "object" &&
-          "type" in part &&
-          (part as { type?: unknown }).type === "image" &&
-          "image" in part
-        ) {
-          const imagePart: Record<string, unknown> = { ...(part as Record<string, unknown>) };
-          const imageValue: unknown = imagePart.image;
-
-          if (Buffer.isBuffer(imageValue) || imageValue instanceof Uint8Array || typeof imageValue === "string") {
-            normalizedParts.push(imagePart);
-            continue;
-          }
-
-          if (
-            imageValue &&
-            typeof imageValue === "object" &&
-            "type" in imageValue &&
-            (imageValue as { type?: unknown }).type === "Buffer" &&
-            "data" in imageValue &&
-            Array.isArray((imageValue as { data?: unknown }).data)
-          ) {
-            try {
-              imagePart.image = Buffer.from((imageValue as { data: number[] }).data);
-              normalizedParts.push(imagePart);
-              continue;
-            } catch {
-              logger.warn("Dropping invalid legacy image payload from restored session", { chatId });
-              continue;
-            }
-          }
-
-          logger.warn("Dropping invalid image payload from restored session", { chatId });
-          continue;
-        }
-
-        normalizedParts.push(part);
-      }
-
-      clonedMessage.content = normalizedParts as any;
-    }
-
-    normalized.push(clonedMessage);
-  }
-
-  return normalized;
 }
 
 async function _compactSessionMessagesAsync(
@@ -1590,65 +973,6 @@ async function _compactSessionMessagesAsync(
   );
 
   return compactionResult.messages;
-}
-
-function _wrapCreateTableWithHotReload(
-  originalTool: ToolSet[string],
-  chatId: string,
-  session: IChatSession,
-): ToolSet[string] {
-  const originalExecute = originalTool.execute;
-
-  if (!originalExecute) {
-    return originalTool;
-  }
-
-  return {
-    ...originalTool,
-    execute: async (input: unknown, options: any): Promise<unknown> => {
-      const result: any = await originalExecute(input, options);
-
-      if (result?.success === true) {
-        // Extract table name from input
-        const tableName: string = typeof input === "object" && input !== null
-          ? String((input as Record<string, unknown>).tableName ?? (input as Record<string, unknown>).name ?? "unknown")
-          : "unknown";
-
-        const toolName = `write_table_${tableName}`;
-
-        try {
-          const hotReload = ToolHotReloadService.getInstance();
-          const rebuildSucceeded: boolean = await hotReload.triggerRebuildAsync(chatId);
-
-          if (!rebuildSucceeded) {
-            LoggerService.getInstance().warn("create_table succeeded but tool hot-reload did not complete", {
-              chatId,
-              toolName,
-              tableName,
-            });
-            return result;
-          }
-
-          // Signal that generate() should terminate now and restart with fresh tools
-          session.terminateCurrentRun = true;
-          session.pendingToolRebuild = { toolName, tableName };
-
-          LoggerService.getInstance().info("create_table triggered hard-stop + tool rebuild", {
-            chatId,
-            toolName,
-            tableName,
-          });
-        } catch (err: unknown) {
-          LoggerService.getInstance().warn("Tool hot-reload failed after create_table", {
-            chatId,
-            error: extractErrorMessage(err),
-          });
-        }
-      }
-
-      return result;
-    },
-  } as ToolSet[string];
 }
 
 //#endregion Private functions
