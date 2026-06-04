@@ -100,7 +100,9 @@ describe("OpenAI-compatible local reasoning middleware E2E", () => {
   it("should extract <think> client-side and preserve reasoning_content in the next tool-call step", async () => {
     // This test requires LM Studio to be reliably running - skip if not available
     // Set BLACKDOGBOT_RUN_LM_STUDIO_TESTS=1 to run this test
+    if (!process.env.BLACKDOGBOT_RUN_LM_STUDIO_TESTS) {
       console.log("Skipping: Set BLACKDOGBOT_RUN_LM_STUDIO_TESTS=1 to run this test");
+      return;
     }
 
     if (!endpointReachable) {

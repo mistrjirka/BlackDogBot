@@ -215,10 +215,8 @@ export class CommandProcessService {
       this._logger.debug("Process resumed from awaiting_input", { handleId });
     }
 
-    const sanitizedInput: string = this._sanitizeStdinInput(input);
-
     if (entry.child.stdin) {
-      entry.child.stdin.write(sanitizedInput);
+      entry.child.stdin.write(input);
 
       if (closeStdin) {
         entry.child.stdin.end();
@@ -363,13 +361,6 @@ export class CommandProcessService {
   //#endregion Public methods
 
   //#region Private methods
-
-  private _sanitizeStdinInput(input: string): string {
-    return input
-      .replace(/[;&|`$(){}[\]<>\'\\]/g, "")
-      .replace(/\n/g, " ")
-      .trim();
-  }
 
   private _generateHandleId(): string {
     const uuid: string = crypto.randomUUID().replace(/-/g, "");

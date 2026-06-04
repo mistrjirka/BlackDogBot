@@ -7,8 +7,7 @@ import * as litesqlValidation from "../helpers/litesql-validation.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { SQLITE_TO_ZOD_TYPE, isDateLikeColumn } from "../utils/sqlite-type-mappings.js";
-
-const DEFAULT_DATABASE = "blackdog";
+import { DEFAULT_DATABASE } from "../config/database.js";
 
 export interface IUpdateTableResult {
   success: boolean;

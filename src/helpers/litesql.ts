@@ -4,6 +4,7 @@ import * as path from "node:path";
 import Database from "better-sqlite3";
 
 import { getDatabasePath, getDatabasesDir, ensureDirectoryExistsAsync } from "../utils/paths.js";
+import { DEFAULT_DATABASE } from "../config/database.js";
 import { LoggerService } from "../services/logger.service.js";
 
 //#region Types
@@ -231,6 +232,13 @@ export async function createDatabaseAsync(databaseName: string): Promise<void> {
   db.close();
 
   logger.info("Database created", { databaseName, path: dbPath });
+}
+
+export async function ensureDatabaseExists(databaseName: string = DEFAULT_DATABASE): Promise<boolean> {
+  const exists: boolean = await databaseExistsAsync(databaseName);
+  if (exists) return true;
+  await createDatabaseAsync(databaseName);
+  return false;
 }
 
 export async function createTableAsync(

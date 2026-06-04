@@ -15,6 +15,7 @@ import { isRetryableApiError, isConnectionError, isContextExceededApiError } fro
 const MAX_KEEP_MESSAGES: number = 3;
 const CONTEXT_THRESHOLD_PERCENTAGE: number = 0.15;
 const APPROX_CONTEXT_SIZE_CHARS: number = 128_000 * 4;
+const CONTEXT_WINDOW_TOKENS: number = 128_000;
 const MAX_SUMMARY_CHARS: number = Math.floor(APPROX_CONTEXT_SIZE_CHARS * CONTEXT_THRESHOLD_PERCENTAGE);
 const VECTOR_TABLE_NAME: string = "cron-messages";
 const SIMILARITY_SEARCH_LIMIT: number = 10;
@@ -530,6 +531,11 @@ ${candidateMessage}`;
         targetTokenCount,
         (msgs: ModelMessage[]): number => this._countTokensForMessages(msgs),
         false,
+        {
+          contextWindow: Number.isFinite(CONTEXT_WINDOW_TOKENS) && CONTEXT_WINDOW_TOKENS > 0
+            ? CONTEXT_WINDOW_TOKENS
+            : undefined,
+        },
       );
 
       const recentMessages: ICronMessageHistory[] = CronMessageHistoryService._sharedHistory.slice(-MAX_KEEP_MESSAGES);

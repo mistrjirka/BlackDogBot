@@ -38,6 +38,7 @@ import { runToolCallingProbeAsync } from "../utils/llm-probe-helpers.js";
 import { createHash } from "node:crypto";
 import { ensureDirectoryExistsAsync, getCacheDir } from "../utils/paths.js";
 import { ConfigService } from "./config.service.js";
+import { HARD_GATE_THRESHOLD_PERCENTAGE } from "../shared/constants.js";
 
 interface IOpenRouterModelListEntry {
   id: string;
@@ -67,12 +68,6 @@ function normalizeBaseUrl(url: string): string {
   return trimmed.replace(/\/v1\/?$/, "");
 }
 
-/**
- * Hard gate threshold as a fraction of context window. Requests whose
- * serialized body exceeds this fraction are rejected before reaching the
- * API, triggering the compaction-retry logic in the agent.
- */
-const HARD_GATE_THRESHOLD_PERCENTAGE: number = 0.85;
 const LM_STUDIO_MODEL_RECOVERY_RETRIES: number = 3;
 const CAPABILITY_PROBE_TIMEOUT_MS: number = 300_000;
 const PARALLEL_TOOL_CALL_PROBE_TIMEOUT_MS: number = CAPABILITY_PROBE_TIMEOUT_MS;

@@ -5,13 +5,12 @@ import * as litesql from "../helpers/litesql.js";
 import type { DatabaseStatus, IColumnInfo } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 import { createUpdateTableTool } from "../tools/update-table.tool.js";
+import { DEFAULT_DATABASE } from "../config/database.js";
 
 import {
   SQLITE_TO_ZOD_TYPE,
   isDateLikeColumn,
 } from "./sqlite-type-mappings.js";
-
-const DEFAULT_DATABASE = "blackdog";
 
 const WRITE_TO_TABLE_DESCRIPTION: string =
   "Insert rows into the \"{tableName}\" table. " +

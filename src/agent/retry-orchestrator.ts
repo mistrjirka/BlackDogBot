@@ -1,6 +1,7 @@
 import { type LanguageModel, type ModelMessage } from "ai";
 
 import { AGENT_EMPTY_RESPONSE_RETRIES, CONTEXT_EXCEEDED_RETRIES } from "./base-agent.js";
+import { DuplicateToolLoopHardStopError } from "./base-agent.js";
 import type { LoggerService } from "../services/logger.service.js";
 import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
 import {
@@ -51,6 +52,10 @@ export interface IRetryOrchestratorConfig {
   contextWindow: number;
   /** Function that performs one generate attempt. Receives messages and abort signal. */
   generateFn: TGenerateFn;
+  /** Builds the current message list for each retry attempt. */
+  buildMessagesForCall: () => ModelMessage[];
+  /** Abort signal shared with the active chat request. */
+  abortSignal: AbortSignal;
   /** Reset token counters before each retry attempt (mirrors MainAgent `_totalInputTokens`). */
   resetTokenCounters: () => void;
   /** Called with provider-reported input tokens after successfully generated response. Mirrors `_totalInputTokens = x`. */
@@ -65,6 +70,8 @@ export interface IRunCycleResult {
   result: INotifyResult;
   /** True when a fallback provider activation is needed (all retries exhausted or non-retryable error). */
   shouldFallback: boolean;
+  /** Raw provider response messages to persist in session history. */
+  responseMessages?: unknown[];
 }
 
 //#region Constants
@@ -103,6 +110,8 @@ export class RetryOrchestrator {
       compactionThreshold,
       contextWindow,
       generateFn,
+      buildMessagesForCall,
+      abortSignal,
       resetTokenCounters,
       totalInputTokensSink,
       emitModelOutputAsync,
@@ -125,10 +134,9 @@ export class RetryOrchestrator {
 
       const llmStartTime: number = Date.now();
       try {
-        const messagesForCall: ModelMessage[] = []; /* Message construction handled externally via generateFn closure */
         const generateResult = await generateFn({
-          messages: messagesForCall,
-          abortSignal: new AbortController().signal,
+          messages: buildMessagesForCall(),
+          abortSignal,
         });
 
 
@@ -176,6 +184,7 @@ export class RetryOrchestrator {
           return {
             result: { text, stepsCount },
             shouldFallback: false,
+            responseMessages: generateResult.response?.messages,
           };
         }
 
@@ -196,8 +205,17 @@ export class RetryOrchestrator {
             stepsCount,
           },
           shouldFallback: true,
+          responseMessages: undefined,
         };
       } catch (genError: unknown) {
+        if (genError instanceof DuplicateToolLoopHardStopError) {
+          throw genError;
+        }
+
+        if (genError instanceof Error && genError.name === "AbortError") {
+          throw genError;
+        }
+
         const aiErrorDetails = extractAiErrorDetails(genError);
 
         // Handle context size exceeded errors with reactive compaction

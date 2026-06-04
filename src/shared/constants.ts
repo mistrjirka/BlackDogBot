@@ -17,6 +17,8 @@ export const TIMED_DIR: string = "timed";
 
 //#region Defaults
 
+export const HARD_GATE_THRESHOLD_PERCENTAGE: number = 0.85;
+
 export const DEFAULT_EMBEDDING_MODEL: string = "onnx-community/Qwen3-Embedding-0.6B-ONNX";
 export const DEFAULT_EMBEDDING_DTYPE: string = "q8";
 export const DEFAULT_EMBEDDING_DEVICE: string = "auto";

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { type ModelMessage } from "ai";
 import { ensureDirectoryExistsAsync, getSessionsDir, getSessionFilePath } from "../utils/paths.js";
+import { LoggerService } from "../services/logger.service.js";
 
 export interface IPersistedSession {
   messages: ModelMessage[];
@@ -45,6 +46,7 @@ export async function saveSessionAsync<ParsedSession extends IPersistedSession>(
  */
 export async function loadSessionAsync<ParsedSession extends IPersistedSession>(chatId: string): Promise<ParsedSession | null> {
   const filePath: string = getSessionFilePath(chatId);
+  const logger: LoggerService = LoggerService.getInstance();
 
   try {
     const content: string = await fs.readFile(filePath, "utf-8");
@@ -61,7 +63,9 @@ export async function loadSessionAsync<ParsedSession extends IPersistedSession>(
     if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
       return null;
     }
-    throw error;
+    const message: string = error instanceof Error ? error.message : String(error);
+    logger.warn("Failed to load session from disk, starting fresh.", { chatId, error: message });
+    return null;
   }
 }
 

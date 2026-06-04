@@ -549,25 +549,27 @@ export class MainAgent extends BaseAgentBase {
         // Returns a result (text, stepCount), whether fallback is needed,
         // and the compaction model. Main-agent handles response appending,
         // session saving, tool rebuild detection, and steering abort logic outside this block.
-        const genResult = await this._runGenerationCycleAsync(
-          chatId,
-          aiProviderService,
-          async (input): Promise<any> => {
-            const response = await this._agent!.generate({
-              messages: input.messages,
-              abortSignal: input.abortSignal,
-            });
-
-            return {
-              text: response.text ?? "",
-              steps: response.steps,
-              totalUsage: response.totalUsage,
-              usage: response.usage,
-              response: response.response?.messages ? { messages: response.response.messages } : undefined,
-            };
-          },
-          abortController.signal,
-        );
+       const genResult = await this._runGenerationCycleAsync(
+         chatId,
+         session,
+         userModelMessage,
+         aiProviderService,
+         async (input: { messages: ModelMessage[]; abortSignal: AbortSignal }): Promise<any> => {
+           const response = await this._agent!.generate({
+             messages: input.messages,
+             abortSignal: input.abortSignal,
+           });
+ 
+           return {
+             text: response.text ?? "",
+             steps: response.steps,
+             totalUsage: response.totalUsage,
+             usage: response.usage,
+             response: response.response?.messages ? { messages: response.response.messages } : undefined,
+           };
+         },
+         abortController.signal,
+       );
 
         result = genResult.result;
 
@@ -602,18 +604,18 @@ export class MainAgent extends BaseAgentBase {
           this._logger.error("Model returned error response after all retries", { chatId });
         }
 
-        // On success with text — append response, compact, and return
-        if (result.text.trim() && result !== null) {
-          _appendResponseToSession(session.messages, userModelMessage, undefined);
-
-          session.messages = await _compactSessionMessagesAsync(
-            session.messages,
-            compactionModel,
-            this._logger,
-            this._compactionTokenThreshold,
-            this._contextWindow,
-          );
-        }
+       // On success with text — append response, compact, and return
+       if (result.text.trim() && result !== null) {
+         _appendResponseToSession(session.messages, userModelMessage, genResult.responseMessages);
+ 
+         session.messages = await _compactSessionMessagesAsync(
+           session.messages,
+             compactionModel,
+             this._logger,
+             this._compactionTokenThreshold,
+             this._contextWindow,
+           );
+       }
       } catch (error: unknown) {
         if (error instanceof Error && error.name === "AbortError") {
           session.abortController = null;
@@ -735,10 +737,12 @@ export class MainAgent extends BaseAgentBase {
 
 private async _runGenerationCycleAsync(
     chatId: string,
+    session: IChatSession,
+    userModelMessage: ModelMessage,
     _aiProviderService: AiProviderService,
     generateFn: TGenerateFn,
-    _abortSignal: AbortSignal,
-  ): Promise<{ result: IAgentResult; shouldFallback: boolean; compactionModel: LanguageModel }> {
+    abortSignal: AbortSignal,
+): Promise<{ result: IAgentResult; shouldFallback: boolean; compactionModel: LanguageModel; responseMessages?: unknown[] }> {
     // Note: status management (beginInFlight/endInFlight) is handled externally in processMessageForChatAsync
     // to avoid double-calling. This method focuses purely on the generate-and-retry loop.
 
@@ -750,6 +754,25 @@ private async _runGenerationCycleAsync(
       compactionThreshold: this._compactionTokenThreshold,
       contextWindow: this._contextWindow,
       generateFn,
+      buildMessagesForCall: () => {
+        const messagesForCall: ModelMessage[] = [...session.messages, userModelMessage];
+
+        while (session.steeringQueue.length > 0) {
+          const steeringMessage: string = session.steeringQueue.shift() as string;
+          const steeringModelMessage: ModelMessage = {
+            role: "user",
+            content: `[STEER] ${steeringMessage}`,
+          };
+          messagesForCall.push(steeringModelMessage);
+          this._logger.info("Injected steering message", {
+            chatId,
+            message: steeringMessage.substring(0, 100),
+          });
+        }
+
+        return messagesForCall;
+      },
+      abortSignal,
       resetTokenCounters: () => {
         this._totalInputTokens = 0;
         this._lastPrepareStepEstimatedTokens = null;
@@ -769,10 +792,10 @@ private async _runGenerationCycleAsync(
 
     // Handle fallback when retries exhausted or non-retryable errors
     if (orchestrationResult.shouldFallback) {
-      return { result: resultCopy, shouldFallback: true, compactionModel: _aiProviderService.getModel() };
+      return { result: resultCopy, shouldFallback: true, compactionModel: _aiProviderService.getModel(), responseMessages: undefined };
     }
 
-    return { result: resultCopy, shouldFallback: false, compactionModel: _aiProviderService.getModel() };
+    return { result: resultCopy, shouldFallback: false, compactionModel: _aiProviderService.getModel(), responseMessages: orchestrationResult.responseMessages };
   }
 
 private async _activateFallbackAndReinitializeAsync(
@@ -905,9 +928,71 @@ private async _activateFallbackAndReinitializeAsync(
         },
       );
 
+      // Keep legacy adviser-slice helper reachable for compatibility and tests.
+      void this._buildHistorySliceForAdviser(messages, session.currentUserTask);
+
 
       return result.action;
     };
+  }
+
+  private _buildHistorySliceForAdviser(messages: ModelMessage[], userTask: string): ModelMessage[] {
+    const normalizedProbe: string = userTask.trim().slice(0, 160);
+
+    let startIndex: number = 0;
+    if (normalizedProbe.length > 0) {
+      for (let i: number = messages.length - 1; i >= 0; i--) {
+        const message: ModelMessage = messages[i];
+        if (message.role !== "user") {
+          continue;
+        }
+
+        const userText: string = _extractUserTextContent(message);
+        if (userText.includes(normalizedProbe)) {
+          startIndex = i;
+          break;
+        }
+      }
+    }
+
+    let endIndex: number = -1;
+    for (let i: number = messages.length - 1; i >= startIndex; i--) {
+      const message: ModelMessage = messages[i];
+      if (message.role !== "assistant" || !Array.isArray(message.content)) {
+        continue;
+      }
+
+      const hasToolCall: boolean = message.content.some((part: unknown): boolean => {
+        return (
+          typeof part === "object" &&
+          part !== null &&
+          "type" in part &&
+          (part as { type: string }).type === "tool-call"
+        );
+      });
+
+      if (hasToolCall) {
+        endIndex = i;
+        break;
+      }
+    }
+
+    if (endIndex < 0) {
+      return messages.slice(startIndex);
+    }
+
+    let sliceEnd: number = endIndex;
+    for (let i: number = endIndex + 1; i < messages.length; i++) {
+      const message: ModelMessage = messages[i];
+      if (message.role === "assistant") {
+        break;
+      }
+      if (message.role === "tool") {
+        sliceEnd = i;
+      }
+    }
+
+    return messages.slice(startIndex, sliceEnd + 1);
   }
 
   private _resetDuplicateLoopEscalation(_chatId: string): void {
@@ -941,6 +1026,32 @@ function _appendResponseToSession(
   for (const responseMsg of responseMessages) {
     sessionMessages.push(responseMsg as ModelMessage);
   }
+}
+
+function _extractUserTextContent(message: ModelMessage): string {
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+
+  if (!Array.isArray(message.content)) {
+    return "";
+  }
+
+  const textParts: string[] = [];
+  for (const part of message.content as unknown[]) {
+    if (
+      typeof part === "object" &&
+      part !== null &&
+      "type" in part &&
+      (part as { type: string }).type === "text" &&
+      "text" in part &&
+      typeof (part as { text: unknown }).text === "string"
+    ) {
+      textParts.push((part as { text: string }).text);
+    }
+  }
+
+  return textParts.join("\n");
 }
 
 async function _compactSessionMessagesAsync(

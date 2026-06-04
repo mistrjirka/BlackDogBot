@@ -13,8 +13,7 @@ describe("create_table tool", () => {
   });
 
   it("auto-creates the database if it does not exist", async () => {
-    vi.mocked(litesql.databaseExistsAsync).mockResolvedValue(false);
-    vi.mocked(litesql.createDatabaseAsync).mockResolvedValue(undefined);
+    vi.mocked(litesql.ensureDatabaseExists).mockResolvedValue(false);
     vi.mocked(litesql.tableExistsAsync).mockResolvedValue(false);
     vi.mocked(litesql.createTableAsync).mockResolvedValue(undefined);
 
@@ -28,7 +27,7 @@ describe("create_table tool", () => {
 
     expect(result.success).toBe(true);
     expect(result.tableName).toBe("messages");
-    expect(litesql.createDatabaseAsync).toHaveBeenCalledWith("blackdog");
+    expect(litesql.ensureDatabaseExists).toHaveBeenCalled();
     expect(litesql.createTableAsync).toHaveBeenCalledWith("blackdog", "messages", expect.any(Array));
   });
 

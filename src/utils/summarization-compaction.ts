@@ -2,13 +2,11 @@ import type { LanguageModel, ModelMessage } from "ai";
 
 import { LoggerService } from "../services/logger.service.js";
 import { generateTextWithRetryAsync } from "./llm-retry.js";
+import { isContextExceededApiError } from "./context-error.js";
 
 //#region Constants
 
 const MAX_DAG_ITERATIONS: number = 12;
-const TRUNCATED_TOOL_MAX_CHARS: number = 1800;
-const CROPPED_MESSAGE_HEAD_CHARS: number = 700;
-const CROPPED_MESSAGE_TAIL_CHARS: number = 260;
 
 //#endregion Constants
 
@@ -84,6 +82,11 @@ export async function compactMessagesSummaryOnlyAsync(
 
   let finalDagResult: ICompactionDagResult = dagResult;
   if (!dagResult.converged) {
+    logger.warn("DAG did not converge, applying multimodal fallback ladder (L5/L6/L7)", {
+      dagPath: dagResult.dagPath,
+      dagTerminationReason: dagResult.dagTerminationReason,
+      maxLevelReached: dagResult.maxLevelReached,
+    });
     finalDagResult = _applyMultimodalFallbackLadder(
       dagResult,
       logger,
@@ -133,40 +136,66 @@ async function _compactSinglePassAsync(
     return messages;
   }
 
-  const stageAResult: ModelMessage[] = await _compactPrefixBeforeLastUserAsync(
-    messages,
-    model,
-    logger,
-    targetTokenCount,
-    countTokens,
-  );
+  let currentResult: ModelMessage[] = messages;
 
-  if (countTokens(stageAResult) <= targetTokenCount) {
-    return stageAResult;
+  // Stage A: compact prefix before last user
+  try {
+    const stageAResult: ModelMessage[] = await _compactPrefixBeforeLastUserAsync(
+      currentResult,
+      model,
+      logger,
+      targetTokenCount,
+      countTokens,
+    );
+    currentResult = stageAResult;
+  } catch (error: unknown) {
+    logger.warn("L1 Stage A (prefix compaction) failed, continuing to Stage B", {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
-  const stageBResult: ModelMessage[] = await _compactLatestUserMessageAsync(
-    stageAResult,
-    model,
-    logger,
-    targetTokenCount,
-    countTokens,
-    options,
-  );
-
-  if (countTokens(stageBResult) <= targetTokenCount) {
-    return stageBResult;
+  if (countTokens(currentResult) <= targetTokenCount) {
+    return currentResult;
   }
 
-  const stageCResult: ModelMessage[] = await _compactToolResultsAfterLatestUserAsync(
-    stageBResult,
-    model,
-    logger,
-    targetTokenCount,
-    countTokens,
-  );
+  // Stage B: compact latest user message
+  try {
+    const stageBResult: ModelMessage[] = await _compactLatestUserMessageAsync(
+      currentResult,
+      model,
+      logger,
+      targetTokenCount,
+      countTokens,
+      options,
+    );
+    currentResult = stageBResult;
+  } catch (error: unknown) {
+    logger.warn("L1 Stage B (latest user compaction) failed, continuing to Stage C", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
-  return stageCResult;
+  if (countTokens(currentResult) <= targetTokenCount) {
+    return currentResult;
+  }
+
+  // Stage C: compact tool results after latest user
+  try {
+    const stageCResult: ModelMessage[] = await _compactToolResultsAfterLatestUserAsync(
+      currentResult,
+      model,
+      logger,
+      targetTokenCount,
+      countTokens,
+    );
+    currentResult = stageCResult;
+  } catch (error: unknown) {
+    logger.warn("L1 Stage C (tool results compaction) failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return currentResult;
 }
 
 async function _compactViaDagAsync(
@@ -183,6 +212,7 @@ async function _compactViaDagAsync(
   let phase: "initial" | "after_l2" | "after_l3" = "initial";
   let iterations: number = 0;
   let l1Passes: number = 0;
+  let consecutiveFailures: number = 0; // circuit breaker: skip LLM nodes after 2 consecutive failures
 
   const dagPath: TCompactionNode[] = [];
   const dagNodeVisitCounts: Record<TCompactionNode, number> = {
@@ -223,32 +253,76 @@ async function _compactViaDagAsync(
     const beforeMessages: ModelMessage[] = currentMessages;
     let nextMessages: ModelMessage[] = currentMessages;
 
-    if (node === "L1") {
-      nextMessages = await _compactSinglePassAsync(
-        currentMessages,
-        model,
-        logger,
-        targetTokenCount,
-        countTokens,
-        options,
-      );
-    } else if (node === "L2") {
-      nextMessages = await _compactToolResultsIndividuallyAsync(
-        currentMessages,
-        model,
-        logger,
-        targetTokenCount,
-        countTokens,
-      );
-    } else if (node === "L3") {
-      nextMessages = _truncateToolResultsAsync(currentMessages, targetTokenCount, countTokens);
-    } else {
-      nextMessages = _cropMessagesFallbackAsync(currentMessages, targetTokenCount, countTokens);
+    try {
+      if (node === "L1") {
+        nextMessages = await _compactSinglePassAsync(
+          currentMessages,
+          model,
+          logger,
+          targetTokenCount,
+          countTokens,
+          options,
+        );
+      } else if (node === "L2") {
+        nextMessages = await _compactToolResultsIndividuallyAsync(
+          currentMessages,
+          model,
+          logger,
+          targetTokenCount,
+          countTokens,
+        );
+      } else if (node === "L3") {
+        nextMessages = await _compactBatchedMessagesAsync(
+          currentMessages,
+          model,
+          logger,
+          targetTokenCount,
+          countTokens,
+          false, // not aggressive
+        );
+      } else {
+        nextMessages = await _compactBatchedMessagesAsync(
+          currentMessages,
+          model,
+          logger,
+          targetTokenCount,
+          countTokens,
+          true, // aggressive
+        );
+      }
+    } catch (error: unknown) {
+      consecutiveFailures++;
+      const isContextError: boolean = isContextExceededApiError(error);
+      logger.warn("DAG node failed, treating as no improvement", {
+        node,
+        phase,
+        iteration: iterations,
+        consecutiveFailures,
+        isContextExceeded: isContextError,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Treat as "no improvement" — nextMessages stays equal to beforeMessages
+      // The existing improved check will route to the next DAG node
+      nextMessages = beforeMessages;
+
+      // Circuit breaker: after 2 consecutive LLM failures, skip to fallback ladder
+      if (consecutiveFailures >= 2) {
+        logger.warn("Circuit breaker: 2 consecutive DAG node failures, skipping to fallback ladder", {
+          dagPath,
+          consecutiveFailures,
+        });
+        break;
+      }
     }
 
     currentMessages = nextMessages;
     const afterTokens: number = countTokens(currentMessages);
     const improved: boolean = afterTokens < beforeTokens || JSON.stringify(beforeMessages) !== JSON.stringify(currentMessages);
+
+    // Reset circuit breaker on success
+    if (improved) {
+      consecutiveFailures = 0;
+    }
 
     logger.info("Compaction DAG node completed", {
       node,
@@ -390,12 +464,52 @@ async function _compactPrefixBeforeLastUserAsync(
     Math.floor(targetTokenCount - countTokens([firstMessage, ...pinnedSummaryMessages, ...activeSuffix]) - 180),
   );
 
-  const summaryText: string = await _summarizeMessagesSingleShotAsync(
-    unpinnedPrefixMessages,
-    model,
-    logger,
-    summaryBudgetTokens,
-  );
+  // Chunked multi-pass summarization to avoid exceeding hard gate
+  const CHUNK_SIZE_TOKENS: number = 30_000;
+  const chunks: ModelMessage[][] = _splitMessagesIntoChunks(unpinnedPrefixMessages, CHUNK_SIZE_TOKENS, countTokens);
+
+  let summaryText: string;
+  if (chunks.length === 1) {
+    // Single chunk — use existing single-shot summarization
+    summaryText = await _summarizeMessagesSingleShotAsync(
+      chunks[0],
+      model,
+      logger,
+      summaryBudgetTokens,
+    );
+  } else {
+    // Multiple chunks — summarize each, then combine
+    logger.info("L1 chunked prefix summarization", {
+      chunkCount: chunks.length,
+      chunkSizes: chunks.map((c: ModelMessage[]): number => countTokens(c)),
+    });
+
+    const chunkSummaries: string[] = [];
+    const perChunkBudget: number = Math.max(400, Math.floor(summaryBudgetTokens / chunks.length));
+
+    for (let i: number = 0; i < chunks.length; i++) {
+      const chunkSummary: string = await _summarizeMessagesSingleShotAsync(
+        chunks[i],
+        model,
+        logger,
+        perChunkBudget,
+      );
+      chunkSummaries.push(chunkSummary);
+    }
+
+    // Combine chunk summaries into one coherent summary
+    const combinedText: string = chunkSummaries
+      .map((s: string, i: number): string => `[Chunk ${i + 1}]:\n${s}`)
+      .join("\n\n");
+
+    summaryText = await _summarizeTextAsync(
+      model,
+      logger,
+      `Combine these conversation summaries into one coherent summary. Preserve key decisions, actions, concrete facts, identifiers, and pending tasks.\n\n${combinedText}`,
+      summaryBudgetTokens,
+      "combine-chunks",
+    );
+  }
 
   const summaryMessage: ModelMessage = {
     role: "user",
@@ -577,19 +691,26 @@ async function _compactToolResultsAfterLatestUserAsync(
     }
 
     const summaryBudget: number = Math.max(200, Math.min(700, Math.floor(item.tokens * 0.25)));
-    const summarized: string = await _summarizeTextAsync(
-      model,
-      logger,
-      `Summarize this tool output for future continuity. Preserve:\n` +
-        `- key factual result\n` +
-        `- IDs / paths / URLs / codes\n` +
-        `- error details if any\n\n` +
-        `Tool output:\n${originalText}`,
-      summaryBudget,
-      `tool-output-${item.index}`,
-    );
+    try {
+      const summarized: string = await _summarizeTextAsync(
+        model,
+        logger,
+        `Summarize this tool output for future continuity. Preserve:\n` +
+          `- key factual result\n` +
+          `- IDs / paths / URLs / codes\n` +
+          `- error details if any\n\n` +
+          `Tool output:\n${originalText}`,
+        summaryBudget,
+        `tool-output-${item.index}`,
+      );
 
-    resultMessages[item.index] = _replaceToolMessageContentWithSummary(originalMsg, summarized);
+      resultMessages[item.index] = _replaceToolMessageContentWithSummary(originalMsg, summarized);
+    } catch (error: unknown) {
+      logger.warn("L1-C per-tool summarization failed, skipping this tool", {
+        toolIndex: item.index,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   logger.info("Compaction stage finished", {
@@ -656,16 +777,24 @@ async function _compactToolResultsIndividuallyAsync(
     }
 
     const summaryBudget: number = Math.max(220, Math.min(900, Math.floor(item.tokens * 0.35)));
-    const summarized: string = await _summarizeTextAsync(
-      model,
-      logger,
-      `Per-tool DAG compaction output. Preserve IDs, URLs, paths, errors, and final outcome.\n\n` +
-        `Tool output:\n${originalText}`,
-      summaryBudget,
-      `dag-per-tool-${item.index}`,
-    );
+    try {
+      const summarized: string = await _summarizeTextAsync(
+        model,
+        logger,
+        `Per-tool DAG compaction output. Preserve IDs, URLs, paths, errors, and final outcome.\n\n` +
+          `Tool output:\n${originalText}`,
+        summaryBudget,
+        `dag-per-tool-${item.index}`,
+      );
 
-    resultMessages[item.index] = _replaceToolMessageContentWithSummary(originalMessage, summarized);
+      resultMessages[item.index] = _replaceToolMessageContentWithSummary(originalMessage, summarized);
+    } catch (error: unknown) {
+      logger.warn("L2 per-tool summarization failed, skipping this tool", {
+        toolIndex: item.index,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Skip this tool, continue with next
+    }
   }
 
   logger.info("Compaction stage finished", {
@@ -679,94 +808,119 @@ async function _compactToolResultsIndividuallyAsync(
   return resultMessages;
 }
 
-function _truncateToolResultsAsync(
+async function _compactBatchedMessagesAsync(
   messages: ModelMessage[],
+  model: LanguageModel,
+  logger: LoggerService,
   targetTokenCount: number,
   countTokens: (msgs: ModelMessage[]) => number,
-): ModelMessage[] {
-  const indexedTools: Array<{ index: number; chars: number }> = [];
+  aggressive: boolean,
+): Promise<ModelMessage[]> {
+  const lastUserIndex: number = _findLastUserIndex(messages);
+  const summaryBudget: number = aggressive ? 150 : 400;
+  const batchSize: number = 8; // up to 8 messages per batch
 
+  // Collect candidate messages (skip system, latest user, already-compacted, short messages)
+  const candidates: Array<{ index: number; text: string }> = [];
   for (let i: number = 0; i < messages.length; i++) {
-    if (messages[i].role !== "tool") {
-      continue;
-    }
+    const msg = messages[i];
+    if (msg.role === "system") continue;
+    if (i === lastUserIndex) continue;
+    if (_isEarlierContextSummaryMessage(msg)) continue;
+    if (_getToolResultCompactionCount(msg) > 0) continue; // already compacted tool result
 
-    const text: string = _extractTextContent(messages[i]);
-    indexedTools.push({ index: i, chars: text.length });
+    const text: string = _extractTextContent(msg).trim();
+    if (text.length < 200) continue;
+
+    candidates.push({ index: i, text });
   }
 
-  indexedTools.sort((a, b) => b.chars - a.chars);
-  const resultMessages: ModelMessage[] = [...messages];
-
-  for (const item of indexedTools) {
-    if (countTokens(resultMessages) <= targetTokenCount) {
-      break;
-    }
-
-    const originalMessage: ModelMessage = resultMessages[item.index];
-    const originalText: string = _extractTextContent(originalMessage);
-    if (originalText.length <= TRUNCATED_TOOL_MAX_CHARS) {
-      continue;
-    }
-
-    const truncatedText: string =
-      `[TRUNCATED TOOL RESULT]\n` +
-      `[ORIGINAL LENGTH: ${originalText.length}]\n` +
-      `${originalText.slice(0, TRUNCATED_TOOL_MAX_CHARS)}`;
-
-    resultMessages[item.index] = _replaceToolMessageContentWithSummary(originalMessage, truncatedText);
-  }
-
-  return resultMessages;
-}
-
-function _cropMessagesFallbackAsync(
-  messages: ModelMessage[],
-  targetTokenCount: number,
-  countTokens: (msgs: ModelMessage[]) => number,
-): ModelMessage[] {
-  if (messages.length === 0) {
+  if (candidates.length === 0) {
     return messages;
   }
 
-  let resultMessages: ModelMessage[] = messages;
+  // Track which indices to keep and which to replace
+  const keepIndices: Set<number> = new Set();
+  for (let i: number = 0; i < messages.length; i++) {
+    keepIndices.add(i);
+  }
+  const replacements: Map<number, ModelMessage> = new Map();
 
-  if (messages.length > 4) {
-    const first: ModelMessage = messages[0];
-    const tail: ModelMessage[] = messages.slice(-3);
-    resultMessages = [first, ...tail];
+  // Maintain running token count to avoid O(N*B) full rebuilds
+  let runningTokenCount: number = countTokens(messages);
+
+  // Group candidates into batches of adjacent messages
+  let batchStart: number = 0;
+  while (batchStart < candidates.length) {
+    if (runningTokenCount <= targetTokenCount) {
+      break;
+    }
+
+    const batchEnd: number = Math.min(batchStart + batchSize, candidates.length);
+    const batch: typeof candidates = candidates.slice(batchStart, batchEnd);
+
+    // Combine batch messages into a single text for summarization (use original messages)
+    const batchText: string = batch
+      .map((c: { index: number; text: string }): string => {
+        const msg = messages[c.index];
+        const roleLabel: string = msg.role === "user" ? "User" : msg.role === "assistant" ? "Assistant" : "Tool";
+        return `[${roleLabel}]: ${c.text}`;
+      })
+      .join("\n\n");
+
+    try {
+      const summarized: string = await _summarizeTextAsync(
+        model,
+        logger,
+        `Summarize these conversation messages concisely. Preserve key facts, decisions, IDs, and outcomes.\n\n${batchText}`,
+        summaryBudget,
+        `batch-${batchStart}`,
+      );
+
+      // Replace the first message in the batch with the summary, mark the rest for removal
+      const firstIndex: number = batch[0].index;
+      const replacementMsg: ModelMessage = {
+        role: "user",
+        content: `[COMPACTED BATCH (${batch.length} messages)]\n${summarized}`,
+      } as ModelMessage;
+      replacements.set(firstIndex, replacementMsg);
+
+      // Update running token count: subtract original batch messages, add replacement
+      const originalFirstTokens: number = countTokens([messages[firstIndex]]);
+      const replacementTokens: number = countTokens([replacementMsg]);
+      runningTokenCount += replacementTokens - originalFirstTokens;
+      for (let i: number = 1; i < batch.length; i++) {
+        const removedTokens: number = countTokens([messages[batch[i].index]]);
+        runningTokenCount -= removedTokens;
+        keepIndices.delete(batch[i].index);
+      }
+    } catch (error: unknown) {
+      logger.warn("L3/L4 batch summarization failed, skipping this batch", {
+        batchStart,
+        batchSize: batch.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    batchStart = batchEnd;
   }
 
-  if (countTokens(resultMessages) <= targetTokenCount) {
-    return resultMessages;
+  // Build final result from kept indices and replacements
+  const resultMessages: ModelMessage[] = [];
+  for (let i: number = 0; i < messages.length; i++) {
+    if (!keepIndices.has(i)) continue;
+    resultMessages.push(replacements.get(i) ?? messages[i]);
   }
 
-  const cropped: ModelMessage[] = resultMessages.map((message: ModelMessage, index: number): ModelMessage => {
-    if (index === 0) {
-      return message;
-    }
-
-    const fullText: string = _extractTextContent(message);
-    if (fullText.length <= CROPPED_MESSAGE_HEAD_CHARS + CROPPED_MESSAGE_TAIL_CHARS + 30) {
-      return message;
-    }
-
-    const croppedText: string =
-      `${fullText.slice(0, CROPPED_MESSAGE_HEAD_CHARS)}\n` +
-      `[... CROPPED FOR CONTEXT BUDGET ...]\n` +
-      `${fullText.slice(-CROPPED_MESSAGE_TAIL_CHARS)}`;
-
-    if (message.role === "tool") {
-      return _replaceToolMessageContentWithSummary(message, croppedText);
-    }
-
-    return {
-      ...message,
-      content: croppedText,
-    } as ModelMessage;
+  logger.info("Compaction stage finished", {
+    stage: aggressive ? "aggressive_batched" : "batched",
+    before: countTokens(messages),
+    after: countTokens(resultMessages),
+    reducedBy: countTokens(messages) - countTokens(resultMessages),
+    candidatesConsidered: candidates.length,
   });
 
-  return cropped;
+  return resultMessages;
 }
 
 function _maxLevel(current: TCompactionNode, next: TCompactionNode): TCompactionNode {
@@ -856,10 +1010,11 @@ function _applyMultimodalFallbackLadder(
     maxLevelReached = _maxLevel(maxLevelReached, "L7");
 
     const beforeL7: number = countTokens(messages);
+    const beforeL7Messages: ModelMessage[] = [...messages];
     messages = _dropImagesFromNonLatestUser(messages);
     const afterL7: number = countTokens(messages);
 
-    if (afterL7 < beforeL7 || JSON.stringify(messages) !== JSON.stringify(dagResult.messages)) {
+    if (afterL7 < beforeL7 || JSON.stringify(messages) !== JSON.stringify(beforeL7Messages)) {
       logger.warn("Multimodal fallback L7 applied (drop non-latest user images)", {
         before: beforeL7,
         after: afterL7,
@@ -1046,17 +1201,18 @@ function _replaceToolMessageContentWithSummary(
     const candidate: Record<string, unknown> = part as Record<string, unknown>;
 
     if (candidate.type === "tool-result") {
-      if ("output" in candidate) {
-        return {
-          ...candidate,
-          output: replacementOutput,
-        };
-      }
-
+      // Align write-preference with read-preference: _extractTextContent reads `result ?? output`
       if ("result" in candidate) {
         return {
           ...candidate,
           result: compactedText,
+        };
+      }
+
+      if ("output" in candidate) {
+        return {
+          ...candidate,
+          output: replacementOutput,
         };
       }
 
@@ -1117,41 +1273,33 @@ async function _summarizeMessagesSingleShotAsync(
 
 async function _summarizeTextAsync(
   model: LanguageModel,
-  logger: LoggerService,
+  _logger: LoggerService,
   sourceText: string,
   targetTokens: number,
   phase: string,
 ): Promise<string> {
-  try {
-    const targetChars: number = Math.max(300, targetTokens * 4);
-    const result = await generateTextWithRetryAsync({
-      model,
-      prompt:
-        `/no_think\n` +
-        `Summarize the following conversation excerpt. ` +
-        `Keep key decisions, actions, concrete facts, identifiers, and pending tasks. ` +
-        `Pay special attention to [Assistant reasoning] entries — these contain the rationale ` +
-        `behind decisions and tool calls. Preserve the reasoning/rationale in your summary so ` +
-        `that the assistant can recall WHY it made past decisions, not just WHAT it did. ` +
-        `Target length: about ${targetChars} characters. ` +
-        `Do not exceed ${targetChars} characters. If needed, prefer concise bullet-like phrasing over prose.\n\n` +
-        `Conversation excerpt:\n${sourceText}`,
-      retryOptions: { callType: "summarization" },
-    });
+  const targetChars: number = Math.max(300, targetTokens * 4);
+  const result = await generateTextWithRetryAsync({
+    model,
+    prompt:
+      `/no_think\n` +
+      `Summarize the following conversation excerpt. ` +
+      `Keep key decisions, actions, concrete facts, identifiers, and pending tasks. ` +
+      `Pay special attention to [Assistant reasoning] entries — these contain the rationale ` +
+      `behind decisions and tool calls. Preserve the reasoning/rationale in your summary so ` +
+      `that the assistant can recall WHY it made past decisions, not just WHAT it did. ` +
+      `Target length: about ${targetChars} characters. ` +
+      `Do not exceed ${targetChars} characters. If needed, prefer concise bullet-like phrasing over prose.\n\n` +
+      `Conversation excerpt:\n${sourceText}`,
+    retryOptions: { callType: "summarization" },
+  });
 
-    return result.text && result.text.trim().length > 0
-      ? result.text.trim()
-      : `[Summary unavailable for phase ${phase}]`;
-  } catch (error: unknown) {
-    logger.warn("History compaction: partial summary failed", {
-      phase,
-      error: error instanceof Error ? error.message : String(error),
-      sourceLength: sourceText.length,
-    });
-
-    const approxTokens: number = _estimateTokens(sourceText);
-    return `[Summary unavailable (${phase}, source~${approxTokens} tokens).]`;
+  const trimmedText: string = result.text?.trim() ?? "";
+  if (trimmedText.length === 0) {
+    throw new Error(`LLM returned empty summary for phase ${phase}`);
   }
+
+  return trimmedText;
 }
 
 function _messagesToPlainText(messages: ModelMessage[]): string {
@@ -1226,6 +1374,51 @@ function _extractTextContent(message: ModelMessage): string {
   }
 
   return parts.join(" ");
+}
+
+function _splitMessagesIntoChunks(
+  messages: ModelMessage[],
+  maxChunkTokens: number,
+  countTokens: (msgs: ModelMessage[]) => number,
+): ModelMessage[][] {
+  if (messages.length === 0) {
+    return [];
+  }
+
+  const chunks: ModelMessage[][] = [];
+  let currentChunk: ModelMessage[] = [];
+  let currentChunkTokens: number = 0;
+
+  for (const message of messages) {
+    const messageTokens: number = countTokens([message]);
+
+    // If a single message exceeds the chunk size, put it in its own chunk
+    if (messageTokens > maxChunkTokens) {
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+        currentChunk = [];
+        currentChunkTokens = 0;
+      }
+      chunks.push([message]);
+      continue;
+    }
+
+    // If adding this message would exceed the chunk size, start a new chunk
+    if (currentChunkTokens + messageTokens > maxChunkTokens && currentChunk.length > 0) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+      currentChunkTokens = 0;
+    }
+
+    currentChunk.push(message);
+    currentChunkTokens += messageTokens;
+  }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
 }
 
 function _estimateTokens(text: string): number {

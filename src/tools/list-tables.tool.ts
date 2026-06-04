@@ -4,8 +4,7 @@ import { z } from "zod";
 import * as litesql from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
-
-const DEFAULT_DATABASE = "blackdog";
+import { DEFAULT_DATABASE } from "../config/database.js";
 
 export const listTablesTool = tool({
   description: "List all tables in the internal database",

@@ -8,7 +8,7 @@ import {
 
 import { LoggerService } from "../services/logger.service.js";
 import { StatusService } from "../services/status.service.js";
-import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
+import { DEFAULT_AGENT_MAX_STEPS, HARD_GATE_THRESHOLD_PERCENTAGE } from "../shared/constants.js";
 import {
   getDuplicateToolCallLoopInfo,
   type IDuplicateToolCallLoopInfo,
@@ -55,8 +55,9 @@ const COMPACTION_THRESHOLD_PERCENTAGE: number = 0.70;
  * Hard gate threshold for blocking requests at the fetch level.
  * Requests exceeding this percentage of context window are rejected
  * with a synthetic 400 error to trigger compaction.
+ * Re-exported from shared/constants.js for backward compatibility.
  */
-export const HARD_GATE_THRESHOLD_PERCENTAGE: number = 0.85;
+export { HARD_GATE_THRESHOLD_PERCENTAGE };
 
 /**
  * How many times to retry the full agent generate call when the model
