@@ -544,6 +544,14 @@ export class MainAgent extends BaseAgentBase {
 
       const statusService: StatusService = StatusService.getInstance();
 
+      // Track compacted messages from prepareStep so we can persist them
+      let prepareStepCompactedMessages: ModelMessage[] | null = null;
+
+      // Register compaction sink to receive compacted messages from prepareStep
+      this.setCompactionSink((compactedMessages: ModelMessage[]) => {
+        prepareStepCompactedMessages = compactedMessages;
+      });
+
       try {
         // Delegate generation loop with full retry logic to orchestrator.
         // Returns a result (text, stepCount), whether fallback is needed,
@@ -586,8 +594,19 @@ export class MainAgent extends BaseAgentBase {
             compactionModel = genResult.compactionModel;
           }
 
-          // Append response to session and compact even on failure
-          _appendResponseToSession(session.messages, userModelMessage, undefined);
+          // If prepareStep compacted messages, use them as the base (they include the compacted user message)
+          // Otherwise, append the original user message to session
+          if (prepareStepCompactedMessages) {
+            session.messages = prepareStepCompactedMessages;
+            // Append only the response messages (user message is already in compacted form)
+            const responseMsgs: unknown[] = genResult.responseMessages ?? [];
+            for (const responseMsg of responseMsgs) {
+              session.messages.push(responseMsg as ModelMessage);
+            }
+          } else {
+            // Append response to session and compact even on failure
+            _appendResponseToSession(session.messages, userModelMessage, undefined);
+          }
 
           session.messages = await _compactSessionMessagesAsync(
             session.messages,
@@ -602,20 +621,34 @@ export class MainAgent extends BaseAgentBase {
           }
 
           this._logger.error("Model returned error response after all retries", { chatId });
-        }
+        } else if (result.text.trim() && result !== null) {
+        // On success with text — append response, compact, and return
+          // If prepareStep compacted messages, use them as the base (they include the compacted user message)
+          // Otherwise, append the original user message to session
+          if (prepareStepCompactedMessages) {
+            session.messages = prepareStepCompactedMessages;
+            // Append only the response messages (user message is already in compacted form)
+            const responseMsgs: unknown[] = genResult.responseMessages ?? [];
+            for (const responseMsg of responseMsgs) {
+              session.messages.push(responseMsg as ModelMessage);
+            }
+            this._logger.info("Using prepareStep compacted messages for session", {
+              chatId,
+              compactedMessageCount: (prepareStepCompactedMessages as ModelMessage[]).length,
+              responseMessageCount: responseMsgs.length,
+            });
+          } else {
+            _appendResponseToSession(session.messages, userModelMessage, genResult.responseMessages);
+          }
 
-       // On success with text — append response, compact, and return
-       if (result.text.trim() && result !== null) {
-         _appendResponseToSession(session.messages, userModelMessage, genResult.responseMessages);
- 
-         session.messages = await _compactSessionMessagesAsync(
-           session.messages,
-             compactionModel,
-             this._logger,
-             this._compactionTokenThreshold,
-             this._contextWindow,
-           );
-       }
+          session.messages = await _compactSessionMessagesAsync(
+            session.messages,
+              compactionModel,
+              this._logger,
+              this._compactionTokenThreshold,
+              this._contextWindow,
+            );
+        }
       } catch (error: unknown) {
         if (error instanceof Error && error.name === "AbortError") {
           session.abortController = null;

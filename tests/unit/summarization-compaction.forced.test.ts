@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { LanguageModel, ModelMessage } from "ai";
 
 import { compactMessagesSummaryOnlyAsync } from "../../src/utils/summarization-compaction.js";
-import { LoggerService } from "../../src/services/logger.service.js";
 import * as llmRetry from "../../src/utils/llm-retry.js";
+import { countApprox, makeLogger } from "../utils/summarization-test-helpers.js";
 
 function buildMessages(count: number, textSize: number): ModelMessage[] {
   const messages: ModelMessage[] = [
@@ -18,10 +18,6 @@ function buildMessages(count: number, textSize: number): ModelMessage[] {
   }
 
   return messages;
-}
-
-function countApprox(msgs: ModelMessage[]): number {
-  return JSON.stringify(msgs).length;
 }
 
 describe("summary compaction (forced)", () => {
@@ -39,12 +35,7 @@ describe("summary compaction (forced)", () => {
     const messages: ModelMessage[] = buildMessages(8, 200);
     const original: number = countApprox(messages);
 
-    const logger = {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-    } as unknown as LoggerService;
+    const logger = makeLogger();
 
     const result = await compactMessagesSummaryOnlyAsync(
       messages,
@@ -63,12 +54,7 @@ describe("summary compaction (forced)", () => {
     const messages: ModelMessage[] = buildMessages(12, 300);
     const original: number = countApprox(messages);
 
-    const logger = {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-    } as unknown as LoggerService;
+    const logger = makeLogger();
 
     const result = await compactMessagesSummaryOnlyAsync(
       messages,

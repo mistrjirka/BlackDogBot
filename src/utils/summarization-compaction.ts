@@ -146,6 +146,7 @@ async function _compactSinglePassAsync(
       logger,
       targetTokenCount,
       countTokens,
+      options,
     );
     currentResult = stageAResult;
   } catch (error: unknown) {
@@ -376,7 +377,7 @@ async function _compactViaDagAsync(
         phase = "after_l2";
         node = "L1";
       } else {
-        node = "L4";
+        node = "L3";
       }
       maxLevelReached = _maxLevel(maxLevelReached, node);
       continue;
@@ -421,6 +422,7 @@ async function _compactPrefixBeforeLastUserAsync(
   logger: LoggerService,
   targetTokenCount: number,
   countTokens: (msgs: ModelMessage[]) => number,
+  options: ICompactionOptions = {},
 ): Promise<ModelMessage[]> {
   const lastUserIndex: number = _findLastUserIndex(messages);
 
@@ -465,51 +467,37 @@ async function _compactPrefixBeforeLastUserAsync(
   );
 
   // Chunked multi-pass summarization to avoid exceeding hard gate
-  const CHUNK_SIZE_TOKENS: number = 30_000;
-  const chunks: ModelMessage[][] = _splitMessagesIntoChunks(unpinnedPrefixMessages, CHUNK_SIZE_TOKENS, countTokens);
+  // Use prompt-based token estimation (60% of context window) instead of structured countTokens
+  const contextWindow: number = options.contextWindow ?? 128_000;
+  const maxChunkPromptTokens: number = Math.floor(contextWindow * 0.60); // 60% of context window, 25% headroom below hard gate
 
-  let summaryText: string;
-  if (chunks.length === 1) {
-    // Single chunk — use existing single-shot summarization
-    summaryText = await _summarizeMessagesSingleShotAsync(
-      chunks[0],
-      model,
-      logger,
-      summaryBudgetTokens,
-    );
+  // Create a token counter that estimates actual prompt tokens (including instruction template)
+  // Used for the initial "fits in one chunk" check
+  const promptTokenCounter = (msgs: ModelMessage[]): number => {
+    const promptText: string = _messagesToPlainText(msgs);
+    return countTokens([{ role: "user", content: _buildSummarizationPrompt(promptText, summaryBudgetTokens) } as ModelMessage]);
+  };
+
+  // Create a lightweight counter for chunking that only counts plain text tokens
+  // This avoids overcounting by including the instruction template N times for N messages
+  const plainTextTokenCounter = (msgs: ModelMessage[]): number => {
+    const plainText: string = _messagesToPlainText(msgs);
+    return countTokens([{ role: "user", content: plainText } as ModelMessage]);
+  };
+
+  // Estimate prompt tokens for the full unpinned prefix
+  const fullPrefixEstimatedTokens: number = promptTokenCounter(unpinnedPrefixMessages);
+
+  let chunks: ModelMessage[][];
+  if (fullPrefixEstimatedTokens <= maxChunkPromptTokens) {
+    // Fits in one chunk - no splitting needed
+    chunks = [unpinnedPrefixMessages];
   } else {
-    // Multiple chunks — summarize each, then combine
-    logger.info("L1 chunked prefix summarization", {
-      chunkCount: chunks.length,
-      chunkSizes: chunks.map((c: ModelMessage[]): number => countTokens(c)),
-    });
-
-    const chunkSummaries: string[] = [];
-    const perChunkBudget: number = Math.max(400, Math.floor(summaryBudgetTokens / chunks.length));
-
-    for (let i: number = 0; i < chunks.length; i++) {
-      const chunkSummary: string = await _summarizeMessagesSingleShotAsync(
-        chunks[i],
-        model,
-        logger,
-        perChunkBudget,
-      );
-      chunkSummaries.push(chunkSummary);
-    }
-
-    // Combine chunk summaries into one coherent summary
-    const combinedText: string = chunkSummaries
-      .map((s: string, i: number): string => `[Chunk ${i + 1}]:\n${s}`)
-      .join("\n\n");
-
-    summaryText = await _summarizeTextAsync(
-      model,
-      logger,
-      `Combine these conversation summaries into one coherent summary. Preserve key decisions, actions, concrete facts, identifiers, and pending tasks.\n\n${combinedText}`,
-      summaryBudgetTokens,
-      "combine-chunks",
-    );
+    // Split into chunks using plain text token counter (avoids overcounting)
+    chunks = _splitMessagesIntoChunks(unpinnedPrefixMessages, maxChunkPromptTokens, plainTextTokenCounter);
   }
+
+  const summaryText: string = await _summarizePrefixChunksAsync(chunks, model, logger, summaryBudgetTokens, countTokens);
 
   const summaryMessage: ModelMessage = {
     role: "user",
@@ -591,7 +579,6 @@ async function _compactLatestUserMessageAsync(
 
   const taskContractSummary: string = await _summarizeTextAsync(
     model,
-    logger,
     `Convert this user request into a concise TASK CONTRACT. Preserve the critical details exactly when possible:\n` +
       `- explicit goals\n` +
       `- hard constraints and prohibitions\n` +
@@ -669,13 +656,7 @@ async function _compactToolResultsAfterLatestUserAsync(
     return messages;
   }
 
-  indexedToolMessages.sort((a, b) => {
-    if (a.compactionCount !== b.compactionCount) {
-      return a.compactionCount - b.compactionCount;
-    }
-
-    return b.tokens - a.tokens;
-  });
+  indexedToolMessages.sort(_sortToolMessagesByCompactionAndTokens);
 
   const resultMessages: ModelMessage[] = [...messages];
 
@@ -694,7 +675,6 @@ async function _compactToolResultsAfterLatestUserAsync(
     try {
       const summarized: string = await _summarizeTextAsync(
         model,
-        logger,
         `Summarize this tool output for future continuity. Preserve:\n` +
           `- key factual result\n` +
           `- IDs / paths / URLs / codes\n` +
@@ -755,13 +735,7 @@ async function _compactToolResultsIndividuallyAsync(
     return messages;
   }
 
-  indexedToolMessages.sort((a, b) => {
-    if (a.compactionCount !== b.compactionCount) {
-      return a.compactionCount - b.compactionCount;
-    }
-
-    return b.tokens - a.tokens;
-  });
+  indexedToolMessages.sort(_sortToolMessagesByCompactionAndTokens);
 
   const resultMessages: ModelMessage[] = [...messages];
 
@@ -780,7 +754,6 @@ async function _compactToolResultsIndividuallyAsync(
     try {
       const summarized: string = await _summarizeTextAsync(
         model,
-        logger,
         `Per-tool DAG compaction output. Preserve IDs, URLs, paths, errors, and final outcome.\n\n` +
           `Tool output:\n${originalText}`,
         summaryBudget,
@@ -860,18 +833,12 @@ async function _compactBatchedMessagesAsync(
     const batch: typeof candidates = candidates.slice(batchStart, batchEnd);
 
     // Combine batch messages into a single text for summarization (use original messages)
-    const batchText: string = batch
-      .map((c: { index: number; text: string }): string => {
-        const msg = messages[c.index];
-        const roleLabel: string = msg.role === "user" ? "User" : msg.role === "assistant" ? "Assistant" : "Tool";
-        return `[${roleLabel}]: ${c.text}`;
-      })
-      .join("\n\n");
+    const batchMessages: ModelMessage[] = batch.map((c: { index: number; text: string }): ModelMessage => messages[c.index]);
+    const batchText: string = _messagesToPlainText(batchMessages);
 
     try {
       const summarized: string = await _summarizeTextAsync(
         model,
-        logger,
         `Summarize these conversation messages concisely. Preserve key facts, decisions, IDs, and outcomes.\n\n${batchText}`,
         summaryBudget,
         `batch-${batchStart}`,
@@ -882,7 +849,7 @@ async function _compactBatchedMessagesAsync(
       const replacementMsg: ModelMessage = {
         role: "user",
         content: `[COMPACTED BATCH (${batch.length} messages)]\n${summarized}`,
-      } as ModelMessage;
+      };
       replacements.set(firstIndex, replacementMsg);
 
       // Update running token count: subtract original batch messages, add replacement
@@ -1193,7 +1160,7 @@ function _replaceToolMessageContentWithSummary(
     value: compactedText,
   };
 
-  const newContent: unknown[] = originalMsg.content.map((part: unknown): unknown => {
+  const newContent = originalMsg.content.map((part: unknown): unknown => {
     if (typeof part !== "object" || part === null) {
       return part;
     }
@@ -1227,7 +1194,7 @@ function _replaceToolMessageContentWithSummary(
 
   return {
     ...originalMsg,
-    content: newContent as ModelMessage["content"],
+    content: newContent as typeof originalMsg.content,
   } as ModelMessage;
 }
 
@@ -1254,43 +1221,106 @@ function _getToolResultCompactionCount(message: ModelMessage): number {
   return 1;
 }
 
+interface IIndexedToolMessage {
+  index: number;
+  tokens: number;
+  compactionCount: number;
+}
+
+function _sortToolMessagesByCompactionAndTokens(a: IIndexedToolMessage, b: IIndexedToolMessage): number {
+  if (a.compactionCount !== b.compactionCount) {
+    return a.compactionCount - b.compactionCount;
+  }
+
+  return b.tokens - a.tokens;
+}
+
 async function _summarizeMessagesSingleShotAsync(
   messages: ModelMessage[],
   model: LanguageModel,
-  logger: LoggerService,
   targetSummaryTokens: number,
 ): Promise<string> {
   const sourceText: string = _messagesToPlainText(messages);
 
   return await _summarizeTextAsync(
     model,
-    logger,
     sourceText,
     targetSummaryTokens,
     "oneshot",
   );
 }
 
+async function _summarizePrefixChunksAsync(
+  chunks: ModelMessage[][],
+  model: LanguageModel,
+  logger: LoggerService,
+  summaryBudgetTokens: number,
+  countTokens: (msgs: ModelMessage[]) => number,
+): Promise<string> {
+  if (chunks.length === 1) {
+    // Single chunk — use existing single-shot summarization
+    return await _summarizeMessagesSingleShotAsync(
+      chunks[0],
+      model,
+      summaryBudgetTokens,
+    );
+  }
+
+  // Multiple chunks — summarize each, then combine
+  logger.info("L1 chunked prefix summarization", {
+    chunkCount: chunks.length,
+    chunkSizes: chunks.map((c: ModelMessage[]): number => countTokens(c)),
+  });
+
+  const chunkSummaries: string[] = [];
+  const perChunkBudget: number = Math.max(400, Math.floor(summaryBudgetTokens / chunks.length));
+
+  for (let i: number = 0; i < chunks.length; i++) {
+    const chunkSummary: string = await _summarizeMessagesSingleShotAsync(
+      chunks[i],
+      model,
+      perChunkBudget,
+    );
+    chunkSummaries.push(chunkSummary);
+  }
+
+  // Combine chunk summaries into one coherent summary
+  const combinedText: string = chunkSummaries
+    .map((s: string, i: number): string => `[Chunk ${i + 1}]:\n${s}`)
+    .join("\n\n");
+
+  return await _summarizeTextAsync(
+    model,
+    `Combine these conversation summaries into one coherent summary. Preserve key decisions, actions, concrete facts, identifiers, and pending tasks.\n\n${combinedText}`,
+    summaryBudgetTokens,
+    "combine-chunks",
+  );
+}
+
+function _buildSummarizationPrompt(sourceText: string, targetTokens: number): string {
+  const targetChars: number = Math.max(300, targetTokens * 4);
+  return (
+    `/no_think\n` +
+    `Summarize the following conversation excerpt. ` +
+    `Keep key decisions, actions, concrete facts, identifiers, and pending tasks. ` +
+    `Pay special attention to [Assistant reasoning] entries — these contain the rationale ` +
+    `behind decisions and tool calls. Preserve the reasoning/rationale in your summary so ` +
+    `that the assistant can recall WHY it made past decisions, not just WHAT it did. ` +
+    `Target length: about ${targetChars} characters. ` +
+    `Do not exceed ${targetChars} characters. If needed, prefer concise bullet-like phrasing over prose.\n\n` +
+    `Conversation excerpt:\n${sourceText}`
+  );
+}
+
 async function _summarizeTextAsync(
   model: LanguageModel,
-  _logger: LoggerService,
   sourceText: string,
   targetTokens: number,
   phase: string,
 ): Promise<string> {
-  const targetChars: number = Math.max(300, targetTokens * 4);
   const result = await generateTextWithRetryAsync({
     model,
-    prompt:
-      `/no_think\n` +
-      `Summarize the following conversation excerpt. ` +
-      `Keep key decisions, actions, concrete facts, identifiers, and pending tasks. ` +
-      `Pay special attention to [Assistant reasoning] entries — these contain the rationale ` +
-      `behind decisions and tool calls. Preserve the reasoning/rationale in your summary so ` +
-      `that the assistant can recall WHY it made past decisions, not just WHAT it did. ` +
-      `Target length: about ${targetChars} characters. ` +
-      `Do not exceed ${targetChars} characters. If needed, prefer concise bullet-like phrasing over prose.\n\n` +
-      `Conversation excerpt:\n${sourceText}`,
+    prompt: _buildSummarizationPrompt(sourceText, targetTokens),
     retryOptions: { callType: "summarization" },
   });
 

@@ -158,6 +158,12 @@ export type OnDuplicateToolLoopCallback = (
   messages: ModelMessage[],
 ) => Promise<EDuplicateLoopAction>;
 
+/**
+ * Callback invoked when prepareStep compacts the message history.
+ * Receives the compacted messages so the caller can persist them.
+ */
+export type CompactionSinkCallback = (compactedMessages: ModelMessage[]) => void;
+
 export interface IBaseAgentOptions {
   maxSteps?: number;
   contextWindow?: number;
@@ -187,6 +193,7 @@ export abstract class BaseAgentBase {
   protected _rawEstimatedInputTokens: number = 0;
   protected _shouldTerminateRunCallback: (() => boolean) | null;
   protected _onDuplicateToolLoop: OnDuplicateToolLoopCallback | null;
+  protected _compactionSink: CompactionSinkCallback | null;
 
   //#endregion Data members
 
@@ -204,11 +211,21 @@ export abstract class BaseAgentBase {
     this._lastPrepareStepEstimatedTokens = null;
     this._shouldTerminateRunCallback = null;
     this._onDuplicateToolLoop = options?.onDuplicateToolLoop ?? null;
+    this._compactionSink = null;
   }
 
   //#endregion Constructors
 
   //#region Public methods
+
+  /**
+   * Register a callback to receive compacted messages from prepareStep.
+   * When prepareStep compacts the message history, it calls this sink
+   * so the caller can persist the compacted messages to session storage.
+   */
+  public setCompactionSink(callback: CompactionSinkCallback | null): void {
+    this._compactionSink = callback;
+  }
 
   /**
    * Update the context window size after initialization (e.g. once the real
@@ -845,6 +862,11 @@ export abstract class BaseAgentBase {
             compactionTokenThreshold,
             self._contextWindow,
           );
+
+          // Notify the caller about the compaction so they can persist the compacted messages
+          if (self._compactionSink) {
+            self._compactionSink(compactionResult.messages);
+          }
 
           return { messages: compactionResult.messages, activeTools: activeToolNames };
         }
