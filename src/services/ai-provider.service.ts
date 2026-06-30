@@ -1005,7 +1005,10 @@ export class AiProviderService {
 
       for (const candidate of candidates) {
         // Strip think tags that some models wrap around their output
-        const stripped: string = candidate.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+        const stripped: string = candidate
+          .replace(/<think>[\s\S]*?<\/think>/g, "")
+          .replace(/<\|channel>thought\n[\s\S]*?\n<channel\|>/g, "")
+          .trim();
         const textToParse: string = stripped.length > 0 ? stripped : candidate;
 
         try {
@@ -1513,6 +1516,49 @@ export class AiProviderService {
           };
         }
 
+        const gemmaChannelRegex: RegExp = /<\|channel>thought\n([\s\S]*?)\n<channel\|>([\s\S]*?)$/g;
+        const gemmaMatches: RegExpMatchArray[] = Array.from(originalContent.matchAll(gemmaChannelRegex));
+
+        if (gemmaMatches.length > 0) {
+          const reasoningParts: string[] = gemmaMatches
+            .map((match: RegExpMatchArray): string => (match[1] ?? "").trim())
+            .filter((part: string): boolean => part.length > 0);
+
+          const cleanedContent: string = originalContent
+            .replace(/<\|channel>thought\n[\s\S]*?\n<channel\|>/g, "")
+            .trim();
+
+          return {
+            reasoningContent: reasoningParts.length > 0 ? reasoningParts.join("\n\n") : null,
+            cleanedContent,
+          };
+        }
+
+        const gemmaChannelOpen: string = "<|channel>thought";
+        const gemmaChannelOpenIndex: number = originalContent.indexOf(gemmaChannelOpen);
+
+        if (gemmaChannelOpenIndex !== -1) {
+          const afterOpen: string = originalContent
+            .slice(gemmaChannelOpenIndex + gemmaChannelOpen.length)
+            .trim();
+          const channelClose: string = "<channel|>";
+          const channelCloseIndex: number = afterOpen.indexOf(channelClose);
+
+          if (channelCloseIndex !== -1) {
+            const reasoningContent: string = afterOpen
+              .slice(0, channelCloseIndex)
+              .trim();
+            const cleanedContent: string = afterOpen
+              .slice(channelCloseIndex + channelClose.length)
+              .trim();
+
+            return {
+              reasoningContent: reasoningContent.length > 0 ? reasoningContent : null,
+              cleanedContent,
+            };
+          }
+        }
+
         return {
           reasoningContent: null,
           cleanedContent: originalContent,
@@ -1548,6 +1594,11 @@ export class AiProviderService {
             (thinkTagMatches.length > 0 || rawContent.includes("</think>"));
           const hasReasoningField: boolean = reasoningContent.trim().length > 0;
 
+          const gemmaChannelMatches: RegExpMatchArray[] = typeof rawContent === "string"
+            ? Array.from(rawContent.matchAll(/<\|channel>thought[\s\S]*?<channel\|>/g))
+            : [];
+          const hasGemmaChannelTags: boolean = gemmaChannelMatches.length > 0;
+
           if (thinkTagMatches.length > 0) {
             choicesWithThinkTags += 1;
             totalThinkTagCount += thinkTagMatches.length;
@@ -1557,7 +1608,7 @@ export class AiProviderService {
             choicesWithReasoningContentField += 1;
           }
 
-          if (hasReasoningField || hasThinkBoundary) {
+          if (hasReasoningField || hasThinkBoundary || hasGemmaChannelTags) {
             choicesWithReasoning += 1;
           }
 
@@ -1565,6 +1616,15 @@ export class AiProviderService {
             if (thinkTagMatches.length > 0) {
               logger.debug("Detected think tags in LLM response", {
                 thinkTagCount: thinkTagMatches.length,
+                hasToolCalls,
+                contentLength: rawContent.length,
+                reasoningContentLength: reasoningContent.trim().length,
+                contentPreview: rawContent.slice(0, 200),
+              });
+            }
+            if (hasGemmaChannelTags) {
+              logger.debug("Detected Gemma channel tags in LLM response", {
+                gemmaChannelCount: gemmaChannelMatches.length,
                 hasToolCalls,
                 contentLength: rawContent.length,
                 reasoningContentLength: reasoningContent.trim().length,
@@ -1582,6 +1642,24 @@ export class AiProviderService {
           }
 
           if (hasToolCalls && typeof rawContent === "string" && rawContent.trim().length > 0) {
+            const parsed = parseToolCallReasoningFromContent(rawContent);
+            const existingReasoning: string = choice.message?.reasoning_content?.trim() ?? "";
+
+            if (existingReasoning.length === 0 && parsed.reasoningContent) {
+              choice.message!.reasoning_content = parsed.reasoningContent;
+              modified = true;
+            }
+
+            if (parsed.cleanedContent.length === 0) {
+              delete choice.message!.content;
+              modified = true;
+            } else if (parsed.cleanedContent !== rawContent) {
+              choice.message!.content = parsed.cleanedContent;
+              modified = true;
+            }
+          }
+
+          if (!hasToolCalls && hasGemmaChannelTags && typeof rawContent === "string" && rawContent.trim().length > 0) {
             const parsed = parseToolCallReasoningFromContent(rawContent);
             const existingReasoning: string = choice.message?.reasoning_content?.trim() ?? "";
 
