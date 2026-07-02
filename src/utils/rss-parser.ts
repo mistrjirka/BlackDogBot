@@ -4,8 +4,8 @@
  * Extracts ALL available fields from each item including content:encoded.
  */
 
-function extractAllTags(xml: string): Record<string, string> {
-  const result: Record<string, string> = {};
+function extractAllTags(xml: string): Record<string, string | string[]> {
+  const result: Record<string, string | string[]> = {};
   
   // Match any tag with its content
   const tagRegex = /<([a-zA-Z0-9_:]+)[^>]*>([\s\S]*?)<\/\1>/gi;
@@ -21,7 +21,14 @@ function extractAllTags(xml: string): Record<string, string> {
       content = cdataMatch[1];
     }
     
-    result[tagName] = content.trim();
+    const trimmed = content.trim();
+    if (tagName in result) {
+      // Duplicate tag — convert to array or append
+      const existing = result[tagName];
+      result[tagName] = Array.isArray(existing) ? [...existing, trimmed] : [existing, trimmed];
+    } else {
+      result[tagName] = trimmed;
+    }
   }
   
   return result;

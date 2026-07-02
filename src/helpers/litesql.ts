@@ -44,6 +44,71 @@ export interface ISafeGetTableSchemaResult {
 
 //#region Types and Validation
 
+const IDENTIFIER_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Validates a SQL identifier (table name, column name) against a strict
+ * alphanumeric-plus-underscore pattern. Rejects any value that could break
+ * out of double-quoted context.
+ */
+function validateIdentifier(name: string, label: string): void {
+  if (!IDENTIFIER_REGEX.test(name)) {
+    throw new Error(`Invalid ${label} "${name}": must match ${IDENTIFIER_REGEX.source}`);
+  }
+}
+
+/**
+ * Validates a WHERE clause to only allow simple column comparisons with
+ * literal values. Blocks keywords that could chain additional statements
+ * or subqueries.
+ *
+ * Allowed pattern: one or more conditions joined by AND/OR, where each
+ * condition is either:
+ *   column_name  comparison_op  value    (=, !=, <>, <, >, <=, >=, LIKE)
+ *   column_name  IS [NOT] NULL
+ *
+ * Values: single-quoted strings, numbers, NULL, TRUE, FALSE
+ */
+const SINGLE_QUOTED_STRING = "'(?:[^'\\\\]|\\\\.)*'";
+const DOUBLE_QUOTED_STRING = '"(?:[^"\\\\]|\\\\.)*"';
+const NUMERIC_LITERAL = "-?\\d+(?:\\.\\d+)?";
+const BOOLEAN_LITERAL = "NULL|TRUE|FALSE";
+const VALUE_PATTERN = `(?:${SINGLE_QUOTED_STRING}|${DOUBLE_QUOTED_STRING}|${NUMERIC_LITERAL}|${BOOLEAN_LITERAL})`;
+const COLUMN_REF = `(?:"[A-Za-z_][A-Za-z0-9_]*"|[A-Za-z_][A-Za-z0-9_]*)`;
+const COMPARISON_OP = `(?:=|!=|<>|<=|>=|<|>|NOT\\s+LIKE|LIKE)`;
+const IS_NULL_OP = `IS(?:\\s+NOT)?\\s+NULL`;
+const CONDITION = `(?:\\s*${COLUMN_REF}\\s*(?:${COMPARISON_OP}\\s*${VALUE_PATTERN}|${IS_NULL_OP}))`;
+const WHERE_CLAUSE_REGEX = new RegExp(`^${CONDITION}(?:\\s+(?:AND|OR)${CONDITION})*\\s*$`, "i");
+
+function validateWhereClause(where: string): void {
+  if (!where.trim()) {
+    throw new Error(
+      `Invalid WHERE clause: must not be empty. ` +
+      `Blocked keywords: SELECT, INSERT, UPDATE, DELETE, DROP, UNION, JOIN, ;, --`,
+    );
+  }
+  if (!WHERE_CLAUSE_REGEX.test(where)) {
+    throw new Error(
+      `Invalid WHERE clause: only simple column comparisons joined by AND/OR are allowed. ` +
+      `Blocked keywords: SELECT, INSERT, UPDATE, DELETE, DROP, UNION, JOIN, ;, --`,
+    );
+  }
+}
+
+/**
+ * Validates an ORDER BY clause to only allow column names with optional
+ * ASC/DESC direction.
+ */
+const ORDER_BY_REGEX = /^(?:"[A-Za-z_][A-Za-z0-9_]*"|[A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:ASC|DESC))?(?:\s*,\s*(?:"[A-Za-z_][A-Za-z0-9_]*"|[A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:ASC|DESC))?)*$/i;
+
+function validateOrderByClause(orderBy: string): void {
+  if (!ORDER_BY_REGEX.test(orderBy)) {
+    throw new Error(
+      `Invalid ORDER BY clause: only column names with optional ASC/DESC are allowed.`,
+    );
+  }
+}
+
 export interface IInsertResult {
   insertedCount: number;
   lastRowId: number;
@@ -177,6 +242,7 @@ export async function listTablesAsync(databaseName: string): Promise<string[]> {
 }
 
 export async function getTableSchemaAsync(databaseName: string, tableName: string): Promise<ITableInfo> {
+  validateIdentifier(tableName, "table name");
   const db: Database.Database = openDatabase(databaseName);
 
   try {
@@ -246,6 +312,9 @@ export async function createTableAsync(
   tableName: string,
   columns: { name: string; type: string; primaryKey?: boolean; notNull?: boolean }[],
 ): Promise<void> {
+  validateIdentifier(tableName, "table name");
+  columns.forEach((col) => validateIdentifier(col.name, "column name"));
+
   const logger: LoggerService = LoggerService.getInstance();
   const db: Database.Database = openDatabase(databaseName);
 
@@ -282,6 +351,7 @@ export async function createTableAsync(
 }
 
 export async function dropTableAsync(databaseName: string, tableName: string): Promise<void> {
+  validateIdentifier(tableName, "table name");
   const logger: LoggerService = LoggerService.getInstance();
   const db: Database.Database = openDatabase(databaseName);
 
@@ -298,6 +368,7 @@ export async function insertIntoTableAsync(
   tableName: string,
   data: Record<string, unknown> | Record<string, unknown>[],
 ): Promise<IInsertResult> {
+  validateIdentifier(tableName, "table name");
   const logger: LoggerService = LoggerService.getInstance();
   const db: Database.Database = openDatabase(databaseName);
 
@@ -364,31 +435,35 @@ export async function tableExistsAsync(databaseName: string, tableName: string):
 }
 
 export async function queryTableAsync(databaseName: string, tableName: string, options?: IQueryOptions): Promise<IQueryResult> {
+  validateIdentifier(tableName, "table name");
+
   const db: Database.Database = openDatabase(databaseName);
 
   try {
     const columnList: string = options?.columns && options.columns.length > 0
-      ? options.columns.map((c: string) => `"${c}"`).join(", ")
+      ? options.columns.map((c: string) => { validateIdentifier(c, "column name"); return `"${c}"`; }).join(", ")
       : "*";
 
     let selectSql: string = `SELECT ${columnList} FROM "${tableName}"`;
     let countSql: string = `SELECT COUNT(*) as count FROM "${tableName}"`;
 
-    if (options?.where) {
+    if (options?.where !== undefined) {
+      validateWhereClause(options.where);
       selectSql += ` WHERE ${options.where}`;
       countSql += ` WHERE ${options.where}`;
     }
 
     if (options?.orderBy) {
+      validateOrderByClause(options.orderBy);
       selectSql += ` ORDER BY ${options.orderBy}`;
     }
 
     if (options?.limit !== undefined) {
-      selectSql += ` LIMIT ${options.limit}`;
+      selectSql += ` LIMIT ${Number(options.limit)}`;
     }
 
     if (options?.offset !== undefined) {
-      selectSql += ` OFFSET ${options.offset}`;
+      selectSql += ` OFFSET ${Number(options.offset)}`;
     }
 
     const rows: Record<string, unknown>[] = db.prepare(selectSql).all() as Record<string, unknown>[];
@@ -406,6 +481,9 @@ export async function updateTableAsync(
   set: Record<string, unknown>,
   where: string,
 ): Promise<{ updatedCount: number }> {
+  validateIdentifier(tableName, "table name");
+  validateWhereClause(where);
+
   const logger: LoggerService = LoggerService.getInstance();
   const db: Database.Database = openDatabase(databaseName);
 
@@ -418,7 +496,10 @@ export async function updateTableAsync(
       );
     }
 
-    const setClauses: string[] = Object.keys(set).map((key: string) => `"${key}" = ?`);
+    const setClauses: string[] = Object.keys(set).map((key: string) => {
+      validateIdentifier(key, "column name");
+      return `"${key}" = ?`;
+    });
     const setValues: unknown[] = Object.values(set);
     const updateSql: string = `UPDATE "${tableName}" SET ${setClauses.join(", ")} WHERE ${where}`;
 
@@ -440,6 +521,9 @@ export async function deleteFromTableAsync(
   tableName: string,
   where: string,
 ): Promise<{ deletedCount: number }> {
+  validateIdentifier(tableName, "table name");
+  validateWhereClause(where);
+
   const logger: LoggerService = LoggerService.getInstance();
   const db: Database.Database = openDatabase(databaseName);
 

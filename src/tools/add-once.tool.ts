@@ -9,6 +9,7 @@ import { AiProviderService } from "../services/ai-provider.service.js";
 import { generateId } from "../utils/id.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { wallClockToUtcIso } from "../utils/time.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
 import { buildCronTaskVerifierPrompt } from "../utils/cron-task-verifier.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
@@ -44,7 +45,7 @@ function _buildSchedule(
   params: { year: number; month: number; day: number; hour: number; minute: number },
   timezone: string,
 ): Schedule {
-  const runAt: string = new Date(params.year, params.month - 1, params.day, params.hour, params.minute, 0, 0).toISOString();
+  const runAt: string = wallClockToUtcIso(params, timezone);
   return {
     type: "once",
     runAt,

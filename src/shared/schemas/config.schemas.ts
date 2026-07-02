@@ -270,9 +270,21 @@ const brainInterfaceConfigSchema = z.object({
     .describe("JWT audience for BrainInterface tokens"),
 });
 
+const discordConfigSchema = z.object({
+  botToken: z.string().min(1),
+  channels: z.array(z.object({
+    channelId: z.string().min(1),
+    guildId: z.string().min(1),
+    permission: z.enum(["ignore", "read_only", "full"]),
+    receiveNotifications: z.boolean(),
+  })).default([]),
+});
+
 export const configSchema = z.object({
   ai: aiConfigSchema,
   telegram: telegramConfigSchema
+    .optional(),
+  discord: discordConfigSchema
     .optional(),
   scheduler: schedulerConfigSchema
     .default({ enabled: true }),

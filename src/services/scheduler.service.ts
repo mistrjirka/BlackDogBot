@@ -596,19 +596,24 @@ export class SchedulerService {
       return { task: rawParsed, migrated: false };
     }
 
+    const migratedSchedule: Record<string, unknown> = {
+      type: rawSchedule.type,
+      offsetFromDayStart: {
+        hours: 0,
+        minutes: 0,
+      },
+      timezone: this._resolveScheduleTimezone(rawSchedule.timezone),
+    };
+
+    // once-type schedules require runAt — compute from legacy interval/offset
+    const baseTime: Date = new Date();
+    const offsetMs: number = ((rawSchedule.offsetMinutes ?? 0) * 60_000);
+    const intervalMs: number = (rawSchedule.intervalMs ?? 0);
+    migratedSchedule.runAt = new Date(baseTime.getTime() + offsetMs + intervalMs).toISOString();
+
     const migratedTask: Record<string, unknown> = {
       ...raw,
-      schedule: {
-        type: rawSchedule.type,
-        intervalMs: rawSchedule.intervalMs,
-        offsetMinutes: rawSchedule.offsetMinutes,
-        every: rawSchedule.every,
-        offsetFromDayStart: {
-          hours: 0,
-          minutes: 0,
-        },
-        timezone: this._resolveScheduleTimezone(rawSchedule.timezone),
-      },
+      schedule: migratedSchedule,
       updatedAt: new Date().toISOString(),
     };
 

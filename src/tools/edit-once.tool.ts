@@ -6,6 +6,7 @@ import { SchedulerService } from "../services/scheduler.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
+import { wallClockToUtcIso } from "../utils/time.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
 import type { IScheduledTask } from "../shared/types/index.js";
 
@@ -113,15 +114,32 @@ const executeEditOnce = async (
       const currentRunAt = existingSchedule.type === "once" ? existingSchedule.runAt : null;
       const currentDate = currentRunAt ? new Date(currentRunAt) : new Date();
 
-      const newRunAt = new Date(
-        year ?? currentDate.getFullYear(),
-        (month ?? (currentDate.getMonth() + 1)) - 1,
-        day ?? currentDate.getDate(),
-        hour ?? currentDate.getHours(),
-        minute ?? currentDate.getMinutes(),
-        0,
-        0,
-      ).toISOString();
+      // Extract existing components in the configured timezone (not server-local)
+      const tzParts = new Intl.DateTimeFormat("en-US", {
+        timeZone: effectiveScheduleTimezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).formatToParts(currentDate);
+
+      const getPart = (type: string): number => {
+        const p = tzParts.find((part) => part.type === type);
+        return p ? parseInt(p.value, 10) : 0;
+      };
+
+      const newRunAt = wallClockToUtcIso(
+        {
+          year: year ?? getPart("year"),
+          month: month ?? getPart("month"),
+          day: day ?? getPart("day"),
+          hour: hour ?? (getPart("hour") === 24 ? 0 : getPart("hour")),
+          minute: minute ?? getPart("minute"),
+        },
+        effectiveScheduleTimezone,
+      );
 
       patch.schedule = {
         type: "once",

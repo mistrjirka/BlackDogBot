@@ -74,6 +74,8 @@ export class CronAgent extends BaseAgentBase {
   //#region Data members
 
   private static _instance: CronAgent | null;
+  /** Serializes task executions to prevent concurrent corruption of shared state. */
+  private _executionMutex: Promise<void> = Promise.resolve();
 
   //#endregion Data members
 
@@ -102,6 +104,27 @@ export class CronAgent extends BaseAgentBase {
   }
 
   public async executeTaskAsync(
+    task: IScheduledTask,
+    messageSender: MessageSender,
+    taskIdProvider: TaskIdProvider,
+    executionContext: IExecutionContext,
+    traceCollector?: ITraceCollector,
+  ): Promise<IAgentResult> {
+    // Serialize task executions to prevent concurrent corruption of shared state
+    // (this._agent, token counters, compaction flags) when run_timed bypasses scheduler.
+    let releaseMutex: (() => void) | undefined;
+    const previousTask: Promise<void> = this._executionMutex;
+    this._executionMutex = new Promise<void>((resolve): void => { releaseMutex = resolve; });
+    await previousTask;
+
+    try {
+      return await this._executeTaskInnerAsync(task, messageSender, taskIdProvider, executionContext, traceCollector);
+    } finally {
+      releaseMutex!();
+    }
+  }
+
+  private async _executeTaskInnerAsync(
     task: IScheduledTask,
     messageSender: MessageSender,
     taskIdProvider: TaskIdProvider,

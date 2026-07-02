@@ -1155,9 +1155,9 @@ function _replaceToolMessageContentWithSummary(
     return originalMsg;
   }
 
-  const replacementOutput: { type: "text"; value: string } = {
+  const replacementOutput: { type: "text"; text: string } = {
     type: "text",
-    value: compactedText,
+    text: compactedText,
   };
 
   const newContent = originalMsg.content.map((part: unknown): unknown => {

@@ -62,6 +62,10 @@ export interface IRetryOrchestratorConfig {
   totalInputTokensSink: (value: number) => void;
   /** Emit model output text via brain interface emitter. Wrapped in try/catch inside runCycle. */
   emitModelOutputAsync: (chatId: string, stepNumber: number, text: string) => Promise<void>;
+  /** Called when a context-exceeded error triggers compaction. The callback should compact
+   *  session messages and return the new message list. If omitted, the retry continues
+   *  without compaction (guaranteed to fail again with the same oversized context). */
+  onContextExceededCompaction?: () => Promise<ModelMessage[]>;
 }
 
 /** Outcome returned after one complete runCycle execution. */
@@ -82,10 +86,6 @@ const MAX_429_RETRIES: number = 8;
 /** Maximum number of generic retryable API errors before giving up. */
 const MAX_GENERIC_RETRIES: number = 3;
 
-/** Reserved token budget for predictive compaction headroom. When this amount is subtracted from
- * the compaction threshold, the resulting target determines when to trigger summary-only compaction. */
-const SESSION_COMPACTION_HEADROOM_TOKENS: number = 4000;
-
 //#endregion Constants
 
 //#region Class
@@ -105,24 +105,14 @@ export class RetryOrchestrator {
     const {
       chatId,
       logger,
-      model: compactionModel,
-      maxSteps,
-      compactionThreshold,
-      contextWindow,
       generateFn,
       buildMessagesForCall,
       abortSignal,
       resetTokenCounters,
       totalInputTokensSink,
       emitModelOutputAsync,
+      onContextExceededCompaction,
     } = config;
-
-
-    // Suppress unused warnings — these will be wired up when context compaction integration is completed
-    void SESSION_COMPACTION_HEADROOM_TOKENS;
-    void (compactionModel as unknown);
-    void (compactionThreshold as unknown);
-    void (contextWindow as unknown);
 
     let contextRetries: number = 0;
     let _429Retries: number = 0;
@@ -141,7 +131,7 @@ export class RetryOrchestrator {
 
 
         const latencyMs: number = Date.now() - llmStartTime;
-        const stepsCount: number = generateResult.steps?.length ?? maxSteps;
+        const stepsCount: number = generateResult.steps?.length || 1;
 
         const inputTokens: number | undefined =
           generateResult.totalUsage?.inputTokens ?? generateResult.usage?.inputTokens;
@@ -222,13 +212,21 @@ export class RetryOrchestrator {
         if (isContextExceededApiError(genError) && contextRetries < CONTEXT_EXCEEDED_RETRIES) {
           contextRetries++;
 
-          /* Context compaction requires access to session.messages — handled by caller */
-          logger.warn("Context size exceeded, forcing compaction on next step", {
-            chatId,
-            contextRetry: contextRetries,
-            maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
-            statusCode: aiErrorDetails.statusCode,
-          });
+          if (onContextExceededCompaction) {
+            await onContextExceededCompaction();
+            logger.info("Context compaction triggered, retrying with compacted messages", {
+              chatId,
+              contextRetry: contextRetries,
+              maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
+            });
+          } else {
+            logger.warn("Context size exceeded but no compaction callback provided, retrying without compaction", {
+              chatId,
+              contextRetry: contextRetries,
+              maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
+              statusCode: aiErrorDetails.statusCode,
+            });
+          }
 
           attempt--; // Don't burn the empty-response retry limit
           continue;

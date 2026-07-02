@@ -44,7 +44,7 @@ export async function saveSessionAsync<ParsedSession extends IPersistedSession>(
  * @param chatId - The chat session identifier to load
  * @returns Promise resolving to the session data or null if not found
  */
-export async function loadSessionAsync<ParsedSession extends IPersistedSession>(chatId: string): Promise<ParsedSession | null> {
+export async function loadSessionAsync(chatId: string): Promise<IPersistedSession | null> {
   const filePath: string = getSessionFilePath(chatId);
   const logger: LoggerService = LoggerService.getInstance();
 
@@ -58,7 +58,7 @@ export async function loadSessionAsync<ParsedSession extends IPersistedSession>(
 
     parsed.messages = _normalizeLoadedSessionMessages(parsed.messages);
 
-    return parsed as ParsedSession;
+    return parsed;
   } catch (error: unknown) {
     if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
       return null;

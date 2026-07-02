@@ -10,6 +10,17 @@ import { clearDependencyCache, checkBinaryAsync } from "./dependency-checker.js"
 
 const execAsync = promisify(exec);
 
+/** Regex that matches safe package names: alphanumeric, dots, hyphens, underscores, slashes, @-scopes */
+const SAFE_PACKAGE_NAME_REGEX = /^[a-zA-Z0-9_@./-]+$/;
+
+/**
+ * Validates a package name is safe for shell interpolation.
+ * Rejects names containing shell metacharacters: ; & | $ ` > < ( ) # etc.
+ */
+export function validatePackageName(name: string): boolean {
+  return SAFE_PACKAGE_NAME_REGEX.test(name);
+}
+
 type AllowedInstallKind = "brew" | "node" | "go" | "uv" | "pacman" | "apt" | "download";
 export type SkillInstallKind = AllowedInstallKind;
 
@@ -177,6 +188,10 @@ async function installBrewAsync(step: ISkillInstallStep, timeout: number): Promi
     return { success: false, error: "No formula specified for brew install", installedBins: [] };
   }
 
+  if (!validatePackageName(formula)) {
+    return { success: false, error: `Invalid package name "${formula}": contains shell metacharacters`, installedBins: [] };
+  }
+
   try {
     await execAsync(`brew install ${formula}`, { timeout });
     const bins: string[] = step.bins.length > 0 ? step.bins : [formula];
@@ -196,6 +211,10 @@ async function installNodeAsync(step: ISkillInstallStep, timeout: number): Promi
 
   if (!pkg) {
     return { success: false, error: "No package specified for npm install", installedBins: [] };
+  }
+
+  if (!validatePackageName(pkg)) {
+    return { success: false, error: `Invalid package name "${pkg}": contains shell metacharacters`, installedBins: [] };
   }
 
   try {
@@ -219,6 +238,10 @@ async function installGoAsync(step: ISkillInstallStep, timeout: number): Promise
     return { success: false, error: "No package specified for go install", installedBins: [] };
   }
 
+  if (!validatePackageName(pkg)) {
+    return { success: false, error: `Invalid package name "${pkg}": contains shell metacharacters`, installedBins: [] };
+  }
+
   try {
     await execAsync(`go install ${pkg}@latest`, { timeout });
     const bins: string[] = step.bins.length > 0 ? step.bins : [pkg.split("/").pop() || pkg];
@@ -238,6 +261,10 @@ async function installUvAsync(step: ISkillInstallStep, timeout: number): Promise
 
   if (!pkg) {
     return { success: false, error: "No package specified for uv pip install", installedBins: [] };
+  }
+
+  if (!validatePackageName(pkg)) {
+    return { success: false, error: `Invalid package name "${pkg}": contains shell metacharacters`, installedBins: [] };
   }
 
   try {

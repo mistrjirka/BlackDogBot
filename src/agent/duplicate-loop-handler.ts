@@ -251,7 +251,7 @@ function _findFirstUserTask(messages: ModelMessage[]): string {
             "type" in part &&
             (part as { type: string }).type === "text" &&
             "text" in part &&
-            typeof (part as { text: unknown }) === "string"
+            typeof (part as { text: unknown }).text === "string"
           ) {
             return (part as { text: string }).text.slice(0, 256);
           }

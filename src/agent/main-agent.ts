@@ -621,7 +621,7 @@ export class MainAgent extends BaseAgentBase {
           }
 
           this._logger.error("Model returned error response after all retries", { chatId });
-        } else if (result.text.trim() && result !== null) {
+        } else if (result.text.trim()) {
         // On success with text — append response, compact, and return
           // If prepareStep compacted messages, use them as the base (they include the compacted user message)
           // Otherwise, append the original user message to session
@@ -816,6 +816,17 @@ private async _runGenerationCycleAsync(
       emitModelOutputAsync: async (_chatId2: string, _stepNumber: number, _text: string) => {
         // TODO: Implement model output emission via BrainInterfaceService when integration is finalized
       },
+      onContextExceededCompaction: async (): Promise<ModelMessage[]> => {
+        const compacted: ModelMessage[] = await _compactSessionMessagesAsync(
+          session.messages,
+          _aiProviderService.getModel(),
+          this._logger,
+          this._compactionTokenThreshold,
+          this._contextWindow,
+        );
+        session.messages = compacted;
+        return compacted;
+      },
     });
 
     const resultCopy: IAgentResult = {
@@ -927,7 +938,7 @@ private async _activateFallbackAndReinitializeAsync(
   }
 
   private async _loadSessionAsync(chatId: string): Promise<IPersistedSession | null> {
-    return _loadSessionAsync<IPersistedSession & IChatSession>(chatId);
+    return _loadSessionAsync(chatId);
   }
 
   private _createDuplicateToolLoopCallback(

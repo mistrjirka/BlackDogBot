@@ -64,7 +64,7 @@ export async function validateFetcherConfigAsync(
     logger.debug("Probing curl_fetcher URL", { url });
 
     const method: string = (config.method as string) ?? "GET";
-    const probe = await probeUrlAsync(url, method === "HEAD" ? "HEAD" : "HEAD");
+    const probe = await probeUrlAsync(url, method);
 
     if (!probe.reachable) {
       // Retry with GET since some servers reject HEAD

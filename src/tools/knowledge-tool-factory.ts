@@ -79,7 +79,7 @@ export function createKnowledgeToolFactory(deps: IKnowledgeToolFactoryDependenci
             await knowledgeService.editKnowledgeDocumentAsync(id, collection, content, metadata);
             return { success: true, message: "Knowledge document updated successfully." };
           } catch (error: unknown) {
-            return { success: false, message: (error as Error).message };
+            return { success: false, message: extractErrorMessage(error) };
           }
         },
       });

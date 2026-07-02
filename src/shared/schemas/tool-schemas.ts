@@ -164,7 +164,7 @@ export const stopCmdToolInputSchema = z.object({
   handleId: z.string()
     .min(1)
     .describe("Process handle to stop"),
-  signal: z.string()
+  signal: z.enum(["SIGTERM", "SIGKILL", "SIGINT"])
     .default("SIGTERM")
     .describe("Signal to send (SIGTERM, SIGKILL, SIGINT)"),
 });
@@ -824,7 +824,7 @@ export const editFileToolOutputSchema = z.object({
 
 export const fetchRssToolInputSchema = z.object({
   url: z.string()
-    .min(1)
+    .url()
     .describe("URL of the RSS or Atom feed to fetch"),
   maxItems: z.number()
     .int()

@@ -284,7 +284,7 @@ describe("createOutputZodSchema", () => {
     expect(zodSchema.safeParse(invalidInput).success).toBe(false);
   });
 
-  it("should enforce strict object keys for structured output schemas", () => {
+  it("should respect the required array for structured output schemas", () => {
     const schema = {
       type: "object",
       properties: {
@@ -296,6 +296,7 @@ describe("createOutputZodSchema", () => {
 
     const zodSchema = createOutputZodSchema(schema);
 
+    // Both fields present — should succeed
     expect(
       zodSchema.safeParse({
         title: "Example",
@@ -303,9 +304,17 @@ describe("createOutputZodSchema", () => {
       }).success,
     ).toBe(true);
 
+    // Only required field present — should succeed (summary is optional)
     expect(
       zodSchema.safeParse({
         title: "Example",
+      }).success,
+    ).toBe(true);
+
+    // Missing required field — should fail
+    expect(
+      zodSchema.safeParse({
+        summary: "Text",
       }).success,
     ).toBe(false);
   });
