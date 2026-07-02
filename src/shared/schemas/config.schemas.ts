@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ALLOWED_INSTALL_KINDS } from "../constants.js";
 
 //#region Config Schemas
 
@@ -218,7 +219,7 @@ const skillsConfigSchema = z.object({
     .positive()
     .default(300000)
     .describe("Timeout in milliseconds for each install step"),
-  allowedInstallKinds: z.enum(["brew", "node", "go", "uv", "pacman", "apt", "download"])
+  allowedInstallKinds: z.enum(ALLOWED_INSTALL_KINDS)
     .array()
     .default(["brew", "node", "go", "uv"])
     .describe("Whitelist of allowed install kinds. pacman, apt, and download require manual steps."),

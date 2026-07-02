@@ -1,5 +1,7 @@
 //#region Skill Types
 
+import type { AllowedInstallKind } from "../constants.js";
+
 export type SkillState = 
   | "never-touched"
   | "ready"
@@ -18,7 +20,7 @@ export interface ISkillRequirements {
 
 export interface ISkillInstallStep {
   id: string;
-  kind: "brew" | "node" | "go" | "uv" | "download" | "apt" | "pacman";
+  kind: AllowedInstallKind;
   formula: string | null;
   package: string | null;
   bins: string[];
@@ -59,12 +61,8 @@ export interface ISkill {
   state: ISkillStateInfo;
 }
 
-export interface ISkillMissingDeps {
-  bins: string[];
-  anyBins: string[];
-  env: string[];
-  config: string[];
-}
+/** Missing dependencies — same shape as requirements */
+export type ISkillMissingDeps = ISkillRequirements;
 
 export interface ISkillStateInfo {
   state: SkillState;

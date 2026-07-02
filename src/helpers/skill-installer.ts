@@ -2,6 +2,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
 import type { ISkillInstallStep } from "../shared/types/index.js";
+import type { AllowedInstallKind } from "../shared/constants.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { clearDependencyCache, checkBinaryAsync } from "./dependency-checker.js";
@@ -21,7 +22,6 @@ export function validatePackageName(name: string): boolean {
   return SAFE_PACKAGE_NAME_REGEX.test(name);
 }
 
-type AllowedInstallKind = "brew" | "node" | "go" | "uv" | "pacman" | "apt" | "download";
 export type SkillInstallKind = AllowedInstallKind;
 
 interface IInstallStepResult {

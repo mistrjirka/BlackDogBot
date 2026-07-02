@@ -57,3 +57,10 @@ export const PROMPT_PERSISTENCE: string = "persistence";
 export const INCLUDE_DIRECTIVE_REGEX: RegExp = /\{\{include:(.+?)\}\}/g;
 
 //#endregion Include Directive
+
+//#region Install Kinds
+
+export const ALLOWED_INSTALL_KINDS = ["brew", "node", "go", "uv", "pacman", "apt", "download"] as const;
+export type AllowedInstallKind = (typeof ALLOWED_INSTALL_KINDS)[number];
+
+//#endregion Install Kinds
