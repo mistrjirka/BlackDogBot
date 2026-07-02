@@ -677,7 +677,7 @@ export const getCronToolInputSchema = z.object({
 
 export const getCronToolOutputSchema = z.object({
   success: z.boolean(),
-  task: z.any()
+  task: z.record(z.string(), z.unknown())
     .optional()
     .describe("Full scheduled task configuration"),
   error: z.string()
@@ -698,7 +698,7 @@ export const listCronsToolOutputSchema = z.object({
     tools: z.string()
       .array(),
     schedule: z.object({
-      type: z.string(),
+      type: z.enum(["once", "interval"]),
       expression: z.string()
         .optional(),
       every: z.object({
@@ -723,7 +723,7 @@ export const listCronsToolOutputSchema = z.object({
     enabled: z.boolean(),
     lastRunAt: z.string()
       .nullable(),
-    lastRunStatus: z.string()
+    lastRunStatus: z.enum(["success", "failure"])
       .nullable(),
     messageDedupEnabled: z.boolean()
       .describe("Whether message deduplication is enabled for this task"),
@@ -967,7 +967,7 @@ export const searchTimedToolOutputSchema = z.object({
     description: z.string(),
     enabled: z.boolean(),
     schedule: z.object({
-      type: z.string(),
+      type: z.enum(["once", "interval"]),
       every: z.object({
         hours: z.number(),
         minutes: z.number(),

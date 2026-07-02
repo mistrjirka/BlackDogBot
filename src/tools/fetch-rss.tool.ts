@@ -89,7 +89,7 @@ export const fetchRssTool = tool({
   description:
     "Fetch and parse an RSS or Atom feed. Returns feed metadata and items. Use mode='unseen' to only get new items since the last fetch (state is persisted per URL).",
   inputSchema: fetchRssToolInputSchema,
-  execute: async ({ url, maxItems, mode }): Promise<IFetchRssResult> => {
+  execute: async ({ url, maxItems, mode }: { url: string; maxItems: number; mode: string }): Promise<IFetchRssResult> => {
     try {
       const response: Response = await fetch(url, {
         method: "GET",
