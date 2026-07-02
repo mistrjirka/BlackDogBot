@@ -313,7 +313,7 @@ async function mainAsync(): Promise<void> {
                 `⚠️ **Skill Needs Manual Setup**: \`${skill.name}\`\n\n` +
                 `This skill requires packages that cannot be auto-installed.\n\n` +
                 `**Manual steps:**\n${result.manualStepsRequired.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\n` +
-                `After completing these steps, restart BlackDogBot or use the setup-skill tool.`;
+                `After completing these steps, restart BlackDogBot.`;
               await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
             }
           } else {

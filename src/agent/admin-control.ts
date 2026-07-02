@@ -94,6 +94,12 @@ export class AdminControl {
   }
 
   clearAllChatHistory(): void {
+    for (const chatId of this._sessions.keys()) {
+      ToolHotReloadService.getInstance().unregisterRebuildCallback(chatId);
+      fs.unlink(getSessionFilePath(chatId)).catch(() => {
+        // File may not exist, ignore
+      });
+    }
     this._sessions.clear();
     this._logger.info("All chat history cleared.");
   }

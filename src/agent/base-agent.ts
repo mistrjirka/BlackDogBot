@@ -903,10 +903,6 @@ export abstract class BaseAgentBase {
   }
 
   //#endregion Protected methods
-
-  protected get _currentInputTokensForLegacyLogs(): number {
-    return this._providerInputTokens ?? this._estimatedInputTokens;
-  }
 }
 //#endregion BaseAgent
 

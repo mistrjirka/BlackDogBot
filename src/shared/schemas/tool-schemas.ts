@@ -659,16 +659,6 @@ export const removeTimedToolOutputSchema = z.object({
   message: z.string(),
 });
 
-export const removeCronToolInputSchema = z.object({
-  taskId: z.string()
-    .min(1),
-});
-
-export const removeCronToolOutputSchema = z.object({
-  success: z.boolean(),
-  message: z.string(),
-});
-
 export const getCronToolInputSchema = z.object({
   taskId: z.string()
     .min(1)

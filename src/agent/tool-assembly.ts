@@ -48,11 +48,6 @@ import type { McpService } from "../services/mcp.service.js";
 import type { IFileReadTracker } from "../utils/file-tools-helper.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
 
-export interface ICreateTableWithHotReloadSession {
-  terminateCurrentRun: boolean;
-  pendingToolRebuild: { toolName: string; tableName: string } | null;
-}
-
 export async function assembleToolsForChat(
   chatId: string,
   messageSender: MessageSender,
@@ -165,68 +160,4 @@ function filterToolsByPermission(
   }
 
   return filteredTools;
-}
-
-export function wrapCreateTableWithHotReload(
-  originalTool: ToolSet[string],
-  chatId: string,
-  session: ICreateTableWithHotReloadSession,
-): ToolSet[string] {
-  const logger = LoggerService.getInstance();
-  const originalExecute = originalTool.execute;
-
-  if (!originalExecute) {
-    return originalTool;
-  }
-
-  return {
-    ...originalTool,
-    execute: async (input: unknown, options: any): Promise<unknown> => {
-      const result: any = await originalExecute(input, options);
-
-      if (result?.success === true) {
-        // Extract table name from input
-        const safeInput: Record<string, unknown> | null = typeof input === "object" && input !== null
-          ? (input as Record<string, unknown>)
-          : null;
-
-        const tableName: string = String(safeInput?.tableName ?? safeInput?.name ?? "unknown");
-
-        const toolName = `write_table_${tableName}`;
-
-        try {
-          const hotReload = await import("../services/tool-hot-reload.service.js").then(
-            (m) => m.ToolHotReloadService.getInstance(),
-          );
-          const rebuildSucceeded: boolean = await hotReload.triggerRebuildAsync(chatId);
-
-          if (!rebuildSucceeded) {
-            logger.warn("create_table succeeded but tool hot-reload did not complete", {
-              chatId,
-              toolName,
-              tableName,
-            });
-            return result;
-          }
-
-          // Signal that generate() should terminate now and restart with fresh tools
-          session.terminateCurrentRun = true;
-          session.pendingToolRebuild = { toolName, tableName };
-
-          logger.info("create_table triggered hard-stop + tool rebuild", {
-            chatId,
-            toolName,
-            tableName,
-          });
-        } catch (err: unknown) {
-          logger.warn("Tool hot-reload failed after create_table", {
-            chatId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
-      return result;
-    },
-  } as ToolSet[string];
 }
