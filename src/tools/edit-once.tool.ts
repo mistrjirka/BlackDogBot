@@ -6,7 +6,7 @@ import { SchedulerService } from "../services/scheduler.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
-import { wallClockToUtcIso } from "../utils/time.js";
+import { wallClockToUtcIso, resolveTimezone } from "../utils/time.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
 import type { IScheduledTask } from "../shared/types/index.js";
 
@@ -70,14 +70,7 @@ const executeEditOnce = async (
 
   try {
     const requestedTimezone: string = schedulerTimezone ?? "UTC";
-    const effectiveScheduleTimezone: string = (() => {
-      try {
-        Intl.DateTimeFormat("en-US", { timeZone: requestedTimezone }).format(new Date());
-        return requestedTimezone;
-      } catch {
-        return "UTC";
-      }
-    })();
+    const effectiveScheduleTimezone: string = resolveTimezone(requestedTimezone);
 
     if (tools !== undefined) {
       const invalidTools: string[] = filterInvalidTools(tools);

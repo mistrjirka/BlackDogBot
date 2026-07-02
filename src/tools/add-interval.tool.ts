@@ -11,6 +11,8 @@ import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
 import { buildCronTaskVerifierPrompt } from "../utils/cron-task-verifier.js";
+import { normalizeTimeParts } from "../utils/cron-format.js";
+import { resolveTimezone } from "../utils/time.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 
 //#region Interfaces
@@ -54,20 +56,6 @@ function _buildSchedule(
     timezone,
   };
 }
-
-function _normalizeTimeParts(
-  parts: { hours: number; minutes: number },
-): { hours: number; minutes: number } {
-  const safeHours: number = Math.max(0, parts.hours);
-  const safeMinutes: number = Math.max(0, parts.minutes);
-  const totalMinutes: number = (safeHours * 60) + safeMinutes;
-  return {
-    hours: Math.floor(totalMinutes / 60),
-    minutes: totalMinutes % 60,
-  };
-}
-
-//#endregion Private methods
 
 //#region Tool
 
@@ -137,19 +125,12 @@ export const addIntervalTool = tool({
       }
 
       const effectiveOffsetFromDayStart: { hours: number; minutes: number } =
-        _normalizeTimeParts(offsetFromDayStart);
+        normalizeTimeParts(offsetFromDayStart);
 
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
       const requestedTimezone: string = timezone ?? ConfigService.getInstance().getConfig().scheduler.timezone ?? "UTC";
-      const effectiveTimezone: string = (() => {
-        try {
-          Intl.DateTimeFormat("en-US", { timeZone: requestedTimezone }).format(new Date());
-          return requestedTimezone;
-        } catch {
-          return "UTC";
-        }
-      })();
+      const effectiveTimezone: string = resolveTimezone(requestedTimezone);
       const builtSchedule: Schedule = _buildSchedule(
         every,
         effectiveOffsetFromDayStart,

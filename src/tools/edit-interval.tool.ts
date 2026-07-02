@@ -6,7 +6,8 @@ import { SchedulerService } from "../services/scheduler.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
-import { formatScheduledTask } from "../utils/cron-format.js";
+import { formatScheduledTask, normalizeTimeParts } from "../utils/cron-format.js";
+import { resolveTimezone } from "../utils/time.js";
 import type { IScheduledTask } from "../shared/types/index.js";
 
 //#region Interfaces
@@ -28,18 +29,6 @@ const TOOL_DESCRIPTION: string =
   "You can patch non-instruction fields (name, description, tools, every, offsetFromDayStart, timezone, notifyUser, enabled). " +
   "send_message performs internal deduplication against previous cron messages. " +
   "IMPORTANT: You MUST call 'get_timed' first to retrieve the current task configuration before using this tool.";
-
-function _normalizeTimeParts(
-  parts: { hours: number; minutes: number },
-): { hours: number; minutes: number } {
-  const safeHours: number = Math.max(0, parts.hours);
-  const safeMinutes: number = Math.max(0, parts.minutes);
-  const totalMinutes: number = (safeHours * 60) + safeMinutes;
-  return {
-    hours: Math.floor(totalMinutes / 60),
-    minutes: totalMinutes % 60,
-  };
-}
 
 //#endregion Const
 
@@ -120,22 +109,15 @@ const executeEditInterval = async (
         timezone
         ?? (currentSchedule.type === "interval" ? currentSchedule.timezone : (ConfigService.getInstance().getConfig().scheduler.timezone ?? "UTC"));
 
-      const effectiveScheduleTimezone: string = (() => {
-        try {
-          Intl.DateTimeFormat("en-US", { timeZone: requestedTimezone }).format(new Date());
-          return requestedTimezone;
-        } catch {
-          return "UTC";
-        }
-      })();
+      const effectiveScheduleTimezone: string = resolveTimezone(requestedTimezone);
 
       patch.schedule = {
         type: "interval",
-        every: _normalizeTimeParts({
+        every: normalizeTimeParts({
           hours: every?.hours ?? currentEvery.hours,
           minutes: every?.minutes ?? currentEvery.minutes,
         }),
-        offsetFromDayStart: _normalizeTimeParts({
+        offsetFromDayStart: normalizeTimeParts({
           hours: offsetFromDayStart?.hours ?? currentOffset.hours,
           minutes: offsetFromDayStart?.minutes ?? currentOffset.minutes,
         }),

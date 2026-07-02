@@ -9,7 +9,7 @@ import { AiProviderService } from "../services/ai-provider.service.js";
 import { generateId } from "../utils/id.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
-import { wallClockToUtcIso } from "../utils/time.js";
+import { wallClockToUtcIso, resolveTimezone } from "../utils/time.js";
 import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
 import { buildCronTaskVerifierPrompt } from "../utils/cron-task-verifier.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
@@ -133,14 +133,7 @@ export const addOnceTool = tool({
       const taskId: string = generateId();
       const now: string = new Date().toISOString();
       const configuredTimezone: string = ConfigService.getInstance().getConfig().scheduler.timezone ?? "UTC";
-      const scheduleTimezone: string = (() => {
-        try {
-          Intl.DateTimeFormat("en-US", { timeZone: configuredTimezone }).format(new Date());
-          return configuredTimezone;
-        } catch {
-          return "UTC";
-        }
-      })();
+      const scheduleTimezone: string = resolveTimezone(configuredTimezone);
 
       const builtSchedule: Schedule = _buildSchedule({ year, month, day, hour, minute }, scheduleTimezone);
 

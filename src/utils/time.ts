@@ -1,4 +1,17 @@
 /**
+ * Validates a timezone string. Returns the timezone if valid, or "UTC" if invalid.
+ */
+export function resolveTimezone(timezone: string | undefined): string {
+  const tz = timezone || "UTC";
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date());
+    return tz;
+  } catch {
+    return "UTC";
+  }
+}
+
+/**
  * Returns the current date and time formatted in the given timezone, e.g.:
  *   "2026-02-28 14:35:00 (Europe/Prague)"
  *
