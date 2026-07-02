@@ -1,11 +1,12 @@
 import { type ImagePart, type ModelMessage, type Tool, type ToolSet } from "ai";
+import { encodingForModel } from "js-tiktoken";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 import { countMessagesTokens, countRequestBodyTokens, getSharedEncoder } from "./request-token-counter.js";
 import { estimateImageTokensFromPart } from "./image-token-estimator.js";
 
-function getTextEncoder(): ReturnType<typeof getSharedEncoder> {
+function getTextEncoder(): ReturnType<typeof encodingForModel> {
   return getSharedEncoder();
 }
 

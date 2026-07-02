@@ -536,7 +536,7 @@ ${candidateMessage}`;
     try {
       const model: LanguageModel = AiProviderService.getInstance().getModel();
       const modelMessages: ModelMessage[] = this._mapToModelMessages(messagesToCompact);
-          const targetTokenCount: number = Math.floor(getMaxSummaryChars() / 4);
+      const targetTokenCount: number = Math.floor(getMaxSummaryChars() / 4);
 
       const compactionResult: ISummarizationResult = await compactMessagesSummaryOnlyAsync(
         modelMessages,
