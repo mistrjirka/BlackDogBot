@@ -50,21 +50,6 @@ export const createTableTool = tool({
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const hasDefaultValueInRawInput: boolean = columns.some((col: z.infer<typeof columnDefinitionSchema>): boolean =>
-        Object.prototype.hasOwnProperty.call(col as Record<string, unknown>, "defaultValue"),
-      );
-
-      if (hasDefaultValueInRawInput) {
-        return {
-          success: false,
-          tableName,
-          columns: [],
-          inputSchema: { type: "object", properties: {}, required: [] },
-          message: "",
-          error: "defaultValue is no longer supported in create_table. Create columns without defaults and provide required values when writing rows.",
-        };
-      }
-
       await litesql.ensureDatabaseExists();
 
       const tableExists: boolean = await litesql.tableExistsAsync(DEFAULT_DATABASE, tableName);

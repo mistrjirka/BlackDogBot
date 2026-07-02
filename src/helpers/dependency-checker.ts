@@ -125,11 +125,11 @@ export async function checkRequirementsAsync(
     }
   }
 
-  for (const binAlternatives of requires.anyBins || []) {
-    const result: IAnyBinResult = await checkAnyBinAsync([binAlternatives]);
-
+  // anyBins is a single group of alternatives — check as a group, not individually
+  if (requires.anyBins && requires.anyBins.length > 0) {
+    const result: IAnyBinResult = await checkAnyBinAsync(requires.anyBins);
     if (!result.satisfied) {
-      missing.anyBins.push(binAlternatives);
+      missing.anyBins = requires.anyBins;
     }
   }
 

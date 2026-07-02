@@ -92,7 +92,16 @@ export async function runToolCallingProbeAsync(
     };
   }
 
-  const json = await response.json() as ILlmResponse;
+  let json: ILlmResponse;
+  try {
+    json = await response.json() as ILlmResponse;
+  } catch {
+    return {
+      ok: true,
+      status: response.status,
+      hasToolCalls: false,
+    };
+  }
   const toolCalls = json.choices?.[0]?.message?.tool_calls;
 
   return {

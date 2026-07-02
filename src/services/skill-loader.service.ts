@@ -156,11 +156,7 @@ export class SkillLoaderService {
           state: savedState,
         };
 
-        if (savedState.state === "setup-in-progress" || savedState.state === "setup-failed") {
-          skill.state = await this._determineSkillStateAsync(skill, skipOsCheck);
-        } else if (savedState.state === "never-touched") {
-          skill.state = await this._determineSkillStateAsync(skill, skipOsCheck);
-        } else if (savedState.state === "needs-setup") {
+        if (["setup-in-progress", "setup-failed", "never-touched", "needs-setup"].includes(savedState.state)) {
           skill.state = await this._determineSkillStateAsync(skill, skipOsCheck);
         }
 
