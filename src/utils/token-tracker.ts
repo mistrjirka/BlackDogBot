@@ -1,19 +1,12 @@
 import { type ImagePart, type ModelMessage, type Tool, type ToolSet } from "ai";
-import { encodingForModel } from "js-tiktoken";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
-import { countMessagesTokens, countRequestBodyTokens } from "./request-token-counter.js";
+import { countMessagesTokens, countRequestBodyTokens, getSharedEncoder } from "./request-token-counter.js";
 import { estimateImageTokensFromPart } from "./image-token-estimator.js";
 
-// Cached tokenizer to avoid recreating it on every call.
-let _cachedEncoder: ReturnType<typeof encodingForModel> | null = null;
-
-function getTextEncoder(): ReturnType<typeof encodingForModel> {
-  if (!_cachedEncoder) {
-    _cachedEncoder = encodingForModel("gpt-4o");
-  }
-  return _cachedEncoder;
+function getTextEncoder(): ReturnType<typeof getSharedEncoder> {
+  return getSharedEncoder();
 }
 
 export interface IRequestLikeTokenEstimate {
