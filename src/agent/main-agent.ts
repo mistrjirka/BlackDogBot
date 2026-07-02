@@ -972,71 +972,8 @@ private async _activateFallbackAndReinitializeAsync(
         },
       );
 
-      // Keep legacy adviser-slice helper reachable for compatibility and tests.
-      void this._buildHistorySliceForAdviser(messages, session.currentUserTask);
-
-
       return result.action;
     };
-  }
-
-  private _buildHistorySliceForAdviser(messages: ModelMessage[], userTask: string): ModelMessage[] {
-    const normalizedProbe: string = userTask.trim().slice(0, 160);
-
-    let startIndex: number = 0;
-    if (normalizedProbe.length > 0) {
-      for (let i: number = messages.length - 1; i >= 0; i--) {
-        const message: ModelMessage = messages[i];
-        if (message.role !== "user") {
-          continue;
-        }
-
-        const userText: string = _extractUserTextContent(message);
-        if (userText.includes(normalizedProbe)) {
-          startIndex = i;
-          break;
-        }
-      }
-    }
-
-    let endIndex: number = -1;
-    for (let i: number = messages.length - 1; i >= startIndex; i--) {
-      const message: ModelMessage = messages[i];
-      if (message.role !== "assistant" || !Array.isArray(message.content)) {
-        continue;
-      }
-
-      const hasToolCall: boolean = message.content.some((part: unknown): boolean => {
-        return (
-          typeof part === "object" &&
-          part !== null &&
-          "type" in part &&
-          (part as { type: string }).type === "tool-call"
-        );
-      });
-
-      if (hasToolCall) {
-        endIndex = i;
-        break;
-      }
-    }
-
-    if (endIndex < 0) {
-      return messages.slice(startIndex);
-    }
-
-    let sliceEnd: number = endIndex;
-    for (let i: number = endIndex + 1; i < messages.length; i++) {
-      const message: ModelMessage = messages[i];
-      if (message.role === "assistant") {
-        break;
-      }
-      if (message.role === "tool") {
-        sliceEnd = i;
-      }
-    }
-
-    return messages.slice(startIndex, sliceEnd + 1);
   }
 
   private _resetDuplicateLoopEscalation(_chatId: string): void {
@@ -1070,32 +1007,6 @@ function _appendResponseToSession(
   for (const responseMsg of responseMessages) {
     sessionMessages.push(responseMsg as ModelMessage);
   }
-}
-
-function _extractUserTextContent(message: ModelMessage): string {
-  if (typeof message.content === "string") {
-    return message.content;
-  }
-
-  if (!Array.isArray(message.content)) {
-    return "";
-  }
-
-  const textParts: string[] = [];
-  for (const part of message.content as unknown[]) {
-    if (
-      typeof part === "object" &&
-      part !== null &&
-      "type" in part &&
-      (part as { type: string }).type === "text" &&
-      "text" in part &&
-      typeof (part as { text: unknown }).text === "string"
-    ) {
-      textParts.push((part as { text: string }).text);
-    }
-  }
-
-  return textParts.join("\n");
 }
 
 async function _compactSessionMessagesAsync(
