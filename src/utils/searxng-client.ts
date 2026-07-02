@@ -1,8 +1,6 @@
 import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { fetchWithTimeout } from "./fetch-with-timeout.js";
-
-const DEFAULT_TIMEOUT_MS = 30000;
+import { fetchWithTimeout, DEFAULT_TIMEOUT_MS } from "./fetch-with-timeout.js";
 
 export interface ISearxngClientOptions {
   categories?: string[];
