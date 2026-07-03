@@ -75,11 +75,12 @@ describe("Issue 3: _findFirstUserTask typeof check tests object, not .text", () 
 // but _extractTextContent at line 1366 checks "text" in part, so it never
 // finds the compacted text.
 // ============================================================================
-describe("Issue 4: Compaction output uses 'value' instead of 'text'", () => {
-  it("summarization-compaction replacement output must use 'text' field, not 'value'", () => {
+describe("Issue 4: Compaction output uses 'value' field (AI SDK format)", () => {
+  it("summarization-compaction replacement output must use 'value' field to match AI SDK tool result format", () => {
     const source = readSrc("utils/summarization-compaction.ts");
-    // After fix: the replacementOutput must have `text:` not `value:`
-    expect(source).toMatch(/type:\s*"text",\s*\n\s*text:\s*compactedText/);
+    // The AI SDK expects { type: "text", value: string } for tool result outputs.
+    // The @ai-sdk/openai-compatible provider reads output.value, not output.text.
+    expect(source).toMatch(/type:\s*"text",\s*\n\s*value:\s*compactedText/);
   });
 });
 
