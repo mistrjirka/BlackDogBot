@@ -55,7 +55,7 @@ function extractMatchedFields(result: FuseResult<IScheduledTask>): string[] {
 export const searchTimedTool = tool({
   description: "Search timed/scheduled tasks using fuzzy matching. Searches across task names, descriptions, instructions, task IDs, and tools.",
   inputSchema: searchTimedToolInputSchema,
-  execute: async ({ query, enabledOnly = false, limit = 5, threshold = 0.4 }): Promise<ISearchResult> => {
+  execute: async ({ query, enabledOnly = false, limit = 5, threshold = 0.4 }: { query: string; enabledOnly?: boolean; limit?: number; threshold?: number }): Promise<ISearchResult> => {
     const scheduler: SchedulerService = SchedulerService.getInstance();
 
     const tasks: IScheduledTask[] = enabledOnly

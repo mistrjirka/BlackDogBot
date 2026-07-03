@@ -1,19 +1,15 @@
 import type { ModelMessage } from "ai";
+import type { IToolCallSummary } from "../agent/base-agent.js";
 
-export interface ITrackedToolCallSummary {
-  name: string;
-  input: Record<string, unknown>;
-  toolCallId?: string;
-  result?: unknown;
-  isError?: boolean;
-}
+/** @deprecated Use IToolCallSummary from base-agent.ts instead */
+export type ITrackedToolCallSummary = IToolCallSummary;
 
-export function extractLastAssistantToolCalls(messages: ModelMessage[]): ITrackedToolCallSummary[] {
+export function extractLastAssistantToolCalls(messages: ModelMessage[]): IToolCallSummary[] {
   for (let i: number = messages.length - 1; i >= 0; i--) {
     const message: ModelMessage = messages[i];
 
     if (message.role === "assistant" && Array.isArray(message.content)) {
-      const calls: ITrackedToolCallSummary[] = [];
+      const calls: IToolCallSummary[] = [];
 
       for (const part of message.content) {
         if (

@@ -9,9 +9,6 @@ import {
   getCmdOutputTool,
   waitForCmdTool,
   stopCmdTool,
-  searchKnowledgeTool,
-  addKnowledgeTool,
-  editKnowledgeTool,
   thinkTool,
   createSendMessageTool,
   createReadFileTool,
@@ -27,7 +24,9 @@ import {
   dropTableTool,
   FileReadTracker,
 } from "../tools/index.js";
+import { createKnowledgeToolFactory } from "../tools/knowledge-tool-factory.js";
 import { buildPerTableToolsAsync } from "./per-table-tools.js";
+import * as knowledge from "../helpers/knowledge.js";
 
 export type AgentNodeMessageSender = (message: string) => Promise<string | null>;
 
@@ -49,6 +48,13 @@ export function createAgentNodeToolPool(
     supportsVision = false;
   }
 
+  const knowledgeToolFactory = createKnowledgeToolFactory({
+    knowledgeService: knowledge,
+    messageService: {
+      sendAsync: effectiveSender,
+    },
+  });
+
   const staticTools: Record<string, ToolSet[string]> = {
     think: thinkTool,
     run_cmd: runCmdTool,
@@ -57,9 +63,9 @@ export function createAgentNodeToolPool(
     get_cmd_output: getCmdOutputTool,
     wait_for_cmd: waitForCmdTool,
     stop_cmd: stopCmdTool,
-    search_knowledge: searchKnowledgeTool,
-    add_knowledge: addKnowledgeTool,
-    edit_knowledge: editKnowledgeTool,
+    search_knowledge: knowledgeToolFactory.createSearchKnowledgeTool(),
+    add_knowledge: knowledgeToolFactory.createAddKnowledgeTool(),
+    edit_knowledge: knowledgeToolFactory.createEditKnowledgeTool(),
     send_message: createSendMessageTool(effectiveSender),
     read_file: createReadFileTool(readTracker),
     write_file: createWriteFileTool(readTracker),

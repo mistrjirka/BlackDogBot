@@ -9,9 +9,9 @@ import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { thinkTool } from "./think.tool.js";
 import { runCmdTool } from "./run-cmd.tool.js";
-import { searchKnowledgeTool } from "./search-knowledge.tool.js";
-import { addKnowledgeTool } from "./add-knowledge.tool.js";
+import { createKnowledgeToolFactory } from "./knowledge-tool-factory.js";
 import type { ISkill } from "../shared/types/index.js";
+import * as knowledge from "../helpers/knowledge.js";
 
 //#region Interfaces
 
@@ -67,11 +67,18 @@ export function createCallSkillTool(availableSkillNames: string[]) {
 
         const model: LanguageModel = AiProviderService.getInstance().getModel();
 
+        const knowledgeToolFactory = createKnowledgeToolFactory({
+          knowledgeService: knowledge,
+          messageService: {
+            sendAsync: async (): Promise<null> => null,
+          },
+        });
+
         const tools: ToolSet = {
           think: thinkTool,
           run_cmd: runCmdTool,
-          search_knowledge: searchKnowledgeTool,
-          add_knowledge: addKnowledgeTool,
+          search_knowledge: knowledgeToolFactory.createSearchKnowledgeTool(),
+          add_knowledge: knowledgeToolFactory.createAddKnowledgeTool(),
         };
 
         const wrappedTools: ToolSet = wrapToolSetWithReasoning(tools, {

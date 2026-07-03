@@ -1280,7 +1280,8 @@ function _formatReasoningSuffix(input: Record<string, unknown>): string {
 }
 
 function _detectThinkLeakInModelText(text: string): { hasThinkTags: boolean; hasReasoningPhrases: boolean } {
-  const hasThinkTags: boolean = /<\/?(think|thinking|reasoning)>/i.test(text);
+  const hasThinkTags: boolean = /<\/?(think|thinking|reasoning)>/i.test(text) ||
+    /<\|channel>(thought|reasoning)/i.test(text) || /<channel\|>/i.test(text);
   const hasReasoningPhrases: boolean =
     /\b(the user is asking|i should|let me think|i need to|my approach)\b/i.test(text);
 

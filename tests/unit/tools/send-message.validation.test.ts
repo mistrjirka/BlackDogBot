@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createSendMessageToolWithHistory } from "../../../src/tools/send-message.tool.js";
+import { createSendMessageToolWithHistory } from "../../../src/tools/knowledge-tool-factory.js";
 import { CronMessageHistoryService } from "../../../src/services/cron-message-history.service.js";
 
 vi.mock("../../../src/services/cron-message-history.service.js", () => ({

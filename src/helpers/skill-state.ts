@@ -17,8 +17,15 @@ export async function getSkillStateAsync(skillName: string): Promise<ISkillState
     const parsed: ISkillStateInfo = skillStateInfoSchema.parse(raw);
 
     return parsed;
-  } catch {
-    logger.debug(`No existing state found for skill "${skillName}", returning default state`);
+  } catch (error: unknown) {
+    // ENOENT is expected — skill hasn't been used yet
+    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      logger.debug(`No existing state found for skill "${skillName}", returning default state`);
+    } else {
+      // File exists but is corrupted or unreadable — log warning
+      const message: string = error instanceof Error ? error.message : String(error);
+      logger.warn(`Corrupted state file for skill "${skillName}", returning default state`, { error: message });
+    }
 
     return {
       state: "never-touched",

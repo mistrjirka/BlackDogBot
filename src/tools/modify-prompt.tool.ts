@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { modifyPromptToolInputSchema, EDITABLE_PROMPT_NAMES } from "../shared/schemas/tool-schemas.js";
 import { PromptService } from "../services/prompt.service.js";
+import { extractErrorMessage } from "../utils/error.js";
 
 const _EditablePromptSet: ReadonlySet<string> = new Set(EDITABLE_PROMPT_NAMES);
 
@@ -45,7 +46,7 @@ export const modifyPromptTool = tool({
         }
       }
     } catch (error: unknown) {
-      return { success: false, content: undefined, message: (error as Error).message };
+      return { success: false, content: undefined, message: extractErrorMessage(error) };
     }
   },
 });

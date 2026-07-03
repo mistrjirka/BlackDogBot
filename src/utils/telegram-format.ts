@@ -4,6 +4,7 @@ import { transform as tghtml } from "@adriangalilea/tghtml";
 const THINK_TAG_PATTERN = /<(think|thinking|reasoning|reflection|details)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi;
 const SELF_CLOSING_THINK = /<(think|thinking|reasoning)\/>/gi;
 const MD_THINK_PATTERN = /\[think\]([\s\S]*?)\[\/think\]/gi;
+const GEMMA_CHANNEL_PATTERN = /<\|channel>thought\n([\s\S]*?)\n<channel\|>/g;
 
 //#region Table Parsing and Formatting
 
@@ -269,7 +270,10 @@ export function preprocessThinkTags(text: string): string {
     .replace(SELF_CLOSING_THINK, "\n> *Thinking...*\n")
     .replace(THINK_TAG_PATTERN, "\n> $3\n")
     .replace(MD_THINK_PATTERN, "\n> $1\n")
-    .replace(/<\/(think|thinking|reasoning)>/gi, "");
+    .replace(GEMMA_CHANNEL_PATTERN, "\n> $1\n")
+    .replace(/<\/(think|thinking|reasoning)>/gi, "")
+    .replace(/<\|channel>thought\n/g, "")
+    .replace(/\n<channel\|>/g, "");
 }
 
 export function markdownToTelegramHtml(markdown: string): string {

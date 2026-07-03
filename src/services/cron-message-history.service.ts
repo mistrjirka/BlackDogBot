@@ -14,11 +14,26 @@ import { isRetryableApiError, isConnectionError, isContextExceededApiError } fro
 
 const MAX_KEEP_MESSAGES: number = 3;
 const CONTEXT_THRESHOLD_PERCENTAGE: number = 0.15;
-const APPROX_CONTEXT_SIZE_CHARS: number = 128_000 * 4;
-const MAX_SUMMARY_CHARS: number = Math.floor(APPROX_CONTEXT_SIZE_CHARS * CONTEXT_THRESHOLD_PERCENTAGE);
 const VECTOR_TABLE_NAME: string = "cron-messages";
 const SIMILARITY_SEARCH_LIMIT: number = 10;
 const SEARCH_LOG_PREVIEW_LENGTH: number = 120;
+
+function getContextWindowTokens(): number {
+  try {
+    const ctx = AiProviderService.getInstance().getContextWindow();
+    return Number.isFinite(ctx) && ctx > 0 ? ctx : 128_000;
+  } catch {
+    return 128_000;
+  }
+}
+
+function getApproxContextSizeChars(): number {
+  return getContextWindowTokens() * 4;
+}
+
+function getMaxSummaryChars(): number {
+  return Math.floor(getApproxContextSizeChars() * CONTEXT_THRESHOLD_PERCENTAGE);
+}
 
 const MessageNoveltySchema = z.object({
   reasoning: z.string(),
@@ -175,11 +190,11 @@ export class CronMessageHistoryService {
 
     const totalChars: number = this._calculateTotalChars(CronMessageHistoryService._sharedHistory.slice(-MAX_KEEP_MESSAGES), null);
 
-    if (totalChars > MAX_SUMMARY_CHARS) {
+    if (totalChars > getMaxSummaryChars()) {
       this._logger.info("Message history exceeds threshold, compacting", {
         taskId,
         totalChars,
-        threshold: MAX_SUMMARY_CHARS,
+        threshold: getMaxSummaryChars(),
       });
 
       await this._compactWithDagAsync(taskId);
@@ -521,7 +536,7 @@ ${candidateMessage}`;
     try {
       const model: LanguageModel = AiProviderService.getInstance().getModel();
       const modelMessages: ModelMessage[] = this._mapToModelMessages(messagesToCompact);
-      const targetTokenCount: number = Math.floor(MAX_SUMMARY_CHARS / 4);
+      const targetTokenCount: number = Math.floor(getMaxSummaryChars() / 4);
 
       const compactionResult: ISummarizationResult = await compactMessagesSummaryOnlyAsync(
         modelMessages,
@@ -530,6 +545,11 @@ ${candidateMessage}`;
         targetTokenCount,
         (msgs: ModelMessage[]): number => this._countTokensForMessages(msgs),
         false,
+        {
+          contextWindow: Number.isFinite(getContextWindowTokens()) && getContextWindowTokens() > 0
+            ? getContextWindowTokens()
+            : undefined,
+        },
       );
 
       const recentMessages: ICronMessageHistory[] = CronMessageHistoryService._sharedHistory.slice(-MAX_KEEP_MESSAGES);

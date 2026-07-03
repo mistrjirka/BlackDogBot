@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ALLOWED_INSTALL_KINDS } from "../constants.js";
 
 //#region Skill Schemas
 
@@ -29,7 +30,7 @@ export const skillRequirementsSchema = z.object({
 
 export const skillInstallStepSchema = z.object({
   id: z.string(),
-  kind: z.enum(["brew", "node", "go", "uv", "download", "apt", "pacman"]),
+  kind: z.enum(ALLOWED_INSTALL_KINDS),
   formula: z.string()
     .nullable()
     .default(null),

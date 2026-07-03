@@ -17,6 +17,8 @@ export const TIMED_DIR: string = "timed";
 
 //#region Defaults
 
+export const HARD_GATE_THRESHOLD_PERCENTAGE: number = 0.85;
+
 export const DEFAULT_EMBEDDING_MODEL: string = "onnx-community/Qwen3-Embedding-0.6B-ONNX";
 export const DEFAULT_EMBEDDING_DTYPE: string = "q8";
 export const DEFAULT_EMBEDDING_DEVICE: string = "auto";
@@ -55,3 +57,10 @@ export const PROMPT_PERSISTENCE: string = "persistence";
 export const INCLUDE_DIRECTIVE_REGEX: RegExp = /\{\{include:(.+?)\}\}/g;
 
 //#endregion Include Directive
+
+//#region Install Kinds
+
+export const ALLOWED_INSTALL_KINDS = ["brew", "node", "go", "uv", "pacman", "apt", "download"] as const;
+export type AllowedInstallKind = (typeof ALLOWED_INSTALL_KINDS)[number];
+
+//#endregion Install Kinds

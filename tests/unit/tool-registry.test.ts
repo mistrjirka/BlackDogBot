@@ -100,7 +100,7 @@ describe("tool-registry", () => {
       expect(blocked).toContain("write_file");
       expect(blocked).toContain("add_once");
       expect(blocked).toContain("remove_timed");
-      expect(blocked.length).toBe(16);
+      expect(blocked.length).toBe(18);
     });
   });
 });

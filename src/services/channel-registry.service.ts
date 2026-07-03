@@ -28,6 +28,11 @@ import { getChannelsFilePath } from "../utils/paths.js";
  * - CronTaskExecutor (to find notification channels)
  * - Platform handlers (to register/update channels)
  */
+/**
+ * Singleton - application-wide channel registry. Correct singleton because channels from all
+ * sources (Telegram, Discord, etc.) must be queryable globally. Multiple instances would lose
+ * channels registered by other callers.
+ */
 export class ChannelRegistryService {
   //#region Singleton
 

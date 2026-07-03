@@ -38,6 +38,7 @@ import { runToolCallingProbeAsync } from "../utils/llm-probe-helpers.js";
 import { createHash } from "node:crypto";
 import { ensureDirectoryExistsAsync, getCacheDir } from "../utils/paths.js";
 import { ConfigService } from "./config.service.js";
+import { HARD_GATE_THRESHOLD_PERCENTAGE } from "../shared/constants.js";
 
 interface IOpenRouterModelListEntry {
   id: string;
@@ -67,12 +68,6 @@ function normalizeBaseUrl(url: string): string {
   return trimmed.replace(/\/v1\/?$/, "");
 }
 
-/**
- * Hard gate threshold as a fraction of context window. Requests whose
- * serialized body exceeds this fraction are rejected before reaching the
- * API, triggering the compaction-retry logic in the agent.
- */
-const HARD_GATE_THRESHOLD_PERCENTAGE: number = 0.85;
 const LM_STUDIO_MODEL_RECOVERY_RETRIES: number = 3;
 const CAPABILITY_PROBE_TIMEOUT_MS: number = 300_000;
 const PARALLEL_TOOL_CALL_PROBE_TIMEOUT_MS: number = CAPABILITY_PROBE_TIMEOUT_MS;
@@ -268,11 +263,12 @@ export class AiProviderService {
       try {
         this._contextWindow = await this._modelInfoService.fetchContextWindowAsync(defaultModelId);
         logger.info(`Detected OpenRouter context window: ${this._contextWindow}`);
-      } catch {
+      } catch (e: unknown) {
         this._contextWindow = defaultLocalContextWindow;
         logger.warn(
           `Could not detect context window from OpenRouter API. ` +
-          `Using default: ${defaultLocalContextWindow}.`
+          `Using default: ${defaultLocalContextWindow}.`,
+          { error: String(e) },
         );
       }
     } else {
@@ -1009,7 +1005,10 @@ export class AiProviderService {
 
       for (const candidate of candidates) {
         // Strip think tags that some models wrap around their output
-        const stripped: string = candidate.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+        const stripped: string = candidate
+          .replace(/<think>[\s\S]*?<\/think>/g, "")
+          .replace(/<\|channel>thought\n[\s\S]*?\n<channel\|>/g, "")
+          .trim();
         const textToParse: string = stripped.length > 0 ? stripped : candidate;
 
         try {
@@ -1019,9 +1018,9 @@ export class AiProviderService {
             logger.info("Structured output probe result: SUPPORTED");
             return true;
           }
-        } catch {
-          // Not valid JSON in this candidate, try next
-        }
+   } catch (e: unknown) {
+        if (!(e instanceof SyntaxError)) throw e;
+      }
       }
 
       logger.debug("Structured output probe: no candidate contained valid schema-conformant JSON", {
@@ -1234,7 +1233,7 @@ export class AiProviderService {
       try {
         const supportsTools: boolean = await this._probeToolCallingForProviderModelAsync(provider, config, modelId);
         supportMap.set(modelId, supportsTools);
-      } catch {
+      } catch (e: unknown) {
         supportMap.set(modelId, null);
       }
     }
@@ -1398,7 +1397,8 @@ export class AiProviderService {
     try {
       const payload = JSON.parse(candidate) as Record<string, unknown>;
       return typeof payload.ok === "boolean";
-    } catch {
+    } catch (e: unknown) {
+      if (!(e instanceof SyntaxError)) throw e;
       return false;
     }
   }
@@ -1457,7 +1457,7 @@ export class AiProviderService {
       const message = parsed.choices?.[0]?.message;
       const candidate: string = this._resolveBestProbeCandidate(message);
       return candidate.length > 0;
-    } catch {
+    } catch (e: unknown) {
       return false;
     } finally {
       clearTimeout(timeoutId);
@@ -1516,6 +1516,49 @@ export class AiProviderService {
           };
         }
 
+        const gemmaChannelRegex: RegExp = /<\|channel>thought\n([\s\S]*?)\n<channel\|>([\s\S]*?)$/g;
+        const gemmaMatches: RegExpMatchArray[] = Array.from(originalContent.matchAll(gemmaChannelRegex));
+
+        if (gemmaMatches.length > 0) {
+          const reasoningParts: string[] = gemmaMatches
+            .map((match: RegExpMatchArray): string => (match[1] ?? "").trim())
+            .filter((part: string): boolean => part.length > 0);
+
+          const cleanedContent: string = originalContent
+            .replace(/<\|channel>thought\n[\s\S]*?\n<channel\|>/g, "")
+            .trim();
+
+          return {
+            reasoningContent: reasoningParts.length > 0 ? reasoningParts.join("\n\n") : null,
+            cleanedContent,
+          };
+        }
+
+        const gemmaChannelOpen: string = "<|channel>thought";
+        const gemmaChannelOpenIndex: number = originalContent.indexOf(gemmaChannelOpen);
+
+        if (gemmaChannelOpenIndex !== -1) {
+          const afterOpen: string = originalContent
+            .slice(gemmaChannelOpenIndex + gemmaChannelOpen.length)
+            .trim();
+          const channelClose: string = "<channel|>";
+          const channelCloseIndex: number = afterOpen.indexOf(channelClose);
+
+          if (channelCloseIndex !== -1) {
+            const reasoningContent: string = afterOpen
+              .slice(0, channelCloseIndex)
+              .trim();
+            const cleanedContent: string = afterOpen
+              .slice(channelCloseIndex + channelClose.length)
+              .trim();
+
+            return {
+              reasoningContent: reasoningContent.length > 0 ? reasoningContent : null,
+              cleanedContent,
+            };
+          }
+        }
+
         return {
           reasoningContent: null,
           cleanedContent: originalContent,
@@ -1551,6 +1594,11 @@ export class AiProviderService {
             (thinkTagMatches.length > 0 || rawContent.includes("</think>"));
           const hasReasoningField: boolean = reasoningContent.trim().length > 0;
 
+          const gemmaChannelMatches: RegExpMatchArray[] = typeof rawContent === "string"
+            ? Array.from(rawContent.matchAll(/<\|channel>thought[\s\S]*?<channel\|>/g))
+            : [];
+          const hasGemmaChannelTags: boolean = gemmaChannelMatches.length > 0;
+
           if (thinkTagMatches.length > 0) {
             choicesWithThinkTags += 1;
             totalThinkTagCount += thinkTagMatches.length;
@@ -1560,7 +1608,7 @@ export class AiProviderService {
             choicesWithReasoningContentField += 1;
           }
 
-          if (hasReasoningField || hasThinkBoundary) {
+          if (hasReasoningField || hasThinkBoundary || hasGemmaChannelTags) {
             choicesWithReasoning += 1;
           }
 
@@ -1568,6 +1616,15 @@ export class AiProviderService {
             if (thinkTagMatches.length > 0) {
               logger.debug("Detected think tags in LLM response", {
                 thinkTagCount: thinkTagMatches.length,
+                hasToolCalls,
+                contentLength: rawContent.length,
+                reasoningContentLength: reasoningContent.trim().length,
+                contentPreview: rawContent.slice(0, 200),
+              });
+            }
+            if (hasGemmaChannelTags) {
+              logger.debug("Detected Gemma channel tags in LLM response", {
+                gemmaChannelCount: gemmaChannelMatches.length,
                 hasToolCalls,
                 contentLength: rawContent.length,
                 reasoningContentLength: reasoningContent.trim().length,
@@ -1585,6 +1642,24 @@ export class AiProviderService {
           }
 
           if (hasToolCalls && typeof rawContent === "string" && rawContent.trim().length > 0) {
+            const parsed = parseToolCallReasoningFromContent(rawContent);
+            const existingReasoning: string = choice.message?.reasoning_content?.trim() ?? "";
+
+            if (existingReasoning.length === 0 && parsed.reasoningContent) {
+              choice.message!.reasoning_content = parsed.reasoningContent;
+              modified = true;
+            }
+
+            if (parsed.cleanedContent.length === 0) {
+              delete choice.message!.content;
+              modified = true;
+            } else if (parsed.cleanedContent !== rawContent) {
+              choice.message!.content = parsed.cleanedContent;
+              modified = true;
+            }
+          }
+
+          if (!hasToolCalls && hasGemmaChannelTags && typeof rawContent === "string" && rawContent.trim().length > 0) {
             const parsed = parseToolCallReasoningFromContent(rawContent);
             const existingReasoning: string = choice.message?.reasoning_content?.trim() ?? "";
 
@@ -1636,9 +1711,9 @@ export class AiProviderService {
           });
         }
       }
-    } catch {
-      // Not JSON - ignore
-    }
+  } catch (e: unknown) {
+          if (!(e instanceof SyntaxError)) throw e;
+        }
 
     return response;
   }
@@ -2427,7 +2502,8 @@ export class AiProviderService {
             if (init?.body && typeof init.body === "string") {
               try {
                 parsedRequestBody = JSON.parse(init.body);
-              } catch {
+              } catch (e: unknown) {
+                if (!(e instanceof SyntaxError)) throw e;
                 parsedRequestBody = init.body;
               }
             }
@@ -2535,7 +2611,7 @@ export class AiProviderService {
           // Apply transformations before calling token-gated fetch
           if (init?.body && typeof init.body === "string" && init.method === "POST") {
             try {
-              const body = JSON.parse(init.body);
+              const body = JSON.parse(init.body) as Record<string, unknown>;
               let modified = false;
 
               // Strip response_format when endpoint doesn't support it.
@@ -2611,8 +2687,8 @@ export class AiProviderService {
               if (modified) {
                 init.body = JSON.stringify(body);
               }
-            } catch {
-              // Ignore parse errors
+            } catch (e: unknown) {
+              // Ignore parse/type errors — request body is unchanged
             }
           }
           const response = await tokenGatedFetch(url, init);
@@ -2649,7 +2725,7 @@ export class AiProviderService {
           // Apply transformations before calling token-gated fetch
           if (init?.body && typeof init.body === "string" && init.method === "POST") {
             try {
-              const body = JSON.parse(init.body);
+              const body = JSON.parse(init.body) as Record<string, unknown>;
               let modified = false;
 
               // Fix tool schemas: LM Studio requires explicit type: "object"
@@ -2667,8 +2743,8 @@ export class AiProviderService {
               if (modified) {
                 init.body = JSON.stringify(body);
               }
-            } catch {
-              // Ignore parse errors
+            } catch (e: unknown) {
+              // Ignore parse/type errors — request body is unchanged
             }
           }
           const response = await tokenGatedFetch(url, init);
@@ -2792,7 +2868,7 @@ export class AiProviderService {
         this._modelProfileService.resolveRequestBehavior(this._activeProfileName, operation);
 
       return behavior ?? {};
-    } catch {
+    } catch (e: unknown) {
       return {};
     }
   }
@@ -3003,7 +3079,7 @@ export class AiProviderService {
         return parsed as ICapabilityCache;
       }
       return {};
-    } catch {
+    } catch (e: unknown) {
       return {};
     }
   }
@@ -3039,7 +3115,7 @@ export class AiProviderService {
   private _resolveLlmResponseDiagnosticsEnabled(): boolean {
     try {
       return ConfigService.getInstance().getLoggingConfig().llmResponseDiagnostics === true;
-    } catch {
+    } catch (e: unknown) {
       return false;
     }
   }

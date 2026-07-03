@@ -1,5 +1,21 @@
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
 
+/**
+ * Normalizes time parts to ensure hours and minutes are non-negative
+ * and minutes is within 0-59 range.
+ */
+export function normalizeTimeParts(
+  parts: { hours: number; minutes: number },
+): { hours: number; minutes: number } {
+  const safeHours: number = Math.max(0, parts.hours);
+  const safeMinutes: number = Math.max(0, parts.minutes);
+  const totalMinutes: number = (safeHours * 60) + safeMinutes;
+  return {
+    hours: Math.floor(totalMinutes / 60),
+    minutes: totalMinutes % 60,
+  };
+}
+
 function formatSchedule(schedule: Schedule, timezone?: string): string {
   switch (schedule.type) {
     case "interval": {

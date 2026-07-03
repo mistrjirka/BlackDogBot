@@ -18,7 +18,7 @@ export const stopCmdTool = tool({
 
     const result = await processService.stopAsync(
       handleId,
-      signal as "SIGTERM" | "SIGKILL" | "SIGINT",
+      signal,
     );
 
     const status = processService.getStatus(handleId);

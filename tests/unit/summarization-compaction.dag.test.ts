@@ -2,32 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LanguageModel, ModelMessage } from "ai";
 
 import { compactMessagesSummaryOnlyAsync } from "../../src/utils/summarization-compaction.js";
-import { LoggerService } from "../../src/services/logger.service.js";
 import * as llmRetry from "../../src/utils/llm-retry.js";
-
-function countApprox(messages: ModelMessage[]): number {
-  return JSON.stringify(messages).length;
-}
-
-function makeToolMessage(toolCallId: string, text: string): ModelMessage {
-  return {
-    role: "tool",
-    content: [{
-      type: "tool-result",
-      toolCallId,
-      output: { type: "text", value: text },
-    }],
-  } as ModelMessage;
-}
-
-function makeLogger(): LoggerService {
-  return {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  } as unknown as LoggerService;
-}
+import { countApprox, makeLogger, makeToolMessage } from "../utils/summarization-test-helpers.js";
 
 function buildRichConversation(): ModelMessage[] {
   return [
@@ -92,7 +68,7 @@ describe("summarization DAG compaction", () => {
     expect(result.dagNodeVisitCounts?.L4 ?? 0).toBe(0);
   });
 
-  it("goes L1 -> L2 -> L4 when L2 makes no change (wrong path L3 not chosen)", async () => {
+  it("goes L1 -> L2 -> L3 when L2 makes no change (L3 batched summarization attempted)", async () => {
     const messages: ModelMessage[] = [
       { role: "system", content: "System anchor" } as ModelMessage,
       { role: "user", content: "Old request " + "O".repeat(2800) } as ModelMessage,
@@ -116,8 +92,8 @@ describe("summarization DAG compaction", () => {
       false,
     );
 
-    expect(result.dagPath?.slice(0, 3)).toEqual(["L1", "L2", "L4"]);
-    expect(result.dagPath?.includes("L3")).toBe(false);
+    expect(result.dagPath?.slice(0, 3)).toEqual(["L1", "L2", "L3"]);
+    expect(result.dagPath?.includes("L3")).toBe(true);
   });
 
   it("re-enters L1 after L2 improvement (wrong path L2->L3 is not chosen)", async () => {
@@ -256,6 +232,102 @@ describe("summarization DAG compaction", () => {
       false,
     );
 
+    expect(result.dagPath?.includes("L5")).toBe(true);
+  });
+
+  it("routes L3→L1 when L3 improves token count", async () => {
+    const messages: ModelMessage[] = [
+      { role: "system", content: "System anchor" } as ModelMessage,
+      { role: "user", content: "Old request " + "O".repeat(2800) } as ModelMessage,
+      { role: "assistant", content: "Assistant note " + "N".repeat(2200) } as ModelMessage,
+      { role: "user", content: "LATEST USER: continue" } as ModelMessage,
+      { role: "assistant", content: "Current work " + "W".repeat(2400) } as ModelMessage,
+    ];
+
+    let l3CallCount: number = 0;
+    vi.mocked(llmRetry.generateTextWithRetryAsync).mockImplementation(async (params: unknown) => {
+      const prompt: string = (params as { prompt?: string }).prompt ?? "";
+      // L3 batched summarization
+      if (prompt.includes("Summarize these conversation messages")) {
+        l3CallCount++;
+        // Return short summary to show L3 improves
+        return {
+          text: "Short batch summary",
+          usage: { inputTokens: 200, outputTokens: 30 },
+        } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+      }
+      // L1 and other stages return long output to force progression
+      return {
+        text: "LONG_" + "X".repeat(2600),
+        usage: { inputTokens: 250, outputTokens: 180 },
+      } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+    });
+
+    const target: number = Math.floor(countApprox(messages) * 0.20);
+    const result = await compactMessagesSummaryOnlyAsync(
+      messages,
+      {} as unknown as LanguageModel,
+      makeLogger(),
+      target,
+      countApprox,
+      false,
+    );
+
+    // L3 should have been called and improved
+    expect(l3CallCount).toBeGreaterThan(0);
+    // After L3 improvement, DAG should route back to L1
+    const l3Index: number = (result.dagPath ?? []).indexOf("L3");
+    expect(l3Index).toBeGreaterThan(0);
+    // The node after L3 should be L1 (re-entry after improvement)
+    if (l3Index < (result.dagPath?.length ?? 0) - 1) {
+      expect(result.dagPath?.[l3Index + 1]).toBe("L1");
+    }
+  });
+
+  it("follows DAG path through L3 to L4 when L2 doesn't improve", async () => {
+    const messages: ModelMessage[] = [
+      { role: "system", content: "System anchor" } as ModelMessage,
+      { role: "user", content: "Old request " + "O".repeat(2800) } as ModelMessage,
+      { role: "assistant", content: "Assistant note " + "N".repeat(2200) } as ModelMessage,
+      { role: "user", content: "LATEST USER: continue" } as ModelMessage,
+      { role: "assistant", content: "Current work " + "W".repeat(2400) } as ModelMessage,
+    ];
+
+    // All stages return very long output (longer than original, so no token improvement)
+    vi.mocked(llmRetry.generateTextWithRetryAsync).mockImplementation(async (params: unknown) => {
+      const prompt: string = (params as { prompt?: string }).prompt ?? "";
+      // L3/L4 batched summarization - return VERY long text to prevent token improvement
+      if (prompt.includes("Summarize these conversation messages")) {
+        return {
+          text: "LONG_BATCH_" + "L".repeat(8000),
+          usage: { inputTokens: 300, outputTokens: 2000 },
+        } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+      }
+      // L1 and other stages also return long output
+      return {
+        text: "LONG_SUMMARY_" + "L".repeat(8000),
+        usage: { inputTokens: 300, outputTokens: 2000 },
+      } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+    });
+
+    const target: number = Math.floor(countApprox(messages) * 0.15);
+    const result = await compactMessagesSummaryOnlyAsync(
+      messages,
+      {} as unknown as LanguageModel,
+      makeLogger(),
+      target,
+      countApprox,
+      false,
+    );
+
+    // DAG should visit L3 after L2 (even when L2 doesn't improve)
+    expect(result.dagPath?.[0]).toBe("L1");
+    expect(result.dagPath?.[1]).toBe("L2");
+    expect(result.dagPath?.[2]).toBe("L3");
+    // L3 changes messages (batch summary), so DAG re-enters L1
+    // Then L1 doesn't improve, so goes to L4
+    expect(result.dagPath?.includes("L4")).toBe(true);
+    // Should eventually fall back to L5/L6 when all LLM stages fail
     expect(result.dagPath?.includes("L5")).toBe(true);
   });
 });

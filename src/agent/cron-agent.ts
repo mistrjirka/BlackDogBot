@@ -22,9 +22,6 @@ import {
   searxngTool,
   crawl4aiTool,
   searchTimedTool,
-  searchKnowledgeTool,
-  addKnowledgeTool,
-  editKnowledgeTool,
   createSendMessageToolWithHistory,
   createGetPreviousMessageTool,
   createCallSkillTool,
@@ -44,7 +41,9 @@ import {
   deleteFromDatabaseTool,
   FileReadTracker,
 } from "../tools/index.js";
+import { createKnowledgeToolFactory } from "../tools/knowledge-tool-factory.js";
 import type { MessageSender, TaskIdProvider } from "../tools/index.js";
+import * as knowledge from "../helpers/knowledge.js";
 import { StatusService } from "../services/status.service.js";
 import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/per-table-tools.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
@@ -75,6 +74,8 @@ export class CronAgent extends BaseAgentBase {
   //#region Data members
 
   private static _instance: CronAgent | null;
+  /** Serializes task executions to prevent concurrent corruption of shared state. */
+  private _executionMutex: Promise<void> = Promise.resolve();
 
   //#endregion Data members
 
@@ -103,6 +104,27 @@ export class CronAgent extends BaseAgentBase {
   }
 
   public async executeTaskAsync(
+    task: IScheduledTask,
+    messageSender: MessageSender,
+    taskIdProvider: TaskIdProvider,
+    executionContext: IExecutionContext,
+    traceCollector?: ITraceCollector,
+  ): Promise<IAgentResult> {
+    // Serialize task executions to prevent concurrent corruption of shared state
+    // (this._agent, token counters, compaction flags) when run_timed bypasses scheduler.
+    let releaseMutex: (() => void) | undefined;
+    const previousTask: Promise<void> = this._executionMutex;
+    this._executionMutex = new Promise<void>((resolve): void => { releaseMutex = resolve; });
+    await previousTask;
+
+    try {
+      return await this._executeTaskInnerAsync(task, messageSender, taskIdProvider, executionContext, traceCollector);
+    } finally {
+      releaseMutex!();
+    }
+  }
+
+  private async _executeTaskInnerAsync(
     task: IScheduledTask,
     messageSender: MessageSender,
     taskIdProvider: TaskIdProvider,
@@ -303,6 +325,13 @@ export class CronAgent extends BaseAgentBase {
     const readTracker: FileReadTracker = new FileReadTracker();
     const supportsVision: boolean = AiProviderService.getInstance().getSupportsVision();
 
+    const knowledgeToolFactory = createKnowledgeToolFactory({
+      knowledgeService: knowledge,
+      messageService: {
+        sendAsync: messageSender,
+      },
+    });
+
     const availableTools: Record<string, Tool> = {
       think: thinkTool,
       run_cmd: runCmdTool,
@@ -311,9 +340,9 @@ export class CronAgent extends BaseAgentBase {
       get_cmd_output: getCmdOutputTool,
       wait_for_cmd: waitForCmdTool,
       stop_cmd: stopCmdTool,
-      search_knowledge: searchKnowledgeTool,
-      add_knowledge: addKnowledgeTool,
-      edit_knowledge: editKnowledgeTool,
+      search_knowledge: knowledgeToolFactory.createSearchKnowledgeTool(),
+      add_knowledge: knowledgeToolFactory.createAddKnowledgeTool(),
+      edit_knowledge: knowledgeToolFactory.createEditKnowledgeTool(),
       send_message: createSendMessageToolWithHistory(messageSender, taskIdProvider, executionContext),
       get_previous_message: createGetPreviousMessageTool(executionContext),
       read_file: createReadFileTool(readTracker),

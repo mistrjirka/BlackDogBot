@@ -5,8 +5,7 @@ import * as litesql from "../helpers/litesql.js";
 import * as litesqlValidation from "../helpers/litesql-validation.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
-
-const DEFAULT_DATABASE = "blackdog";
+import { DEFAULT_DATABASE } from "../config/database.js";
 
 //#region Interfaces
 

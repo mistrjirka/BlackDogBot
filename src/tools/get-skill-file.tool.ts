@@ -24,7 +24,15 @@ export const getSkillFileTool = tool({
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const fullPath: string = path.join(getSkillDir(skillName), filePath);
+      const skillDir: string = getSkillDir(skillName);
+      const fullPath: string = path.resolve(skillDir, filePath);
+
+      // Path traversal protection: resolved path must be within the skill directory
+      if (!fullPath.startsWith(skillDir + path.sep) && fullPath !== skillDir) {
+        logger.warn("Path traversal attempt blocked in get_skill_file", { skillName, filePath, fullPath });
+        return { content: "", exists: false };
+      }
+
       const content: string = await fs.readFile(fullPath, "utf-8");
 
       logger.debug(`Read skill file "${filePath}" from skill "${skillName}"`);

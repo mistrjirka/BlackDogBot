@@ -3,8 +3,7 @@ import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import type { IQueryResult } from "../helpers/litesql.js";
-
-const DEFAULT_DATABASE = "blackdog";
+import { DEFAULT_DATABASE } from "../config/database.js";
 
 const SQL_CLAUSES_IN_WHERE_REGEX = /\b(ORDER\s+BY|LIMIT|SELECT|JOIN|GROUP\s+BY|HAVING)\b|;/i;
 const SQL_CLAUSES_IN_ORDER_BY_REGEX = /\b(WHERE|LIMIT|SELECT|JOIN|GROUP\s+BY|HAVING)\b|;/i;

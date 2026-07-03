@@ -26,6 +26,10 @@ const _JsonHighlightPatterns: Array<{ pattern: RegExp; color: (text: string) => 
 
 //#endregion Constants
 
+/**
+ * Singleton - application-wide logger. Correct singleton because all callers share the same
+ * log level, file path, and event emitter. Per-instance state here would break auditability.
+ */
 export class LoggerService {
   //#region Data members
 

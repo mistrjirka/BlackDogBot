@@ -74,7 +74,7 @@ function _wrapSingleTool(
       const sanitizedInput: unknown = _stripReasoning(input);
 
       // Execute the original tool
-      return execute(sanitizedInput as never, options);
+      return execute(sanitizedInput, options);
     },
   } as Tool<unknown, unknown>;
 }

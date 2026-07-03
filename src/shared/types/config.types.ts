@@ -1,6 +1,7 @@
 //#region Config Types
 
 import type { IDiscordConfig } from "./discord.types.js";
+import type { AllowedInstallKind } from "../constants.js";
 
 export type EmbeddingDtype = "fp32" | "fp16" | "q8" | "q4" | "q4f16";
 export type EmbeddingProvider = "local" | "openrouter";
@@ -117,7 +118,7 @@ export interface ISkillsConfig {
   autoSetup?: boolean;
   autoSetupNotify?: boolean;
   installTimeout?: number;
-  allowedInstallKinds?: ("brew" | "node" | "go" | "uv" | "pacman" | "apt" | "download")[];
+  allowedInstallKinds?: AllowedInstallKind[];
   skipOsCheck?: boolean;
 }
 

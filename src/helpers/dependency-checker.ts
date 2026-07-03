@@ -23,6 +23,17 @@ interface IDependencyResult {
 
 const _binaryCache: Map<string, boolean> = new Map();
 
+/** Regex that matches safe binary names: alphanumeric, hyphens, underscores, dots */
+const SAFE_BINARY_NAME_REGEX = /^[a-zA-Z0-9_.-]+$/;
+
+/**
+ * Validates a binary name is safe for shell interpolation.
+ * Rejects names containing shell metacharacters: ; & | $ ` > < ( ) etc.
+ */
+export function validateBinaryName(name: string): boolean {
+  return SAFE_BINARY_NAME_REGEX.test(name);
+}
+
 //#endregion Data members
 
 //#region Public Functions
@@ -32,6 +43,10 @@ export function clearDependencyCache(): void {
 }
 
 export async function checkBinaryAsync(bin: string): Promise<boolean> {
+  if (!validateBinaryName(bin)) {
+    return false;
+  }
+
   if (_binaryCache.has(bin)) {
     return _binaryCache.get(bin)!;
   }
@@ -110,11 +125,11 @@ export async function checkRequirementsAsync(
     }
   }
 
-  for (const binAlternatives of requires.anyBins || []) {
-    const result: IAnyBinResult = await checkAnyBinAsync([binAlternatives]);
-
+  // anyBins is a single group of alternatives — check as a group, not individually
+  if (requires.anyBins && requires.anyBins.length > 0) {
+    const result: IAnyBinResult = await checkAnyBinAsync(requires.anyBins);
     if (!result.satisfied) {
-      missing.anyBins.push(binAlternatives);
+      missing.anyBins = requires.anyBins;
     }
   }
 

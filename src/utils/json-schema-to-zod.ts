@@ -40,7 +40,11 @@ function normalizeStrictObjectSchema(schema: JsonSchema): JsonSchema {
       }
 
       normalized.properties = normalizedProperties;
-      normalized.required = Object.keys(normalizedProperties);
+      // Only force all properties required if the original schema did not
+      // explicitly specify a required array.
+      if (!Array.isArray(normalized.required)) {
+        normalized.required = Object.keys(normalizedProperties);
+      }
     }
   }
 
@@ -105,7 +109,7 @@ export function jsonSchemaToZod(schema: JsonSchema | undefined | null): z.ZodTyp
  * Handles union types like ["string", "null"] which means optional/nullable.
  */
 function handleUnionType(schema: JsonSchema, types: string[]): z.ZodType {
-  // Filter out null to get the base type
+  // Filter out null to get the base types
   const nonNullTypes: string[] = types.filter((t) => t !== "null");
   const isNullable: boolean = types.includes("null");
 
@@ -113,14 +117,18 @@ function handleUnionType(schema: JsonSchema, types: string[]): z.ZodType {
     return z.null();
   }
 
-  // Get the base schema for the non-null type
-  const baseSchema: z.ZodType = jsonSchemaToZod({ ...schema, type: nonNullTypes[0] });
-
-  if (isNullable) {
-    return baseSchema.nullable();
+  if (nonNullTypes.length === 1) {
+    // Single non-null type — straightforward conversion
+    const baseSchema: z.ZodType = jsonSchemaToZod({ ...schema, type: nonNullTypes[0] });
+    return isNullable ? baseSchema.nullable() : baseSchema;
   }
 
-  return baseSchema;
+  // Multiple non-null types — create a union of distinct schemas
+  const zodSchemas: z.ZodType[] = nonNullTypes.map((t) =>
+    jsonSchemaToZod({ ...schema, type: t }),
+  );
+  const unionSchema: z.ZodType = z.union([zodSchemas[0], zodSchemas[1], ...zodSchemas.slice(2)]);
+  return isNullable ? unionSchema.nullable() : unionSchema;
 }
 
 /**

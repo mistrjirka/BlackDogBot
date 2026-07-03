@@ -6,8 +6,7 @@ import type { IColumnInfo } from "../helpers/litesql.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { columnsToJsonSchema, IJsonSchema } from "../utils/litesql-schema-helper.js";
-
-const DEFAULT_DATABASE = "blackdog";
+import { DEFAULT_DATABASE } from "../config/database.js";
 
 const columnDefinitionSchema = z.object({
   name: z.string()
@@ -24,7 +23,7 @@ const columnDefinitionSchema = z.object({
 }).strict();
 
 export const createTableTool = tool({
-  description: "Create a new table in the default database. Call this after prerequisite checks/tool calls are complete for the current run.",
+  description: "Create a new table in the default database.",
   inputSchema: z.object({
     tableName: z.string()
       .min(1)
@@ -51,26 +50,7 @@ export const createTableTool = tool({
     const logger: LoggerService = LoggerService.getInstance();
 
     try {
-      const hasDefaultValueInRawInput: boolean = columns.some((col: z.infer<typeof columnDefinitionSchema>): boolean =>
-        Object.prototype.hasOwnProperty.call(col as Record<string, unknown>, "defaultValue"),
-      );
-
-      if (hasDefaultValueInRawInput) {
-        return {
-          success: false,
-          tableName,
-          columns: [],
-          inputSchema: { type: "object", properties: {}, required: [] },
-          message: "",
-          error: "defaultValue is no longer supported in create_table. Create columns without defaults and provide required values when writing rows.",
-        };
-      }
-
-      let dbExists: boolean = await litesql.databaseExistsAsync(DEFAULT_DATABASE);
-      if (!dbExists) {
-        await litesql.createDatabaseAsync(DEFAULT_DATABASE);
-        dbExists = true;
-      }
+      await litesql.ensureDatabaseExists();
 
       const tableExists: boolean = await litesql.tableExistsAsync(DEFAULT_DATABASE, tableName);
       if (tableExists) {

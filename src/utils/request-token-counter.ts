@@ -82,6 +82,11 @@ function _getEncoder(): ReturnType<typeof encodingForModel> {
   return _encoder;
 }
 
+/** Shared tiktoken encoder for gpt-4o. Cached after first call. */
+export function getSharedEncoder(): ReturnType<typeof encodingForModel> {
+  return _getEncoder();
+}
+
 function _countTextTokens(text: string): number {
   return _getEncoder().encode(text).length;
 }

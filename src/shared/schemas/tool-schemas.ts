@@ -164,7 +164,7 @@ export const stopCmdToolInputSchema = z.object({
   handleId: z.string()
     .min(1)
     .describe("Process handle to stop"),
-  signal: z.string()
+  signal: z.enum(["SIGTERM", "SIGKILL", "SIGINT"])
     .default("SIGTERM")
     .describe("Signal to send (SIGTERM, SIGKILL, SIGINT)"),
 });
@@ -293,21 +293,6 @@ export const getSkillFileToolInputSchema = z.object({
   filePath: z.string()
     .default("SKILL.md")
     .describe("Relative path within the skill directory"),
-});
-
-export const setupSkillToolInputSchema = z.object({
-  skillName: z.string()
-    .min(1)
-    .describe("Name of the skill to set up"),
-});
-
-export const setupSkillToolOutputSchema = z.object({
-  success: z.boolean(),
-  state: z.string(),
-  installed: z.array(z.string()),
-  manualStepsRequired: z.array(z.string()),
-  error: z.string()
-    .nullable(),
 });
 
 export const getSkillFileToolOutputSchema = z.object({
@@ -659,16 +644,6 @@ export const removeTimedToolOutputSchema = z.object({
   message: z.string(),
 });
 
-export const removeCronToolInputSchema = z.object({
-  taskId: z.string()
-    .min(1),
-});
-
-export const removeCronToolOutputSchema = z.object({
-  success: z.boolean(),
-  message: z.string(),
-});
-
 export const getCronToolInputSchema = z.object({
   taskId: z.string()
     .min(1)
@@ -677,7 +652,7 @@ export const getCronToolInputSchema = z.object({
 
 export const getCronToolOutputSchema = z.object({
   success: z.boolean(),
-  task: z.any()
+  task: z.record(z.string(), z.unknown())
     .optional()
     .describe("Full scheduled task configuration"),
   error: z.string()
@@ -698,7 +673,7 @@ export const listCronsToolOutputSchema = z.object({
     tools: z.string()
       .array(),
     schedule: z.object({
-      type: z.string(),
+      type: z.enum(["once", "interval"]),
       expression: z.string()
         .optional(),
       every: z.object({
@@ -723,7 +698,7 @@ export const listCronsToolOutputSchema = z.object({
     enabled: z.boolean(),
     lastRunAt: z.string()
       .nullable(),
-    lastRunStatus: z.string()
+    lastRunStatus: z.enum(["success", "failure"])
       .nullable(),
     messageDedupEnabled: z.boolean()
       .describe("Whether message deduplication is enabled for this task"),
@@ -824,7 +799,7 @@ export const editFileToolOutputSchema = z.object({
 
 export const fetchRssToolInputSchema = z.object({
   url: z.string()
-    .min(1)
+    .url()
     .describe("URL of the RSS or Atom feed to fetch"),
   maxItems: z.number()
     .int()
@@ -967,7 +942,7 @@ export const searchTimedToolOutputSchema = z.object({
     description: z.string(),
     enabled: z.boolean(),
     schedule: z.object({
-      type: z.string(),
+      type: z.enum(["once", "interval"]),
       every: z.object({
         hours: z.number(),
         minutes: z.number(),

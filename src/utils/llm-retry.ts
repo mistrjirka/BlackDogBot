@@ -74,9 +74,9 @@ function getEffectiveTimeout(requestedTimeoutMs: number | undefined, policyTimeo
 function createLinkedAbortSignal(
   abortSignal: AbortSignal | undefined,
   timeoutMs: number,
-): AbortSignal | undefined {
+): { signal: AbortSignal | undefined; cleanup: () => void } {
   if (!abortSignal && timeoutMs === Infinity) {
-    return undefined;
+    return { signal: undefined, cleanup: () => {} };
   }
 
   const controller = new AbortController();
@@ -88,7 +88,7 @@ function createLinkedAbortSignal(
   if (abortSignal) {
     if (abortSignal.aborted) {
       controller.abort();
-      return controller.signal;
+      return { signal: controller.signal, cleanup: () => {} };
     }
     abortSignal.addEventListener("abort", abortFn);
   }
@@ -105,7 +105,15 @@ function createLinkedAbortSignal(
     }
   });
 
-  return controller.signal;
+  // Cleanup function for callers to invoke after the call completes
+  const cleanup = (): void => {
+    clearTimeout(timeoutId);
+    if (abortSignal) {
+      abortSignal.removeEventListener("abort", abortFn);
+    }
+  };
+
+  return { signal: controller.signal, cleanup };
 }
 
 function estimateTokensFromTextByBytes(text: string): number {
@@ -153,7 +161,7 @@ export async function generateTextWithRetryAsync(
   try {
     for (let attempt: number = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const linkedSignal = createLinkedAbortSignal(retryOptions.abortSignal, timeoutMs);
+        const { signal: linkedSignal, cleanup: cleanupSignal } = createLinkedAbortSignal(retryOptions.abortSignal, timeoutMs);
 
         const callFn = async (): Promise<{ text: string; inputTokens: number; outputTokens: number }> => {
           const result = await generateText({
@@ -184,8 +192,12 @@ export async function generateTextWithRetryAsync(
         // Models from AiProviderService are already wrapped with limiter scheduling
         // in AiProviderService._wrapModelWithRateLimiter(). Scheduling again here
         // creates nested Bottleneck scheduling and can deadlock at maxConcurrent=1.
-        const result: { text: string; inputTokens: number; outputTokens: number } =
-          await runWithLlmCallTypeAsync(callType, callFn);
+        let result: { text: string; inputTokens: number; outputTokens: number };
+        try {
+          result = await runWithLlmCallTypeAsync(callType, callFn);
+        } finally {
+          cleanupSignal();
+        }
 
         // Record token usage for budget tracking (actual usage if available)
         rateLimiterService.recordTokenUsage(providerKey, result.inputTokens, result.outputTokens);
@@ -337,7 +349,7 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
   try {
     for (let attempt: number = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const linkedSignal = createLinkedAbortSignal(retryOptions.abortSignal, timeoutMs);
+        const { signal: linkedSignal, cleanup: cleanupSignal } = createLinkedAbortSignal(retryOptions.abortSignal, timeoutMs);
         const requestProviderOptions: SharedV3ProviderOptions | undefined =
           structuredMode === "tool_auto" ? undefined : providerOptions;
 
@@ -462,7 +474,12 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(
         // Models from AiProviderService are already wrapped with limiter scheduling
         // in AiProviderService._wrapModelWithRateLimiter(). Scheduling again here
         // creates nested Bottleneck scheduling and can deadlock at maxConcurrent=1.
-        const result: { object: z.infer<T> } = await runWithLlmCallTypeAsync(callType, callFn);
+        let result: { object: z.infer<T> };
+        try {
+          result = await runWithLlmCallTypeAsync(callType, callFn);
+        } finally {
+          cleanupSignal();
+        }
 
         // Record token usage for budget tracking (byte estimate for structured path).
         // Structured mode may include multiple internal sub-calls, so exact usage

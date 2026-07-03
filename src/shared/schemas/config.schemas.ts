@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ALLOWED_INSTALL_KINDS } from "../constants.js";
 
 //#region Config Schemas
 
@@ -218,7 +219,7 @@ const skillsConfigSchema = z.object({
     .positive()
     .default(300000)
     .describe("Timeout in milliseconds for each install step"),
-  allowedInstallKinds: z.enum(["brew", "node", "go", "uv", "pacman", "apt", "download"])
+  allowedInstallKinds: z.enum(ALLOWED_INSTALL_KINDS)
     .array()
     .default(["brew", "node", "go", "uv"])
     .describe("Whitelist of allowed install kinds. pacman, apt, and download require manual steps."),
@@ -270,9 +271,21 @@ const brainInterfaceConfigSchema = z.object({
     .describe("JWT audience for BrainInterface tokens"),
 });
 
+const discordConfigSchema = z.object({
+  botToken: z.string().min(1),
+  channels: z.array(z.object({
+    channelId: z.string().min(1),
+    guildId: z.string().min(1),
+    permission: z.enum(["ignore", "read_only", "full"]),
+    receiveNotifications: z.boolean(),
+  })).default([]),
+});
+
 export const configSchema = z.object({
   ai: aiConfigSchema,
   telegram: telegramConfigSchema
+    .optional(),
+  discord: discordConfigSchema
     .optional(),
   scheduler: schedulerConfigSchema
     .default({ enabled: true }),

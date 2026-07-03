@@ -13,8 +13,7 @@ describe("create_table tool", () => {
   });
 
   it("auto-creates the database if it does not exist", async () => {
-    vi.mocked(litesql.databaseExistsAsync).mockResolvedValue(false);
-    vi.mocked(litesql.createDatabaseAsync).mockResolvedValue(undefined);
+    vi.mocked(litesql.ensureDatabaseExists).mockResolvedValue(false);
     vi.mocked(litesql.tableExistsAsync).mockResolvedValue(false);
     vi.mocked(litesql.createTableAsync).mockResolvedValue(undefined);
 
@@ -28,7 +27,7 @@ describe("create_table tool", () => {
 
     expect(result.success).toBe(true);
     expect(result.tableName).toBe("messages");
-    expect(litesql.createDatabaseAsync).toHaveBeenCalledWith("blackdog");
+    expect(litesql.ensureDatabaseExists).toHaveBeenCalled();
     expect(litesql.createTableAsync).toHaveBeenCalledWith("blackdog", "messages", expect.any(Array));
   });
 
@@ -66,11 +65,10 @@ describe("create_table tool", () => {
     expect(litesql.createDatabaseAsync).not.toHaveBeenCalled();
   });
 
-  it("rejects defaultValue usage in create_table", async () => {
-    vi.mocked(litesql.databaseExistsAsync).mockResolvedValue(true);
-    vi.mocked(litesql.tableExistsAsync).mockResolvedValue(false);
-
-    const result = await (createTableTool as any).execute({
+  it("rejects defaultValue usage in create_table via schema validation", () => {
+    // Zod .strict() rejects unknown keys like defaultValue before execute runs
+    const inputSchema = (createTableTool as any).inputSchema;
+    const result = inputSchema.safeParse({
       tableName: "messages",
       columns: [
         { name: "id", type: "INTEGER", primaryKey: true },
@@ -79,15 +77,12 @@ describe("create_table tool", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("defaultValue is no longer supported");
   });
 
-  it("ignores unrelated extra properties and still creates table", async () => {
-    vi.mocked(litesql.databaseExistsAsync).mockResolvedValue(true);
-    vi.mocked(litesql.tableExistsAsync).mockResolvedValue(false);
-    vi.mocked(litesql.createTableAsync).mockResolvedValue(undefined);
-
-    const result = await (createTableTool as any).execute({
+  it("rejects extra properties via schema strict mode", () => {
+    // Zod .strict() rejects unknown keys like randomExtraProperty
+    const inputSchema = (createTableTool as any).inputSchema;
+    const result = inputSchema.safeParse({
       tableName: "messages",
       columns: [
         { name: "id", type: "INTEGER", primaryKey: true },
@@ -95,8 +90,7 @@ describe("create_table tool", () => {
       ],
     });
 
-    expect(result.success).toBe(true);
-    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(false);
   });
 
   it("creates table successfully without defaultValue support", async () => {
