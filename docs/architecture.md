@@ -6,7 +6,7 @@ BlackDogBot is a proactive AI assistant daemon for Linux, designed to run as a l
 
 | Component | Technology |
 |-----------|------------|
-| Runtime | Node.js (>= 22) |
+| Runtime | Node.js (>= 22, including Node.js 26) |
 | Language | TypeScript |
 | Package Manager | `pnpm` (Workspace/Monorepo) |
 | AI/LLM | Vercel AI SDK (`ai`), OpenRouter, OpenAI, LM Studio |
@@ -37,6 +37,8 @@ BlackDogBot is a proactive AI assistant daemon for Linux, designed to run as a l
 ```
 
 Graceful shutdown handlers are registered for `SIGTERM` and `SIGINT` signals.
+
+The daemon starts through `scripts/launch.sh`, which prepares CUDA library paths, verifies native runtime dependencies, and invokes the project-local `tsx` binary. It can be run directly with `pnpm start` or under a user-level systemd service installed by `scripts/install-user-service.sh`.
 
 ## Directory Structure
 

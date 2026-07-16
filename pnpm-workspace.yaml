@@ -1,3 +1,14 @@
 packages:
   - "."
   - "brain-interface"
+
+allowBuilds:
+  '@parcel/watcher': false
+  better-sqlite3: true
+  esbuild: true
+  lmdb: false
+  msgpackr-extract: false
+  onnxruntime-node: false
+  protobufjs: true
+  rete: false
+  sharp: true

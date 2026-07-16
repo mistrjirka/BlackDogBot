@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Node.js >= 22
+- Node.js >= 22 (including Node.js 26)
 - pnpm
 - Git (for updating)
 - Docker & Docker Compose (optional, for SearXNG and Crawl4AI services)

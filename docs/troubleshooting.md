@@ -26,12 +26,23 @@ First run may download embedding assets.
 `132` usually means `SIGILL` (illegal instruction) from a native addon.
 
 1. Rebuild required native modules:
-   `pnpm rebuild better-sqlite3 sharp onnxruntime-node`
+   `pnpm rebuild better-sqlite3 sharp`
 2. Verify runtime imports manually:
    `node -e "require('better-sqlite3'); require('sharp'); import('@huggingface/transformers').then(() => console.log('ok'))"`
 3. Retry startup: `pnpm start`
 
 If step 2 still exits with `132`, the machine CPU is not compatible with one of the prebuilt native binaries.
+
+## Native Module ABI Mismatch
+
+If startup reports that `better_sqlite3.node` was compiled against a different Node.js version, reinstall dependencies using the same Node.js runtime that starts the daemon:
+
+```bash
+pnpm install
+node -e "require('better-sqlite3'); console.log('better-sqlite3 ok')"
+```
+
+The project uses `better-sqlite3@12.11.1`, which supports Node.js 26. Do not reuse a `node_modules` directory built under another Node.js major version.
 
 ## Optional Web Services Not Working
 

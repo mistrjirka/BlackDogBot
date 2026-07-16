@@ -58,15 +58,21 @@ fi
 cd "$PROJECT_DIR"
 
 if [[ ! -d "node_modules" ]]; then
-    echo "[launch.sh] node_modules not found. Run 'pnpm install' first."
-    exit 1
+  echo "[launch.sh] node_modules not found. Run 'pnpm install' first."
+  exit 1
 fi
 
 node scripts/verify-runtime-deps.mjs
 
+TSX_BIN="$PROJECT_DIR/node_modules/.bin/tsx"
+if [[ ! -x "$TSX_BIN" ]]; then
+    echo "[launch.sh] Local tsx binary not found. Run 'pnpm install' first."
+    exit 1
+fi
+
 if [[ "${1:-}" == "--watch" ]]; then
     shift
-    exec pnpm exec tsx watch src/index.ts "$@"
+    exec "$TSX_BIN" watch src/index.ts "$@"
 else
-    exec pnpm exec tsx src/index.ts "$@"
+    exec "$TSX_BIN" src/index.ts "$@"
 fi

@@ -16,7 +16,7 @@ A proactive AI assistant daemon for Linux. It runs as a long-lived process, comm
 
 ### Prerequisites
 
-- Node.js 22+
+- Node.js 22+ (including Node.js 26)
 - pnpm
 - Git (recommended for updates)
 - Docker + Docker Compose (optional, for local SearXNG and Crawl4AI)
@@ -24,11 +24,14 @@ A proactive AI assistant daemon for Linux. It runs as a long-lived process, comm
 ### Quick install
 
 ```bash
-# Run the interactive installer
+# Interactive setup (configuration and optional Docker services)
 ./install.sh
 
 # Start the daemon
 pnpm start
+
+# Optional: install and start as a user systemd service
+./scripts/install-user-service.sh
 ```
 
 See [Installation Guide](docs/installation.md) for manual setup and Docker details.
@@ -49,7 +52,8 @@ See [Commands Guide](docs/commands.md) for full command reference.
 - Web tools unavailable: ensure optional services are running (`docker compose -f ~/.blackdogbot/docker-compose.yaml up -d`).
 - Embedding model issues: first run downloads model files; check internet connection and retry.
 - Cron notifications missing: verify channel notifications are enabled and task has `notifyUser: true`.
-- Native runtime crash on startup (`ELIFECYCLE` with exit code `132`): run `pnpm rebuild better-sqlite3 sharp onnxruntime-node` and retry. If it still fails with `132`, your CPU likely cannot run the prebuilt native binary.
+- Native runtime crash on startup (`ELIFECYCLE` with exit code `132`): run `pnpm install` under the same Node.js version used to start the daemon, then retry. `better-sqlite3@12.11.1` supports Node.js 26. If the failure persists with `132`, your CPU may not support one of the native binaries.
+- Native module ABI mismatch (`compiled against a different Node.js version`): reinstall dependencies with the active Node.js runtime using `pnpm install`; do not reuse `node_modules` built by another Node.js major version.
 
 See [Troubleshooting Guide](docs/troubleshooting.md) for detailed fixes.
 
