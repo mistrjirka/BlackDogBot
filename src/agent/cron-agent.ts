@@ -9,7 +9,7 @@ import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
 import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { ConfigService } from "../services/config.service.js";
-import { getCurrentDateTime } from "../utils/time.js";
+import { getCurrentTimeContext } from "../utils/time.js";
 import {
   thinkTool,
   thinkTracker,
@@ -149,11 +149,11 @@ export class CronAgent extends BaseAgentBase {
     );
 
     const config = ConfigService.getInstance().getConfig();
-    const currentDateTime = getCurrentDateTime(config.scheduler?.timezone);
-
     const instructions: string =
       basePrompt +
-      `\n\n<task_context>\nTask: ${task.name}\nDescription: ${task.description}\nCurrent time: ${currentDateTime}\nInstructions: ${task.instructions}\n</task_context>`;
+      `\n\n<task_context>\nTask: ${task.name}\nDescription: ${task.description}\nInstructions: ${task.instructions}\n</task_context>`;
+    const appendCurrentTimeContext = (instruction: string): string =>
+      `${instruction}\n\n${getCurrentTimeContext(config.scheduler?.timezone)}`;
 
     let pendingRebuild: ICronRebuildInfo | null = null;
     let rebuildCount: number = 0;
@@ -259,7 +259,9 @@ export class CronAgent extends BaseAgentBase {
       (): boolean => pendingRebuild !== null,
     );
 
-    let currentInstruction: string = "Execute the scheduled task according to your instructions.";
+    let currentInstruction: string = appendCurrentTimeContext(
+      "Execute the scheduled task according to your instructions.",
+    );
 
     while (true) {
       const result: IAgentResult = await this.processMessageAsync(currentInstruction);
@@ -292,7 +294,9 @@ export class CronAgent extends BaseAgentBase {
           (): boolean => pendingRebuild !== null,
         );
 
-        currentInstruction = `[System] A new tool "${info.toolName}" for the "${info.tableName}" table is now available. Continue the task and use it when needed.`;
+        currentInstruction = appendCurrentTimeContext(
+          `[System] A new tool "${info.toolName}" for the "${info.tableName}" table is now available. Continue the task and use it when needed.`,
+        );
         continue;
       }
 

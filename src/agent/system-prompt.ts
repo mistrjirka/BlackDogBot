@@ -3,7 +3,6 @@ import { ConfigService } from "../services/config.service.js";
 import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { PROMPT_MAIN_AGENT } from "../shared/constants.js";
-import { getCurrentDateTime } from "../utils/time.js";
 
 //#region Public functions
 
@@ -14,10 +13,8 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
 
   let basePrompt: string = await promptService.getPromptAsync(PROMPT_MAIN_AGENT);
 
-  const dateString: string = getCurrentDateTime(config.scheduler?.timezone);
-
   // Build dynamic context about capabilities
-  const contextParts: string[] = [`Current date and time: ${dateString}`];
+  const contextParts: string[] = [];
 
   // Web search and crawling capability
   const searxngUrl: string | undefined = config.services?.searxngUrl;

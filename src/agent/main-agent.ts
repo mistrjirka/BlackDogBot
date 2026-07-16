@@ -34,6 +34,7 @@ import * as toolRegistry from "../helpers/tool-registry.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
 import type { IToolCallSummary } from "./base-agent.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
+import { getCurrentTimeContext } from "../utils/time.js";
 
 import { DuplicateLoopHandler } from "./duplicate-loop-handler.js";
 import { RetryOrchestrator } from "./retry-orchestrator.js";
@@ -507,6 +508,8 @@ export class MainAgent extends BaseAgentBase {
     let currentUserMessage: string = userMessage;
     let finalResult: IAgentResult = { text: "Unexpected error.", stepsCount: 0 };
     let compactionModel: LanguageModel = aiProviderService.getModel();
+    const config = ConfigService.getInstance().getConfig();
+    const currentTimeContext: string = getCurrentTimeContext(config.scheduler?.timezone);
 
     // Outer loop: restarts generate() when a tool rebuild occurs (e.g., create_table)
     while (true) {
@@ -517,9 +520,7 @@ export class MainAgent extends BaseAgentBase {
         { type: "image"; image: Buffer; mediaType?: string }
       > = [];
 
-      if (currentUserMessage.trim().length > 0 || resolvedImageAttachments.length === 0) {
-        userContent.push({ type: "text", text: currentUserMessage });
-      }
+      userContent.push({ type: "text", text: `${currentUserMessage}\n\n${currentTimeContext}` });
 
       for (const imageAttachment of resolvedImageAttachments) {
         userContent.push({

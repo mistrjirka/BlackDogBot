@@ -40,6 +40,14 @@ export function getCurrentDateTime(timezone?: string): string {
 }
 
 /**
+ * Builds the request-scoped time context appended to the user message.
+ * Keeping it out of system instructions preserves reusable prompt prefixes.
+ */
+export function getCurrentTimeContext(timezone?: string): string {
+  return `<user_context>\nCurrent date and time: ${getCurrentDateTime(timezone)}\n</user_context>`;
+}
+
+/**
  * Converts wall-clock time components in a given timezone to a UTC ISO string.
  *
  * @param params - Wall-clock date/time components (year, month 1-12, day, hour, minute)
