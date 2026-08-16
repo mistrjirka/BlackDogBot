@@ -1,6 +1,6 @@
 import type { IScheduledTask, IExecutionContext } from "../shared/types/index.js";
 import { generateId } from "../utils/id.js";
-import { getSafeTimestamp } from "../utils/timestamp.js";
+import { getSafeTimestamp } from "../utils/time.js";
 
 /**
  * Result returned by the cron agent after executing a task.

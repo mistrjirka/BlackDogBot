@@ -128,467 +128,227 @@ function estimateTokensFromPromptAndSystem(prompt: string, system?: string): num
 
 //#endregion Private Helpers
 
-//#region Public functions
+//#region Private Retry Engine
 
-export async function generateTextWithRetryAsync(
-  options: IGenerateTextOptions,
-): Promise<{ text: string }> {
+interface IRetryContext {
+  llmCallId: string;
+  callType: LlmCallType;
+  maxAttempts: number;
+  timeoutMs: number;
+  inputTokensEstimate: number;
+  abortSignal: AbortSignal | undefined;
+  providerKey: string;
+  structuredMode?: string;
+}
+
+interface ILlmCallResult<T> {
+  result: T;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+async function executeLlmCallWithRetryAsync<T>(
+  ctx: IRetryContext,
+  callFn: (linkedSignal: AbortSignal | undefined) => Promise<ILlmCallResult<T>>,
+): Promise<T> {
   const logger: LoggerService = LoggerService.getInstance();
   const rateLimiterService: RateLimiterService = RateLimiterService.getInstance();
   const statusService: StatusService = StatusService.getInstance();
-  const providerKey: string = AiProviderService.getInstance().getActiveProvider();
+  let lastError: unknown;
+  const isStructured: boolean = ctx.structuredMode !== undefined;
+  const successMessage: string = isStructured ? "LLM structured call succeeded" : "LLM call succeeded";
+  const failureMessage: string = isStructured ? "LLM structured call failed" : "LLM call failed";
+  const connectionMessage: string = isStructured
+    ? "LLM structured call connection error, waiting before retry"
+    : "LLM call connection error, waiting before retry";
+  const rateLimitMessage: string = isStructured
+    ? "LLM structured call rate limited (429), waiting before retry"
+    : "LLM call rate limited (429), waiting before retry";
+  const statusLabel: string = isStructured ? "Waiting for structured response" : "Waiting for response";
 
+  const initialStatus: Record<string, unknown> = {
+    inputTokens: ctx.inputTokensEstimate,
+    inputTokensSource: "estimate_bytes",
+    callType: ctx.callType,
+    llmCallId: ctx.llmCallId,
+    ...(isStructured ? { structuredMode: ctx.structuredMode } : {}),
+  };
+  statusService.beginInFlight("llm_request", statusLabel, initialStatus);
+
+  try {
+    for (let attempt: number = 1; attempt <= ctx.maxAttempts; attempt++) {
+      try {
+        const { signal: linkedSignal, cleanup: cleanupSignal } = createLinkedAbortSignal(ctx.abortSignal, ctx.timeoutMs);
+
+        // NOTE: Do not schedule with RateLimiterService here.
+        // Models from AiProviderService are already wrapped with limiter scheduling
+        // in AiProviderService._wrapModelWithRateLimiter(). Scheduling again here
+        // creates nested Bottleneck scheduling and can deadlock at maxConcurrent=1.
+        let result: ILlmCallResult<T>;
+        try {
+          result = await runWithLlmCallTypeAsync(ctx.callType, () => callFn(linkedSignal));
+        } finally {
+          cleanupSignal();
+        }
+
+        rateLimiterService.recordTokenUsage(ctx.providerKey, result.inputTokens, result.outputTokens);
+        logger.info(successMessage, {
+          llmCallId: ctx.llmCallId,
+          callType: ctx.callType,
+          attempt,
+          maxAttempts: ctx.maxAttempts,
+          ...(isStructured ? { structuredMode: ctx.structuredMode } : {
+            inputTokensEstimate: ctx.inputTokensEstimate,
+            inputTokensActual: result.inputTokens,
+            outputTokensActual: result.outputTokens,
+          }),
+          sdkRetriesDisabled: true,
+        });
+        return result.result;
+      } catch (error: unknown) {
+        lastError = error;
+        const errorMessage: string = formatAiErrorForLog(extractAiErrorDetails(error));
+        const isAbort = error instanceof Error && error.name === "AbortError";
+        logger.warn(failureMessage + (isAbort ? " (aborted)" : ""), {
+          llmCallId: ctx.llmCallId,
+          callType: ctx.callType,
+          attempt,
+          maxAttempts: ctx.maxAttempts,
+          ...(isStructured ? { structuredMode: ctx.structuredMode } : {}),
+          localRetryAttempt: attempt,
+          localRetryTotal: ctx.maxAttempts,
+          retryLayer: "local",
+          sdkRetriesDisabled: true,
+          error: errorMessage,
+          isAbort,
+        });
+        statusService.setStatus("llm_request", `Retrying (${attempt}/${ctx.maxAttempts})`, {
+          inputTokens: ctx.inputTokensEstimate,
+          inputTokensSource: "estimate_bytes",
+          callType: ctx.callType,
+          llmCallId: ctx.llmCallId,
+          ...(isStructured ? { structuredMode: ctx.structuredMode } : {}),
+          error: errorMessage,
+        });
+        if (isAbort) break;
+        if (extractAiErrorDetails(error).statusCode === 429) {
+          await apply429BackoffAsync({
+            logger,
+            error,
+            retryAttempt: attempt,
+            logMessage: rateLimitMessage,
+            logContext: { llmCallId: ctx.llmCallId, callType: ctx.callType, attempt, maxAttempts: ctx.maxAttempts },
+          });
+        } else if (isConnectionError(error)) {
+          const retryDelayMs: number = getConnectionRetryDelayMs(attempt);
+          logger.warn(connectionMessage, {
+            llmCallId: ctx.llmCallId,
+            callType: ctx.callType,
+            attempt,
+            maxAttempts: ctx.maxAttempts,
+            ...(isStructured ? { structuredMode: ctx.structuredMode } : {}),
+            retryDelayMs,
+            retryType: "connection",
+          });
+          await new Promise<void>((resolve: () => void): void => { setTimeout(resolve, retryDelayMs); });
+        }
+      }
+    }
+  } finally {
+    statusService.endInFlight();
+  }
+
+  const finalErrorMsg = lastError instanceof Error ? lastError.message : String(lastError ?? "Unknown error");
+  logger.error(isStructured ? "LLM structured call failed after all retries" : "LLM call failed after all retries", {
+    llmCallId: ctx.llmCallId,
+    callType: ctx.callType,
+    maxAttempts: ctx.maxAttempts,
+    ...(isStructured ? { structuredMode: ctx.structuredMode } : {}),
+    localRetryTotal: ctx.maxAttempts,
+    retryLayer: "local",
+    sdkRetriesDisabled: true,
+    error: finalErrorMsg,
+  });
+  throw lastError instanceof Error ? lastError : new Error(`LLM ${isStructured ? "structured " : ""}call failed after ${ctx.maxAttempts} retries: ${finalErrorMsg}`);
+}
+
+//#endregion Private Retry Engine
+
+//#region Public functions
+
+export async function generateTextWithRetryAsync(options: IGenerateTextOptions): Promise<{ text: string }> {
   const retryOptions = options.retryOptions ?? {};
   const callType = retryOptions.callType ?? "agent_primary";
   const policy = getRetryPolicy(callType);
   const maxAttempts = retryOptions.maxAttempts ?? policy.maxAttempts;
   const timeoutMs = getEffectiveTimeout(retryOptions.timeoutMs, policy.timeoutMs);
-
-  const llmCallId = randomUUID();
-  let lastError: unknown;
-
-  // Count input tokens for status display
   const inputTokensEstimate: number = estimateTokensFromPromptAndSystem(options.prompt, options.system);
-
-  // Set status (in-flight)
-  statusService.beginInFlight("llm_request", "Waiting for response", {
-    inputTokens: inputTokensEstimate,
-    inputTokensSource: "estimate_bytes",
-    callType,
-    llmCallId,
+  const providerKey: string = AiProviderService.getInstance().getActiveProvider();
+  const result = await executeLlmCallWithRetryAsync<{ text: string }>({
+    llmCallId: randomUUID(), callType, maxAttempts, timeoutMs, inputTokensEstimate,
+    abortSignal: retryOptions.abortSignal, providerKey,
+  }, async (linkedSignal: AbortSignal | undefined): Promise<ILlmCallResult<{ text: string }>> => {
+    const result = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { system: options.system } : {}), maxRetries: 0, abortSignal: linkedSignal });
+    const inputTokens: number = result.totalUsage?.inputTokens ?? result.usage?.inputTokens ?? inputTokensEstimate;
+    const outputTokens: number = result.totalUsage?.outputTokens ?? result.usage?.outputTokens ?? estimateTokensFromTextByBytes(result.text ?? "");
+    return { result: { text: result.text ?? "" }, inputTokens, outputTokens };
   });
-
-  try {
-    for (let attempt: number = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const { signal: linkedSignal, cleanup: cleanupSignal } = createLinkedAbortSignal(retryOptions.abortSignal, timeoutMs);
-
-        const callFn = async (): Promise<{ text: string; inputTokens: number; outputTokens: number }> => {
-          const result = await generateText({
-            model: options.model,
-            prompt: options.prompt,
-            ...(options.system ? { system: options.system } : {}),
-            maxRetries: 0, // Disable SDK retries - we manage retries ourselves
-            abortSignal: linkedSignal,
-          });
-
-          const inputTokens: number =
-            result.totalUsage?.inputTokens ??
-            result.usage?.inputTokens ??
-            inputTokensEstimate;
-          const outputTokens: number =
-            result.totalUsage?.outputTokens ??
-            result.usage?.outputTokens ??
-            estimateTokensFromTextByBytes(result.text ?? "");
-
-          return {
-            text: result.text ?? "",
-            inputTokens,
-            outputTokens,
-          };
-        };
-
-        // NOTE: Do not schedule with RateLimiterService here.
-        // Models from AiProviderService are already wrapped with limiter scheduling
-        // in AiProviderService._wrapModelWithRateLimiter(). Scheduling again here
-        // creates nested Bottleneck scheduling and can deadlock at maxConcurrent=1.
-        let result: { text: string; inputTokens: number; outputTokens: number };
-        try {
-          result = await runWithLlmCallTypeAsync(callType, callFn);
-        } finally {
-          cleanupSignal();
-        }
-
-        // Record token usage for budget tracking (actual usage if available)
-        rateLimiterService.recordTokenUsage(providerKey, result.inputTokens, result.outputTokens);
-
-        logger.info("LLM call succeeded", {
-          llmCallId,
-          callType,
-          attempt,
-          maxAttempts,
-          inputTokensEstimate,
-          inputTokensActual: result.inputTokens,
-          outputTokensActual: result.outputTokens,
-          sdkRetriesDisabled: true,
-        });
-
-        return { text: result.text };
-      } catch (error: unknown) {
-        lastError = error;
-        const errorMessage: string = formatAiErrorForLog(extractAiErrorDetails(error));
-
-        // Check if this was an abort (cancellation or timeout)
-        const isAbort = error instanceof Error && error.name === "AbortError";
-
-        logger.warn("LLM call failed" + (isAbort ? " (aborted)" : ""), {
-          llmCallId,
-          callType,
-          attempt,
-          maxAttempts,
-          localRetryAttempt: attempt,
-          localRetryTotal: maxAttempts,
-          retryLayer: "local",
-          sdkRetriesDisabled: true,
-          error: errorMessage,
-          isAbort,
-        });
-
-        // Update status with retry info
-        statusService.setStatus("llm_request", `Retrying (${attempt}/${maxAttempts})`, {
-          inputTokens: inputTokensEstimate,
-          inputTokensSource: "estimate_bytes",
-          callType,
-          llmCallId,
-          error: errorMessage,
-        });
-
-        // Don't retry on abort (cancellation or timeout)
-        if (isAbort) {
-          break;
-        }
-
-        if (extractAiErrorDetails(error).statusCode === 429) {
-          await apply429BackoffAsync({
-            logger,
-            error,
-            retryAttempt: attempt,
-            logMessage: "LLM call rate limited (429), waiting before retry",
-            logContext: {
-              llmCallId,
-              callType,
-              attempt,
-              maxAttempts,
-            },
-          });
-        } else {
-          const isConnectionRelatedError: boolean = isConnectionError(error);
-          if (isConnectionRelatedError) {
-            const retryDelayMs: number = getConnectionRetryDelayMs(attempt);
-            logger.warn("LLM call connection error, waiting before retry", {
-              llmCallId,
-              callType,
-              attempt,
-              maxAttempts,
-              retryDelayMs,
-              retryType: "connection",
-            });
-
-            await new Promise<void>((resolve: () => void): void => {
-              setTimeout(resolve, retryDelayMs);
-            });
-          }
-        }
-      }
-    }
-  } finally {
-    statusService.endInFlight();
-  }
-
-  const finalErrorMsg = lastError instanceof Error
-    ? lastError.message
-    : String(lastError ?? "Unknown error");
-
-  logger.error("LLM call failed after all retries", {
-    llmCallId,
-    callType,
-    maxAttempts,
-    localRetryTotal: maxAttempts,
-    retryLayer: "local",
-    sdkRetriesDisabled: true,
-    error: finalErrorMsg,
-  });
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(`LLM call failed after ${maxAttempts} retries: ${finalErrorMsg}`);
+  return result;
 }
 
 /**
  * Generates structured output using generateText + Output.object() with retry logic
  * and rate limiting. Guarantees valid JSON matching the provided Zod schema.
- *
- * Uses generateText with Output.object() instead of generateObject — this extracts
- * structured JSON from the model's text response rather than relying on the provider
- * to support response_format: json_schema or tool-based JSON extraction. This makes
- * it compatible with all providers including llama.cpp, LM Studio, and OpenRouter,
- * while keeping full Zod schema validation.
  */
-export async function generateObjectWithRetryAsync<T extends z.ZodType>(
-  options: IGenerateObjectOptions<T>,
-): Promise<{ object: z.infer<T> }> {
-  const logger: LoggerService = LoggerService.getInstance();
-  const rateLimiterService: RateLimiterService = RateLimiterService.getInstance();
-  const statusService: StatusService = StatusService.getInstance();
+export async function generateObjectWithRetryAsync<T extends z.ZodType>(options: IGenerateObjectOptions<T>): Promise<{ object: z.infer<T> }> {
   const aiProviderService: AiProviderService = AiProviderService.getInstance();
   const providerKey: string = aiProviderService.getActiveProvider();
   const structuredMode = aiProviderService.getStructuredOutputMode();
   const providerOptions: SharedV3ProviderOptions | undefined = aiProviderService.getStructuredProviderOptions();
-
   const retryOptions = options.retryOptions ?? {};
   const callType = retryOptions.callType ?? "schema_extraction";
   const policy = getRetryPolicy(callType);
   const maxAttempts = retryOptions.maxAttempts ?? policy.maxAttempts;
   const timeoutMs = getEffectiveTimeout(retryOptions.timeoutMs, policy.timeoutMs);
-
-  const llmCallId = randomUUID();
-  let lastError: unknown;
-
-  // Count input tokens for status display
   const inputTokensEstimate: number = estimateTokensFromPromptAndSystem(options.prompt, options.system);
-
-  // Set status (in-flight)
-  statusService.beginInFlight("llm_request", "Waiting for structured response", {
-    inputTokens: inputTokensEstimate,
-    inputTokensSource: "estimate_bytes",
-    callType,
-    llmCallId,
-    structuredMode,
-  });
-
-  try {
-    for (let attempt: number = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const { signal: linkedSignal, cleanup: cleanupSignal } = createLinkedAbortSignal(retryOptions.abortSignal, timeoutMs);
-        const requestProviderOptions: SharedV3ProviderOptions | undefined =
-          structuredMode === "tool_auto" ? undefined : providerOptions;
-
-        const callFn = async (): Promise<{ object: z.infer<T> }> => {
-          if (structuredMode === "native_json_schema") {
-            const result = await generateText({
-              model: options.model,
-              prompt: options.prompt,
-              ...(options.system ? { system: options.system } : {}),
-              output: Output.object({ schema: options.schema }),
-              ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}),
-              maxRetries: 0, // Disable SDK retries - we manage retries ourselves
-              abortSignal: linkedSignal,
-            });
-
-            if (result.output === undefined || result.output === null) {
-              throw new Error(
-                "No structured output generated: model did not return parseable JSON matching the schema." +
-                (result.text ? ` Raw text: ${result.text.substring(0, 200)}` : ""),
-              );
-            }
-
-            return { object: result.output };
-          }
-
-          const emitToolName = "emit_structured_output";
-          const emitterTool = dynamicTool({
-            description:
-              "Emit final structured output. Call this tool once with JSON matching the exact schema.",
-            inputSchema: options.schema,
-            execute: async (input: unknown): Promise<{ object: z.infer<T> }> => {
-              return { object: input as z.infer<T> };
-            },
-          });
-
-          if (structuredMode === "tool_emulated") {
-            const toolResult = await generateText({
-              model: options.model,
-              prompt: options.prompt,
-              ...(options.system ? {
-                system:
-                  `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.`,
-              } : {
-                system: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.`,
-              }),
-              tools: {
-                [emitToolName]: emitterTool,
-              },
-              toolChoice: { type: "tool", toolName: emitToolName },
-              ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}),
-              maxRetries: 0,
-              abortSignal: linkedSignal,
-            });
-
-            const emitted = toolResult.toolResults.find((item) => item.toolName === emitToolName);
-            const maybeOutput = emitted?.output as { object?: unknown } | undefined;
-            if (!maybeOutput || maybeOutput.object === undefined) {
-              throw new Error(
-                "Tool-emulated structured output failed: no emit_structured_output tool result returned.",
-              );
-            }
-
-            const parsed = options.schema.parse(maybeOutput.object) as z.infer<T>;
-            return { object: parsed };
-          }
-
-          const maxToolAutoRounds: number = 3;
-
-          for (let round: number = 1; round <= maxToolAutoRounds; round++) {
-            const roundSuffix: string = round === 1
-              ? ""
-              : `\n\nPrevious attempt did not call ${emitToolName}. Retry and call only ${emitToolName} with valid JSON.`;
-
-            try {
-              const toolResult = await generateText({
-                model: options.model,
-                prompt: options.prompt,
-                ...(options.system ? {
-                  system:
-                    `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.${roundSuffix}`,
-                } : {
-                  system: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.${roundSuffix}`,
-                }),
-                tools: {
-                  [emitToolName]: emitterTool,
-                },
-                ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}),
-                maxRetries: 0,
-                abortSignal: linkedSignal,
-              });
-
-              const emitted = toolResult.toolResults.find((item) => item.toolName === emitToolName);
-              const maybeOutput = emitted?.output as { object?: unknown } | undefined;
-
-              if (maybeOutput && maybeOutput.object !== undefined) {
-                const parsed = options.schema.parse(maybeOutput.object) as z.infer<T>;
-                return { object: parsed };
-              }
-
-            } catch (toolAutoError: unknown) {
-              const details = extractAiErrorDetails(toolAutoError);
-              const errorText: string = details.message.toLowerCase();
-              const isRoutingParameterMismatch: boolean =
-                details.statusCode === 404 &&
-                (
-                  errorText.includes("no endpoints found") ||
-                  errorText.includes("requested parameters")
-                );
-
-              if (!isRoutingParameterMismatch) {
-                throw toolAutoError;
-              }
-            }
-          }
-
-          throw new Error(
-            "Tool-auto structured output failed: no emit_structured_output result after retries.",
-          );
-        };
-
-        // NOTE: Do not schedule with RateLimiterService here.
-        // Models from AiProviderService are already wrapped with limiter scheduling
-        // in AiProviderService._wrapModelWithRateLimiter(). Scheduling again here
-        // creates nested Bottleneck scheduling and can deadlock at maxConcurrent=1.
-        let result: { object: z.infer<T> };
+  const result = await executeLlmCallWithRetryAsync<{ object: z.infer<T> }>({
+    llmCallId: randomUUID(), callType, maxAttempts, timeoutMs, inputTokensEstimate,
+    abortSignal: retryOptions.abortSignal, providerKey, structuredMode,
+  }, async (linkedSignal: AbortSignal | undefined): Promise<ILlmCallResult<{ object: z.infer<T> }>> => {
+    const requestProviderOptions: SharedV3ProviderOptions | undefined = structuredMode === "tool_auto" ? undefined : providerOptions;
+    const emitToolName = "emit_structured_output";
+    const emitterTool = dynamicTool({ description: "Emit final structured output. Call this tool once with JSON matching the exact schema.", inputSchema: options.schema, execute: async (input: unknown): Promise<{ object: z.infer<T> }> => ({ object: input as z.infer<T> }) });
+    let object: z.infer<T>;
+    if (structuredMode === "native_json_schema") {
+      const generated = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { system: options.system } : {}), output: Output.object({ schema: options.schema }), ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}), maxRetries: 0, abortSignal: linkedSignal });
+      if (generated.output === undefined || generated.output === null) throw new Error("No structured output generated: model did not return parseable JSON matching the schema." + (generated.text ? ` Raw text: ${generated.text.substring(0, 200)}` : ""));
+      object = generated.output;
+    } else if (structuredMode === "tool_emulated") {
+      const generated = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { system: `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.` } : { system: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.` }), tools: { [emitToolName]: emitterTool }, toolChoice: { type: "tool", toolName: emitToolName }, ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}), maxRetries: 0, abortSignal: linkedSignal });
+      const emitted = generated.toolResults.find((item) => item.toolName === emitToolName);
+      const maybeOutput = emitted?.output as { object?: unknown } | undefined;
+      if (!maybeOutput || maybeOutput.object === undefined) throw new Error("Tool-emulated structured output failed: no emit_structured_output tool result returned.");
+      object = options.schema.parse(maybeOutput.object) as z.infer<T>;
+    } else {
+      let parsed: z.infer<T> | undefined;
+      for (let round: number = 1; round <= 3; round++) {
+        const roundSuffix: string = round === 1 ? "" : `\n\nPrevious attempt did not call ${emitToolName}. Retry and call only ${emitToolName} with valid JSON.`;
         try {
-          result = await runWithLlmCallTypeAsync(callType, callFn);
-        } finally {
-          cleanupSignal();
-        }
-
-        // Record token usage for budget tracking (byte estimate for structured path).
-        // Structured mode may include multiple internal sub-calls, so exact usage
-        // is not consistently available from a single returned object here.
-        const outputTokensEstimate: number = estimateTokensFromTextByBytes(JSON.stringify(result.object));
-        rateLimiterService.recordTokenUsage(providerKey, inputTokensEstimate, outputTokensEstimate);
-
-        logger.info("LLM structured call succeeded", {
-          llmCallId,
-          callType,
-          attempt,
-          maxAttempts,
-          structuredMode,
-          sdkRetriesDisabled: true,
-        });
-
-        return result;
-      } catch (error: unknown) {
-        lastError = error;
-        const errorMessage: string = formatAiErrorForLog(extractAiErrorDetails(error));
-
-        // Check if this was an abort (cancellation or timeout)
-        const isAbort = error instanceof Error && error.name === "AbortError";
-
-        logger.warn("LLM structured call failed" + (isAbort ? " (aborted)" : ""), {
-          llmCallId,
-          callType,
-          attempt,
-          maxAttempts,
-          structuredMode,
-          localRetryAttempt: attempt,
-          localRetryTotal: maxAttempts,
-          retryLayer: "local",
-          sdkRetriesDisabled: true,
-          error: errorMessage,
-          isAbort,
-        });
-
-        // Update status with retry info
-        statusService.setStatus("llm_request", `Retrying (${attempt}/${maxAttempts})`, {
-          inputTokens: inputTokensEstimate,
-          inputTokensSource: "estimate_bytes",
-          callType,
-          llmCallId,
-          structuredMode,
-          error: errorMessage,
-        });
-
-        // Don't retry on abort (cancellation or timeout)
-        if (isAbort) {
-          break;
-        }
-
-        if (extractAiErrorDetails(error).statusCode === 429) {
-          await apply429BackoffAsync({
-            logger,
-            error,
-            retryAttempt: attempt,
-            logMessage: "LLM structured call rate limited (429), waiting before retry",
-            logContext: {
-              llmCallId,
-              callType,
-              attempt,
-              maxAttempts,
-            },
-          });
-        } else {
-          const isConnectionRelatedError: boolean = isConnectionError(error);
-          if (isConnectionRelatedError) {
-            const retryDelayMs: number = getConnectionRetryDelayMs(attempt);
-            logger.warn("LLM structured call connection error, waiting before retry", {
-              llmCallId,
-              callType,
-              attempt,
-              maxAttempts,
-              structuredMode,
-              retryDelayMs,
-              retryType: "connection",
-            });
-
-            await new Promise<void>((resolve: () => void): void => {
-              setTimeout(resolve, retryDelayMs);
-            });
-          }
+          const generated = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { system: `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.${roundSuffix}` } : { system: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.${roundSuffix}` }), tools: { [emitToolName]: emitterTool }, ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}), maxRetries: 0, abortSignal: linkedSignal });
+          const emitted = generated.toolResults.find((item) => item.toolName === emitToolName);
+          const maybeOutput = emitted?.output as { object?: unknown } | undefined;
+          if (maybeOutput && maybeOutput.object !== undefined) { parsed = options.schema.parse(maybeOutput.object) as z.infer<T>; break; }
+        } catch (toolAutoError: unknown) {
+          const details = extractAiErrorDetails(toolAutoError); const errorText: string = details.message.toLowerCase();
+          if (!(details.statusCode === 404 && (errorText.includes("no endpoints found") || errorText.includes("requested parameters")))) throw toolAutoError;
         }
       }
+      if (parsed === undefined) throw new Error("Tool-auto structured output failed: no emit_structured_output result after retries.");
+      object = parsed;
     }
-  } finally {
-    statusService.endInFlight();
-  }
-
-  const finalErrorMsg = lastError instanceof Error
-    ? lastError.message
-    : String(lastError ?? "Unknown error");
-
-  logger.error("LLM structured call failed after all retries", {
-    llmCallId,
-    callType,
-    maxAttempts,
-    structuredMode,
-    localRetryTotal: maxAttempts,
-    retryLayer: "local",
-    sdkRetriesDisabled: true,
-    error: finalErrorMsg,
+    return { result: { object }, inputTokens: inputTokensEstimate, outputTokens: estimateTokensFromTextByBytes(JSON.stringify(object)) };
   });
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(`LLM structured call failed after ${maxAttempts} retries: ${finalErrorMsg}`);
+  return result;
 }
 
 //#endregion Public functions

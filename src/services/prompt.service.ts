@@ -15,7 +15,7 @@ import {
   getCommitHashPath,
   ensureDirectoryExistsAsync,
 } from "../utils/paths.js";
-import { getSafeTimestamp } from "../utils/timestamp.js";
+import { getSafeTimestamp } from "../utils/time.js";
 import { LoggerService } from "./logger.service.js";
 
 //#region Interfaces

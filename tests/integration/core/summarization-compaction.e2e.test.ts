@@ -11,7 +11,7 @@ import { AiProviderService } from "../../../src/services/ai-provider.service.js"
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { compactMessagesSummaryOnlyAsync } from "../../../src/utils/summarization-compaction.js";
 import { generateTextWithRetryAsync } from "../../../src/utils/llm-retry.js";
-import { getSafeTimestamp } from "../../../src/utils/timestamp.js";
+import { getSafeTimestamp } from "../../../src/utils/time.js";
 
 //#region Types
 

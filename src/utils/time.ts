@@ -98,3 +98,7 @@ export function wallClockToUtcIso(
   const correctUtc = new Date(utcGuess.getTime() + offsetMs);
   return correctUtc.toISOString();
 }
+
+export function getSafeTimestamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}

@@ -1,5 +1,5 @@
 import type Bottleneck from "bottleneck";
-import { type LanguageModel } from "ai";
+import type { LanguageModel } from "ai";
 import type { SharedV3ProviderOptions } from "@ai-sdk/provider";
 import { LMStudioClient } from "@lmstudio/sdk";
 import { LoggerService } from "./logger.service.js";
