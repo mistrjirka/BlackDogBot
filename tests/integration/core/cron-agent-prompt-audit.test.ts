@@ -4,7 +4,8 @@ import path from "node:path";
 import os from "node:os";
 import { z } from "zod";
 
-import { CronAgent, type IToolCallTrace, type ITraceCollector } from "../../../src/agent/cron-agent.js";
+import { CronAgent } from "../../../src/agent/cron-agent.js";
+import type { IToolCallTrace, ITraceCollector } from "../../../src/shared/types/cron.types.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";

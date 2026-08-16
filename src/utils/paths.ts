@@ -3,7 +3,6 @@ import os from "node:os";
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
 
-import * as litesql from "../helpers/litesql.js";
 
 const _BaseDirName: string = ".blackdogbot";
 
@@ -183,10 +182,6 @@ export async function ensureAllDirectoriesAsync(): Promise<void> {
   }
 }
 
-export async function ensureDefaultDatabaseAsync(): Promise<void> {
-  await ensureDirectoryExistsAsync(getDatabasesDir());
-  await litesql.ensureDatabaseExists();
-}
 
 export function getOldDatumBackupDir(): string {
   return path.join(getBaseDir(), ".old.datumofthesave");

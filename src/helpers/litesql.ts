@@ -131,6 +131,12 @@ export interface IQueryResult {
 
 //#region Public Functions
 
+export async function ensureDefaultDatabaseAsync(): Promise<void> {
+  await ensureDirectoryExistsAsync(getDatabasesDir());
+  await ensureDatabaseExists();
+}
+
+
 export async function listDatabasesAsync(): Promise<IDatabaseInfo[]> {
   await ensureDirectoryExistsAsync(getDatabasesDir());
 

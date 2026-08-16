@@ -1,7 +1,8 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { SchedulerService } from "../services/scheduler.service.js";
-import { CronAgent, type IToolCallTrace, type ITraceCollector } from "../agent/cron-agent.js";
+import type { IToolCallTrace, ITraceCollector } from "../shared/types/cron.types.js";
+import { getRunTimedExecutor } from "../executors/run-timed-port.js";
 import { LoggerService } from "../services/logger.service.js";
 import type { IExecutionContext } from "../shared/types/index.js";
 import { summarizeJson } from "../utils/json-summarize.js";
@@ -81,7 +82,6 @@ export const runTimedTool = tool({
     async (input: IRunTimedInput, _context: ToolExecuteContext): Promise<IRunTimedResult> => {
       const logger = LoggerService.getInstance();
       const scheduler = SchedulerService.getInstance();
-      const cronAgent = CronAgent.getInstance();
 
       try {
         const task = await scheduler.getTaskAsync(input.taskId);
@@ -140,7 +140,7 @@ export const runTimedTool = tool({
           };
         }
 
-        const result = await cronAgent.executeTaskAsync(
+        const result = await getRunTimedExecutor()(
           task,
           messageSender,
           taskIdProvider,

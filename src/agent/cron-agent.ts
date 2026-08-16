@@ -3,7 +3,8 @@ import type { Tool } from "ai";
 
 import { BaseAgentBase } from "./base-agent.js";
 import type { IAgentResult, IToolCallSummary } from "./base-agent.js";
-import type { IScheduledTask, IExecutionContext } from "../shared/types/index.js";
+import type { IScheduledTask, IExecutionContext, ITraceCollector } from "../shared/types/index.js";
+
 import { PROMPT_CRON_AGENT } from "../shared/constants.js";
 import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
 import { PromptService } from "../services/prompt.service.js";
@@ -51,18 +52,6 @@ import { redactSensitiveData } from "../utils/log-redaction.js";
 import { attachDelegateAgentTool } from "./delegate-agent.js";
 
 //#region Interfaces
-
-export interface IToolCallTrace {
-  step: number;
-  name: string;
-  input: Record<string, unknown>;
-  output: unknown;
-  isError: boolean;
-}
-
-export interface ITraceCollector {
-  addTrace(trace: IToolCallTrace): void;
-}
 
 interface ICronRebuildInfo {
   toolName: string;

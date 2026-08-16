@@ -1,5 +1,17 @@
 //#region Cron Types
 
+export interface IToolCallTrace {
+  step: number;
+  name: string;
+  input: Record<string, unknown>;
+  output: unknown;
+  isError: boolean;
+}
+
+export interface ITraceCollector {
+  addTrace(trace: IToolCallTrace): void;
+}
+
 export interface ICronMessageHistory {
   messageId: string;
   content: string;
