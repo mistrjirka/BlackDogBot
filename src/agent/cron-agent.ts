@@ -24,7 +24,8 @@ import {
   searchTimedTool,
   createSendMessageToolWithHistory,
   createGetPreviousMessageTool,
-  createCallSkillTool,
+  loadSkillTool,
+  listSkillsTool,
   getSkillFileTool,
   listTimedTool,
   createReadFileTool,
@@ -46,8 +47,8 @@ import type { MessageSender, TaskIdProvider } from "../tools/index.js";
 import * as knowledge from "../helpers/knowledge.js";
 import { StatusService } from "../services/status.service.js";
 import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/per-table-tools.js";
-import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { redactSensitiveData } from "../utils/log-redaction.js";
+import { attachDelegateAgentTool } from "./delegate-agent.js";
 
 //#region Interfaces
 
@@ -401,13 +402,9 @@ export class CronAgent extends BaseAgentBase {
       availableTools[name] = toolDef;
     }
 
-    // Only include skill tools if skills are loaded
-    const availableSkills = SkillLoaderService.getInstance().getAvailableSkills();
-    if (availableSkills.length > 0) {
-      const skillNames = availableSkills.map((s) => s.name);
-      availableTools.call_skill = createCallSkillTool(skillNames);
-      availableTools.get_skill_file = getSkillFileTool;
-    }
+    availableTools.list_skills = listSkillsTool;
+    availableTools.load_skill = loadSkillTool;
+    availableTools.get_skill_file = getSkillFileTool;
 
     const resolvedTools: ToolSet = {};
     const effectiveToolNames: string[] = [];
@@ -438,6 +435,10 @@ export class CronAgent extends BaseAgentBase {
       }
 
       resolvedTools[toolName] = tool;
+    }
+
+    if (effectiveToolNames.includes("delegate_agent")) {
+      attachDelegateAgentTool(resolvedTools, AiProviderService.getInstance().getModel());
     }
 
     return resolvedTools;

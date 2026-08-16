@@ -33,18 +33,20 @@ import {
   getTimedTool,
   runTimedTool,
   createReadImageTool,
-  createCallSkillTool,
+  loadSkillTool,
+  listSkillsTool,
   getSkillFileTool,
-  FileReadTracker,
+  type FileReadTracker,
 } from "../tools/index.js";
 import { createKnowledgeToolFactory } from "../tools/knowledge-tool-factory.js";
 import { LoggerService } from "../services/logger.service.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
-import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { buildPerTableToolsAsync } from "../utils/per-table-tools.js";
 import * as toolRegistry from "../helpers/tool-registry.js";
 import * as knowledge from "../helpers/knowledge.js";
 import type { McpService } from "../services/mcp.service.js";
+import type { AiProviderService } from "../services/ai-provider.service.js";
+import { attachDelegateAgentTool } from "./delegate-agent.js";
 import type { IFileReadTracker } from "../utils/file-tools-helper.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
 
@@ -52,9 +54,8 @@ export async function assembleToolsForChat(
   chatId: string,
   messageSender: MessageSender,
   readTracker: FileReadTracker,
-  aiProviderService?: import("../services/ai-provider.service.js").AiProviderService,
+  aiProviderService?: AiProviderService,
   mcpService?: McpService,
-  skillLoaderService?: SkillLoaderService,
   platform: MessagePlatform = "telegram",
 ): Promise<ToolSet> {
   const tools = createBaseToolSet(messageSender, readTracker);
@@ -64,13 +65,9 @@ export async function assembleToolsForChat(
     tools.read_image = createReadImageTool(readTracker as IFileReadTracker);
   }
 
-  // Only include skill tools if skills are actually loaded
-  const availableSkills = skillLoaderService?.getAvailableSkills() ?? [];
-  if (availableSkills.length > 0) {
-    const skillNames = availableSkills.map((s): string => s.name);
-    tools.call_skill = createCallSkillTool(skillNames);
-    tools.get_skill_file = getSkillFileTool;
-  }
+  tools.list_skills = listSkillsTool;
+  tools.load_skill = loadSkillTool;
+  tools.get_skill_file = getSkillFileTool;
 
   // Merge MCP tools from connected servers
   const mcpTools: ToolSet = mcpService?.getTools() ?? {};
@@ -89,8 +86,11 @@ export async function assembleToolsForChat(
     tools[toolName] = toolDef;
   }
 
-  // Filter tools based on permission
-  return filterToolsByPermission(tools, { platform, chatId });
+  const filteredTools: ToolSet = filterToolsByPermission(tools, { platform, chatId });
+  if (aiProviderService && ChannelRegistryService.getInstance().getPermission(platform, chatId) !== "ignore") {
+    attachDelegateAgentTool(filteredTools, aiProviderService.getModel());
+  }
+  return filteredTools;
 }
 
 function createBaseToolSet(messageSender: MessageSender, readTracker: FileReadTracker): ToolSet {
@@ -154,7 +154,7 @@ function filterToolsByPermission(
 
   const filteredTools: ToolSet = {};
   for (const [toolName, tool] of Object.entries(tools)) {
-    if (toolRegistry.isToolAllowed(toolName, permission, {})) {
+    if (toolRegistry.isToolAllowed(toolName, permission)) {
       filteredTools[toolName] = tool;
     }
   }

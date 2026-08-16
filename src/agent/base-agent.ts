@@ -241,7 +241,7 @@ export abstract class BaseAgentBase {
     });
   }
 
-  public async processMessageAsync(userMessage: string): Promise<IAgentResult> {
+  public async processMessageAsync(userMessage: string, abortSignal?: AbortSignal): Promise<IAgentResult> {
     this._ensureInitialized();
 
     this._logger.debug("Processing user message", { messageLength: userMessage.length });
@@ -279,7 +279,7 @@ export abstract class BaseAgentBase {
         }
 
         try {
-          result = await currentAgent.generate({ prompt: userMessage });
+          result = await currentAgent.generate({ prompt: userMessage, abortSignal });
         } catch (error: unknown) {
           const currentAgentAttempt: number = attempt;
           const totalAgentAttempts: number = AGENT_EMPTY_RESPONSE_RETRIES + 1;

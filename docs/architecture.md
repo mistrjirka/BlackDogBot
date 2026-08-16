@@ -204,7 +204,7 @@ The application stores its state in `~/.blackdogbot/`:
 | `cron/tasks/` | Scheduled task definitions (JSON) |
 | `prompts/` | Editable Markdown templates for agent personas |
 | `skills/` | Installed skill directories |
-| `skills/state/` | Skill setup completion state |
+| `skills/<name>/state.json` and `skill-state/<hash>.json` | Managed and scoped skill setup state |
 | `logs/` | Application logs |
 | `workspace/` | Working directory for file operations |
 | `databases/` | SQLite databases for structured data |

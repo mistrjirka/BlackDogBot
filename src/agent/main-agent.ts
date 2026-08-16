@@ -2,6 +2,7 @@
 import { ToolSet, LanguageModel, type ModelMessage } from "ai";
 
 import { assembleToolsForChat } from "./tool-assembly.js";
+import { attachDelegateAgentTool } from "./delegate-agent.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -21,7 +22,6 @@ import type { MessageSender } from "../tools/index.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
 import { BrainInterfaceService } from "../brain-interface/service.js";
 import type { IBrainInterfaceEmitter } from "../brain-interface/types.js";
-import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { ConfigService } from "../services/config.service.js";
 
 import { saveSessionAsync as _saveSessionAsync, loadSessionAsync as _loadSessionAsync, type IPersistedSession } from "./session-manager.js";
@@ -227,7 +227,6 @@ export class MainAgent extends BaseAgentBase {
       readTracker,
       AiProviderService.getInstance(),
       McpService.getInstance(),
-      SkillLoaderService.getInstance(),
       platform,
     );
 
@@ -357,16 +356,19 @@ export class MainAgent extends BaseAgentBase {
         });
       }
       const perTableTools: ToolSet = { ...writeResult.tools, ...updateResult.tools };
-       const mergedTools: ToolSet = { ...currentFilteredTools, ...perTableTools };
+      const mergedTools: ToolSet = { ...currentFilteredTools, ...perTableTools };
 
-       // Re-filter based on permission
-       const reFilteredTools: ToolSet = {};
-       const hotReloadSkillNames = SkillLoaderService.getInstance().getAvailableSkills()
-         .map((s) => s.name);
-       for (const [toolName, toolDef] of Object.entries(mergedTools)) {
-         if (toolRegistry.isToolAllowed(toolName, permission, { skillNames: hotReloadSkillNames })) {
+      // Re-filter based on permission.
+      const reFilteredTools: ToolSet = {};
+      for (const [toolName, toolDef] of Object.entries(mergedTools)) {
+        if (toolRegistry.isToolAllowed(toolName, permission)) {
           reFilteredTools[toolName] = toolDef;
         }
+      }
+
+      if ("delegate_agent" in reFilteredTools) {
+        // Rebuild the delegate snapshot with any hot-reloaded effective tools.
+        attachDelegateAgentTool(reFilteredTools, model);
       }
 
       this._buildAgent(

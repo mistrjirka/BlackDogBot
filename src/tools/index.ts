@@ -5,11 +5,17 @@ export { getCmdStatusTool } from "./get-cmd-status.tool.js";
 export { getCmdOutputTool } from "./get-cmd-output.tool.js";
 export { waitForCmdTool } from "./wait-for-cmd.tool.js";
 export { stopCmdTool } from "./stop-cmd.tool.js";
-export { createSendMessageTool, createSendMessageToolWithHistory, type MessageSender, type TaskIdProvider } from "./knowledge-tool-factory.js";
+export {
+	createSendMessageTool,
+	createSendMessageToolWithHistory,
+	type MessageSender,
+	type TaskIdProvider,
+} from "./knowledge-tool-factory.js";
 export { createGetPreviousMessageTool } from "./get-previous-message.tool.js";
 export { modifyPromptTool } from "./modify-prompt.tool.js";
 export { listPromptsTool } from "./list-prompts.tool.js";
-export { createCallSkillTool } from "./call-skill.tool.js";
+export { loadSkillTool } from "./load-skill.tool.js";
+export { listSkillsTool } from "./list-skills.tool.js";
 export { getSkillFileTool } from "./get-skill-file.tool.js";
 export { addOnceTool } from "./add-once.tool.js";
 export { addIntervalTool } from "./add-interval.tool.js";

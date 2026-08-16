@@ -115,11 +115,11 @@ export interface IKnowledgeConfig {
 
 export interface ISkillsConfig {
   directories: string[];
-  autoSetup?: boolean;
-  autoSetupNotify?: boolean;
-  installTimeout?: number;
-  allowedInstallKinds?: AllowedInstallKind[];
-  skipOsCheck?: boolean;
+  autoSetup: boolean;
+  autoSetupNotify: boolean;
+  installTimeout: number;
+  allowedInstallKinds: AllowedInstallKind[];
+  skipOsCheck: boolean;
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";

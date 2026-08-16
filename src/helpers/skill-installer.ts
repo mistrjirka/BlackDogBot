@@ -2,27 +2,32 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
 import type { ISkillInstallStep } from "../shared/types/index.js";
-import type { AllowedInstallKind } from "../shared/constants.js";
+import { DEFAULT_ALLOWED_INSTALL_KINDS, DEFAULT_SKILL_INSTALL_TIMEOUT_MS, type AllowedInstallKind } from "../shared/constants.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { clearDependencyCache, checkBinaryAsync } from "./dependency-checker.js";
+import { sanitizeSetupError } from "./skill-state.js";
 
 //#region Types
 
 const execAsync = promisify(exec);
 
-/** Regex that matches safe package names: alphanumeric, dots, hyphens, underscores, slashes, @-scopes */
-const SAFE_PACKAGE_NAME_REGEX = /^[a-zA-Z0-9_@./-]+$/;
+/** Regex that matches registry/package identifiers before path-segment checks. */
+const SAFE_PACKAGE_NAME_REGEX = /^(?!-)[a-zA-Z0-9_@./=~^+-]+$/;
 
 /**
  * Validates a package name is safe for shell interpolation.
- * Rejects names containing shell metacharacters: ; & | $ ` > < ( ) # etc.
+ * Rejects names containing shell metacharacters: ; & | $ ` > < ( ) etc.
+ * Safe version-specifier characters (=, ~, ^, +) remain supported.
  */
 export function validatePackageName(name: string): boolean {
-  return SAFE_PACKAGE_NAME_REGEX.test(name);
+  if (!SAFE_PACKAGE_NAME_REGEX.test(name) || name.startsWith("/") || name.startsWith("~")) {
+    return false;
+  }
+
+  return !name.split("/").some((segment) => segment === "." || segment === "..");
 }
 
-export type SkillInstallKind = AllowedInstallKind;
 
 interface IInstallStepResult {
   success: boolean;
@@ -41,9 +46,15 @@ interface IInstallResult {
 
 //#region Constants
 
-const DEFAULT_ALLOWED_KINDS: AllowedInstallKind[] = ["brew", "node", "go", "uv"];
 
-const REQUIRES_SUDO_KINDS: AllowedInstallKind[] = ["pacman", "apt"];
+const MANUAL_INSTALL_KINDS: AllowedInstallKind[] = ["pacman", "apt", "download"];
+
+export function isManualInstallStep(
+  step: ISkillInstallStep,
+  allowedKinds: AllowedInstallKind[] = DEFAULT_ALLOWED_INSTALL_KINDS,
+): boolean {
+  return !allowedKinds.includes(step.kind) || MANUAL_INSTALL_KINDS.includes(step.kind);
+}
 
 //#endregion Constants
 
@@ -51,8 +62,8 @@ const REQUIRES_SUDO_KINDS: AllowedInstallKind[] = ["pacman", "apt"];
 
 export async function executeSkillInstallStepsAsync(
   steps: ISkillInstallStep[],
-  allowedKinds: AllowedInstallKind[] = DEFAULT_ALLOWED_KINDS,
-  timeout: number = 300000,
+  allowedKinds: AllowedInstallKind[] = DEFAULT_ALLOWED_INSTALL_KINDS,
+  timeout: number = DEFAULT_SKILL_INSTALL_TIMEOUT_MS,
 ): Promise<IInstallResult> {
   const logger: LoggerService = LoggerService.getInstance();
   const result: IInstallResult = {
@@ -63,44 +74,41 @@ export async function executeSkillInstallStepsAsync(
   };
 
   for (const step of steps) {
-    const isAllowed: boolean = allowedKinds.includes(step.kind as AllowedInstallKind);
-    const requiresSudo: boolean = REQUIRES_SUDO_KINDS.includes(step.kind as AllowedInstallKind);
-
-    if (!isAllowed || requiresSudo) {
+    if (isManualInstallStep(step, allowedKinds)) {
       const manualInstruction: string = getSkillManualInstructions(step);
       result.manualStepsRequired.push(manualInstruction);
-      logger.info(`Install step "${step.id}" requires manual action (${step.kind})`);
+      logger.info(`Install step "${sanitizeSetupError(step.id)}" requires manual action (${step.kind})`);
 
       continue;
     }
 
-    logger.info(`Executing install step: ${step.id} (${step.kind})`);
+    logger.info(`Executing install step: ${sanitizeSetupError(step.id)} (${step.kind})`);
 
     try {
       const stepResult: IInstallStepResult = await executeInstallStepAsync(step, timeout);
 
       if (stepResult.success) {
         result.installed.push(...stepResult.installedBins);
-        logger.info(`Install step "${step.id}" completed successfully`);
+        logger.info(`Install step "${sanitizeSetupError(step.id)}" completed successfully`);
       } else {
         result.success = false;
-        result.error = `Step "${step.id}" failed: ${stepResult.error}`;
+        result.error = `Step "${sanitizeSetupError(step.id)}" failed: ${stepResult.error}`;
 
         break;
       }
     } catch (err) {
       result.success = false;
-      result.error = `Step "${step.id}" threw error: ${extractErrorMessage(err)}`;
+      result.error = `Step "${sanitizeSetupError(step.id)}" threw error: ${extractErrorMessage(err)}`;
 
       break;
     }
   }
 
-  if (result.success && result.installed.length > 0) {
-    clearDependencyCache();
+  clearDependencyCache();
 
+  if (result.success) {
     for (const bin of result.installed) {
-      const exists: boolean = await checkBinaryAsync(bin);
+      const exists: boolean | null = await checkBinaryAsync(bin);
 
       if (!exists) {
         result.success = false;
@@ -118,17 +126,17 @@ export function getSkillManualInstructions(step: ISkillInstallStep): string {
   const label: string = step.label || `Install ${step.formula || step.package || step.id}`;
 
   switch (step.kind) {
-    case "pacman": {
-      const formula: string | undefined = step.formula ?? step.package ?? undefined;
-      const cmd: string = `sudo pacman -S ${formula}`;
-
-      return `${label}: \`${cmd}\``;
-    }
+    case "pacman":
     case "apt": {
-      const formula: string | undefined = step.formula ?? step.package ?? undefined;
-      const cmd: string = `sudo apt install -y ${formula}`;
+      const formula: string = step.formula ?? step.package ?? step.id;
+      if (!validatePackageName(formula) || formula.endsWith(".rb")) {
+        return `${label}: Manual installation required; inspect the package name before running a command`;
+      }
+      const command: string = step.kind === "pacman"
+        ? `sudo pacman -S ${formula}`
+        : `sudo apt install -y ${formula}`;
 
-      return `${label}: \`${cmd}\``;
+      return `${label}: \`${command}\``;
     }
     case "download":
       return `${label}: Download and install manually (see skill documentation)`;
@@ -137,23 +145,6 @@ export function getSkillManualInstructions(step: ISkillInstallStep): string {
   }
 }
 
-export function getSkillMissingDepsInstructions(missing: { bins: string[]; env: string[]; config: string[] }): string[] {
-  const instructions: string[] = [];
-
-  for (const bin of missing.bins) {
-    instructions.push(`Install binary: \`${bin}\``);
-  }
-
-  for (const envVar of missing.env) {
-    instructions.push(`Set environment variable: \`${envVar}=<value>\``);
-  }
-
-  for (const configPath of missing.config) {
-    instructions.push(`Configure: \`${configPath}\` in BlackDogBot config`);
-  }
-
-  return instructions;
-}
 
 //#endregion Public Functions
 
@@ -188,13 +179,13 @@ async function installBrewAsync(step: ISkillInstallStep, timeout: number): Promi
     return { success: false, error: "No formula specified for brew install", installedBins: [] };
   }
 
-  if (!validatePackageName(formula)) {
-    return { success: false, error: `Invalid package name "${formula}": contains shell metacharacters`, installedBins: [] };
+  if (!validatePackageName(formula) || formula.endsWith(".rb")) {
+    return { success: false, error: `Invalid package name "${formula}": contains unsafe package or path syntax`, installedBins: [] };
   }
 
   try {
     await execAsync(`brew install ${formula}`, { timeout });
-    const bins: string[] = step.bins.length > 0 ? step.bins : [formula];
+    const bins: string[] = step.bins;
 
     return { success: true, error: null, installedBins: bins };
   } catch (err) {
@@ -214,12 +205,12 @@ async function installNodeAsync(step: ISkillInstallStep, timeout: number): Promi
   }
 
   if (!validatePackageName(pkg)) {
-    return { success: false, error: `Invalid package name "${pkg}": contains shell metacharacters`, installedBins: [] };
+    return { success: false, error: `Invalid package name "${pkg}": contains unsafe package or path syntax`, installedBins: [] };
   }
 
   try {
     await execAsync(`npm install -g ${pkg}`, { timeout });
-    const bins: string[] = step.bins.length > 0 ? step.bins : [pkg.replace(/^@[^/]+\//, "").replace(/-.*/, "")];
+    const bins: string[] = step.bins;
 
     return { success: true, error: null, installedBins: bins };
   } catch (err) {
@@ -239,12 +230,12 @@ async function installGoAsync(step: ISkillInstallStep, timeout: number): Promise
   }
 
   if (!validatePackageName(pkg)) {
-    return { success: false, error: `Invalid package name "${pkg}": contains shell metacharacters`, installedBins: [] };
+    return { success: false, error: `Invalid package name "${pkg}": contains unsafe package or path syntax`, installedBins: [] };
   }
 
   try {
     await execAsync(`go install ${pkg}@latest`, { timeout });
-    const bins: string[] = step.bins.length > 0 ? step.bins : [pkg.split("/").pop() || pkg];
+    const bins: string[] = step.bins;
 
     return { success: true, error: null, installedBins: bins };
   } catch (err) {
@@ -264,7 +255,7 @@ async function installUvAsync(step: ISkillInstallStep, timeout: number): Promise
   }
 
   if (!validatePackageName(pkg)) {
-    return { success: false, error: `Invalid package name "${pkg}": contains shell metacharacters`, installedBins: [] };
+    return { success: false, error: `Invalid package name "${pkg}": contains unsafe package or path syntax`, installedBins: [] };
   }
 
   try {

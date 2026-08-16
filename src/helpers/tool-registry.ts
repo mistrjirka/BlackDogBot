@@ -72,44 +72,22 @@ const CORE_TOOL_NAMES: string[] = [
   "list_prompts",
   "modify_prompt",
   "get_skill_file",
+  "list_skills",
+  "load_skill",
+  "delegate_agent",
 ];
 
 //#endregion Constants
 
-//#region Types
-
-export interface IToolFilterOptions {
-  skillNames?: string[];
-}
-
-//#endregion Types
 
 //#region Public Functions
 
-export function getAllowedToolNames(
-  permission: ChannelPermission,
-  options?: IToolFilterOptions
-): string[] {
+export function getAllowedToolNames(permission: ChannelPermission): string[] {
   if (permission === "ignore") {
     return [];
   }
 
-  // MCP tools are blocked in read_only by default
-  if (permission === "read_only") {
-    // Filtered below per-tool
-  }
-
   const allowed: string[] = [];
-
-  if (options?.skillNames) {
-    for (const skillName of options.skillNames) {
-      if (permission === "read_only" && READ_ONLY_BLOCKED_TOOLS.has(skillName)) {
-        continue;
-      }
-      allowed.push(skillName);
-    }
-  }
-
   const coreTools: string[] = getCoreToolNames();
 
   for (const toolName of coreTools) {
@@ -122,30 +100,17 @@ export function getAllowedToolNames(
   return allowed;
 }
 
-export function isToolAllowed(
-  toolName: string,
-  permission: ChannelPermission,
-  options?: IToolFilterOptions
-): boolean {
+export function isToolAllowed(toolName: string, permission: ChannelPermission): boolean {
   if (permission === "ignore") {
     return false;
   }
 
-  // MCP tools are blocked in read_only by default
   if (permission === "read_only" && toolName.startsWith("mcp.")) {
     return false;
   }
 
-  // Per-table write tools (write_table_<tableName>) are blocked in read_only
   if (permission === "read_only" && toolName.startsWith("write_table_")) {
     return false;
-  }
-
-  if (options?.skillNames?.includes(toolName)) {
-    if (permission === "read_only" && READ_ONLY_BLOCKED_TOOLS.has(toolName)) {
-      return false;
-    }
-    return true;
   }
 
   if (permission === "read_only" && READ_ONLY_BLOCKED_TOOLS.has(toolName)) {

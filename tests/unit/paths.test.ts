@@ -16,7 +16,6 @@ import {
   getPromptsDir,
   getPromptFragmentsDir,
   getSkillDir,
-  getSkillFilePath,
   getSkillStatePath,
   getTimedFilePath,
   getPromptFilePath,
@@ -129,11 +128,9 @@ describe("paths utility", () => {
 
   it("should return skill-specific paths", () => {
     const skillDir: string = getSkillDir("my-skill");
-    const skillFilePath: string = getSkillFilePath("my-skill");
     const skillStatePath: string = getSkillStatePath("my-skill");
 
     expect(skillDir).toContain("my-skill");
-    expect(skillFilePath).toContain("SKILL.md");
     expect(skillStatePath).toContain("state.json");
   });
   it("should return timed and prompt file paths", () => {

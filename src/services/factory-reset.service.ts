@@ -9,6 +9,7 @@ import {
   getRssStateDir,
   getTimedDir,
   getSkillsDir,
+  getSkillStateDir,
   getLogsDir,
   getWorkspaceDir,
   getDatabasesDir,
@@ -71,9 +72,10 @@ export async function factoryResetAsync(): Promise<IFactoryResetResult> {
     await _wipeDirAsync(getRssStateDir());
   });
 
-  // 4. Clear skill state files (state.json inside each skill dir)
+  // 4. Clear skill state files (managed state.json and scoped state files)
   await _safeStepAsync("Clear skill state", errors, async (): Promise<void> => {
     await _deleteFilesInDirAsync(getSkillsDir(), "state.json");
+    await _wipeDirAsync(getSkillStateDir());
   });
 
   // 5. Reset all prompts to factory defaults

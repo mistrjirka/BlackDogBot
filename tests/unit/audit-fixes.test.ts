@@ -285,13 +285,16 @@ describe("H8 — wallClockToUtcIso timezone conversion", () => {
 
 // ─── H11: Shell injection in skill-installer.ts ─────────────────────────────
 
-import { validatePackageName } from "../../src/helpers/skill-installer.js";
+import { executeSkillInstallStepsAsync, getSkillManualInstructions, validatePackageName } from "../../src/helpers/skill-installer.js";
 
 describe("H11 — validatePackageName blocks shell injection", () => {
   it("should accept valid package names", () => {
     expect(validatePackageName("ffmpeg")).toBe(true);
     expect(validatePackageName("@anthropic/claude")).toBe(true);
     expect(validatePackageName("golang.org/x/tools/cmd/gopls")).toBe(true);
+    expect(validatePackageName("pandas==2.2.0")).toBe(true);
+    expect(validatePackageName("pkg@^1.0.0")).toBe(true);
+    expect(validatePackageName("pkg@1.0.0+build.1")).toBe(true);
   });
 
   it("should reject shell metacharacters", () => {
@@ -301,12 +304,49 @@ describe("H11 — validatePackageName blocks shell injection", () => {
     expect(validatePackageName("pkg $(whoami)")).toBe(false);
     expect(validatePackageName("pkg `id`")).toBe(false);
     expect(validatePackageName("pkg > /tmp/x")).toBe(false);
+    expect(validatePackageName("--prefix=/tmp/blackdogbot")).toBe(false);
+    expect(validatePackageName(".")).toBe(false);
+    expect(validatePackageName("../.blackdogbot/skills/evil")).toBe(false);
+    expect(validatePackageName("/tmp/evil")).toBe(false);
+    expect(validatePackageName("foo/../bar")).toBe(false);
+    expect(validatePackageName("~/evil")).toBe(false);
+    expect(validatePackageName("~user/evil")).toBe(false);
+  });
+});
+
+describe("manual install instruction safety", () => {
+  const baseStep = {
+    id: "manual-install",
+    kind: "apt" as const,
+    formula: "curl",
+    package: null,
+    bins: [],
+    label: "Install curl",
+    os: [],
+  };
+
+  it("renders safe apt commands and hides unsafe package syntax", () => {
+    expect(getSkillManualInstructions(baseStep)).toContain("sudo apt install -y curl");
+    expect(getSkillManualInstructions({ ...baseStep, formula: "--prefix=/tmp/evil" })).not.toContain("sudo apt install");
+    expect(getSkillManualInstructions({ ...baseStep, kind: "pacman", formula: "ffmpeg" })).toContain("sudo pacman -S ffmpeg");
+    expect(getSkillManualInstructions({ ...baseStep, formula: "evil.rb" })).not.toContain("sudo apt install");
+    expect(getSkillManualInstructions({ ...baseStep, kind: "pacman", formula: "evil.rb" })).not.toContain("sudo pacman -S");
+  });
+
+  it("reports manual steps without executing them", async () => {
+    const result = await executeSkillInstallStepsAsync([baseStep]);
+    expect(result.success).toBe(true);
+    expect(result.manualStepsRequired).toHaveLength(1);
+  });
+
+  it("renders download instructions without a shell command", () => {
+    expect(getSkillManualInstructions({ ...baseStep, kind: "download", formula: null })).toContain("Download and install manually");
   });
 });
 
 // ─── H12: Shell injection in dependency-checker.ts ───────────────────────────
 
-import { validateBinaryName } from "../../src/helpers/dependency-checker.js";
+import { checkBinaryAsync, checkConfig, checkRequirementsAsync, clearDependencyCache, createDependencyCheckBudget, validateBinaryName } from "../../src/helpers/dependency-checker.js";
 
 describe("H12 — validateBinaryName blocks shell injection", () => {
   it("should accept valid binary names", () => {
@@ -320,6 +360,43 @@ describe("H12 — validateBinaryName blocks shell injection", () => {
     expect(validateBinaryName("bin && whoami")).toBe(false);
     expect(validateBinaryName("bin | sh")).toBe(false);
     expect(validateBinaryName("bin $(id)")).toBe(false);
+  });
+});
+
+// Config dependency paths must not traverse inherited object properties.
+describe("config dependency path safety", () => {
+  it("requires own properties at every path segment", () => {
+    expect(checkConfig("__proto__", {})).toBe(false);
+    expect(checkConfig("constructor", {})).toBe(false);
+    expect(checkConfig("toString", {})).toBe(false);
+    expect(checkConfig("skills.enabled", { skills: { enabled: true } })).toBe(true);
+  });
+});
+
+describe("dependency check budget", () => {
+  it("reports an incomplete check without persisting a false missing dependency", async () => {
+    const budget = createDependencyCheckBudget();
+    budget.remaining = 0;
+
+    const result = await checkRequirementsAsync(
+      { bins: ["node"], anyBins: [], env: [], config: [] },
+      {},
+      budget,
+    );
+
+    expect(result.complete).toBe(false);
+    expect(result.satisfied).toBe(false);
+    expect(result.missing.bins).toEqual([]);
+  });
+
+  it("uses a fresh binary cache entry without consuming a new budget", async () => {
+    clearDependencyCache();
+    const firstBudget = { remaining: 1 };
+    expect(await checkBinaryAsync("node", firstBudget)).toBe(true);
+
+    const cachedBudget = { remaining: 0 };
+    expect(await checkBinaryAsync("node", cachedBudget)).toBe(true);
+    clearDependencyCache();
   });
 });
 

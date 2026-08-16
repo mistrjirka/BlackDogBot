@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
-import { parseSkillFileAsync, type IParsedSkill } from "../../../src/skills/parser.js";
+import { loadSkillInstructionsAsync, parseSkillFrontmatterAsync } from "../../../src/skills/parser.js";
 
 //#region Helpers
 
@@ -47,14 +47,15 @@ describe("skill parser", () => {
 
     await fs.writeFile(skillFile, content, "utf-8");
 
-    const result: IParsedSkill = await parseSkillFileAsync(skillFile);
+    const frontmatter = await parseSkillFrontmatterAsync(skillFile);
+    const instructions: string = await loadSkillInstructionsAsync(skillFile);
 
-    expect(result.frontmatter.name).toBe("test-skill");
-    expect(result.frontmatter.description).toBe("A test skill for unit testing");
-    expect(result.frontmatter.userInvocable).toBe(true);
-    expect(result.frontmatter.disableModelInvocation).toBe(false);
-    expect(result.instructions).toContain("# Test Skill Instructions");
-    expect(result.instructions).toContain("Do something useful.");
+    expect(frontmatter.name).toBe("test-skill");
+    expect(frontmatter.description).toBe("A test skill for unit testing");
+    expect(frontmatter.userInvocable).toBe(true);
+    expect(frontmatter.disableModelInvocation).toBe(false);
+    expect(instructions).toContain("# Test Skill Instructions");
+    expect(instructions).toContain("Do something useful.");
   });
 
   it("should apply defaults for optional frontmatter fields", async () => {
@@ -70,14 +71,14 @@ describe("skill parser", () => {
 
     await fs.writeFile(skillFile, content, "utf-8");
 
-    const result: IParsedSkill = await parseSkillFileAsync(skillFile);
+    const frontmatter = await parseSkillFrontmatterAsync(skillFile);
 
-    expect(result.frontmatter.homepage).toBeNull();
-    expect(result.frontmatter.commandDispatch).toBeNull();
-    expect(result.frontmatter.commandTool).toBeNull();
-    expect(result.frontmatter.commandArgMode).toBeNull();
-    expect(result.frontmatter.userInvocable).toBe(true);
-    expect(result.frontmatter.disableModelInvocation).toBe(false);
+    expect(frontmatter.homepage).toBeNull();
+    expect(frontmatter.commandDispatch).toBeNull();
+    expect(frontmatter.commandTool).toBeNull();
+    expect(frontmatter.commandArgMode).toBeNull();
+    expect(frontmatter.userInvocable).toBe(true);
+    expect(frontmatter.disableModelInvocation).toBe(false);
   });
 
   it("should throw on invalid frontmatter (missing required name)", async () => {
@@ -92,7 +93,7 @@ describe("skill parser", () => {
 
     await fs.writeFile(skillFile, content, "utf-8");
 
-    await expect(parseSkillFileAsync(skillFile)).rejects.toThrow("Invalid SKILL.md frontmatter");
+    await expect(parseSkillFrontmatterAsync(skillFile)).rejects.toThrow("Invalid SKILL.md frontmatter");
   });
 
   it("should throw on invalid skill name format (uppercase not allowed)", async () => {
@@ -108,13 +109,22 @@ describe("skill parser", () => {
 
     await fs.writeFile(skillFile, content, "utf-8");
 
-    await expect(parseSkillFileAsync(skillFile)).rejects.toThrow("Invalid SKILL.md frontmatter");
+    await expect(parseSkillFrontmatterAsync(skillFile)).rejects.toThrow("Invalid SKILL.md frontmatter");
+  });
+
+  it("should reject oversized instruction files", async () => {
+    const skillFile: string = path.join(tempDir, "SKILL.md");
+    const content: string = `---\nname: large-skill\ndescription: Large\n---\n\n${"x".repeat(1024 * 1024)}`;
+
+    await fs.writeFile(skillFile, content, "utf-8");
+
+    await expect(loadSkillInstructionsAsync(skillFile)).rejects.toThrow("exceeds");
   });
 
   it("should throw when file does not exist", async () => {
     const fakePath: string = path.join(tempDir, "nonexistent.md");
 
-    await expect(parseSkillFileAsync(fakePath)).rejects.toThrow();
+    await expect(parseSkillFrontmatterAsync(fakePath)).rejects.toThrow();
   });
 });
 

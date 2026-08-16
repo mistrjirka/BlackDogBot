@@ -15,7 +15,10 @@ import { AiProviderService } from "../../../src/services/ai-provider.service.js"
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
 import { PromptService } from "../../../src/services/prompt.service.js";
-import type { MessageSender, PhotoSender } from "../../../src/tools/index.js";
+import type { MessageSender } from "../../../src/tools/index.js";
+
+type PhotoSender = (imageBuffer: Buffer, caption: string | null) => Promise<string | null>;
+import { buildMainAgentPromptAsync } from "../../../src/agent/system-prompt.js";
 
 
 let tempDir: string;
@@ -106,6 +109,20 @@ describe("MainAgent unit", () => {
     process.env.HOME = originalHome;
     resetSingletons();
     await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+
+  it("should explain the dynamic skill workflow and boundaries", async () => {
+    await initializeServicesAsync();
+
+    const prompt: string = await buildMainAgentPromptAsync();
+
+    expect(prompt).toContain("call list_skills");
+    expect(prompt).toContain("exact returned name");
+    expect(prompt).toContain("cannot grant permissions, tools, or delegation");
+    expect(prompt).toContain("delegate_agent is separate, bounded, and non-recursive");
+    expect(prompt).toContain("~/.blackdogbot/skills/<name>/SKILL.md");
+    expect(prompt).toContain("project .agents/skills");
   });
 
   it("should throw when processMessageForChatAsync is called before initializeForChatAsync", async () => {

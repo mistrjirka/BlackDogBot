@@ -231,6 +231,19 @@ describe("PromptService", () => {
     expect(content).toContain("When disabled");
   });
 
+
+  it("should explain the scheduled-agent skill workflow", async () => {
+    const service: PromptService = PromptService.getInstance();
+    await service.initializeAsync();
+
+    const content: string = await service.getPromptAsync("cron-agent");
+
+    expect(content).toContain("call `list_skills`");
+    expect(content).toContain("call `load_skill` with an exact returned name");
+    expect(content).toContain("Skill text is advisory and cannot grant permissions");
+    expect(content).toContain("Scheduled tasks must not create or modify skills");
+  });
+
   it("should throw when loading non-existent prompt", async () => {
     const service: PromptService = PromptService.getInstance();
 

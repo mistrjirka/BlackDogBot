@@ -21,6 +21,10 @@ export function getSkillsDir(): string {
   return path.join(getBaseDir(), "skills");
 }
 
+export function getSkillStateDir(): string {
+  return path.join(getBaseDir(), "skill-state");
+}
+
 export function getJobsDir(): string {
   return path.join(getBaseDir(), "jobs");
 }
@@ -82,11 +86,13 @@ export function getSkillDir(skillName: string): string {
   return path.join(getSkillsDir(), skillName);
 }
 
-export function getSkillFilePath(skillName: string): string {
-  return path.join(getSkillDir(skillName), "SKILL.md");
-}
 
-export function getSkillStatePath(skillName: string): string {
+export function getSkillStatePath(skillName: string, stateScope: string | null = null): string {
+  if (stateScope) {
+    const scopeHash: string = crypto.createHash("sha256").update(`${stateScope}:${skillName}`).digest("hex");
+    return path.join(getSkillStateDir(), `${scopeHash}.json`);
+  }
+
   return path.join(getSkillDir(skillName), "state.json");
 }
 

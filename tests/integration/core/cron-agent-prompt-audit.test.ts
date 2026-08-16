@@ -154,8 +154,8 @@ const _CategoryDefinitions: ICategoryDefinition[] = [
   },
   {
     key: "skill_tools",
-    goal: "Assess whether skill invocation tool descriptions clearly explain required arguments and boundaries.",
-    toolNames: ["call_skill", "get_skill_file"],
+    goal: "Assess whether skill loading, delegation, and resource tool descriptions clearly explain required arguments and boundaries.",
+    toolNames: ["list_skills", "load_skill", "delegate_agent", "get_skill_file"],
     allowedIssueTitles: [
       "missing description",
       "missing output fields",

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { skillStateInfoSchema } from "./skill.schemas.js";
+import { MAX_DELEGATE_AGENT_OUTPUT_LENGTH } from "../constants.js";
 
 //#region Think Tool
 
@@ -270,21 +272,43 @@ export const editKnowledgeToolOutputSchema = z.object({
 
 //#region Skill Tools
 
-export const callSkillToolInputSchema = z.object({
-  skillName: z.string()
-    .min(1)
-    .describe("Name of the skill to call"),
-  input: z.string()
-    .default("")
-    .describe("Input to pass to the skill"),
-});
+export const listSkillsToolInputSchema = z.object({}).strict();
 
-export const callSkillToolOutputSchema = z.object({
+export const skillSetupIssueSchema = skillStateInfoSchema.pick({
+  state: true,
+  missingDeps: true,
+  lastError: true,
+  manualStepsRequired: true,
+  nextSetupAttemptAt: true,
+}).extend({
+  name: z.string(),
+  description: z.string(),
+}).strict();
+
+export const listSkillsToolOutputSchema = z.object({
+  skills: z.array(z.object({ name: z.string(), description: z.string() }).strict()),
+  unavailableSkills: z.array(skillSetupIssueSchema),
+}).strict();
+
+export const loadSkillToolInputSchema = z.object({
+  skillName: z.string().min(1).describe("Name of the skill to load"),
+}).strict();
+
+export const loadSkillToolOutputSchema = z.object({
   success: z.boolean(),
-  output: z.string(),
-  error: z.string()
-    .nullable(),
-});
+  skillName: z.string(),
+  instructions: z.string(),
+  error: z.string().nullable(),
+}).strict();
+export const delegateAgentToolInputSchema = z.object({
+  task: z.string().min(1).max(100_000).describe("Bounded task for the delegated worker"),
+}).strict();
+
+export const delegateAgentToolOutputSchema = z.object({
+  success: z.boolean(),
+  output: z.string().max(MAX_DELEGATE_AGENT_OUTPUT_LENGTH),
+  error: z.string().nullable(),
+}).strict();
 
 export const getSkillFileToolInputSchema = z.object({
   skillName: z.string()
@@ -293,12 +317,12 @@ export const getSkillFileToolInputSchema = z.object({
   filePath: z.string()
     .default("SKILL.md")
     .describe("Relative path within the skill directory"),
-});
+}).strict();
 
 export const getSkillFileToolOutputSchema = z.object({
   content: z.string(),
   exists: z.boolean(),
-});
+}).strict();
 
 //#endregion Skill Tools
 
@@ -336,8 +360,10 @@ export const CRON_VALID_TOOL_NAMES = [
   "drop_table",
   "read_from_database",
   "delete_from_database",
-  "call_skill",
+  "load_skill",
+  "list_skills",
   "get_skill_file",
+  "delegate_agent",
 ] as const;
 
 function _validateDate(params: { year: number; month: number; day: number }): boolean {
@@ -835,7 +861,6 @@ export const EDITABLE_PROMPT_NAMES: readonly string[] = [
   "tool-preambles",
   "context-gathering",
   "persistence",
-  "skill-setup",
   "graph-audit",
   "prompt-fragments/output-format",
   "prompt-fragments/xml-tag-guide",

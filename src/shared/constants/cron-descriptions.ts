@@ -149,12 +149,18 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "This operation permanently deletes matching rows. " +
     "Args: tableName (string, required); where (string, required).",
 
-  call_skill:
-    "Invoke a named skill agent with the given input and return its output. " +
-    "Args: skillName (string, required — must be a skill listed as available at runtime); input (string, default '').",
+  list_skills:
+    "List ready skills and their descriptions; unavailableSkills reports model-visible setup failures and retry state. Use an exact returned ready name with load_skill to load advisory instructions.",
+
+  load_skill:
+    "Load the instructions for a named skill into the current tool loop. This is instruction-only and does not spawn a worker. " +
+    "Args: skillName (string, required — must be a skill listed as available at runtime).",
+  delegate_agent:
+    "Run one bounded delegated task using the caller's effective tools, except delegate_agent itself. The worker cannot delegate further. " +
+    "Args: task (string, required).",
 
   get_skill_file:
-    "Read a file from a skill's directory. " +
+    "Read a file from a ready, model-visible skill's directory; unavailable skills return exists:false. " +
     "Args: skillName (string, required); filePath (string, default 'SKILL.md').",
 
   search_timed:

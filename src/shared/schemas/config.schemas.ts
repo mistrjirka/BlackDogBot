@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ALLOWED_INSTALL_KINDS } from "../constants.js";
+import { ALLOWED_INSTALL_KINDS, DEFAULT_ALLOWED_INSTALL_KINDS, DEFAULT_SKILL_INSTALL_TIMEOUT_MS } from "../constants.js";
 
 //#region Config Schemas
 
@@ -205,6 +205,8 @@ const knowledgeConfigSchema = z.object({
 
 const skillsConfigSchema = z.object({
   directories: z.string()
+    .trim()
+    .min(1)
     .array()
     .default(["~/.blackdogbot/skills"])
     .describe("Directories to scan for skills"),
@@ -217,11 +219,11 @@ const skillsConfigSchema = z.object({
   installTimeout: z.number()
     .int()
     .positive()
-    .default(300000)
+    .default(DEFAULT_SKILL_INSTALL_TIMEOUT_MS)
     .describe("Timeout in milliseconds for each install step"),
   allowedInstallKinds: z.enum(ALLOWED_INSTALL_KINDS)
     .array()
-    .default(["brew", "node", "go", "uv"])
+    .default(DEFAULT_ALLOWED_INSTALL_KINDS)
     .describe("Whitelist of allowed install kinds. pacman, apt, and download require manual steps."),
   skipOsCheck: z.boolean()
     .default(false)

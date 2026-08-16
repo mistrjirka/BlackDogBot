@@ -19,6 +19,7 @@ import { McpService } from "./services/mcp.service.js";
 import * as toolRegistry from "./helpers/tool-registry.js";
 import * as skillInstaller from "./helpers/skill-installer.js";
 import * as skillState from "./helpers/skill-state.js";
+import * as dependencyChecker from "./helpers/dependency-checker.js";
 import { CronAgent } from "./agent/cron-agent.js";
 import { MainAgent } from "./agent/main-agent.js";
 import { BrainInterfaceService } from "./brain-interface/service.js";
@@ -31,7 +32,6 @@ import { getJobLogsDir, getBrainInterfaceTokenFilePath, ensureAllDirectoriesAsyn
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
 import { extractErrorMessage } from "./utils/error.js";
 import { TelegramHandler } from "./platforms/telegram/handler.js";
-import type { SkillInstallKind } from "./helpers/skill-installer.js";
 import { generateJwtToken, type IJwtPayload } from "./utils/jwt.js";
 import { notifySchedulerChannelsWithDedupAsync } from "./utils/scheduler-notifications.js";
 
@@ -167,9 +167,17 @@ async function mainAsync(): Promise<void> {
 
   // 6. Initialize skill loader
   const skillLoaderService: SkillLoaderService = SkillLoaderService.getInstance();
-  const skipOsCheck = config.skills.skipOsCheck ?? false;
+  const skipOsCheck = config.skills.skipOsCheck;
+  const skillDependencyConfig: Record<string, unknown> = { ...config };
 
-  await skillLoaderService.loadAllSkillsAsync(config.skills.directories, skipOsCheck);
+  await skillLoaderService.loadAllSkillsAsync(
+    config.skills.directories,
+    skipOsCheck,
+    config.skills.allowedInstallKinds,
+    skillDependencyConfig,
+    config.skills.installTimeout,
+  );
+  await skillLoaderService.startWatching();
 
   logger.info("Skill loader initialized.", {
     skillCount: skillLoaderService.getAllSkills().length,
@@ -262,86 +270,193 @@ async function mainAsync(): Promise<void> {
 
   // 7.6. Auto-setup skills with missing dependencies
   const skillsConfig = config.skills;
-  const autoSetup = skillsConfig.autoSetup ?? true;
-  const autoSetupNotify = skillsConfig.autoSetupNotify ?? true;
-  const allowedInstallKinds = skillsConfig.allowedInstallKinds ?? ["brew", "node", "go", "uv"];
-  const installTimeout = skillsConfig.installTimeout ?? 300000;
+  const autoSetup = skillsConfig.autoSetup;
+  const autoSetupNotify = skillsConfig.autoSetupNotify;
+  const allowedInstallKinds = skillsConfig.allowedInstallKinds;
+  const installTimeout = skillsConfig.installTimeout;
+  const notifySkillSetupFailureAsync = async (
+    displaySkillName: string,
+    safeError: string,
+    attemptsBeforeRun: number,
+  ): Promise<void> => {
+    if (!autoSetupNotify) {
+      return;
+    }
+    const notifyMessage =
+      `❌ **Skill Setup Failed**: \`${displaySkillName}\`\n\n` +
+      `**Error:**\n\`\`\`\n${safeError}\n\`\`\`\n\n` +
+      `${attemptsBeforeRun + 1 < skillState.MAX_AUTO_SETUP_ATTEMPTS ? "Will retry on the next restart after the backoff is due." : "Retry limit reached for this setup metadata; update the skill requirements to retry."}`;
+    await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
+  }
 
   if (autoSetup) {
-    const skillsNeedingSetup = skillLoaderService.getAllSkills().filter(
-      (skill) => skill.state.state === "needs-setup"
-    );
+    const skillsNeedingSetup = skillLoaderService.getAllSkills().filter((skill) => {
+      const installSteps = skill.frontmatter.metadata?.openclaw?.install ?? [];
+      const missingInstallDependencies = new Set([
+        ...(skill.state.missingDeps?.bins ?? []),
+        ...(skill.state.missingDeps?.anyBins ?? []),
+      ]);
+      const hasAutomaticInstallStep = installSteps.some(
+        (step) => !skillInstaller.isManualInstallStep(step, allowedInstallKinds)
+          && (step.bins.length === 0 || step.bins.some((bin) => missingInstallDependencies.has(bin))),
+      );
+      const retryAt = skill.state.nextSetupAttemptAt ? Date.parse(skill.state.nextSetupAttemptAt) : Number.NaN;
+
+      return skill.autoSetupAllowed
+        && skill.state.state === "needs-setup"
+        && hasAutomaticInstallStep
+        && (Number.isNaN(retryAt) || retryAt <= Date.now())
+        && dependencyChecker.hasMissingInstallDependencies(skill.state.missingDeps)
+        && skill.state.setupAttempts < skillState.MAX_AUTO_SETUP_ATTEMPTS;
+    });
 
     if (skillsNeedingSetup.length > 0) {
-      logger.info(`Auto-setting up ${skillsNeedingSetup.length} skills...`);
-
-      for (const skill of skillsNeedingSetup) {
-        try {
-          logger.info(`Setting up skill "${skill.name}"...`);
-
-          await skillState.markSkillSetupInProgressAsync(skill.name);
-
-          const installSteps = skill.frontmatter.metadata?.openclaw?.install || [];
-          const result = await skillInstaller.executeSkillInstallStepsAsync(
-            installSteps,
-            allowedInstallKinds as SkillInstallKind[],
-            installTimeout
-          );
-
-          if (result.success) {
-            await skillState.markSkillSetupCompleteAsync(skill.name);
-            logger.info(`Skill "${skill.name}" setup completed`, { installed: result.installed });
-
-            if (autoSetupNotify) {
-              const notifyMessage =
-                `✅ **Skill Ready**: \`${skill.name}\`\n\n` +
-                (result.installed.length > 0 ? `**Installed:** ${result.installed.join(", ")}` : "");
-              await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
-            }
-          } else if (result.manualStepsRequired.length > 0) {
-            await skillState.markSkillNeedsSetupAsync(
-              skill.name,
-              skill.state.missingDeps,
-              result.manualStepsRequired
+      logger.info(`Scheduling auto-setup for ${skillsNeedingSetup.length} skills in background...`);
+      void (async (): Promise<void> => {
+        for (const skill of skillsNeedingSetup) {
+          const displaySkillName: string = skillState.sanitizeSetupError(skill.name);
+          try {
+            logger.info(`Setting up skill "${displaySkillName}"...`);
+            const currentDependencyResult = await dependencyChecker.checkRequirementsAsync(
+              skill.frontmatter.metadata?.openclaw?.requires,
+              skillDependencyConfig,
             );
-            logger.info(`Skill "${skill.name}" requires manual steps`, {
-              manualSteps: result.manualStepsRequired,
-            });
-
-            if (autoSetupNotify) {
-              const notifyMessage =
-                `⚠️ **Skill Needs Manual Setup**: \`${skill.name}\`\n\n` +
-                `This skill requires packages that cannot be auto-installed.\n\n` +
-                `**Manual steps:**\n${result.manualStepsRequired.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\n` +
-                `After completing these steps, restart BlackDogBot.`;
-              await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
+            if (currentDependencyResult.satisfied) {
+              await skillState.markSkillSetupCompleteAsync(
+                skill.name,
+                skillState.getSkillSetupFingerprint(skill),
+                skill.stateScope,
+              );
+              logger.info(`Skill "${displaySkillName}" already satisfies its requirements; skipped setup`);
+              continue;
             }
-          } else {
-            await skillState.markSkillSetupErrorAsync(skill.name, result.error || "Unknown error");
-            logger.error(`Skill "${skill.name}" setup failed`, { error: result.error });
-
-            if (autoSetupNotify) {
-              const notifyMessage =
-                `❌ **Skill Setup Failed**: \`${skill.name}\`\n\n` +
-                `**Error:**\n\`\`\`\n${result.error}\n\`\`\`\n\n` +
-                `Will retry on next startup.`;
-              await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
+            if (!dependencyChecker.hasMissingInstallDependencies(currentDependencyResult.missing)) {
+              await skillState.markSkillNeedsSetupAsync(
+                skill.name,
+                currentDependencyResult.missing,
+                skill.state.manualStepsRequired,
+                skillState.getSkillSetupFingerprint(skill),
+                skill.stateScope,
+              );
+              continue;
             }
-          }
-        } catch (setupError) {
-          const errorMsg = setupError instanceof Error ? setupError.message : String(setupError);
-          await skillState.markSkillSetupErrorAsync(skill.name, errorMsg);
-          logger.error(`Skill "${skill.name}" setup threw error`, { error: errorMsg });
 
-          if (autoSetupNotify) {
-            const notifyMessage =
-              `❌ **Skill Setup Failed**: \`${skill.name}\`\n\n` +
-              `**Error:**\n\`\`\`\n${errorMsg}\n\`\`\`\n\n` +
-              `Will retry on next startup.`;
-            await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
+            await skillState.markSkillSetupInProgressAsync(skill.name, skillState.getSkillSetupFingerprint(skill), skill.stateScope);
+
+            const missingInstallDependencies = new Set([
+              ...currentDependencyResult.missing.bins,
+              ...currentDependencyResult.missing.anyBins,
+            ]);
+            const installSteps = (skill.frontmatter.metadata?.openclaw?.install ?? []).filter(
+              (step) => step.bins.length === 0
+                || step.bins.some((bin) => missingInstallDependencies.has(bin)),
+            );
+            const result = await skillInstaller.executeSkillInstallStepsAsync(
+              installSteps,
+              allowedInstallKinds,
+              installTimeout
+            );
+
+            if (result.success && result.manualStepsRequired.length === 0) {
+              const dependencyResult = await dependencyChecker.checkRequirementsAsync(
+                skill.frontmatter.metadata?.openclaw?.requires,
+                skillDependencyConfig,
+              );
+              if (!dependencyResult.satisfied) {
+                const hasMissingInstallDependencies = dependencyChecker.hasMissingInstallDependencies(dependencyResult.missing);
+                if (!hasMissingInstallDependencies) {
+                  await skillState.markSkillNeedsSetupAsync(
+                    skill.name,
+                    dependencyResult.missing,
+                    [],
+                    skillState.getSkillSetupFingerprint(skill),
+                    skill.stateScope,
+                  );
+                  const missingRequirements: string = skillState.sanitizeSetupError(
+                    [...dependencyResult.missing.env, ...dependencyResult.missing.config].join(", "),
+                  );
+                  logger.info(`Skill "${displaySkillName}" remains unavailable until requirements are configured`, {
+                    missing: missingRequirements,
+                  });
+                  if (autoSetupNotify) {
+                    const notifyMessage =
+                      `⚠️ **Skill Needs Configuration**: \`${displaySkillName}\`\n\n` +
+                      `Missing requirements: ${missingRequirements}`;
+                    await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
+                  }
+                  continue;
+                }
+
+                const unmetRequirements: string[] = [
+                  ...dependencyResult.missing.bins,
+                  ...dependencyResult.missing.anyBins,
+                  ...dependencyResult.missing.env,
+                  ...dependencyResult.missing.config,
+                ];
+                throw new Error(`Install completed but requirements remain unmet: ${unmetRequirements.join(", ")}`);
+              }
+
+              await skillState.markSkillSetupCompleteAsync(skill.name, skillState.getSkillSetupFingerprint(skill), skill.stateScope);
+              logger.info(`Skill "${displaySkillName}" setup completed`, {
+                installed: skillState.sanitizeSetupError(result.installed.join(", ")),
+              });
+
+              if (autoSetupNotify) {
+                const notifyMessage =
+                  `✅ **Skill Ready**: \`${displaySkillName}\`\n\n` +
+                  (result.installed.length > 0
+                    ? `**Installed:** ${skillState.sanitizeSetupError(result.installed.join(", "))}`
+                    : "");
+                await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
+              }
+            } else if (result.success && result.manualStepsRequired.length > 0) {
+              const manualDependencyResult = await dependencyChecker.checkRequirementsAsync(
+                skill.frontmatter.metadata?.openclaw?.requires,
+                skillDependencyConfig,
+              );
+              await skillState.markSkillNeedsSetupAsync(
+                skill.name,
+                manualDependencyResult.missing,
+                result.manualStepsRequired,
+                skillState.getSkillSetupFingerprint(skill),
+                skill.stateScope,
+              );
+              logger.info(`Skill "${displaySkillName}" requires manual steps`, {
+                manualSteps: skillState.sanitizeSetupError(result.manualStepsRequired.join("\n")),
+              });
+
+              if (autoSetupNotify) {
+                const notifyMessage =
+                  `⚠️ **Skill Needs Manual Setup**: \`${displaySkillName}\`\n\n` +
+                  `This skill requires packages that cannot be auto-installed.\n\n` +
+                  `**Manual steps:**\n${skillState.sanitizeSetupError(result.manualStepsRequired.map((s, i) => `${i + 1}. ${s}`).join("\n"))}\n\n` +
+                  `After completing these steps, restart BlackDogBot.`;
+                await notifyAllChannelsAsync(notifyMessage, "Failed to notify");
+              }
+            } else {
+              const safeError: string = skillState.sanitizeSetupError(result.error || "Unknown error");
+              await skillState.markSkillSetupErrorAsync(skill.name, safeError, skillState.getSkillSetupFingerprint(skill), skill.stateScope);
+              logger.error(`Skill "${displaySkillName}" setup failed`, { error: safeError });
+
+              await notifySkillSetupFailureAsync(displaySkillName, safeError, skill.state.setupAttempts);
+            }
+          } catch (setupError) {
+            const safeError: string = skillState.sanitizeSetupError(
+              setupError instanceof Error ? setupError.message : String(setupError),
+            );
+            try {
+              await skillState.markSkillSetupErrorAsync(skill.name, safeError, skillState.getSkillSetupFingerprint(skill), skill.stateScope);
+            } catch (stateError: unknown) {
+              logger.error("Failed to persist skill setup failure", {
+                error: skillState.sanitizeSetupError(stateError instanceof Error ? stateError.message : String(stateError)),
+              });
+            }
+            logger.error(`Skill "${displaySkillName}" setup threw error`, { error: safeError });
+
+            await notifySkillSetupFailureAsync(displaySkillName, safeError, skill.state.setupAttempts);
           }
         }
-      }
+      })().catch((error: unknown) => logger.error("Background skill setup failed", { error: extractErrorMessage(error) }));
     }
   }
 
@@ -494,6 +609,7 @@ async function mainAsync(): Promise<void> {
   // 11. Graceful shutdown
   const shutdownAsync = async (): Promise<void> => {
     logger.info("Shutdown signal received. Stopping BlackDogBot...");
+    skillLoaderService.stopWatching();
 
     await McpService.getInstance().closeAsync().catch(() => {});
     messagingService.shutdownTelegramOutbox();

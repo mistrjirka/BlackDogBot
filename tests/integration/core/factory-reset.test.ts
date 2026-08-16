@@ -207,6 +207,16 @@ describe("factoryResetAsync", () => {
     expect(skillContent).toBe("# Test Skill");
   });
 
+  it("should clear scoped skill state files", async () => {
+    const scopedStateDir: string = path.join(tempDir, ".blackdogbot", "skill-state");
+    await fs.mkdir(scopedStateDir, { recursive: true });
+    await fs.writeFile(path.join(scopedStateDir, "scoped-state.json"), "{}", "utf-8");
+
+    await factoryResetAsync();
+
+    await expect(fs.readdir(scopedStateDir)).resolves.toEqual([]);
+  });
+
   it("should return success: true with empty errors array", async () => {
     const result = await factoryResetAsync();
 

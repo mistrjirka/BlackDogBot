@@ -3,7 +3,6 @@
 export const BASE_DIR_NAME: string = ".blackdogbot";
 export const CONFIG_FILE_NAME: string = "config.yaml";
 export const SKILL_FILE_NAME: string = "SKILL.md";
-export const SKILL_STATE_FILE_NAME: string = "state.json";
 
 //#endregion Path Constants
 
@@ -33,6 +32,7 @@ export const DEFAULT_RPM: number = 60;
 export const DEFAULT_TPM: number = 100000;
 
 export const DEFAULT_AGENT_MAX_STEPS: number = 300;
+export const MAX_DELEGATE_AGENT_OUTPUT_LENGTH: number = 100_000;
 export const FORCE_THINK_INTERVAL: number = 5;
 export const DEFAULT_CMD_TIMEOUT_MS: number = 30000;
 export const DEFAULT_PYTHON_TIMEOUT_MS: number = 30000;
@@ -45,7 +45,6 @@ export const ID_LENGTH: number = 12;
 
 export const PROMPT_MAIN_AGENT: string = "main-agent";
 export const PROMPT_CRON_AGENT: string = "cron-agent";
-export const PROMPT_SKILL_SETUP: string = "skill-setup";
 export const PROMPT_TOOL_PREAMBLES: string = "tool-preambles";
 export const PROMPT_CONTEXT_GATHERING: string = "context-gathering";
 export const PROMPT_PERSISTENCE: string = "persistence";
@@ -62,5 +61,22 @@ export const INCLUDE_DIRECTIVE_REGEX: RegExp = /\{\{include:(.+?)\}\}/g;
 
 export const ALLOWED_INSTALL_KINDS = ["brew", "node", "go", "uv", "pacman", "apt", "download"] as const;
 export type AllowedInstallKind = (typeof ALLOWED_INSTALL_KINDS)[number];
+export const DEFAULT_ALLOWED_INSTALL_KINDS: AllowedInstallKind[] = ["brew", "node", "go", "uv"];
+export const DEFAULT_SKILL_INSTALL_TIMEOUT_MS: number = 300000;
+export const MAX_SKILL_INSTALL_STEPS: number = 32;
+export const DEPENDENCY_CHECK_CACHE_TTL_MS: number = 60000;
+export const MAX_DEPENDENCY_CHECKS_PER_REFRESH: number = 1024;
+export const MAX_DEPENDENCY_CACHE_ENTRIES: number = 1024;
 
 //#endregion Install Kinds
+
+//#region Skill Setup Limits
+
+export const MAX_AUTO_SETUP_ATTEMPTS: number = 3;
+export const MAX_SETUP_ERROR_LENGTH: number = 2000;
+export const MAX_SETUP_ERROR_PREVIEW_LENGTH: number = 500;
+export const MAX_MANUAL_STEP_INSTRUCTION_LENGTH: number = 1200;
+export const MAX_SKILLS_PER_ROOT: number = 256;
+export const MAX_SKILL_WATCHERS: number = 512;
+
+//#endregion Skill Setup Limits
