@@ -7,7 +7,7 @@ This project maintains a strict coding style to ensure consistency across the da
 | Item | Visibility | Case | Prefix | Suffix | Example |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Class Names** | All | PascalCase | | | `export class MyClass {}` |
-| **Service Names** | All | PascalCase | | `Service` | `export class JobExecutorService {}` |
+| **Service Names** | All | PascalCase | | `Service` | `export class SchedulerService {}` |
 | **Agent Names** | All | PascalCase | | `Agent` | `export class MainAgent {}` |
 | **Interface Names**| All | PascalCase | `I` | | `export interface IMessage {}` |
 | **Abstract Classes**| All | PascalCase | | `Base` | `export abstract class BaseAgentBase {}` |

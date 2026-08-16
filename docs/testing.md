@@ -34,29 +34,7 @@ tests/
 │   │   ├── skill-state.test.ts
 │   │   ├── telegram-auth.test.ts
 │   │   └── telegram-handler.test.ts
-│   │
-│   └── jobs/                  # Job-related integration tests
-│       ├── add-agent-node.test.ts
-│       ├── add-cron-tool.test.ts
-│       ├── add-python-code-node.test.ts
-│       ├── ai-job-creation-e2e.test.ts
-│       ├── clear-job-graph.test.ts
-│       ├── connect-nodes-validation.test.ts
-│       ├── cron-agent-e2e.test.ts
-│       ├── cron-message-routing.test.ts
-│       ├── cron-scheduler.test.ts
-│       ├── disconnect-nodes.test.ts
-│       ├── graph-audit-e2e.test.ts
-│       ├── graph-renderer.test.ts
-│       ├── graph-tools.test.ts
-│       ├── job-completion-event.test.ts
-│   │   ├── job-creation-mode.test.ts
-│   │   ├── job-execution-e2e.test.ts
-│   │   ├── litesql-*.test.ts
-│       ├── remove-node-cleanup.test.ts
-│       ├── rss-*.test.ts
-│       ├── scheduler.test.ts
-│       └── tool-prerequisite.test.ts
+│   └── utils/              # Shared test utilities
 ```
 
 ## Running Tests
@@ -76,10 +54,7 @@ pnpm test:unit
 # Core integration tests (config, skills, messaging)
 pnpm test:core
 
-# Job-related integration tests (slower, more complex)
-pnpm test:jobs
-
-# Fast tests (unit + core, skips job tests)
+# Fast tests (unit + core)
 pnpm test:fast
 ```
 
@@ -124,17 +99,6 @@ Examples:
 - `telegram-handler.test.ts` - Message routing, error handling
 - `skill-loader.test.ts` - Skill discovery and loading
 
-### Job Integration Tests (`tests/integration/jobs/`)
-
-- **Real LLM calls** (most tests)
-- **Complex scenarios** (multi-node graphs, cron tasks)
-- **Longer execution time** (10-60 seconds each)
-- **Test full workflows**: job creation, execution, scheduling
-
-Examples:
-- `job-execution-e2e.test.ts` - Full job graph execution
-- `ai-job-creation-e2e.test.ts` - Natural language job creation
-- `cron-agent-e2e.test.ts` - Cron task execution with real LLM
 
 ## LLM Mocking Policy
 
@@ -238,7 +202,6 @@ describe("MyService Integration", () => {
 |----------|-------|-------|
 | Unit | 12 | ~155 |
 | Core Integration | 19 | ~85 |
-| Job Integration | 32 | ~50 |
 | **Total** | **63** | **~290** |
 
 Run `pnpm test` to see current counts.

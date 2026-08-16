@@ -1,13 +1,12 @@
 # BlackDogBot
 
-A proactive AI assistant daemon for Linux. It runs as a long-lived process, communicates via Telegram and/or Discord, and executes structured jobs, skills, and scheduled tasks autonomously.
+A proactive AI assistant daemon for Linux. It runs as a long-lived process, communicates via Telegram and/or Discord, and executes skills and scheduled tasks autonomously.
 
 ## Features
 
 - Multi-platform messaging for Telegram and Discord
 - Permission-aware tool access (`ignore`, `read_only`, `full`)
-- Autonomous scheduled tasks (`cron`, `interval`, `once`)
-- Job graph execution with structured node inputs/outputs
+- Autonomous scheduled tasks (interval, once)
 - Skill system with reusable `SKILL.md` capabilities
 - Persistent knowledge with embeddings + vector search
 - Editable prompt system stored under `~/.blackdogbot/prompts/`
