@@ -6,6 +6,7 @@ import { SchedulerService } from "../services/scheduler.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
+import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { generateId } from "../utils/id.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
@@ -103,6 +104,7 @@ export const addIntervalTool = tool({
         instructions,
         toolContextBlock,
         taskType: "interval",
+        availableSkills: SkillLoaderService.getInstance().getAvailableSkills().map((skill) => skill.name),
       });
 
       const aiService = AiProviderService.getInstance();

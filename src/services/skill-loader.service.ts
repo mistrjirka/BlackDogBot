@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { watch, type Dirent, type FSWatcher } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { ISkill, ISkillStateInfo } from "../shared/types/index.js";
 import { getSkillsDir } from "../utils/paths.js";
@@ -15,6 +16,15 @@ import { LoggerService } from "./logger.service.js";
 
 const PROCESS_START_TIME_MS: number = Date.now();
 const SETUP_CLAIM_GRACE_MS: number = 60_000;
+
+// Skills bundled with this package (repo root /skills). Scanned last so any
+// same-named skill in a user-managed root overrides the bundled copy.
+const BUNDLED_SKILLS_DIR: string = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "skills",
+);
 
 export class SkillLoaderService {
 
@@ -110,7 +120,7 @@ export class SkillLoaderService {
     this._dependencyConfig = dependencyConfig;
     this._installTimeout = installTimeout;
     const configuredDirs = additionalDirs.filter((dir) => dir.trim().length > 0);
-    const roots = [getSkillsDir(), path.join(process.cwd(), ".agents", "skills"), path.join(os.homedir(), ".agents", "skills"), ...configuredDirs];
+    const roots = [getSkillsDir(), path.join(process.cwd(), ".agents", "skills"), path.join(os.homedir(), ".agents", "skills"), ...configuredDirs, BUNDLED_SKILLS_DIR];
     this._roots = [...new Set(roots.map((root) => this._resolveRoot(root)))];
     this._autoSetupRoots = new Set([this._resolveRoot(getSkillsDir()), ...configuredDirs.map((root) => this._resolveRoot(root))]);
     await this.refreshAsync();

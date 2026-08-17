@@ -7,6 +7,7 @@ interface ICronTaskVerifierPromptOptions {
   existingTask?: IScheduledTask;
   proposedTools?: string[];
   intention?: string;
+  availableSkills?: string[];
 }
 
 export function buildCronTaskVerifierPrompt(options: ICronTaskVerifierPromptOptions): string {
@@ -17,7 +18,12 @@ export function buildCronTaskVerifierPrompt(options: ICronTaskVerifierPromptOpti
     existingTask,
     proposedTools,
     intention,
+    availableSkills,
   } = options;
+
+  const skillsBlock = availableSkills && availableSkills.length > 0
+    ? `\nInstalled skills the agent can load via load_skill: ${availableSkills.join(", ")}\n`
+    : "";
 
   const basePrompt = `
 You are a task instruction verifier for an autonomous AI agent.
@@ -28,8 +34,7 @@ Your job: determine whether the instructions contain enough context for the agen
 
 DEFAULT TO VALID. Only mark instructions invalid if there is a genuine, unresolvable ambiguity that would cause the agent to fail or act incorrectly.
 
-${toolContextBlock}
-
+${toolContextBlock}${skillsBlock}
 RULES:
 
 1. Schedule/timing is already encoded in the task schedule fields — do NOT require the instructions to re-state when or how often the task runs.
@@ -58,7 +63,8 @@ RULES:
 
 7. **READ-ONLY vs. FETCH/WRITE TASK DISTINCTION:**
    - If instructions only READ from a database (e.g., "summarize items", "generate report", "send notification based on stored data"), they do NOT require an external source URL. The database IS their source. Mark as VALID.
-   - If instructions FETCH from external sources (RSS, APIs, web) or WRITE to a database, they MUST specify source URLs AND target table schemas. Mark as INVALID if missing.`;
+   - If instructions FETCH from external sources (RSS, APIs, web) or WRITE to a database, they MUST specify source URLs AND target table schemas. Mark as INVALID if missing.
+   - **Skill delegation exception:** if the instructions explicitly name an installed skill (e.g. "use the news-digest skill"), that skill supplies its own workflow, data schemas, and output format — do NOT require the instructions to repeat the skill's internals, and the fetch/write requirements above do not apply to what the skill covers. The skill must be named explicitly (a vague reference like "do the usual news thing" is NOT a delegation). Task-specific parameters the skill expects but does not contain (e.g. specific feed URLs, topic, time window) MUST still be present in the instructions. If the named skill is not in the installed skills list, treat the reference as an unspecified external resource (rule 5).`;
 
   if (taskType === "edit") {
     if (!existingTask) {

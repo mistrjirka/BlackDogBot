@@ -11,6 +11,12 @@ A proactive AI assistant daemon for Linux. It runs as a long-lived process, comm
 - Persistent knowledge with embeddings + vector search
 - Editable prompt system stored under `~/.blackdogbot/prompts/`
 
+### Bundled skills
+
+The repository ships ready-to-use skills under `skills/`. They load automatically alongside user skills from `~/.blackdogbot/skills`; a user skill with the same name overrides the bundled copy.
+
+- `news-digest` — curated, deduplicated news digest from RSS feeds and/or web search, with persistence to a `news_items` table. Reference it by name in scheduled task instructions (e.g. "Use the news-digest skill with feeds ...").
+
 ## Installation
 
 ### Prerequisites

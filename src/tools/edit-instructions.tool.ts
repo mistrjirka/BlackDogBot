@@ -7,6 +7,7 @@ import { SchedulerService } from "../services/scheduler.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
+import { SkillLoaderService } from "../services/skill-loader.service.js";
 import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
@@ -138,6 +139,7 @@ const executeEditInstructions = async (
       existingTask,
       proposedTools: toolsToVerify,
       intention: normalizedIntention,
+      availableSkills: SkillLoaderService.getInstance().getAvailableSkills().map((skill) => skill.name),
     });
 
     const aiService: AiProviderService = AiProviderService.getInstance();
