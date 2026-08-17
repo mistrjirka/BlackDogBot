@@ -571,7 +571,7 @@ export abstract class BaseAgentBase {
           return terminateRun;
         },
       ],
-      experimental_repairToolCall: repairToolCallJsonAsync,
+      repairToolCall: repairToolCallJsonAsync,
       prepareStep: async ({ stepNumber, messages, steps }) => {
         // Early abort check: if the abort signal is already fired, throw immediately.
         // This prevents wasted work during compaction, pause-waiting, or tool execution
@@ -871,9 +871,10 @@ export abstract class BaseAgentBase {
           return { messages: compactionResult.messages, activeTools: activeToolNames };
         }
 
-        // When extra tools are active, inject the creation mode guide into the system prompt
-        // and return activeTools so the LLM can see them; when not in creation mode and
-        // there are no extra tools, return {} (no restriction).
+        // When extra tools are active, inject the creation mode guide into the instructions
+        // and return activeTools so the LLM can see them. v7 carries prepareStep instruction
+        // overrides forward, so the non-creation branches explicitly return the base
+        // instructions to reset the carried state.
         if (extraToolNames.length > 0) {
           if (creationPrompt) {
             return { instructions: `${instructions}\n\n${creationPrompt}`, activeTools: activeToolNames };

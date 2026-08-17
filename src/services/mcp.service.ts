@@ -380,8 +380,8 @@ function _convertMcpToolToAiSdk(
  *
  * Handles multimodal content:
  * - text → { type: "text", text }
- * - image → { type: "media", data, mediaType }
- * - audio → { type: "media", data, mediaType }
+ * - image → { type: "file-data", data, mediaType }
+ * - audio → { type: "file-data", data, mediaType }
  */
 function _convertMcpResultToModelOutput(
   output: unknown,
