@@ -6,7 +6,6 @@ import type { IAgentResult, IToolCallSummary } from "./base-agent.js";
 import type { IScheduledTask, IExecutionContext, ITraceCollector } from "../shared/types/index.js";
 
 import { PROMPT_CRON_AGENT } from "../shared/constants.js";
-import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
 import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { ConfigService } from "../services/config.service.js";
@@ -344,25 +343,7 @@ export class CronAgent extends BaseAgentBase {
     availableTools.get_skill_file = getSkillFileTool;
 
     const resolvedTools: ToolSet = {};
-    const effectiveToolNames: string[] = [];
-
-    // Expand deprecated tool aliases (e.g. query_database → 4 dedicated tools)
-    for (const name of toolNames) {
-      const replacements: readonly string[] | undefined = CRON_TOOL_ALIASES[name];
-      if (replacements) {
-        this._logger.warn(
-          `Deprecated tool "${name}" in cron task — expanded to: ${replacements.join(", ")}. Update the task to remove this warning.`,
-        );
-        for (const replacement of replacements) {
-          if (!effectiveToolNames.includes(replacement)) {
-            effectiveToolNames.push(replacement);
-          }
-        }
-      } else {
-        effectiveToolNames.push(name);
-      }
-    }
-
+    const effectiveToolNames: string[] = toolNames;
     for (const toolName of effectiveToolNames) {
       const tool: Tool | undefined = availableTools[toolName];
 

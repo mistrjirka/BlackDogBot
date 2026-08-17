@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { markdownToTelegramHtml, stripAllHtml, preprocessThinkTags, wrapMarkdownTablesInCodeBlocks, convertTablesToBulletLists } from "../../src/utils/telegram-format.js";
+import { markdownToTelegramHtml, stripAllHtml, preprocessThinkTags, convertTablesToBulletLists } from "../../src/utils/telegram-format.js";
 
 describe("preprocessThinkTags", () => {
   it("should convert self-closing <think/> to blockquote", () => {
@@ -164,77 +164,6 @@ describe("stripAllHtml", () => {
 
   it("should handle empty input", () => {
     expect(stripAllHtml("")).toBe("");
-  });
-});
-
-describe("wrapMarkdownTablesInCodeBlocks", () => {
-  it("should wrap a simple markdown table in code blocks", () => {
-    const input = `| Header1 | Header2 |
-|---------|---------|
-| Cell1   | Cell2   |`;
-    const result = wrapMarkdownTablesInCodeBlocks(input);
-    expect(result).toBe("```\n| Header1 | Header2 |\n|---------|---------|\n| Cell1   | Cell2   |\n```");
-  });
-
-  it("should not wrap tables already inside code blocks", () => {
-    const input = "```\n| Header1 | Header2 |\n|---------|---------|\n| Cell1   | Cell2   |\n```";
-    const result = wrapMarkdownTablesInCodeBlocks(input);
-    expect(result).toBe(input); // Should remain unchanged
-  });
-
-  it("should handle multiple tables", () => {
-    const input = `| A | B |
-|---|---|
-| 1 | 2 |
-
-Some text
-
-| C | D |
-|---|---|
-| 3 | 4 |`;
-    const result = wrapMarkdownTablesInCodeBlocks(input);
-    const lines = result.split('\n');
-    // Should have two code blocks
-    const codeBlockCount = lines.filter(line => line.trim() === '```').length;
-    expect(codeBlockCount).toBe(4); // Opening and closing for each table
-  });
-
-  it("should not treat spoiler delimiters as table rows", () => {
-    const input = "||hidden text||";
-    const result = wrapMarkdownTablesInCodeBlocks(input);
-    expect(result).toBe(input);
-  });
-
-  it("should handle tables with extra spaces", () => {
-    const input = `  | Col1 | Col2 |
-  |------|------|
-  | A    | B    |`;
-    const result = wrapMarkdownTablesInCodeBlocks(input);
-    expect(result).toContain("```");
-    expect(result).toContain("| Col1 | Col2 |");
-  });
-
-  it("should not wrap single line that looks like table row", () => {
-    const input = "| Just one row |";
-    const result = wrapMarkdownTablesInCodeBlocks(input);
-    expect(result).toBe(input);
-  });
-
-  it("should handle tables at start and end of text", () => {
-    const input = `| Start | Table |
-|-------|-------|
-| data  | here  |
-
-Middle text
-
-| End | Table |
-|-----|-------|
-| foo | bar   |`;
-    const result = wrapMarkdownTablesInCodeBlocks(input);
-    expect(result).toContain("```");
-    // Ensure both tables are wrapped: each table adds 2 backtick fences (opening and closing)
-    const codeBlocks = result.split('```').length - 1;
-    expect(codeBlocks).toBe(4); // 2 per table = 4 total
   });
 });
 

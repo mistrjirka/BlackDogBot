@@ -3,7 +3,6 @@ import path from "node:path";
 
 import { IScheduledTask } from "../shared/types/index.js";
 import { scheduledTaskSchema } from "../shared/schemas/index.js";
-import { CRON_TOOL_ALIASES } from "../shared/schemas/tool-schemas.js";
 import {
   getTimedDir,
   getTimedFilePath,
@@ -307,7 +306,6 @@ export class SchedulerService {
       entry.endsWith(".json"),
     );
 
-    const migratedTasks: string[] = [];
 
     for (const fileName of jsonFiles) {
       const filePath: string = path.join(timedDir, fileName);
@@ -343,13 +341,6 @@ export class SchedulerService {
           await fs.writeFile(filePath, JSON.stringify(effectiveTask, null, 2), "utf-8");
         }
 
-        // Check for deprecated tool names
-        const deprecatedTools: string[] = effectiveTask.tools.filter(
-          (name: string) => name in CRON_TOOL_ALIASES,
-        );
-        if (deprecatedTools.length > 0) {
-          migratedTasks.push(`${effectiveTask.name} (${effectiveTask.taskId}): ${deprecatedTools.join(", ")}`);
-        }
 
         this._tasks.set(effectiveTask.taskId, effectiveTask);
       } catch (error: unknown) {
@@ -360,12 +351,7 @@ export class SchedulerService {
       }
     }
 
-    if (migratedTasks.length > 0) {
-      this._logger.warn(
-        `${migratedTasks.length} timed task(s) use deprecated tool names that will be auto-expanded at runtime:`,
-        { tasks: migratedTasks },
-      );
-    }
+
   }
 
   private _hasOwnProperty(target: unknown, key: string): boolean {

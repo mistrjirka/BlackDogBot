@@ -22,6 +22,7 @@ import {
   type IAiErrorDetails,
 } from "../../utils/ai-error.js";
 import { extractErrorMessage } from "../../utils/error.js";
+import { isContextExceededTelegramError } from "../../utils/context-error.js";
 import { PromptService } from "../../services/prompt.service.js";
 import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 import { isCancelCommand } from "../../utils/command-utils.js";
@@ -776,17 +777,6 @@ export class TelegramHandler {
     }
   }
 
-  private _isContextExceededError(error: unknown): boolean {
-    const details: IAiErrorDetails = extractAiErrorDetails(error);
-    const combined: string = `${details.message ?? ""} ${details.providerMessage ?? ""} ${details.responseBody ?? ""}`.toLowerCase();
-
-    if (details.statusCode === 400 && combined.includes("context") && combined.includes("exceeded")) {
-      return true;
-    }
-
-    return combined.includes("context_length_exceeded") ||
-      (combined.includes("context") && combined.includes("token") && combined.includes("limit"));
-  }
 
   private async _processWithContextRecoveryAsync(
     chatId: string,
@@ -796,7 +786,7 @@ export class TelegramHandler {
     try {
       return await runAsync();
     } catch (processingError: unknown) {
-      const isContextExceeded: boolean = this._isContextExceededError(processingError);
+      const isContextExceeded: boolean = isContextExceededTelegramError(processingError);
       if (!isContextExceeded) {
         throw processingError;
       }

@@ -218,7 +218,6 @@ export const getSkillFileToolOutputSchema = z.object({
 //#region Cron Tools
 
 /** Maps deprecated tool names to their replacement(s). */
-export const CRON_TOOL_ALIASES: Readonly<Record<string, readonly string[]>> = {};
 
 export const CRON_VALID_TOOL_NAMES = [
   "think",
