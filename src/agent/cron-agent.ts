@@ -12,40 +12,18 @@ import { AiProviderService } from "../services/ai-provider.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { getCurrentTimeContext } from "../utils/time.js";
 import {
-  thinkTool,
   thinkTracker,
-  runCmdTool,
-  runCmdInputTool,
-  getCmdStatusTool,
-  getCmdOutputTool,
-  waitForCmdTool,
-  stopCmdTool,
-  searxngTool,
-  crawl4aiTool,
-  searchTimedTool,
   createSendMessageToolWithHistory,
   createGetPreviousMessageTool,
   loadSkillTool,
   listSkillsTool,
   getSkillFileTool,
-  listTimedTool,
-  createReadFileTool,
   createReadImageTool,
-  createWriteFileTool,
-  appendFileTool,
-  editFileTool,
-  fetchRssTool,
-  listTablesTool,
-  getTableSchemaTool,
   createTableTool,
-  dropTableTool,
-  readFromDatabaseTool,
-  deleteFromDatabaseTool,
   FileReadTracker,
 } from "../tools/index.js";
-import { createKnowledgeToolFactory } from "../tools/knowledge-tool-factory.js";
+import { createAgentBaseToolSet } from "./tool-assembly.js";
 import type { MessageSender, TaskIdProvider } from "../tools/index.js";
-import * as knowledge from "../helpers/knowledge.js";
 import { StatusService } from "../services/status.service.js";
 import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/per-table-tools.js";
 import { redactSensitiveData } from "../utils/log-redaction.js";
@@ -319,41 +297,11 @@ export class CronAgent extends BaseAgentBase {
     const readTracker: FileReadTracker = new FileReadTracker();
     const supportsVision: boolean = AiProviderService.getInstance().getSupportsVision();
 
-    const knowledgeToolFactory = createKnowledgeToolFactory({
-      knowledgeService: knowledge,
-      messageService: {
-        sendAsync: messageSender,
-      },
-    });
-
     const availableTools: Record<string, Tool> = {
-      think: thinkTool,
-      run_cmd: runCmdTool,
-      run_cmd_input: runCmdInputTool,
-      get_cmd_status: getCmdStatusTool,
-      get_cmd_output: getCmdOutputTool,
-      wait_for_cmd: waitForCmdTool,
-      stop_cmd: stopCmdTool,
-      search_knowledge: knowledgeToolFactory.createSearchKnowledgeTool(),
-      add_knowledge: knowledgeToolFactory.createAddKnowledgeTool(),
-      edit_knowledge: knowledgeToolFactory.createEditKnowledgeTool(),
+      ...createAgentBaseToolSet(messageSender, readTracker),
       send_message: createSendMessageToolWithHistory(messageSender, taskIdProvider, executionContext),
       get_previous_message: createGetPreviousMessageTool(executionContext),
-      read_file: createReadFileTool(readTracker),
-      write_file: createWriteFileTool(readTracker),
-      append_file: appendFileTool,
-      edit_file: editFileTool,
-      list_timed: listTimedTool,
-      fetch_rss: fetchRssTool,
-      searxng: searxngTool,
-      crawl4ai: crawl4aiTool,
-      search_timed: searchTimedTool,
-      list_tables: listTablesTool,
-      get_table_schema: getTableSchemaTool,
       create_table: _wrapCronCreateTableTool(createTableTool, onCreateTableRebuild),
-      drop_table: dropTableTool,
-      read_from_database: readFromDatabaseTool,
-      delete_from_database: deleteFromDatabaseTool,
     };
 
     if (supportsVision) {

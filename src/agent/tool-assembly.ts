@@ -93,6 +93,51 @@ export async function assembleToolsForChat(
   return filteredTools;
 }
 
+/**
+ * Base tool set shared by the chat agent (MainAgent) and the cron agent.
+ * Chat-only tools (task management, plain send_message, prompt tools) and
+ * cron-only tools (send_message with history, get_previous_message,
+ * create_table) are added by the respective callers.
+ */
+export function createAgentBaseToolSet(
+  messageSender: MessageSender,
+  readTracker: FileReadTracker,
+): ToolSet {
+  const knowledgeToolFactory = createKnowledgeToolFactory({
+    knowledgeService: knowledge,
+    messageService: {
+      sendAsync: messageSender,
+    },
+  });
+
+  return {
+    think: thinkTool,
+    run_cmd: runCmdTool,
+    run_cmd_input: runCmdInputTool,
+    get_cmd_status: getCmdStatusTool,
+    get_cmd_output: getCmdOutputTool,
+    wait_for_cmd: waitForCmdTool,
+    stop_cmd: stopCmdTool,
+    search_knowledge: knowledgeToolFactory.createSearchKnowledgeTool(),
+    add_knowledge: knowledgeToolFactory.createAddKnowledgeTool(),
+    edit_knowledge: knowledgeToolFactory.createEditKnowledgeTool(),
+    read_file: createReadFileTool(readTracker as IFileReadTracker),
+    write_file: createWriteFileTool(readTracker as IFileReadTracker),
+    append_file: appendFileTool,
+    edit_file: editFileTool,
+    list_timed: listTimedTool,
+    fetch_rss: fetchRssTool,
+    searxng: searxngTool,
+    crawl4ai: crawl4aiTool,
+    search_timed: searchTimedTool,
+    list_tables: listTablesTool,
+    get_table_schema: getTableSchemaTool,
+    drop_table: dropTableTool,
+    read_from_database: readFromDatabaseTool,
+    delete_from_database: deleteFromDatabaseTool,
+  };
+}
+
 function createBaseToolSet(messageSender: MessageSender, readTracker: FileReadTracker): ToolSet {
   const knowledgeToolFactory = createKnowledgeToolFactory({
     knowledgeService: knowledge,
@@ -102,36 +147,13 @@ function createBaseToolSet(messageSender: MessageSender, readTracker: FileReadTr
   });
 
   const tools: ToolSet = {
-    think: thinkTool,
-    run_cmd: runCmdTool,
-    run_cmd_input: runCmdInputTool,
-    get_cmd_status: getCmdStatusTool,
-    get_cmd_output: getCmdOutputTool,
-    wait_for_cmd: waitForCmdTool,
-    stop_cmd: stopCmdTool,
+    ...createAgentBaseToolSet(messageSender, readTracker),
     modify_prompt: modifyPromptTool,
     list_prompts: listPromptsTool,
-    search_knowledge: knowledgeToolFactory.createSearchKnowledgeTool(),
-    add_knowledge: knowledgeToolFactory.createAddKnowledgeTool(),
-    edit_knowledge: knowledgeToolFactory.createEditKnowledgeTool(),
     send_message: knowledgeToolFactory.createSendMessageTool(),
-    read_file: createReadFileTool(readTracker as IFileReadTracker),
-    write_file: createWriteFileTool(readTracker as IFileReadTracker),
-    append_file: appendFileTool,
-    edit_file: editFileTool,
     remove_timed: removeTimedTool,
-    list_timed: listTimedTool,
     get_timed: getTimedTool,
     run_timed: runTimedTool,
-    fetch_rss: fetchRssTool,
-    list_tables: listTablesTool,
-    get_table_schema: getTableSchemaTool,
-    drop_table: dropTableTool,
-    read_from_database: readFromDatabaseTool,
-    delete_from_database: deleteFromDatabaseTool,
-    searxng: searxngTool,
-    crawl4ai: crawl4aiTool,
-    search_timed: searchTimedTool,
   };
 
   // Add cron/timed tools separately for clarity

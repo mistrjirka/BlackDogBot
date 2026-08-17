@@ -1,6 +1,6 @@
 import type { LanguageModel, ModelMessage } from "ai";
 
-import { LoggerService } from "../services/logger.service.js";
+import type { LoggerService } from "../services/logger.service.js";
 import { generateTextWithRetryAsync } from "./llm-retry.js";
 import { isContextExceededApiError } from "./context-error.js";
 
@@ -391,7 +391,6 @@ async function _compactViaDagAsync(
         node = "L4";
       }
       maxLevelReached = _maxLevel(maxLevelReached, node);
-      continue;
     }
   }
 
@@ -1452,7 +1451,10 @@ function _splitMessagesIntoChunks(
 }
 
 function _estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  // Byte-based (not char-based) to stay consistent with llm-retry's
+  // estimateTokensFromTextByBytes: equal for ASCII, higher for non-ASCII,
+  // so compaction can only trigger earlier, never later.
+  return Math.ceil(Buffer.byteLength(text, "utf8") / 4);
 }
 
 //#endregion Private functions

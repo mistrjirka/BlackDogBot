@@ -60,3 +60,6 @@ thoughts/ledgers/
 # Heap snapshots
 Heap.*.heapsnapshot
 *.heapsnapshot
+
+# Agent session artifacts
+.pi-subagents/
