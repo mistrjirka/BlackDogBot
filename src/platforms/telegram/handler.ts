@@ -311,13 +311,13 @@ export class TelegramHandler {
                   stepLogsCountBefore: stepLogs.length,
                 });
               },
-              (stepNumber: number, _toolCalls: IToolCallSummary[], formatted: string | null): void => {
+              (stepNumber: number, toolCalls: IToolCallSummary[], formatted: string | null): void => {
                 if (formatted !== null) {
                   this._logger.debug("Telegram tool step appended to progress trace", {
                     chatId, stepNumber, formattedLength: formatted.length,
                     stepLogsCountAfter: stepLogs.length, formattedPreview: formatted.slice(0, 180),
                   });
-                } else {
+                } else if (toolCalls.length === 0) {
                   this._logger.debug("Telegram onStep received empty toolCalls", { chatId, stepNumber, stepLogsCount: stepLogs.length });
                 }
               },

@@ -352,26 +352,7 @@ export class MainAgent extends BaseAgentBase {
         attachDelegateAgentTool(reFilteredTools, model);
       }
 
-      this._buildAgent(
-        model,
-        instructions,
-        reFilteredTools,
-        combinedOnStepAsync,
-        undefined,
-        undefined,
-        (): Promise<void> | null => {
-          if (session.paused) {
-            return new Promise<void>((resolve: () => void): void => {
-              session.resumeResolve = resolve;
-            });
-          }
-          return null;
-        },
-        (): string | null => null,
-        (): AbortSignal | null => session.abortController?.signal ?? null,
-        undefined,
-        this._createDuplicateToolLoopCallback(chatId),
-      );
+      this._buildAgentForChat(chatId, model, instructions, reFilteredTools, combinedOnStepAsync);
 
       this._logger.debug("MainAgent _buildAgent completed after hot-reload", {
         chatId,
