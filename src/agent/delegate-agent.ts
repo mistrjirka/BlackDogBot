@@ -81,7 +81,7 @@ export function createDelegateAgentTool(options: IDelegateAgentOptions) {
     inputSchema: delegateAgentToolInputSchema,
     execute: async (
       { task }: { task: string },
-      executionOptions: ToolExecutionOptions,
+      executionOptions: ToolExecutionOptions<unknown>,
     ): Promise<IDelegateAgentResult> => {
       try {
         const workerTools: ToolSet = withoutDelegateAgent(options.tools);

@@ -1,6 +1,6 @@
 import type Bottleneck from "bottleneck";
 import type { LanguageModel } from "ai";
-import type { SharedV3ProviderOptions } from "@ai-sdk/provider";
+import type { SharedV4ProviderOptions } from "@ai-sdk/provider";
 import { LMStudioClient } from "@lmstudio/sdk";
 import { LoggerService } from "./logger.service.js";
 import type { IAiConfig, AiProvider, IRateLimitConfig, IOpenRouterConfig, IOpenAiCompatibleConfig, ILmStudioConfig, IAiFallbackEntry, IProviderCapabilitySummary, ResolvedStructuredOutputMode, StructuredOutputMode } from "../shared/types/index.js";
@@ -674,7 +674,7 @@ export class AiProviderService extends AiProviderCore {
     return this._supportsVision;
   }
 
-  public getStructuredProviderOptions(): SharedV3ProviderOptions | undefined {
+  public getStructuredProviderOptions(): SharedV4ProviderOptions | undefined {
     if (!this._aiConfig) {
       throw new Error("AiProviderService not initialized");
     }

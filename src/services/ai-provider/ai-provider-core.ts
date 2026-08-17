@@ -1,5 +1,5 @@
 import { type LanguageModel, wrapLanguageModel, extractReasoningMiddleware } from "ai";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { LMStudioClient } from "@lmstudio/sdk";
@@ -1578,9 +1578,9 @@ export class AiProviderCore {
   }
 
   protected _wrapModelWithRateLimiter(model: LanguageModel, providerKey: string): LanguageModel {
-    const originalModel = model as LanguageModelV3;
+    const originalModel = model as LanguageModelV4;
 
-    const wrappedModel: LanguageModelV3 = {
+    const wrappedModel: LanguageModelV4 = {
       ...originalModel,
       doGenerate: async (options) => {
         return this._rateLimiterService.scheduleAsync(providerKey, async () =>
@@ -1631,7 +1631,7 @@ export class AiProviderCore {
           messages: tokenBreakdown.messages,
           image: tokenBreakdown.image,
           tools: tokenBreakdown.tools,
-          system: tokenBreakdown.system,
+          instructions: tokenBreakdown.system,
           overhead: tokenBreakdown.overhead,
           messageCount: tokenBreakdown.messageCount,
           toolCount: tokenBreakdown.toolCount,

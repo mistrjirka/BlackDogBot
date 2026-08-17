@@ -1,4 +1,4 @@
-import { type Tool, type ToolCallOptions, type ToolSet } from "ai";
+import { type Tool, type ToolExecutionOptions, type ToolSet } from "ai";
 import { z } from "zod";
 
 import { LoggerService } from "../services/logger.service.js";
@@ -70,7 +70,7 @@ function _wrapSingleTool(
   return {
     ...toolDef,
     inputSchema,
-    execute: async (input: unknown, options: ToolCallOptions): Promise<unknown> => {
+    execute: async (input: unknown, options: ToolExecutionOptions<never>): Promise<unknown> => {
       const sanitizedInput: unknown = _stripReasoning(input);
 
       // Execute the original tool

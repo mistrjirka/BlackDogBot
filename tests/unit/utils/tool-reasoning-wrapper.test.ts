@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { tool, type ModelMessage, type ToolCallOptions, type ToolSet } from "ai";
+import { tool, type ModelMessage, type ToolExecutionOptions, type ToolSet } from "ai";
 import { z } from "zod";
 
 import { FORCE_THINK_INTERVAL } from "../../../src/shared/constants.js";
@@ -34,7 +34,7 @@ function _messagesAtReasoningThreshold(): ModelMessage[] {
   return messages;
 }
 
-function _buildOptions(messages: ModelMessage[]): ToolCallOptions {
+function _buildOptions(messages: ModelMessage[]): ToolExecutionOptions {
   return {
     toolCallId: "test-call-id",
     messages,

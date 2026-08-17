@@ -1,5 +1,5 @@
 import { generateText, Output, dynamicTool, type LanguageModel } from "ai";
-import type { SharedV3ProviderOptions } from "@ai-sdk/provider";
+import type { SharedV4ProviderOptions } from "@ai-sdk/provider";
 import type { z } from "zod";
 import { randomUUID } from "node:crypto";
 
@@ -288,7 +288,7 @@ export async function generateTextWithRetryAsync(options: IGenerateTextOptions):
     llmCallId: randomUUID(), callType, maxAttempts, timeoutMs, inputTokensEstimate,
     abortSignal: retryOptions.abortSignal, providerKey,
   }, async (linkedSignal: AbortSignal | undefined): Promise<ILlmCallResult<{ text: string }>> => {
-    const result = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { system: options.system } : {}), maxRetries: 0, abortSignal: linkedSignal });
+    const result = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { instructions: options.system } : {}), maxRetries: 0, abortSignal: linkedSignal });
     const inputTokens: number = result.totalUsage?.inputTokens ?? result.usage?.inputTokens ?? inputTokensEstimate;
     const outputTokens: number = result.totalUsage?.outputTokens ?? result.usage?.outputTokens ?? estimateTokensFromTextByBytes(result.text ?? "");
     return { result: { text: result.text ?? "" }, inputTokens, outputTokens };
@@ -304,7 +304,7 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(options:
   const aiProviderService: AiProviderService = AiProviderService.getInstance();
   const providerKey: string = aiProviderService.getActiveProvider();
   const structuredMode = aiProviderService.getStructuredOutputMode();
-  const providerOptions: SharedV3ProviderOptions | undefined = aiProviderService.getStructuredProviderOptions();
+  const providerOptions: SharedV4ProviderOptions | undefined = aiProviderService.getStructuredProviderOptions();
   const retryOptions = options.retryOptions ?? {};
   const callType = retryOptions.callType ?? "schema_extraction";
   const policy = getRetryPolicy(callType);
@@ -315,12 +315,12 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(options:
     llmCallId: randomUUID(), callType, maxAttempts, timeoutMs, inputTokensEstimate,
     abortSignal: retryOptions.abortSignal, providerKey, structuredMode,
   }, async (linkedSignal: AbortSignal | undefined): Promise<ILlmCallResult<{ object: z.infer<T> }>> => {
-    const requestProviderOptions: SharedV3ProviderOptions | undefined = structuredMode === "tool_auto" ? undefined : providerOptions;
+    const requestProviderOptions: SharedV4ProviderOptions | undefined = structuredMode === "tool_auto" ? undefined : providerOptions;
     const emitToolName = "emit_structured_output";
     const emitterTool = dynamicTool({ description: "Emit final structured output. Call this tool once with JSON matching the exact schema.", inputSchema: options.schema, execute: async (input: unknown): Promise<{ object: z.infer<T> }> => ({ object: input as z.infer<T> }) });
     let object: z.infer<T>;
     if (structuredMode === "native_json_schema") {
-      const generated = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { system: options.system } : {}), output: Output.object({ schema: options.schema }), ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}), maxRetries: 0, abortSignal: linkedSignal });
+      const generated = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { instructions: options.system } : {}), output: Output.object({ schema: options.schema }), ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}), maxRetries: 0, abortSignal: linkedSignal });
       if (generated.output === undefined || generated.output === null) throw new Error("No structured output generated: model did not return parseable JSON matching the schema." + (generated.text ? ` Raw text: ${generated.text.substring(0, 200)}` : ""));
       object = generated.output;
     } else if (structuredMode === "tool_emulated") {

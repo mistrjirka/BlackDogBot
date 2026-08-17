@@ -426,7 +426,7 @@ function _convertMcpResultToModelOutput(
 
       case "image":
         modelParts.push({
-          type: "media",
+          type: 'file-data',
           data: String(item.data ?? ""),
           mediaType: String(item.mimeType ?? "image/png"),
         });
@@ -434,7 +434,7 @@ function _convertMcpResultToModelOutput(
 
       case "audio":
         modelParts.push({
-          type: "media",
+          type: 'file-data',
           data: String(item.data ?? ""),
           mediaType: String(item.mimeType ?? "audio/mpeg"),
         });

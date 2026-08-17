@@ -1,4 +1,4 @@
-import type { LanguageModelV3ToolCall } from "@ai-sdk/provider";
+import type { LanguageModelV4ToolCall } from "@ai-sdk/provider";
 import { LoggerService } from "../services/logger.service.js";
 
 /**
@@ -11,9 +11,9 @@ import { LoggerService } from "../services/logger.service.js";
 export async function repairToolCallJsonAsync({
   toolCall,
 }: {
-  toolCall: LanguageModelV3ToolCall;
+  toolCall: LanguageModelV4ToolCall;
   error: unknown;
-}): Promise<LanguageModelV3ToolCall | null> {
+}): Promise<LanguageModelV4ToolCall | null> {
   const logger: LoggerService = LoggerService.getInstance();
   const raw: string = toolCall.input;
 

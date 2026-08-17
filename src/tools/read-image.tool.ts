@@ -124,7 +124,7 @@ export function createReadImageTool(readTracker: IFileReadTracker) {
         type: "content" as const,
         value: [
           {
-            type: "media" as const,
+            type: "image-data" as const,
             data: output.data,
             mediaType: output.mediaType,
           },

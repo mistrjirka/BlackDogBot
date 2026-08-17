@@ -277,6 +277,6 @@ function _buildRequestLikeBody(
     model: "token-estimation-only",
     messages: requestMessages,
     tools: activeToolsPayload,
-    system: systemPrompt,
+    instructions: systemPrompt,
   });
 }

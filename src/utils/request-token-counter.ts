@@ -33,7 +33,7 @@ export function countRequestBodyTokens(requestBody: string): IRequestTokenBreakd
 
     const messages = body.messages ?? [];
     const tools = body.tools ?? [];
-    const system = body.system ?? "";
+    const system = body.instructions ?? body.system ?? "";
     const sanitizedBody: string = _buildSanitizedRequestBodyForCounting(body);
 
     const imageTokens = _sumImageTokenEstimates(messages);

@@ -2,7 +2,7 @@ import {
   ToolLoopAgent,
   ToolSet,
   LanguageModel,
-  stepCountIs,
+  isStepCount,
   type ModelMessage,
 } from "ai";
 
@@ -557,7 +557,7 @@ export abstract class BaseAgentBase {
       maxRetries: 0,
       tools: allTools,
       stopWhen: [
-        stepCountIs(maxSteps),
+        isStepCount(maxSteps),
         (): boolean => {
           if (!shouldTerminateRun) {
             return false;
@@ -876,13 +876,13 @@ export abstract class BaseAgentBase {
         // there are no extra tools, return {} (no restriction).
         if (extraToolNames.length > 0) {
           if (creationPrompt) {
-            return { system: `${instructions}\n\n${creationPrompt}`, activeTools: activeToolNames };
+            return { instructions: `${instructions}\n\n${creationPrompt}`, activeTools: activeToolNames };
           }
 
-          return { activeTools: activeToolNames };
+          return { instructions, activeTools: activeToolNames };
         }
 
-        return {};
+        return { instructions };
       },
     });
 

@@ -28,7 +28,7 @@ vi.mock("ai", async () => {
   return {
     tool: (definition: unknown): unknown => definition,
     ToolLoopAgent: FakeToolLoopAgent,
-    stepCountIs: (): unknown => ({}),
+    isStepCount: (): unknown => ({}),
   };
 });
 

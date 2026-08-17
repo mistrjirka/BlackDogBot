@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import { generateText, stepCountIs, tool, type LanguageModel } from "ai";
+import { generateText, isStepCount, tool, type LanguageModel } from "ai";
 import { z } from "zod";
 
 import { ConfigService } from "../../../src/services/config.service.js";
@@ -209,7 +209,7 @@ describe("OpenAI-compatible local reasoning middleware E2E", () => {
           }),
         },
         toolChoice: { type: "tool", toolName: "calculator" },
-        stopWhen: stepCountIs(2),
+        stopWhen: isStepCount(2),
         maxRetries: 0,
         prompt: "Call calculator with a=2 and b=2. After tool result, answer with exactly 4.",
       });
