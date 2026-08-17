@@ -1,3 +1,4 @@
+import { sleepAsync } from "../utils/sleep.js";
 import {
   ToolLoopAgent,
   ToolSet,
@@ -400,9 +401,7 @@ export abstract class BaseAgentBase {
             });
 
             if (retryDelayMs > 0) {
-              await new Promise<void>((resolve: () => void): void => {
-                setTimeout(resolve, retryDelayMs);
-              });
+              await sleepAsync(retryDelayMs);
             }
 
             attempt--; // Don't burn the empty-response retry budget

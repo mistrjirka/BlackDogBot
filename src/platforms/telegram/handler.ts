@@ -80,6 +80,45 @@ interface IPendingTelegramImage {
 
 //#endregion Constants
 
+interface ITelegramEditApi {
+  editMessageText: (chatId: string, messageId: number, text: string, options?: Record<string, unknown>) => Promise<unknown>;
+}
+
+function _buildProgressText(status: string, stepLogs: string[]): string {
+  if (stepLogs.length === 0) {
+    return status;
+  }
+  const compactLogs: string[] = _compactStepLogs(stepLogs, MAX_BLOCKQUOTE_LENGTH);
+  const blockquotes: string = compactLogs
+    .map((block: string): string => `<blockquote expandable>${_escapeTelegramHtml(block)}</blockquote>`)
+    .join("\n");
+  return `${status}\n\n${blockquotes}`;
+}
+
+function createProgressOnStep(
+  progressMsgId: number,
+  editApi: ITelegramEditApi,
+  chatId: string,
+  logger: LoggerService,
+  stepLogs: string[],
+  buildText: (status: string) => string,
+  source: string,
+  onStepStarted?: (stepNumber: number, toolCalls: IToolCallSummary[]) => void,
+  onStepLogged?: (stepNumber: number, toolCalls: IToolCallSummary[], formatted: string | null) => void,
+): OnStepCallback {
+  return async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
+    onStepStarted?.(stepNumber, toolCalls);
+    const filteredToolCalls: IToolCallSummary[] = toolCalls.filter((tc: IToolCallSummary): boolean => tc.name !== "think");
+    let formatted: string | null = null;
+    if (filteredToolCalls.length > 0) {
+      formatted = filteredToolCalls.map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input)).join(", ");
+      stepLogs.push(`Step ${stepNumber}: ${formatted}`);
+    }
+    onStepLogged?.(stepNumber, toolCalls, formatted);
+    await _tryEditMessageTextAsync(editApi, logger, chatId, progressMsgId, buildText("⚙️ Working..."), "HTML", source);
+  };
+}
+
 //#region TelegramHandler
 
 export class TelegramHandler {
@@ -214,19 +253,7 @@ export class TelegramHandler {
     let progressMsgId: number | null = null;
     const stepLogs: string[] = [];
 
-    const buildProgressText = (status: string): string => {
-      if (stepLogs.length === 0) {
-        return status;
-      }
-      
-      const compactLogs: string[] = _compactStepLogs(stepLogs, MAX_BLOCKQUOTE_LENGTH);
-      
-      const blockquotes: string = compactLogs
-        .map((block: string): string => `<blockquote expandable>${_escapeTelegramHtml(block)}</blockquote>`)
-        .join("\n");
-
-      return `${status}\n\n${blockquotes}`;
-    };
+    const buildProgressText = (status: string): string => _buildProgressText(status, stepLogs);
 
     try {
       const incoming: IIncomingMessage = {
@@ -269,54 +296,32 @@ export class TelegramHandler {
 
       const onStepAsync: OnStepCallback | undefined =
         progressMsgId !== null
-          ? async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
-              this._logger.debug("Telegram onStep callback invoked", {
-                chatId,
-                stepNumber,
-                toolCallsCount: toolCalls.length,
-                toolNames: toolCalls.map((tc: IToolCallSummary): string => tc.name),
-                stepLogsCountBefore: stepLogs.length,
-              });
-
-              if (toolCalls.length > 0) {
-                const filteredToolCalls: IToolCallSummary[] = toolCalls.filter(
-                  (tc: IToolCallSummary): boolean => tc.name !== "think",
-                );
-
-                if (filteredToolCalls.length > 0) {
-                  const formatted: string = filteredToolCalls
-                    .map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input))
-                    .join(", ");
-                  stepLogs.push(`Step ${stepNumber}: ${formatted}`);
-
-                  this._logger.debug("Telegram tool step appended to progress trace", {
-                    chatId,
-                    stepNumber,
-                    formattedLength: formatted.length,
-                    stepLogsCountAfter: stepLogs.length,
-                    formattedPreview: formatted.slice(0, 180),
-                  });
-                }
-              } else {
-                this._logger.debug("Telegram onStep received empty toolCalls", {
-                  chatId,
-                  stepNumber,
-                  stepLogsCount: stepLogs.length,
+          ? createProgressOnStep(
+              progressMsgId,
+              ctx.api,
+              chatId,
+              this._logger,
+              stepLogs,
+              buildProgressText,
+              "progress-step",
+              (stepNumber: number, toolCalls: IToolCallSummary[]): void => {
+                this._logger.debug("Telegram onStep callback invoked", {
+                  chatId, stepNumber, toolCallsCount: toolCalls.length,
+                  toolNames: toolCalls.map((tc: IToolCallSummary): string => tc.name),
+                  stepLogsCountBefore: stepLogs.length,
                 });
-              }
-
-              const progressText: string = buildProgressText("⚙️ Working...");
-
-              await _tryEditMessageTextAsync(
-                ctx.api,
-                this._logger,
-                chatId,
-                progressMsgId!,
-                progressText,
-                "HTML",
-                "progress-step",
-              );
-            }
+              },
+              (stepNumber: number, _toolCalls: IToolCallSummary[], formatted: string | null): void => {
+                if (formatted !== null) {
+                  this._logger.debug("Telegram tool step appended to progress trace", {
+                    chatId, stepNumber, formattedLength: formatted.length,
+                    stepLogsCountAfter: stepLogs.length, formattedPreview: formatted.slice(0, 180),
+                  });
+                } else {
+                  this._logger.debug("Telegram onStep received empty toolCalls", { chatId, stepNumber, stepLogsCount: stepLogs.length });
+                }
+              },
+            )
           : undefined;
 
       await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
@@ -822,19 +827,7 @@ export class TelegramHandler {
     let progressMsgId: number | null = null;
     const stepLogs: string[] = [];
 
-    const buildProgressText = (status: string): string => {
-      if (stepLogs.length === 0) {
-        return status;
-      }
-
-      const compactLogs: string[] = _compactStepLogs(stepLogs, MAX_BLOCKQUOTE_LENGTH);
-
-      const blockquotes: string = compactLogs
-        .map((block: string): string => `<blockquote expandable>${_escapeTelegramHtml(block)}</blockquote>`)
-        .join("\n");
-
-      return `${status}\n\n${blockquotes}`;
-    };
+    const buildProgressText = (status: string): string => _buildProgressText(status, stepLogs);
 
     const hasAnyImageAttachment: boolean = queuedMessages.some(
       (queuedMessage: IPendingTelegramMessage): boolean => queuedMessage.imageAttachments.length > 0,
@@ -867,28 +860,7 @@ export class TelegramHandler {
 
       const onStepAsync: OnStepCallback | undefined =
         progressMsgId !== null
-          ? async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
-              const filteredToolCalls: IToolCallSummary[] = toolCalls.filter(
-                (tc: IToolCallSummary): boolean => tc.name !== "think",
-              );
-
-              if (filteredToolCalls.length > 0) {
-                const formatted: string = filteredToolCalls
-                  .map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input))
-                  .join(", ");
-                stepLogs.push(`Step ${stepNumber}: ${formatted}`);
-              }
-
-              await _tryEditMessageTextAsync(
-                bot!.api,
-                this._logger,
-                chatId,
-                progressMsgId!,
-                buildProgressText("⚙️ Working..."),
-                "HTML",
-                "queue-progress-step",
-              );
-            }
+          ? createProgressOnStep(progressMsgId, bot!.api, chatId, this._logger, stepLogs, buildProgressText, "queue-progress-step")
           : undefined;
 
       await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");

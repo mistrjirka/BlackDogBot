@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 
-import type { ISkill, ISkillMissingDeps, ISkillStateInfo } from "../shared/types/index.js";
+import type { ISkill, ISkillMissingDeps, ISkillStateInfo, SkillState } from "../shared/types/index.js";
 import { skillStateInfoSchema } from "../shared/schemas/index.js";
 import { LoggerService } from "../services/logger.service.js";
 import { getSkillStatePath, ensureDirectoryExistsAsync } from "../utils/paths.js";
@@ -91,6 +91,32 @@ function canonicalizeForFingerprint(value: unknown): unknown {
   return value;
 }
 
+function _buildState(
+  state: SkillState,
+  lastError: string | null,
+  setupAt: string | null,
+  lastCheckedAt: string,
+  missingDeps: ISkillMissingDeps | null,
+  manualStepsRequired: string[],
+  attemptedInstalls: string[],
+  setupFingerprint: string | null,
+  setupAttempts: number,
+  nextSetupAttemptAt: string | null,
+): ISkillStateInfo {
+  return {
+    state,
+    lastError,
+    setupAt,
+    lastCheckedAt,
+    missingDeps,
+    manualStepsRequired,
+    attemptedInstalls,
+    setupFingerprint,
+    setupAttempts,
+    nextSetupAttemptAt,
+  };
+}
+
 export function getSkillSetupFingerprint(skill: ISkill): string {
   const openclaw = skill.frontmatter.metadata.openclaw;
   return crypto.createHash("sha256").update(JSON.stringify(canonicalizeForFingerprint(openclaw))).digest("hex");
@@ -99,18 +125,7 @@ export function getSkillSetupFingerprint(skill: ISkill): string {
 export async function markSkillSetupCompleteAsync(skillName: string, fingerprint: string | null = null, stateScope: string | null = null): Promise<void> {
   const now: string = new Date().toISOString();
   const logger: LoggerService = LoggerService.getInstance();
-  const state: ISkillStateInfo = {
-    state: "ready",
-    lastError: null,
-    setupAt: now,
-    lastCheckedAt: now,
-    missingDeps: null,
-    manualStepsRequired: [],
-    attemptedInstalls: [],
-    setupFingerprint: fingerprint,
-    setupAttempts: 0,
-    nextSetupAttemptAt: null,
-  };
+  const state: ISkillStateInfo = _buildState("ready", null, now, now, null, [], [], fingerprint, 0, null);
 
   await saveSkillStateAsync(skillName, state, stateScope);
 
@@ -127,18 +142,11 @@ export async function markSkillSetupErrorAsync(skillName: string, error: string,
     MAX_AUTO_SETUP_ATTEMPTS,
     fingerprintChanged ? 1 : Math.max(1, currentState.setupAttempts),
   );
-  const state: ISkillStateInfo = {
-    state: "setup-failed",
-    lastError: safeError,
-    setupAt: null,
-    lastCheckedAt: now,
-    missingDeps: currentState.missingDeps,
-    manualStepsRequired: currentState.manualStepsRequired,
-    attemptedInstalls: currentState.attemptedInstalls,
-    setupFingerprint: fingerprint ?? currentState.setupFingerprint,
-    setupAttempts,
-    nextSetupAttemptAt: setupAttempts >= MAX_AUTO_SETUP_ATTEMPTS ? null : new Date(Date.now() + getSetupBackoffMs(setupAttempts)).toISOString(),
-  };
+  const state: ISkillStateInfo = _buildState(
+    "setup-failed", safeError, null, now, currentState.missingDeps, currentState.manualStepsRequired,
+    currentState.attemptedInstalls, fingerprint ?? currentState.setupFingerprint, setupAttempts,
+    setupAttempts >= MAX_AUTO_SETUP_ATTEMPTS ? null : new Date(Date.now() + getSetupBackoffMs(setupAttempts)).toISOString(),
+  );
 
   await saveSkillStateAsync(skillName, state, stateScope);
 
@@ -154,18 +162,10 @@ export async function markSkillSetupInProgressAsync(skillName: string, fingerpri
     MAX_AUTO_SETUP_ATTEMPTS,
     fingerprintChanged ? 1 : Math.max(1, currentState.setupAttempts + 1),
   );
-  const state: ISkillStateInfo = {
-    state: "setup-in-progress",
-    lastError: null,
-    setupAt: null,
-    lastCheckedAt: now,
-    missingDeps: currentState.missingDeps,
-    manualStepsRequired: currentState.manualStepsRequired,
-    attemptedInstalls: currentState.attemptedInstalls,
-    setupFingerprint: fingerprint ?? currentState.setupFingerprint,
-    setupAttempts,
-    nextSetupAttemptAt: null,
-  };
+  const state: ISkillStateInfo = _buildState(
+    "setup-in-progress", null, null, now, currentState.missingDeps, currentState.manualStepsRequired,
+    currentState.attemptedInstalls, fingerprint ?? currentState.setupFingerprint, setupAttempts, null,
+  );
 
   await saveSkillStateAsync(skillName, state, stateScope);
 
@@ -191,18 +191,10 @@ export async function markSkillNeedsSetupAsync(
   const nextSetupAttemptAt: string | null = needsSetup && setupAttempts > 0 && setupAttempts < MAX_AUTO_SETUP_ATTEMPTS
     ? new Date(Date.now() + getSetupBackoffMs(setupAttempts)).toISOString()
     : null;
-  const state: ISkillStateInfo = {
-    state: needsSetup ? "needs-setup" : "missing-deps",
-    lastError: null,
-    setupAt: null,
-    lastCheckedAt: now,
-    missingDeps,
-    manualStepsRequired: manualSteps,
-    attemptedInstalls: [],
-    setupFingerprint: fingerprint ?? currentState.setupFingerprint,
-    setupAttempts,
-    nextSetupAttemptAt,
-  };
+  const state: ISkillStateInfo = _buildState(
+    needsSetup ? "needs-setup" : "missing-deps", null, null, now, missingDeps, manualSteps, [],
+    fingerprint ?? currentState.setupFingerprint, setupAttempts, nextSetupAttemptAt,
+  );
 
   await saveSkillStateAsync(skillName, state, stateScope);
 

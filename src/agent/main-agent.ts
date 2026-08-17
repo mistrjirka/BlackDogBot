@@ -318,26 +318,7 @@ export class MainAgent extends BaseAgentBase {
       }
     };
 
-    this._buildAgent(
-      model,
-      instructions,
-      filteredTools,
-      combinedOnStepAsync,
-      undefined,
-      undefined,
-      (): Promise<void> | null => {
-        if (session.paused) {
-          return new Promise<void>((resolve: () => void): void => {
-            session.resumeResolve = resolve;
-          });
-        }
-        return null;
-      },
-      (): string | null => null,
-      (): AbortSignal | null => session.abortController?.signal ?? null,
-      undefined,
-      this._createDuplicateToolLoopCallback(chatId),
-    );
+    this._buildAgentForChat(chatId, model, instructions, filteredTools, combinedOnStepAsync);
 
     this._logger.debug("MainAgent _buildAgent completed", {
       chatId,
@@ -405,6 +386,36 @@ export class MainAgent extends BaseAgentBase {
     });
 
     this._logger.info("MainAgent initialized for chat.", { chatId, permission });
+  }
+
+  private _buildAgentForChat(
+    chatId: string,
+    model: LanguageModel,
+    instructions: string,
+    tools: ToolSet,
+    combinedOnStepAsync: OnStepCallback,
+  ): void {
+    const session: IChatSession = this._sessions.get(chatId)!;
+    this._buildAgent(
+      model,
+      instructions,
+      tools,
+      combinedOnStepAsync,
+      undefined,
+      undefined,
+      (): Promise<void> | null => {
+        if (session.paused) {
+          return new Promise<void>((resolve: () => void): void => {
+            session.resumeResolve = resolve;
+          });
+        }
+        return null;
+      },
+      (): string | null => null,
+      (): AbortSignal | null => session.abortController?.signal ?? null,
+      undefined,
+      this._createDuplicateToolLoopCallback(chatId),
+    );
   }
 
   /**

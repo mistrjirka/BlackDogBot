@@ -1,3 +1,4 @@
+import { sleepAsync } from "../utils/sleep.js";
 import { type LanguageModel, type ModelMessage } from "ai";
 
 import { AGENT_EMPTY_RESPONSE_RETRIES, CONTEXT_EXCEEDED_RETRIES } from "./base-agent.js";
@@ -270,9 +271,7 @@ export class RetryOrchestrator {
           });
 
           if (retryDelayMs > 0) {
-            await new Promise<void>((resolve: () => void): void => {
-              setTimeout(resolve, retryDelayMs);
-            });
+            await sleepAsync(retryDelayMs);
           }
 
 
