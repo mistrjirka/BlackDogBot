@@ -1,20 +1,15 @@
 import { tool } from "ai";
-import { z } from "zod";
 import { editInstructionsToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
 import { filterInvalidTools } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
-import { SkillLoaderService } from "../services/skill-loader.service.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { formatScheduledTask } from "../utils/cron-format.js";
-import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
 import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/per-table-tools.js";
-import { buildCronTaskVerifierPrompt } from "../utils/cron-task-verifier.js";
 import type { IScheduledTask } from "../shared/types/index.js";
+import { verifyCronInstructionsAsync } from "./cron-task-helper.js";
 
 //#region Interfaces
 
@@ -115,8 +110,6 @@ const executeEditInstructions = async (
     ];
     const expandedToolsToVerify: string[] = [...new Set([...toolsToVerify, ...allDynamicTableTools])];
 
-   const toolContextBlock: string = await buildCronToolContextBlockAsync(expandedToolsToVerify);
-
     const lowerInstructions: string = normalizedInstructions.toLowerCase();
     const mentionsRunCmd: boolean = lowerInstructions.includes("run_cmd");
     const mentionsSqlite: boolean = lowerInstructions.includes("sqlite") || lowerInstructions.includes("sqlite3");
@@ -132,40 +125,26 @@ const executeEditInstructions = async (
       };
     }
 
-    const verifierPrompt: string = buildCronTaskVerifierPrompt({
+    const verificationResult = await verifyCronInstructionsAsync({
       instructions: normalizedInstructions,
-      toolContextBlock,
+      tools: expandedToolsToVerify,
       taskType: "edit",
       existingTask,
       proposedTools: toolsToVerify,
       intention: normalizedIntention,
-      availableSkills: SkillLoaderService.getInstance().getAvailableSkills().map((skill) => skill.name),
     });
 
-    const aiService: AiProviderService = AiProviderService.getInstance();
-    const model = aiService.getModel();
-
-    const verificationResult = await generateObjectWithRetryAsync({
-      model,
-      schema: z.object({
-        isClear: z.boolean(),
-        missingContext: z.string(),
-      }),
-      prompt: verifierPrompt,
-      retryOptions: { callType: "schema_extraction" },
-    });
-
-    if (!verificationResult.object.isClear) {
+    if (!verificationResult.isClear) {
       const errorMsg =
         `EDIT REJECTED. The updated instructions were not approved by the verifier.\n\n` +
-        `Verifier reason: ${verificationResult.object.missingContext}\n\n` +
+        `Verifier reason: ${verificationResult.missingContext}\n\n` +
         `Current instructions:\n${existingTask.instructions}\n\n` +
         `Proposed instructions:\n${normalizedInstructions}\n\n` +
         `Intention: ${normalizedIntention}`;
 
       logger.warn(`[${TOOL_NAME}] Edit rejected`, {
         taskId,
-        reason: verificationResult.object.missingContext,
+        reason: verificationResult.missingContext,
       });
 
       return { success: false, error: errorMsg };

@@ -1,17 +1,11 @@
 import { tool } from "ai";
-import { z } from "zod";
 import { addIntervalToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
 import { filterInvalidTools } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
+import { buildTaskRecord, verifyCronInstructionsAsync } from "./cron-task-helper.js";
 import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
-import { AiProviderService } from "../services/ai-provider.service.js";
-import { SkillLoaderService } from "../services/skill-loader.service.js";
-import { generateId } from "../utils/id.js";
-import { generateObjectWithRetryAsync } from "../utils/llm-retry.js";
 import { extractErrorMessage } from "../utils/error.js";
-import { buildCronToolContextBlockAsync } from "../utils/cron-tool-context.js";
-import { buildCronTaskVerifierPrompt } from "../utils/cron-task-verifier.js";
 import { normalizeTimeParts } from "../utils/cron-format.js";
 import { resolveTimezone } from "../utils/time.js";
 import type { IScheduledTask, Schedule } from "../shared/types/index.js";
@@ -98,30 +92,14 @@ export const addIntervalTool = tool({
 
       logger.debug(`[${TOOL_NAME}] Verifying instructions for: ${name}`);
 
-     const toolContextBlock: string = await buildCronToolContextBlockAsync(tools);
-
-      const verifierPrompt: string = buildCronTaskVerifierPrompt({
+      const verificationResult = await verifyCronInstructionsAsync({
         instructions,
-        toolContextBlock,
+        tools,
         taskType: "interval",
-        availableSkills: SkillLoaderService.getInstance().getAvailableSkills().map((skill) => skill.name),
       });
 
-      const aiService = AiProviderService.getInstance();
-      const model = aiService.getModel();
-
-      const verificationResult = await generateObjectWithRetryAsync({
-        model,
-        schema: z.object({
-          isClear: z.boolean(),
-          missingContext: z.string(),
-        }),
-        prompt: verifierPrompt,
-        retryOptions: { callType: "schema_extraction" },
-      });
-
-      if (!verificationResult.object.isClear) {
-        const errorMsg = `REJECTED. ${verificationResult.object.missingContext} → Solution: Embed the missing information directly into the \`instructions\` parameter. Scheduled agents have no access to external files unless you add explicit \`read_file\` steps.`;
+      if (!verificationResult.isClear) {
+        const errorMsg = `REJECTED. ${verificationResult.missingContext} → Solution: Embed the missing information directly into the \`instructions\` parameter. Scheduled agents have no access to external files unless you add explicit \`read_file\` steps.`;
         logger.warn(`[${TOOL_NAME}] Task rejected: ${errorMsg}`);
         return { taskId: "", success: false, error: errorMsg };
       }
@@ -129,8 +107,6 @@ export const addIntervalTool = tool({
       const effectiveOffsetFromDayStart: { hours: number; minutes: number } =
         normalizeTimeParts(offsetFromDayStart);
 
-      const taskId: string = generateId();
-      const now: string = new Date().toISOString();
       const requestedTimezone: string = timezone ?? ConfigService.getInstance().getConfig().scheduler.timezone ?? "UTC";
       const effectiveTimezone: string = resolveTimezone(requestedTimezone);
       const builtSchedule: Schedule = _buildSchedule(
@@ -139,25 +115,16 @@ export const addIntervalTool = tool({
         effectiveTimezone,
       );
 
-      const task: IScheduledTask = {
-        taskId,
+      const task: IScheduledTask = buildTaskRecord({
         name,
         description,
         instructions,
         tools,
         schedule: builtSchedule,
         notifyUser,
-        enabled: true,
-        createdAt: now,
-        updatedAt: now,
-        lastRunAt: null,
-        lastRunStatus: null,
-        lastRunError: null,
-        messageHistory: [],
-        messageSummary: null,
-        summaryGeneratedAt: null,
-        messageDedupEnabled: messageDedupEnabled ?? true,
-      };
+        messageDedupEnabled,
+      });
+      const taskId: string = task.taskId;
 
       await SchedulerService.getInstance().addTaskAsync(task);
 
