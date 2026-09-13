@@ -9,6 +9,15 @@ import type { ModelMessage } from "ai";
  */
 const DUPLICATE_CONSECUTIVE_STEPS: number = 3;
 
+/**
+ * Tool calls that are idempotent status polls or reads. Repeating them with
+ * identical arguments is a designed pattern (e.g. polling get_cmd_status /
+ * wait_for_cmd for a long-running command), not a stuck loop — steps made up
+ * exclusively of these calls are exempt from duplicate-loop detection.
+ */
+const LOOP_EXEMPT_TOOL_PREFIXES: string[] = ["get_", "list_"];
+const LOOP_EXEMPT_TOOLS: ReadonlySet<string> = new Set(["wait_for_cmd"]);
+
 //#endregion Constants
 
 //#region Public functions
@@ -64,6 +73,18 @@ export function getDuplicateToolCallLoopInfo(
   );
 
   if (steps.length < DUPLICATE_CONSECUTIVE_STEPS) {
+    return {
+      isLoopDetected: false,
+      canonicalSignature: "",
+      duplicateCount: 0,
+      summaryString: "",
+    };
+  }
+
+  // Idempotent poll/read steps (get_*/list_*/wait_for_cmd) are exempt: a loop
+  // requires identical steps, so if the oldest candidate step is exempt, all
+  // identical ones are as well.
+  if (_isLoopExemptStep(steps[0].signatures)) {
     return {
       isLoopDetected: false,
       canonicalSignature: "",
@@ -156,6 +177,22 @@ function _lastAssistantStepIsThink(messages: ModelMessage[]): boolean {
   }
 
   return false;
+}
+
+/**
+ * Checks whether a tool-call step consists exclusively of idempotent poll/read
+ * calls (tools named get_* or list_*, plus wait_for_cmd) that are safe to
+ * repeat with identical arguments by design.
+ */
+function _isLoopExemptStep(signatures: IToolCallSignature[]): boolean {
+  if (signatures.length === 0) {
+    return false;
+  }
+
+  return signatures.every((signature: IToolCallSignature): boolean =>
+    LOOP_EXEMPT_TOOL_PREFIXES.some((prefix: string): boolean => signature.toolName.startsWith(prefix)) ||
+    LOOP_EXEMPT_TOOLS.has(signature.toolName),
+  );
 }
 
 /**

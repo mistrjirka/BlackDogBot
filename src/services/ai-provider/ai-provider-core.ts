@@ -78,6 +78,11 @@ const VISION_PROBE_TIMEOUT_MS: number = CAPABILITY_PROBE_TIMEOUT_MS;
 const TOOL_CALLING_PROBE_TIMEOUT_MS: number = CAPABILITY_PROBE_TIMEOUT_MS;
 const VISION_PROBE_MAX_TOKENS: number = 128;
 const CAPABILITY_CACHE_FILE_NAME: string = "capabilities.json";
+// Bump when the probe contract changes so stale cached results are ignored and
+// re-probed (v2: the structured-output probe mirrors the production request by
+// injecting reasoning_format where supported — pre-v2 "native_json_schema"
+// positives can be false).
+const CAPABILITY_CACHE_KEY_VERSION: string = "v2";
 const tinyProbePngBase64: string = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAJ0lEQVR4nO3NMQ0AAAwDoPpXWSlVsWMJGCA9FoFAIBAIBAKBQPAlGMclgJeVJrNbAAAAAElFTkSuQmCC";
 
 export const STRUCTURED_OUTPUT_STRATEGY_AUTO: StructuredOutputMode = "auto";
@@ -2407,7 +2412,17 @@ export class AiProviderCore {
       const content: string = await fs.readFile(cachePath, "utf-8");
       const parsed: unknown = JSON.parse(content);
       if (parsed && typeof parsed === "object") {
-        return parsed as ICapabilityCache;
+        // Drop entries written under older key versions — their probe contract
+        // differs, so the cached results are stale (e.g. pre-v2 false
+        // positives). The next probe re-writes them under the current version.
+        const entries: Record<string, ICapabilityCacheEntry> = parsed as Record<string, ICapabilityCacheEntry>;
+        const cache: ICapabilityCache = {};
+        for (const [key, value] of Object.entries(entries)) {
+          if (key.startsWith(`${CAPABILITY_CACHE_KEY_VERSION}:`)) {
+            cache[key] = value;
+          }
+        }
+        return cache;
       }
       return {};
     } catch (e: unknown) {
@@ -2421,17 +2436,17 @@ export class AiProviderCore {
 
   protected _getCapabilityCacheKey(defaultModelId: string): string {
     if (!this._aiConfig) {
-      return `unknown:${defaultModelId}`;
+      return `${CAPABILITY_CACHE_KEY_VERSION}:unknown:${defaultModelId}`;
     }
 
     const providerKey: AiProvider = this._aiConfig.provider;
     if (this._isOpenAiCompatible(providerKey) || this._isLmStudio(providerKey)) {
       const config: IOpenAiCompatibleConfig | ILmStudioConfig = this._getActiveProviderConfig() as IOpenAiCompatibleConfig | ILmStudioConfig;
       const baseUrl: string = normalizeBaseUrl(this._getLocalBaseUrl(config));
-      return `${providerKey}:${defaultModelId}:${baseUrl}`;
+      return `${CAPABILITY_CACHE_KEY_VERSION}:${providerKey}:${defaultModelId}:${baseUrl}`;
     }
 
-    return `${providerKey}:${defaultModelId}`;
+    return `${CAPABILITY_CACHE_KEY_VERSION}:${providerKey}:${defaultModelId}`;
   }
 
   protected _resolveBestProbeCandidate(message: { content?: string; reasoning_content?: string } | undefined): string {

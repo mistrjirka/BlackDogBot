@@ -164,6 +164,64 @@ describe("prepare-step duplicate tool-call detection", () => {
     expect(getDuplicateToolCallLoopInfo(2, messages).isLoopDetected).toBe(false);
   });
 
+  it("should not detect duplicate loop for repeated idempotent get_* polls", () => {
+    const messages: ModelMessage[] = [
+      _assistantToolCallMessage("get_cmd_status", { handleId: "cmd-1" }),
+      _assistantToolCallMessage("get_cmd_status", { handleId: "cmd-1" }),
+      _assistantToolCallMessage("get_cmd_status", { handleId: "cmd-1" }),
+    ];
+
+    expect(getDuplicateToolCallLoopInfo(2, messages).isLoopDetected).toBe(false);
+  });
+
+  it("should not detect duplicate loop for repeated wait_for_cmd calls", () => {
+    const messages: ModelMessage[] = [
+      _assistantToolCallMessage("wait_for_cmd", { handleId: "cmd-1", timeoutMs: 5000 }),
+      _assistantToolCallMessage("wait_for_cmd", { handleId: "cmd-1", timeoutMs: 5000 }),
+      _assistantToolCallMessage("wait_for_cmd", { handleId: "cmd-1", timeoutMs: 5000 }),
+    ];
+
+    expect(getDuplicateToolCallLoopInfo(2, messages).isLoopDetected).toBe(false);
+  });
+
+  it("should not detect duplicate loop for repeated list_* calls", () => {
+    const messages: ModelMessage[] = [
+      _assistantToolCallMessage("list_tables", {}),
+      _assistantToolCallMessage("list_tables", {}),
+      _assistantToolCallMessage("list_tables", {}),
+    ];
+
+    expect(getDuplicateToolCallLoopInfo(2, messages).isLoopDetected).toBe(false);
+  });
+
+  it("should still detect duplicate loop when an exempt poll is mixed with a mutating call", () => {
+    const messages: ModelMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolName: "get_cmd_status", toolCallId: "call_1", args: { handleId: "cmd-1" } },
+          { type: "tool-call", toolName: "write_table_items", toolCallId: "call_2", args: { tableName: "items", data: [{ id: 1 }] } },
+        ],
+      } as unknown as ModelMessage,
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolName: "write_table_items", toolCallId: "call_2", args: { tableName: "items", data: [{ id: 1 }] } },
+          { type: "tool-call", toolName: "get_cmd_status", toolCallId: "call_1", args: { handleId: "cmd-1" } },
+        ],
+      } as unknown as ModelMessage,
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolName: "get_cmd_status", toolCallId: "call_1", args: { handleId: "cmd-1" } },
+          { type: "tool-call", toolName: "write_table_items", toolCallId: "call_2", args: { tableName: "items", data: [{ id: 1 }] } },
+        ],
+      } as unknown as ModelMessage,
+    ];
+
+    expect(getDuplicateToolCallLoopInfo(2, messages).isLoopDetected).toBe(true);
+  });
+
   it("should return loop info with signature and duplicate summary", () => {
     const messages: ModelMessage[] = [
       _assistantToolCallMessage("edit_interval", {

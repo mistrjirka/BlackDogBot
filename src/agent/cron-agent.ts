@@ -11,7 +11,6 @@ import { AiProviderService } from "../services/ai-provider.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { getCurrentTimeContext } from "../utils/time.js";
 import {
-  thinkTracker,
   createSendMessageToolWithHistory,
   createGetPreviousMessageTool,
   loadSkillTool,
@@ -95,9 +94,6 @@ export class CronAgent extends BaseAgentBase {
     executionContext.taskName = task.name;
     executionContext.taskDescription = task.description;
     executionContext.taskInstructions = task.instructions;
-
-    // Reset think operation tracker at the start of each task
-    thinkTracker.reset();
 
     // Reset stale compaction flag from any previous task execution.
     // CronAgent is a singleton — without this reset, a context-exceeded error
