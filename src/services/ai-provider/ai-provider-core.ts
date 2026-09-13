@@ -31,6 +31,11 @@ import {
 } from "../model-profile.service.js";
 import { countRequestBodyTokens, type IRequestTokenBreakdown } from "../../utils/request-token-counter.js";
 import { extractErrorMessage } from "../../utils/error.js";
+import {
+  appendLlmTraceRecordAsync,
+  resolveLlmTraceFilePath,
+  LLM_TRACE_MAX_RESPONSE_CHARS,
+} from "./llm-trace.js";
 import { getCurrentLlmCallType } from "../../utils/llm-call-context.js";
 import { runToolCallingProbeAsync } from "../../utils/llm-probe-helpers.js";
 import { createHash } from "node:crypto";
@@ -1785,7 +1790,16 @@ export class AiProviderCore {
       } else {
         response = await fetch(url, init);
       }
-      
+
+      // Optional LLM request/response trace (BLACKDOG_LOG_LLM). Fire-and-forget:
+      // diagnostics must never delay or fail the request.
+      void this._appendLlmTraceAsync(
+        providerName,
+        typeof url === "string" ? url : url.toString(),
+        init,
+        response,
+      );
+
       // Log response status for debugging
       logger.info("Received response from provider", {
         provider: providerName,
@@ -1880,6 +1894,14 @@ export class AiProviderCore {
             });
 
             response = await fetch(url, init);
+            // Trace the retry as its own HTTP request (the failed attempt
+            // above was already traced), so self-healed requests show both.
+            void this._appendLlmTraceAsync(
+              providerName,
+              typeof url === "string" ? url : url.toString(),
+              init,
+              response,
+            );
             if (response.ok) {
               return response;
             }
@@ -2463,6 +2485,68 @@ export class AiProviderCore {
       return ConfigService.getInstance().getLoggingConfig().llmResponseDiagnostics === true;
     } catch (e: unknown) {
       return false;
+    }
+  }
+
+  /**
+   * Appends one JSONL request/response record when BLACKDOG_LOG_LLM is set.
+   * Streaming requests are skipped — reading the response body would buffer
+   * the entire SSE stream. Never throws: a failed trace write must not break
+   * the request path.
+   */
+  protected async _appendLlmTraceAsync(
+    providerName: string,
+    requestUrl: string,
+    init: RequestInit | undefined,
+    response: Response,
+  ): Promise<void> {
+    if (resolveLlmTraceFilePath() === null) {
+      return;
+    }
+
+    try {
+      let requestBody: unknown = null;
+      let isStreaming: boolean = false;
+      if (typeof init?.body === "string") {
+        try {
+          const parsed: unknown = JSON.parse(init.body);
+          requestBody = parsed;
+          isStreaming = typeof parsed === "object" && parsed !== null &&
+            (parsed as Record<string, unknown>).stream === true;
+        } catch {
+          requestBody = init.body.slice(0, 300);
+        }
+      }
+
+      if (isStreaming) {
+        return;
+      }
+
+      let responseText: string | null = null;
+      let responseTruncated: boolean = false;
+      try {
+        const raw: string = await response.clone().text();
+        responseTruncated = raw.length > LLM_TRACE_MAX_RESPONSE_CHARS;
+        responseText = responseTruncated ? raw.slice(0, LLM_TRACE_MAX_RESPONSE_CHARS) : raw;
+      } catch {
+        responseText = null;
+      }
+
+      await appendLlmTraceRecordAsync({
+        ts: new Date().toISOString(),
+        provider: providerName,
+        url: requestUrl,
+        method: init?.method ?? "GET",
+        status: response.status,
+        requestBody,
+        response: responseText,
+        responseTruncated,
+      });
+    } catch (error: unknown) {
+      LoggerService.getInstance().warn("LLM trace append failed", {
+        provider: providerName,
+        error: extractErrorMessage(error),
+      });
     }
   }
 
