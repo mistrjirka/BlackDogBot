@@ -21,21 +21,15 @@ import {
   createTableTool,
   FileReadTracker,
 } from "../tools/index.js";
-import { createAgentBaseToolSet } from "./tool-assembly.js";
+import { createAgentBaseToolSet, wrapCreateTableTool } from "./tool-assembly.js";
+import type { ICreateTableRebuildInfo } from "../shared/types/tool-rebuild.types.js";
 import type { MessageSender, TaskIdProvider } from "../tools/index.js";
 import { StatusService } from "../services/status.service.js";
 import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/per-table-tools.js";
 import { redactSensitiveData } from "../utils/log-redaction.js";
 import { attachDelegateAgentTool } from "./delegate-agent.js";
 
-//#region Interfaces
 
-interface ICronRebuildInfo {
-  toolName: string;
-  tableName: string;
-}
-
-//#endregion Interfaces
 
 export class CronAgent extends BaseAgentBase {
   //#region Data members
@@ -122,7 +116,7 @@ export class CronAgent extends BaseAgentBase {
     const appendCurrentTimeContext = (instruction: string): string =>
       `${instruction}\n\n${getCurrentTimeContext(config.scheduler?.timezone)}`;
 
-    let pendingRebuild: ICronRebuildInfo | null = null;
+    let pendingRebuild: ICreateTableRebuildInfo | null = null;
     let rebuildCount: number = 0;
     const maxRebuildRestarts: number = 2;
 
@@ -131,7 +125,7 @@ export class CronAgent extends BaseAgentBase {
       messageSender,
       taskIdProvider,
       executionContext,
-      (info: ICronRebuildInfo): void => {
+      (info: ICreateTableRebuildInfo): void => {
         pendingRebuild = info;
       },
     );
@@ -234,7 +228,7 @@ export class CronAgent extends BaseAgentBase {
       const result: IAgentResult = await this.processMessageAsync(currentInstruction);
 
       if (pendingRebuild !== null && rebuildCount < maxRebuildRestarts) {
-        const info: ICronRebuildInfo = pendingRebuild;
+        const info: ICreateTableRebuildInfo = pendingRebuild;
         pendingRebuild = null;
         rebuildCount++;
 
@@ -267,7 +261,7 @@ export class CronAgent extends BaseAgentBase {
         continue;
       }
 
-      const pendingToolName: string | undefined = (pendingRebuild as ICronRebuildInfo | null)?.toolName;
+      const pendingToolName: string | undefined = (pendingRebuild as ICreateTableRebuildInfo | null)?.toolName;
       if (pendingToolName && rebuildCount >= maxRebuildRestarts) {
         this._logger.warn("Cron tool rebuild restart budget exhausted", {
           taskId: task.taskId,
@@ -291,7 +285,7 @@ export class CronAgent extends BaseAgentBase {
     messageSender: MessageSender,
     taskIdProvider: TaskIdProvider,
     executionContext: IExecutionContext,
-    onCreateTableRebuild?: (info: ICronRebuildInfo) => void,
+    onCreateTableRebuild?: (info: ICreateTableRebuildInfo) => void,
   ): Promise<ToolSet> {
     const readTracker: FileReadTracker = new FileReadTracker();
     const supportsVision: boolean = AiProviderService.getInstance().getSupportsVision();
@@ -300,7 +294,7 @@ export class CronAgent extends BaseAgentBase {
       ...createAgentBaseToolSet(messageSender, readTracker),
       send_message: createSendMessageToolWithHistory(messageSender, taskIdProvider, executionContext),
       get_previous_message: createGetPreviousMessageTool(executionContext),
-      create_table: _wrapCronCreateTableTool(createTableTool, onCreateTableRebuild),
+      create_table: wrapCreateTableTool(createTableTool, onCreateTableRebuild),
     };
 
     if (supportsVision) {
@@ -363,37 +357,4 @@ export class CronAgent extends BaseAgentBase {
   }
 
   //#endregion Private methods
-}
-
-function _wrapCronCreateTableTool(
-  originalTool: Tool,
-  onCreateTableRebuild?: (info: ICronRebuildInfo) => void,
-): Tool {
-  const originalExecute = originalTool.execute;
-
-  if (!originalExecute) {
-    return originalTool;
-  }
-
-  return {
-    ...originalTool,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK execute callback options are untyped; tool input schema is the source of truth
-    execute: async (input: unknown, options: any): Promise<unknown> => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK execute callback result is untyped; tool output schema is the source of truth
-      const result: any = await originalExecute(input, options);
-
-      if (result?.success === true && onCreateTableRebuild) {
-        const tableName: string = typeof input === "object" && input !== null
-          ? String((input as Record<string, unknown>).tableName ?? (input as Record<string, unknown>).name ?? "unknown")
-          : "unknown";
-
-        onCreateTableRebuild({
-          toolName: `write_table_${tableName}`,
-          tableName,
-        });
-      }
-
-      return result;
-    },
-  };
 }

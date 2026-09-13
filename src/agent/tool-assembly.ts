@@ -1,6 +1,7 @@
-import type { ToolSet } from "ai";
+import type { Tool, ToolSet } from "ai";
 import {
   thinkTool,
+  createTableTool,
   runCmdTool,
   runCmdInputTool,
   getCmdStatusTool,
@@ -49,6 +50,7 @@ import type { AiProviderService } from "../services/ai-provider.service.js";
 import { attachDelegateAgentTool } from "./delegate-agent.js";
 import type { IFileReadTracker } from "../utils/file-tools-helper.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
+import type { ICreateTableRebuildInfo } from "../shared/types/tool-rebuild.types.js";
 
 export async function assembleToolsForChat(
   chatId: string,
@@ -57,6 +59,7 @@ export async function assembleToolsForChat(
   aiProviderService?: AiProviderService,
   mcpService?: McpService,
   platform: MessagePlatform = "telegram",
+  onCreateTableAsync?: (info: ICreateTableRebuildInfo) => void | Promise<void>,
 ): Promise<ToolSet> {
   const tools = createBaseToolSet(messageSender, readTracker);
 
@@ -86,6 +89,12 @@ export async function assembleToolsForChat(
     tools[toolName] = toolDef;
   }
 
+  // create_table in chat: the prompt directs the agent to create tables in the
+  // conversation ("do table setup in this conversation"). The wrapper triggers
+  // the post-create rebuild so write_table_<name>/update_table_<name> become
+  // available without waiting for a re-init.
+  tools.create_table = wrapCreateTableTool(createTableTool, onCreateTableAsync);
+
   const filteredTools: ToolSet = filterToolsByPermission(tools, { platform, chatId });
   if (aiProviderService && ChannelRegistryService.getInstance().getPermission(platform, chatId) !== "ignore") {
     attachDelegateAgentTool(filteredTools, aiProviderService.getModel());
@@ -96,8 +105,9 @@ export async function assembleToolsForChat(
 /**
  * Base tool set shared by the chat agent (MainAgent) and the cron agent.
  * Chat-only tools (task management, plain send_message, prompt tools) and
- * cron-only tools (send_message with history, get_previous_message,
- * create_table) are added by the respective callers.
+ * cron-only tools (send_message with history, get_previous_message) are added
+ * by the respective callers; create_table is added by both callers with a
+ * post-create rebuild hook.
  */
 export function createAgentBaseToolSet(
   messageSender: MessageSender,
@@ -138,7 +148,7 @@ export function createAgentBaseToolSet(
   };
 }
 
-function createBaseToolSet(messageSender: MessageSender, readTracker: FileReadTracker): ToolSet {
+export function createBaseToolSet(messageSender: MessageSender, readTracker: FileReadTracker): ToolSet {
   const knowledgeToolFactory = createKnowledgeToolFactory({
     knowledgeService: knowledge,
     messageService: {
@@ -164,6 +174,45 @@ function createBaseToolSet(messageSender: MessageSender, readTracker: FileReadTr
   tools.edit_instructions = editInstructionsTool;
 
   return tools;
+}
+
+/**
+ * Wraps the create_table tool so that a successful create triggers a
+ * post-create rebuild hook (per-table write/update tools). Shared by the chat
+ * and cron agents; the hook may be async (the chat path awaits it so the
+ * agent is rebuilt before the run loop restarts generate()).
+ */
+export function wrapCreateTableTool(
+  originalTool: Tool,
+  onCreateTableAsync?: (info: ICreateTableRebuildInfo) => void | Promise<void>,
+): Tool {
+  const originalExecute = originalTool.execute;
+
+  if (!originalExecute) {
+    return originalTool;
+  }
+
+  return {
+    ...originalTool,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK execute callback options are untyped; tool input schema is the source of truth
+    execute: async (input: unknown, options: any): Promise<unknown> => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK execute callback result is untyped; tool output schema is the source of truth
+      const result: any = await originalExecute(input, options);
+
+      if (result?.success === true && onCreateTableAsync) {
+        const tableName: string = typeof input === "object" && input !== null
+          ? String((input as Record<string, unknown>).tableName ?? "unknown")
+          : "unknown";
+
+        await onCreateTableAsync({
+          toolName: `write_table_${tableName}`,
+          tableName,
+        });
+      }
+
+      return result;
+    },
+  };
 }
 
 function filterToolsByPermission(

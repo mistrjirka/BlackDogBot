@@ -2,6 +2,7 @@
 import { ToolSet, LanguageModel, type ModelMessage } from "ai";
 
 import { assembleToolsForChat } from "./tool-assembly.js";
+import type { ICreateTableRebuildInfo } from "../shared/types/tool-rebuild.types.js";
 import { attachDelegateAgentTool } from "./delegate-agent.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
@@ -65,7 +66,7 @@ export interface IChatSession {
   paused: boolean;
   resumeResolve: (() => void) | null;
   abortController: AbortController | null;
-  pendingToolRebuild: { toolName: string; tableName: string } | null;
+  pendingToolRebuild: ICreateTableRebuildInfo | null;
   toolRebuildCount: number;
   terminateCurrentRun: boolean;
   steeringQueue: string[];
@@ -228,6 +229,15 @@ export class MainAgent extends BaseAgentBase {
       AiProviderService.getInstance(),
       McpService.getInstance(),
       platform,
+      async (info: ICreateTableRebuildInfo): Promise<void> => {
+        // Flag the outer run loop to restart generate() with a synthetic
+        // "new tool available" message, then hot-reload the per-table tools
+        // (write_table_<name> + update_table_<name>) into the agent.
+        // Awaiting triggerRebuildAsync guarantees the rebuilt agent is in
+        // place before the run loop restarts generate().
+        session.pendingToolRebuild = info;
+        await ToolHotReloadService.getInstance().triggerRebuildAsync(chatId);
+      },
     );
 
     // Capture permission and skill names for hot-reload callback scope
@@ -500,6 +510,10 @@ export class MainAgent extends BaseAgentBase {
     }
 
     let currentUserMessage: string = userMessage;
+    // Set when the loop restarts after a tool rebuild: the synthetic restart
+    // message must not re-attach the user's image attachments (they were
+    // already delivered in the first iteration).
+    let isRebuildRestart: boolean = false;
     let finalResult: IAgentResult = { text: "Unexpected error.", stepsCount: 0 };
     let compactionModel: LanguageModel = aiProviderService.getModel();
     const config = ConfigService.getInstance().getConfig();
@@ -508,7 +522,7 @@ export class MainAgent extends BaseAgentBase {
     // Outer loop: restarts generate() when a tool rebuild occurs (e.g., create_table)
     while (true) {
       // Append the user message to session history
-      const resolvedImageAttachments: IChatImageAttachment[] = imageAttachments ?? [];
+      const resolvedImageAttachments: IChatImageAttachment[] = isRebuildRestart ? [] : (imageAttachments ?? []);
       const userContent: Array<
         { type: "text"; text: string } |
         { type: "file"; data: Uint8Array; mediaType: string }
@@ -678,12 +692,15 @@ export class MainAgent extends BaseAgentBase {
         continue;
       }
 
-      // Check if a tool rebuild occurred during this generate() call
+      // Check if a tool rebuild occurred during this generate() call.
+      // Read the flag once before the check (through the accessor — see its
+      // docs): the branch below assigns null and continues, so after the if
+      // this local still holds the value that generate() left behind.
+      const rebuildInfo: ICreateTableRebuildInfo | null = this._readPendingToolRebuild(session);
       if (
-        session.pendingToolRebuild !== null &&
+        rebuildInfo !== null &&
         session.toolRebuildCount < MAX_TOOL_REBUILD_RESTARTS
       ) {
-        const rebuildInfo = session.pendingToolRebuild as { toolName: string; tableName: string };
         session.toolRebuildCount++;
         session.pendingToolRebuild = null;
         session.terminateCurrentRun = false;
@@ -697,13 +714,13 @@ export class MainAgent extends BaseAgentBase {
 
         // Inject synthetic user message about the new tool
         currentUserMessage = `[System] A new tool "${rebuildInfo.toolName}" for the "${rebuildInfo.tableName}" table is now available. Use it to insert data into that table.`;
+        isRebuildRestart = true;
 
         continue; // Restart generate() with fresh agent that has the new tool
       }
 
-      const pendingRebuildInfo = session.pendingToolRebuild;
-      if (session.toolRebuildCount >= MAX_TOOL_REBUILD_RESTARTS && pendingRebuildInfo) {
-        const pendingToolName: string = (pendingRebuildInfo as { toolName: string; tableName: string }).toolName;
+      if (session.toolRebuildCount >= MAX_TOOL_REBUILD_RESTARTS && rebuildInfo !== null) {
+        const pendingToolName: string = rebuildInfo.toolName;
         this._logger.warn("Tool rebuild restart budget exhausted", {
           chatId,
           maxRestarts: MAX_TOOL_REBUILD_RESTARTS,
@@ -763,7 +780,20 @@ export class MainAgent extends BaseAgentBase {
     return true;
   }
 
-private async _runGenerationCycleAsync(
+  /**
+   * Reads the pending tool-rebuild flag through a method call rather than
+   * directly on the property: the flag is set by the create_table callback
+   * during generate() (async, invisible to TS flow analysis), while the
+   * `= null` reset earlier in this method would otherwise narrow
+   * session.pendingToolRebuild to `null` for the rest of the function and
+   * defeat the post-generate check below (a `const` inherits its
+   * initializer's flow type).
+   */
+  private _readPendingToolRebuild(session: IChatSession): ICreateTableRebuildInfo | null {
+    return session.pendingToolRebuild;
+  }
+
+  private async _runGenerationCycleAsync(
     chatId: string,
     session: IChatSession,
     userModelMessage: ModelMessage,

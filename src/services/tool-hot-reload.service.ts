@@ -2,7 +2,7 @@ import { type ToolSet } from "ai";
 import { LoggerService } from "./logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 
-type RebuildCallback = (perTableTools: ToolSet) => void;
+type RebuildCallback = (perTableTools: ToolSet) => void | Promise<void>;
 
 /**
  * Singleton service that allows tools to trigger a hot-reload of the
@@ -82,7 +82,11 @@ export class ToolHotReloadService {
         toolCount: Object.keys(perTableTools).length,
       });
 
-      callback(perTableTools);
+      // Awaited so the agent's tool set is fully rebuilt before
+      // triggerRebuildAsync resolves — callers (e.g. the create_table wrapper)
+      // restart generate() immediately after, and a rejected rebuild must be
+      // reported here rather than as an unhandled promise rejection.
+      await callback(perTableTools);
       return true;
     } catch (err: unknown) {
       this._logger.error("Tool hot-reload failed", {
