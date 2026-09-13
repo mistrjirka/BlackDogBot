@@ -45,6 +45,9 @@ pnpm-debug.log*
 # OpenCode local data
 .opencode/
 
+# Codegraph index (local)
+.codegraph/
+
 # Session ledgers (developer-local continuity notes)
 thoughts/ledgers/
 
