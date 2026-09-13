@@ -277,7 +277,7 @@ describe("Session persistence", () => {
           role: "user",
           content: [
             { type: "text", text: "image context" },
-            { type: "image", image: imageBuffer, mediaType: "image/jpeg" },
+            { type: "file", data: imageBuffer, mediaType: "image/jpeg" },
           ],
         },
       ];
@@ -304,8 +304,9 @@ describe("Session persistence", () => {
       const loadedContent: unknown[] = (loadedMessages[0] as { content: unknown[] }).content;
       const loadedImagePart: Record<string, unknown> = loadedContent[1] as Record<string, unknown>;
 
-      expect(Buffer.isBuffer(loadedImagePart.image)).toBe(true);
-      expect((loadedImagePart.image as Buffer).equals(imageBuffer)).toBe(true);
+      expect(loadedImagePart.type).toBe("file");
+      expect(Buffer.isBuffer(loadedImagePart.data)).toBe(true);
+      expect((loadedImagePart.data as Buffer).equals(imageBuffer)).toBe(true);
     });
 
     it("should restore legacy Node Buffer JSON shape from session files", async () => {

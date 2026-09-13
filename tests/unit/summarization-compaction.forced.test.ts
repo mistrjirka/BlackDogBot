@@ -50,6 +50,35 @@ describe("summary compaction (forced)", () => {
     expect(result.compactedTokens).toBe(result.originalTokens);
   });
 
+  it("retains the newest image when L1 compacts its mixed user message", async () => {
+    const imageData: Uint8Array = Uint8Array.from({ length: 9000 }, (): number => 65);
+    const messages: ModelMessage[] = [
+      { role: "system", content: "System instructions" },
+      { role: "assistant", content: "Earlier context " + "x".repeat(1200) },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Describe this image" },
+          { type: "file", data: imageData, mediaType: "image/jpeg" },
+        ],
+      },
+    ];
+
+    const result = await compactMessagesSummaryOnlyAsync(
+      messages,
+      {} as unknown as LanguageModel,
+      makeLogger(),
+      1000,
+      countApprox,
+      true,
+    );
+
+    const latestUser = [...result.messages].reverse().find((message) => message.role === "user");
+    expect(latestUser?.content).toEqual(expect.arrayContaining([
+      { type: "file", data: imageData, mediaType: "image/jpeg" },
+    ]));
+  });
+
   it("performs at least one pass when forced even if under target", async () => {
     const messages: ModelMessage[] = buildMessages(12, 300);
     const original: number = countApprox(messages);

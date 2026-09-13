@@ -511,15 +511,15 @@ export class MainAgent extends BaseAgentBase {
       const resolvedImageAttachments: IChatImageAttachment[] = imageAttachments ?? [];
       const userContent: Array<
         { type: "text"; text: string } |
-        { type: "image"; image: Buffer; mediaType?: string }
+        { type: "file"; data: Uint8Array; mediaType: string }
       > = [];
 
       userContent.push({ type: "text", text: `${currentUserMessage}\n\n${currentTimeContext}` });
 
       for (const imageAttachment of resolvedImageAttachments) {
         userContent.push({
-          type: "image",
-          image: imageAttachment.imageBuffer,
+          type: "file",
+          data: imageAttachment.imageBuffer,
           mediaType: imageAttachment.mediaType,
         });
       }

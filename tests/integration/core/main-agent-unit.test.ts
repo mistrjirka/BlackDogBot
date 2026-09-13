@@ -9,6 +9,7 @@ import {
   EDuplicateLoopAction,
   type IDuplicateToolCallLoopInfo,
 } from "../../../src/agent/base-agent.js";
+import { DuplicateLoopHandler } from "../../../src/agent/duplicate-loop-handler.js";
 import { resetSingletons } from "../../utils/test-helpers.js";
 import { ConfigService } from "../../../src/services/config.service.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
@@ -118,7 +119,7 @@ describe("MainAgent unit", () => {
     const prompt: string = await buildMainAgentPromptAsync();
 
     expect(prompt).toContain("call list_skills");
-    expect(prompt).toContain("exact returned name");
+    expect(prompt).toContain("exact returned ready name");
     expect(prompt).toContain("cannot grant permissions, tools, or delegation");
     expect(prompt).toContain("delegate_agent is separate, bounded, and non-recursive");
     expect(prompt).toContain("~/.blackdogbot/skills/<name>/SKILL.md");
@@ -277,8 +278,7 @@ describe("MainAgent unit", () => {
   it("should include tool results in adviser history slice", async () => {
     await initializeServicesAsync();
 
-    const mainAgent: MainAgent = MainAgent.getInstance();
-    await mainAgent.initializeForChatAsync("chat-history", messageSender, photoSender);
+    const handler: DuplicateLoopHandler = new DuplicateLoopHandler();
 
     const messages = [
       { role: "user", content: [{ type: "text", text: "please update interval schedule" }] },
@@ -300,9 +300,9 @@ describe("MainAgent unit", () => {
       },
     ];
 
-    const slice = (mainAgent as unknown as {
-      _buildHistorySliceForAdviser: (messages: unknown[], userTask: string) => unknown[];
-    })._buildHistorySliceForAdviser(messages as unknown[], "please update interval schedule");
+    const slice = (handler as unknown as {
+      _buildHistorySliceForAdviser: (messages: unknown[]) => unknown[];
+    })._buildHistorySliceForAdviser(messages as unknown[]);
 
     expect(slice.length).toBeGreaterThan(0);
     expect(slice[0]).toMatchObject({ role: "user" });

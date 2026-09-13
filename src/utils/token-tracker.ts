@@ -1,4 +1,4 @@
-import { type ImagePart, type ModelMessage, type Tool, type ToolSet } from "ai";
+import { type ModelMessage, type Tool, type ToolSet } from "ai";
 import { encodingForModel } from "js-tiktoken";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
@@ -173,7 +173,7 @@ function toRequestMessageForTokenCounting(message: ModelMessage): Record<string,
       continue;
     }
 
-    if ("type" in part && part.type === "image") {
+    if ("type" in part && (part.type === "file" || part.type === "image")) {
       imageTokenEstimateTotal += _estimateImagePartTokens(part);
       continue;
     }
@@ -228,8 +228,8 @@ function extractToolResultValue(part: unknown): unknown {
   return null;
 }
 
-function _estimateImagePartTokens(part: ImagePart): number {
-  return estimateImageTokensFromPart(part as unknown as Record<string, unknown>);
+function _estimateImagePartTokens(part: object): number {
+  return estimateImageTokensFromPart(part as Record<string, unknown>);
 }
 
 function _buildRequestLikeBody(

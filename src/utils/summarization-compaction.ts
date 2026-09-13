@@ -1,4 +1,4 @@
-import type { LanguageModel, ModelMessage } from "ai";
+import type { FilePart, ImagePart, LanguageModel, ModelMessage } from "ai";
 
 import type { LoggerService } from "../services/logger.service.js";
 import { generateTextWithRetryAsync } from "./llm-retry.js";
@@ -588,6 +588,9 @@ async function _compactLatestUserMessageAsync(
     "latest-user-contract",
   );
 
+  const preservedContentParts = Array.isArray(lastUserMessage.content)
+    ? lastUserMessage.content.filter((part) => _isImageContentPart(part))
+    : [];
   const replacement: ModelMessage = {
     role: "user",
     content: [
@@ -595,6 +598,7 @@ async function _compactLatestUserMessageAsync(
         type: "text",
         text: `[LATEST USER REQUEST - COMPACT TASK CONTRACT]\n${taskContractSummary}\n[END OF TASK CONTRACT]`,
       },
+      ...preservedContentParts,
     ],
   };
 
@@ -1081,19 +1085,22 @@ function _pruneIntermediateToolResults(
   return result;
 }
 
+function _isImageContentPart(part: unknown): part is ImagePart | FilePart {
+  if (typeof part !== "object" || part === null || !("type" in part)) {
+    return false;
+  }
+
+  const partType: unknown = (part as { type?: unknown }).type;
+  return partType === "image" || partType === "file";
+}
+
 function _messagesContainImages(messages: ModelMessage[]): boolean {
   return messages.some((message: ModelMessage): boolean => {
     if (!Array.isArray(message.content)) {
       return false;
     }
 
-    return message.content.some((part: unknown): boolean => {
-      if (typeof part !== "object" || part === null || !("type" in part)) {
-        return false;
-      }
-
-      return (part as { type?: string }).type === "image";
-    });
+    return message.content.some((part: unknown): boolean => _isImageContentPart(part));
   });
 }
 
@@ -1110,7 +1117,7 @@ function _dropImagesFromNonLatestUser(messages: ModelMessage[]): ModelMessage[] 
         return true;
       }
 
-      return (part as { type?: string }).type !== "image";
+      return !_isImageContentPart(part);
     });
 
     if (nonImageParts.length > 0) {

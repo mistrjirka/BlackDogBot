@@ -3,6 +3,8 @@ const BASE64_DATA_URL_OVERHEAD_CHARS: number = 64;
 const CHARS_PER_TOKEN_ESTIMATE: number = 4;
 
 export const MIN_IMAGE_TOKEN_ESTIMATE: number = 85;
+// Cap estimates at a visual-token budget; encoded payload bytes are not text tokens.
+export const MAX_IMAGE_TOKEN_ESTIMATE: number = 4096;
 
 export function isImageContentPart(part: unknown): boolean {
   if (typeof part !== "object" || part === null) {
@@ -12,7 +14,7 @@ export function isImageContentPart(part: unknown): boolean {
   const candidate: Record<string, unknown> = part as Record<string, unknown>;
   const type: string = typeof candidate.type === "string" ? candidate.type : "";
 
-  if (type === "image" || type === "image_url" || type === "input_image") {
+  if (type === "file" || type === "image" || type === "image_url" || type === "input_image") {
     return true;
   }
 
@@ -45,11 +47,23 @@ export function estimateImageTokensFromPart(part: Record<string, unknown>): numb
 
   const base64CharsApprox: number = Math.ceil(sizeBytes * BASE64_EXPANSION_RATIO) + BASE64_DATA_URL_OVERHEAD_CHARS;
   const tokenEstimate: number = Math.ceil(base64CharsApprox / CHARS_PER_TOKEN_ESTIMATE);
-  return Math.max(MIN_IMAGE_TOKEN_ESTIMATE, tokenEstimate);
+  return Math.min(MAX_IMAGE_TOKEN_ESTIMATE, Math.max(MIN_IMAGE_TOKEN_ESTIMATE, tokenEstimate));
 }
 
 function _extractImageSource(part: Record<string, unknown>): unknown {
   const type: string = typeof part.type === "string" ? part.type : "";
+
+  if (type === "file") {
+    if ("data" in part) {
+      const data: unknown = part.data;
+      if (typeof data === "object" && data !== null && "type" in data && (data as { type?: unknown }).type === "data" && "data" in data) {
+        return (data as { data: unknown }).data;
+      }
+      return data;
+    }
+
+    return undefined;
+  }
 
   if (type === "image") {
     if ("image" in part) {

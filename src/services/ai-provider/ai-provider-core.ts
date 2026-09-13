@@ -240,6 +240,7 @@ export class AiProviderCore {
       return false;
     }
 
+    const provider: AiProvider = this._aiConfig.provider;
     const logger = LoggerService.getInstance();
     logger.info("Testing endpoint structured output (response_format: json_schema) support...");
 
@@ -248,10 +249,12 @@ export class AiProviderCore {
       const baseUrl: string = this._getLocalBaseUrl(config);
 
       // Build probe request body.
-      // IMPORTANT: Do not include reasoning_format here. On newer llama.cpp
-      // versions, combining reasoning_format with response_format json_schema
-      // can fail (e.g. sampler initialization errors), even when each feature
-      // works independently.
+      // IMPORTANT: mirror the production request. For llama.cpp endpoints the
+      // fetch wrapper injects reasoning_format: "none" into chat completions,
+      // and current llama.cpp builds reject combining it with
+      // response_format json_schema (400 "Failed to initialize samplers").
+      // A probe that omits it yields a false positive that breaks every
+      // native structured-output request.
       const probeBody: Record<string, unknown> = {
         model: config.model,
         messages: [{ role: "user", content: 'Reply with: {"ok": true}' }],
@@ -272,6 +275,11 @@ export class AiProviderCore {
           },
         },
       };
+
+      // Mirror the production wrapper: inject reasoning_format when supported.
+      if (provider !== "openrouter" && this._supportsReasoningFormat) {
+        probeBody.reasoning_format = "none";
+      }
 
       const response = await fetch(`${baseUrl}/v1/chat/completions`, {
         method: "POST",
@@ -1582,6 +1590,7 @@ export class AiProviderCore {
 
     const wrappedModel: LanguageModelV4 = {
       ...originalModel,
+      provider: originalModel.provider,
       doGenerate: async (options) => {
         return this._rateLimiterService.scheduleAsync(providerKey, async () =>
           Promise.resolve(originalModel.doGenerate(options))
@@ -2066,11 +2075,19 @@ export class AiProviderCore {
           // Log failed requests to help debug LM Studio compatibility issues
           if (!response.ok) {
             const logger: LoggerService = LoggerService.getInstance();
+            let requestBody: unknown = null;
+            if (init?.body && typeof init.body === "string") {
+              try {
+                requestBody = JSON.parse(init.body);
+              } catch {
+                // Non-JSON body — log it as null rather than throwing in the error path
+              }
+            }
             logger.error("LM Studio API request failed", {
               status: response.status,
               statusText: response.statusText,
               url: url.toString(),
-              requestBody: init?.body ? JSON.parse(init.body as string) : null,
+              requestBody,
             });
           }
 
