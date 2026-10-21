@@ -26,6 +26,10 @@ interface IMcpServerConnection {
   serverId: string;
 }
 
+type TModelOutputPart =
+  | { type: "text"; text: string }
+  | { type: "file-data"; data: string; mediaType: string };
+
 //#endregion Types
 
 //#region Constants
@@ -528,7 +532,7 @@ export function filterMcpToolsForServer(
 
 /**
  * Convert an MCP tool to an AI SDK tool with image output handling.
- * Uses `as any` because tool() overloads don't accept dynamic ZodType schemas.
+ * Casts only the dynamic input schema; the tool contract remains typed.
  */
 function _convertMcpToolToAiSdk(
   client: Client,
@@ -607,8 +611,7 @@ function _convertMcpResultToModelOutput(
     };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- MCP content items are dynamically typed (text/image/audio) - modelParts must accommodate all possible content types
-  const modelParts: any[] = [];
+  const modelParts: TModelOutputPart[] = [];
 
   for (const item of content) {
     if (!item || typeof item !== "object" || !("type" in item)) {

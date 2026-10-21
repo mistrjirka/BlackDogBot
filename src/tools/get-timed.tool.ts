@@ -46,6 +46,6 @@ export const getTimedTool = tool({
       display: formatScheduledTask(task, timezone),
     };
   },
-} as any);
+});
 
 //#endregion Tool

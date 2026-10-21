@@ -20,4 +20,4 @@ const executeEditOnce = async (input: { taskId: string; name?: string; descripti
   } });
 };
 
-export const editOnceTool = tool({ description: TOOL_DESCRIPTION, inputSchema: editOnceToolInputSchema, execute: createToolWithPrerequisites("edit_once", TOOL_PREREQUISITES["edit_once"] || [], executeEditOnce) as any });
+export const editOnceTool = tool({ description: TOOL_DESCRIPTION, inputSchema: editOnceToolInputSchema, execute: createToolWithPrerequisites("edit_once", TOOL_PREREQUISITES["edit_once"] || [], executeEditOnce) });

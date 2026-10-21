@@ -40,9 +40,11 @@ import type { MessagePlatform } from "../shared/types/messaging.types.js";
 import { getCurrentTimeContext } from "../utils/time.js";
 
 import { DuplicateLoopHandler } from "./duplicate-loop-handler.js";
-import { RetryOrchestrator } from "./retry-orchestrator.js";
-
-type TGenerateFn = (input: { messages: ModelMessage[]; abortSignal: AbortSignal }) => Promise<{ text: string; steps?: unknown[]; totalUsage?: Record<string, number | undefined>; usage?: Record<string, number | undefined>; response?: { messages?: ModelMessage[] } }>;
+import {
+  RetryOrchestrator,
+  type IGenerateCallOutput,
+  type TGenerateFn,
+} from "./retry-orchestrator.js";
 
 //#region Constants
 
@@ -700,7 +702,7 @@ export class MainAgent extends BaseAgentBase {
          session,
          userModelMessage,
          aiProviderService,
-         async (input: { messages: ModelMessage[]; abortSignal: AbortSignal }): Promise<any> => {
+         async (input: { messages: ModelMessage[]; abortSignal: AbortSignal }): Promise<IGenerateCallOutput> => {
            const response = await activeAgent.generate({
              messages: input.messages,
              abortSignal: input.abortSignal,

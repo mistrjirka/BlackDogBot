@@ -19,4 +19,4 @@ const executeEditInterval = async (input: IEditIntervalInput, _context: ToolExec
     return { type: "interval", every: normalizeTimeParts({ hours: every?.hours ?? currentEvery.hours, minutes: every?.minutes ?? currentEvery.minutes }), offsetFromDayStart: normalizeTimeParts({ hours: offsetFromDayStart?.hours ?? currentOffset.hours, minutes: offsetFromDayStart?.minutes ?? currentOffset.minutes }), timezone: resolveTimezone(requested) };
   } });
 };
-export const editIntervalTool = tool({ description: TOOL_DESCRIPTION, inputSchema: editIntervalToolInputSchema, execute: createToolWithPrerequisites("edit_interval", TOOL_PREREQUISITES["edit_interval"] || [], executeEditInterval) as any });
+export const editIntervalTool = tool({ description: TOOL_DESCRIPTION, inputSchema: editIntervalToolInputSchema, execute: createToolWithPrerequisites("edit_interval", TOOL_PREREQUISITES["edit_interval"] || [], executeEditInterval) });

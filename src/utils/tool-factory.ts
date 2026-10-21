@@ -7,7 +7,8 @@ import { hasPrerequisiteBeenMet } from "./tool-prerequisite.js";
 export interface ToolExecuteContext {
   toolCallId: string;
   messages: ModelMessage[];
-  abortSignal: AbortSignal;
+  abortSignal?: AbortSignal;
+  context: unknown;
 }
 
 /**

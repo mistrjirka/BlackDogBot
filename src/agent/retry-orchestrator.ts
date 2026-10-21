@@ -21,15 +21,15 @@ interface IGenerateCallInput {
   abortSignal: AbortSignal;
 }
 
-interface IGenerateCallOutput {
+export interface IGenerateCallOutput {
   text: string;
   steps?: unknown[];
-  totalUsage?: Record<string, number | undefined>;
-  usage?: Record<string, number | undefined>;
+  totalUsage?: { inputTokens?: number; outputTokens?: number; [key: string]: unknown };
+  usage?: { inputTokens?: number; outputTokens?: number; [key: string]: unknown };
   response?: { messages?: ModelMessage[] };
 }
 
-type TGenerateFn = (input: IGenerateCallInput) => Promise<IGenerateCallOutput>;
+export type TGenerateFn = (input: IGenerateCallInput) => Promise<IGenerateCallOutput>;
 
 interface INotifyResult {
   text: string;

@@ -173,8 +173,7 @@ export const runTimedTool = tool({
         };
       }
   },
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wrapper type is compatible at runtime
-  ) as any,
+  ),
 });
 
 //#endregion Tool

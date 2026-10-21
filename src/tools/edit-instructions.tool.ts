@@ -190,8 +190,7 @@ export const editInstructionsTool = tool({
     "edit_instructions",
     TOOL_PREREQUISITES["edit_instructions"] || [],
     executeEditInstructions,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK tool execute typing mismatch with wrapper
-  ) as any,
+  ),
 });
 
 //#endregion Tool
