@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ModelMessage, ToolSet } from "ai";
 
-import { estimateRequestLikeTokens } from "../../src/utils/token-tracker.js";
+import { countTokens, estimateRequestLikeTokens } from "../../src/utils/token-tracker.js";
 import { countRequestBodyTokens } from "../../src/utils/request-token-counter.js";
 
 describe("token tracker image-aware estimation", () => {
@@ -66,6 +66,35 @@ describe("token tracker image-aware estimation", () => {
 
     expect(estimate).not.toBeNull();
     expect(estimate!.breakdown.image).toBe(0);
+  });
+
+  it("counts images nested in tool results as an image budget, not base64 text", () => {
+    const imageBase64: string = "A".repeat(220_000);
+    const readImageToolResult: ModelMessage = {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "read-image-call",
+          toolName: "read_image",
+          output: {
+            type: "content",
+            value: [
+              {
+                type: "file",
+                data: { type: "data", data: imageBase64 },
+                mediaType: "image/jpeg",
+              },
+            ],
+          },
+        },
+      ],
+    } as ModelMessage;
+
+    const tokens: number = countTokens([readImageToolResult]);
+
+    expect(tokens).toBeGreaterThan(0);
+    expect(tokens).toBeLessThan(10_000);
   });
 
   it("keeps request-like image estimate aligned with hard-gate counter for image_url payload", () => {

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 import { countMessagesTokens, countRequestBodyTokens, getSharedEncoder } from "./request-token-counter.js";
-import { estimateImageTokensFromPart } from "./image-token-estimator.js";
+import { estimateImageTokensFromPart, isImageContentPart } from "./image-token-estimator.js";
 
 function getTextEncoder(): ReturnType<typeof encodingForModel> {
   return getSharedEncoder();
@@ -180,11 +180,13 @@ function toRequestMessageForTokenCounting(message: ModelMessage): Record<string,
 
     if ("result" in part || "output" in part) {
       const toolResultValue: unknown = extractToolResultValue(part);
-      const serialized: string = typeof toolResultValue === "string"
-        ? toolResultValue
-        : JSON.stringify(toolResultValue ?? null);
+      const sanitizedToolResult = _sanitizeToolResultForTokenCounting(toolResultValue);
+      const serialized: string = typeof sanitizedToolResult.value === "string"
+        ? sanitizedToolResult.value
+        : JSON.stringify(sanitizedToolResult.value ?? null);
 
       textParts.push(serialized);
+      imageTokenEstimateTotal += sanitizedToolResult.imageTokens;
 
       const toolCallId: unknown = (part as { toolCallId?: unknown }).toolCallId;
       if (typeof toolCallId === "string" && toolCallId.length > 0) {
@@ -226,6 +228,51 @@ function extractToolResultValue(part: unknown): unknown {
   }
 
   return null;
+}
+
+/**
+ * Replaces image payloads nested in a tool result with a compact token estimate.
+ * read_image returns base64 inside its content block; without this, compaction
+ * would count the payload as text (~148k tokens) instead of a normal image
+ * budget (~4k).
+ */
+function _sanitizeToolResultForTokenCounting(
+  value: unknown,
+): { value: unknown; imageTokens: number } {
+  if (Array.isArray(value)) {
+    let imageTokens: number = 0;
+    const sanitizedItems: unknown[] = value.map((item: unknown): unknown => {
+      const sanitizedItem = _sanitizeToolResultForTokenCounting(item);
+      imageTokens += sanitizedItem.imageTokens;
+      return sanitizedItem.value;
+    });
+
+    return { value: sanitizedItems, imageTokens };
+  }
+
+  if (isImageContentPart(value)) {
+    const imageTokens: number = estimateImageTokensFromPart(value as Record<string, unknown>);
+
+    return {
+      value: { type: "image_token_estimate", tokens: imageTokens },
+      imageTokens,
+    };
+  }
+
+  if (typeof value === "object" && value !== null) {
+    let imageTokens: number = 0;
+    const sanitizedObject: Record<string, unknown> = {};
+
+    for (const [key, child] of Object.entries(value)) {
+      const sanitizedChild = _sanitizeToolResultForTokenCounting(child);
+      sanitizedObject[key] = sanitizedChild.value;
+      imageTokens += sanitizedChild.imageTokens;
+    }
+
+    return { value: sanitizedObject, imageTokens };
+  }
+
+  return { value, imageTokens: 0 };
 }
 
 function _estimateImagePartTokens(part: object): number {

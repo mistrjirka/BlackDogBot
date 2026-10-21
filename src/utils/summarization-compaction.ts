@@ -3,6 +3,7 @@ import type { FilePart, ImagePart, LanguageModel, ModelMessage } from "ai";
 import type { LoggerService } from "../services/logger.service.js";
 import { generateTextWithRetryAsync } from "./llm-retry.js";
 import { isContextExceededApiError } from "./context-error.js";
+import { isImageContentPart as isImagePartLike } from "./image-token-estimator.js";
 
 //#region Constants
 
@@ -1405,11 +1406,38 @@ function _extractTextContent(message: ModelMessage): string {
       const resultValue: unknown = resPart.result ?? resPart.output;
       const errorPrefix: string = resPart.isError ? " (ERROR)" : "";
       const toolLabel: string = resPart.toolName ? ` ${resPart.toolName}` : "";
-      parts.push(`[Tool result${toolLabel}${errorPrefix}]: ${typeof resultValue === "string" ? resultValue : JSON.stringify(resultValue)}`);
+      const serializedResult: string = typeof resultValue === "string"
+        ? resultValue
+        : JSON.stringify(_sanitizeImagesForSummary(resultValue) ?? null);
+      parts.push(`[Tool result${toolLabel}${errorPrefix}]: ${serializedResult}`);
     }
   }
 
   return parts.join(" ");
+}
+
+function _sanitizeImagesForSummary(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item: unknown): unknown => _sanitizeImagesForSummary(item));
+  }
+
+  if (isImagePartLike(value)) {
+    return {
+      type: "image",
+      note: "[image content omitted from compaction summary]",
+    };
+  }
+
+  if (typeof value === "object" && value !== null) {
+    const sanitizedObject: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      sanitizedObject[key] = _sanitizeImagesForSummary(child);
+    }
+
+    return sanitizedObject;
+  }
+
+  return value;
 }
 
 function _splitMessagesIntoChunks(

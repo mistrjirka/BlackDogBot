@@ -284,6 +284,68 @@ describe("summarization DAG compaction", () => {
     }
   });
 
+  it("omits base64 image payloads from summarization prompts", async () => {
+    const imageBase64: string = "BASE64_IMAGE_PAYLOAD_" + "A".repeat(120_000);
+    const capturedPrompts: string[] = [];
+
+    vi.mocked(llmRetry.generateTextWithRetryAsync).mockImplementation(async (params: unknown) => {
+      capturedPrompts.push((params as { prompt?: string }).prompt ?? "");
+      return {
+        text: "Compact summary",
+        usage: { inputTokens: 100, outputTokens: 20 },
+      } as unknown as Awaited<ReturnType<typeof llmRetry.generateTextWithRetryAsync>>;
+    });
+
+    const messages: ModelMessage[] = [
+      { role: "system", content: "System anchor" } as ModelMessage,
+      { role: "user", content: "Old request" } as ModelMessage,
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "read-image-call",
+            toolName: "read_image",
+            input: { filePath: "image.jpg" },
+          },
+        ],
+      } as ModelMessage,
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "read-image-call",
+            toolName: "read_image",
+            output: {
+              type: "content",
+              value: [
+                {
+                  type: "file",
+                  data: { type: "data", data: imageBase64 },
+                  mediaType: "image/jpeg",
+                },
+              ],
+            },
+          },
+        ],
+      } as ModelMessage,
+      { role: "user", content: "LATEST USER: continue" } as ModelMessage,
+    ];
+
+    await compactMessagesSummaryOnlyAsync(
+      messages,
+      {} as unknown as LanguageModel,
+      makeLogger(),
+      50,
+      countApprox,
+      true,
+    );
+
+    expect(capturedPrompts.length).toBeGreaterThan(0);
+    expect(capturedPrompts.some((prompt: string): boolean => prompt.includes("BASE64_IMAGE_PAYLOAD_"))).toBe(false);
+  });
+
   it("follows DAG path through L3 to L4 when L2 doesn't improve", async () => {
     const messages: ModelMessage[] = [
       { role: "system", content: "System anchor" } as ModelMessage,

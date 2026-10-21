@@ -48,8 +48,9 @@ export function createReadImageTool(readTracker: IFileReadTracker) {
   return tool({
     description:
       "Read an image file and pass it to the model as media content. " +
-      "Use this when you want the model to inspect screenshots or other local images. " +
-      "Supports png/jpg/jpeg/gif/webp/bmp/svg up to 10MB.",
+      "Use this only for local images that are not already attached to the conversation; " +
+      "images attached directly to a user message are already visible. " +
+      "Never guess or invent a path. Supports png/jpg/jpeg/gif/webp/bmp/svg up to 10MB.",
     inputSchema: readImageToolInputSchema,
     execute: async ({ filePath }: { filePath: string }): Promise<IReadImageResult> => {
       const logger: LoggerService = LoggerService.getInstance();
