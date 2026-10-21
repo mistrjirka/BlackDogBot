@@ -58,6 +58,8 @@ export interface IRetryOrchestratorConfig {
   buildMessagesForCall: () => ModelMessage[];
   /** Abort signal shared with the active chat request. */
   abortSignal: AbortSignal;
+  /** Optional global task-level termination check (step budget, user stop). */
+  shouldTerminate?: () => boolean;
   /** Reset token counters before each retry attempt (mirrors MainAgent `_totalInputTokens`). */
   resetTokenCounters: () => void;
   /** Called with provider-reported input tokens after successfully generated response. Mirrors `_totalInputTokens = x`. */
@@ -121,6 +123,13 @@ export class RetryOrchestrator {
     let _genericRetries: number = 0;
 
     for (let attempt: number = 1; attempt <= AGENT_EMPTY_RESPONSE_RETRIES + 1; attempt++) {
+      if (config.shouldTerminate?.()) {
+        return {
+          result: { text: "Stopped: the task exceeded its step budget or was terminated.", stepsCount: 0 },
+          shouldFallback: false,
+        };
+      }
+
       // Reset token count so prepareStep doesn't use stale values from a failed attempt
       resetTokenCounters();
 

@@ -422,6 +422,8 @@ async function mainAsync(): Promise<void> {
     logger.info("Shutdown signal received. Stopping BlackDogBot...");
     skillLoaderService.stopWatching();
 
+    await MainAgent.getInstance().shutdownAsync().catch(() => {});
+
     await McpService.getInstance().closeAsync().catch(() => {});
     messagingService.shutdownTelegramOutbox();
     await telegramPlatform.stop();

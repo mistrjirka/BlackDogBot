@@ -24,6 +24,7 @@ import {
 import { extractErrorMessage } from "../../utils/error.js";
 import { isContextExceededTelegramError } from "../../utils/context-error.js";
 import { PromptService } from "../../services/prompt.service.js";
+import { StatusService } from "../../services/status.service.js";
 import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 import { isCancelCommand } from "../../utils/command-utils.js";
 import { getTelegramChatsFilePath } from "../../utils/paths.js";
@@ -88,25 +89,28 @@ interface ITelegramEditApi {
   editMessageText: (chatId: string, messageId: number, text: string, options?: Record<string, unknown>) => Promise<unknown>;
 }
 
-export function _buildProgressText(status: string, stepLogs: string[]): string {
+export function _buildProgressText(status: string, stepLogs: string[], contextLine?: string): string {
+  const statusWithContext: string =
+    contextLine && contextLine.length > 0 ? `${status}\n${contextLine}` : status;
+
   if (stepLogs.length === 0) {
-    return status;
+    return statusWithContext;
   }
 
   let visibleLogs: string[] = [...stepLogs];
-  let text: string = _renderProgressText(status, visibleLogs);
+  let text: string = _renderProgressText(statusWithContext, visibleLogs);
 
   // Older steps are dropped first so the newest activity stays visible and
   // every blockquote remains well-formed. A hard character slice here would
   // risk splitting HTML tags or entities.
   while (text.length > PROGRESS_MAX_LENGTH && visibleLogs.length > 1) {
     visibleLogs.shift();
-    text = _renderProgressText(status, ["… (earlier steps hidden)", ...visibleLogs]);
+    text = _renderProgressText(statusWithContext, ["… (earlier steps hidden)", ...visibleLogs]);
   }
 
   if (text.length > PROGRESS_MAX_LENGTH) {
     // A single step is unusually large; fall back to the status line.
-    return status;
+    return statusWithContext;
   }
 
   return text;
@@ -124,6 +128,48 @@ function _renderProgressText(status: string, stepLogs: string[]): string {
   return `${status}\n\n${blockquotes}`;
 }
 
+function _formatTokenCount(tokens: number): string {
+  if (tokens >= 1_000) {
+    const thousands: number = tokens / 1_000;
+    return Number.isInteger(thousands) ? `${thousands}k` : `${thousands.toFixed(1)}k`;
+  }
+
+  return `${Math.max(0, Math.round(tokens))}`;
+}
+
+function _buildContextUsageLine(): string {
+  const status: StatusService = StatusService.getInstance();
+  const tokens: number = status.getContextTokens();
+  const window: number = status.getContextWindow() || AiProviderService.getInstance().getContextWindow();
+
+  if (tokens <= 0 || window <= 0) {
+    return "";
+  }
+
+  const percentage: number = Math.round((tokens / window) * 100);
+  return `📊 ${_formatTokenCount(tokens)} / ${_formatTokenCount(window)} context (${percentage}%)`;
+}
+
+function _formatCompactionLine(beforeTokens: number, afterTokens: number): string {
+  return `Context compaction: ${_formatTokenCount(beforeTokens)} → ${_formatTokenCount(afterTokens)}`;
+}
+
+export function _parseQueueCommand(text: string): string | null {
+  const match: RegExpMatchArray | null = text.match(
+    /^\/queue(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/i,
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  return (match[1] ?? "").trim();
+}
+
+function _isSlashCommand(text: string): boolean {
+  return /^\/[A-Za-z0-9_]+/.test(text.trim());
+}
+
 function createProgressOnStep(
   progressMsgId: number,
   editApi: ITelegramEditApi,
@@ -134,9 +180,19 @@ function createProgressOnStep(
   source: string,
   onStepStarted?: (stepNumber: number, toolCalls: IToolCallSummary[]) => void,
   onStepLogged?: (stepNumber: number, toolCalls: IToolCallSummary[], formatted: string | null) => void,
+  compactionState?: { lastSeenAt: number },
 ): OnStepCallback {
   return async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
     onStepStarted?.(stepNumber, toolCalls);
+
+    if (compactionState) {
+      const compactionEvent = StatusService.getInstance().getLastCompactionEvent();
+      if (compactionEvent && compactionEvent.at > compactionState.lastSeenAt) {
+        compactionState.lastSeenAt = compactionEvent.at;
+        stepLogs.push(_formatCompactionLine(compactionEvent.beforeTokens, compactionEvent.afterTokens));
+      }
+    }
+
     const filteredToolCalls: IToolCallSummary[] = toolCalls.filter((tc: IToolCallSummary): boolean => tc.name !== "think");
     let formatted: string | null = null;
     if (filteredToolCalls.length > 0) {
@@ -241,6 +297,17 @@ export class TelegramHandler {
       return;
     }
 
+    const queueCommandText: string | null = _parseQueueCommand(message.text);
+    let promptText: string = queueCommandText !== null ? queueCommandText : message.text;
+
+    if (queueCommandText !== null && promptText.length === 0) {
+      const pendingImages: IPendingTelegramImage | undefined = this._pendingImagesByChat.get(chatId);
+      if (!pendingImages || pendingImages.imageAttachments.length === 0) {
+        await this._safeReplyOrQueueAsync(ctx, chatId, "Usage: /queue <message>");
+        return;
+      }
+    }
+
     let pendingImageAttachments: IChatImageAttachment[] = [];
     const pendingImage: IPendingTelegramImage | undefined = this._pendingImagesByChat.get(chatId);
     if (pendingImage) {
@@ -258,11 +325,33 @@ export class TelegramHandler {
       this._logger.info("Auto-registered Telegram channel", { chatId });
     }
 
-    // Prevent concurrent processing per chat
+    // Prevent concurrent processing per chat. Mid-run text is steered into the
+    // current run by default; /queue opts into the old queue-after-run behavior.
     if (this._processing.has(chatId)) {
+      const shouldQueueExplicitly: boolean = queueCommandText !== null;
+      const isSlashCommand: boolean = _isSlashCommand(promptText);
+      const canSteer: boolean =
+        !shouldQueueExplicitly &&
+        !isSlashCommand &&
+        pendingImageAttachments.length === 0 &&
+        promptText.trim().length > 0;
+
+      if (canSteer) {
+        const steered: boolean = this._mainAgent.steerChat(chatId, promptText.trim());
+
+        if (steered) {
+          this._logger.info("Auto-steered Telegram message into active run", {
+            chatId,
+            messageLength: promptText.length,
+          });
+          await this._safeReplyOrQueueAsync(ctx, chatId, "↪️ Steering the current run.");
+          return;
+        }
+      }
+
       const pendingForChat: IPendingTelegramMessage[] = this._pendingMessages.get(chatId) ?? [];
       pendingForChat.push({
-        text: message.text,
+        text: promptText,
         messageId: message.message_id,
         imageAttachments: pendingImageAttachments,
       });
@@ -271,7 +360,12 @@ export class TelegramHandler {
       this._logger.info("Queued Telegram message while previous one is still processing", {
         chatId,
         queuedCount: pendingForChat.length,
+        explicitQueue: shouldQueueExplicitly,
       });
+
+      if (shouldQueueExplicitly) {
+        await this._safeReplyOrQueueAsync(ctx, chatId, "Queued. It will run after the current task finishes.");
+      }
 
       return;
     }
@@ -281,14 +375,19 @@ export class TelegramHandler {
     // Progress message state
     let progressMsgId: number | null = null;
     const stepLogs: string[] = [];
+    const existingCompactionEvent = StatusService.getInstance().getLastCompactionEvent();
+    const compactionState: { lastSeenAt: number } = {
+      lastSeenAt: existingCompactionEvent?.at ?? 0,
+    };
 
-    const buildProgressText = (status: string): string => _buildProgressText(status, stepLogs);
+    const buildProgressText = (status: string): string =>
+      _buildProgressText(status, stepLogs, _buildContextUsageLine());
 
     try {
       const incoming: IIncomingMessage = {
         id: generateId(),
         platform: "telegram",
-        text: message.text,
+        text: promptText,
         userId: chatId,
         userName: message.from?.username ?? message.from?.first_name ?? null,
         timestamp: message.date * 1000,
@@ -350,6 +449,7 @@ export class TelegramHandler {
                   this._logger.debug("Telegram onStep received empty toolCalls", { chatId, stepNumber, stepLogsCount: stepLogs.length });
                 }
               },
+              compactionState,
             )
           : undefined;
 
@@ -855,8 +955,13 @@ export class TelegramHandler {
 
     let progressMsgId: number | null = null;
     const stepLogs: string[] = [];
+    const existingCompactionEvent = StatusService.getInstance().getLastCompactionEvent();
+    const compactionState: { lastSeenAt: number } = {
+      lastSeenAt: existingCompactionEvent?.at ?? 0,
+    };
 
-    const buildProgressText = (status: string): string => _buildProgressText(status, stepLogs);
+    const buildProgressText = (status: string): string =>
+      _buildProgressText(status, stepLogs, _buildContextUsageLine());
 
     const hasAnyImageAttachment: boolean = queuedMessages.some(
       (queuedMessage: IPendingTelegramMessage): boolean => queuedMessage.imageAttachments.length > 0,
@@ -889,7 +994,7 @@ export class TelegramHandler {
 
       const onStepAsync: OnStepCallback | undefined =
         progressMsgId !== null
-          ? createProgressOnStep(progressMsgId, bot!.api, chatId, this._logger, stepLogs, buildProgressText, "queue-progress-step")
+          ? createProgressOnStep(progressMsgId, bot!.api, chatId, this._logger, stepLogs, buildProgressText, "queue-progress-step", undefined, undefined, compactionState)
           : undefined;
 
       await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
@@ -1066,10 +1171,13 @@ export class TelegramHandler {
     messageId: number | null,
     imageAttachments: IChatImageAttachment[],
   ): Promise<void> {
+    const queueCommandText: string | null = _parseQueueCommand(promptText);
+    const effectivePromptText: string = queueCommandText !== null ? queueCommandText : promptText;
+
     if (this._processing.has(chatId)) {
       const pendingForChat: IPendingTelegramMessage[] = this._pendingMessages.get(chatId) ?? [];
       pendingForChat.push({
-        text: promptText,
+        text: effectivePromptText,
         messageId,
         imageAttachments,
       });
@@ -1080,7 +1188,11 @@ export class TelegramHandler {
     this._processing.add(chatId);
 
     try {
-      await this._processMergedQueuedMessageAsync(chatId, [{ text: promptText, messageId, imageAttachments }]);
+      await this._processMergedQueuedMessageAsync(chatId, [{
+        text: effectivePromptText,
+        messageId,
+        imageAttachments,
+      }]);
       await this._drainQueuedMessagesAsync(chatId);
     } finally {
       this._processing.delete(chatId);

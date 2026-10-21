@@ -69,7 +69,7 @@ function _capableContentSchema(): z.ZodType {
 
 describe("variable-store — constants", () => {
   it("exposes the documented thresholds", () => {
-    expect(CAPTURE_THRESHOLD_CHARS).toBe(1000);
+    expect(CAPTURE_THRESHOLD_CHARS).toBe(4000);
     expect(MAX_VARIABLES_PER_RUN).toBe(50);
     expect(MAX_VARIABLE_BYTES).toBe(1024 * 1024);
   });
@@ -94,7 +94,7 @@ describe("variableRefSchema", () => {
 describe("VariableStore.maybeCapture — threshold (group 1)", () => {
   it("does not capture below the threshold and returns the original", () => {
     const store = new VariableStore();
-    const value: string = _stringWithJsonLength(CAPTURE_THRESHOLD_CHARS - 1); // 999-byte JSON
+    const value: string = _stringWithJsonLength(CAPTURE_THRESHOLD_CHARS - 1); // 3999-byte JSON
 
     const result = store.maybeCapture("t", value);
 
@@ -104,7 +104,7 @@ describe("VariableStore.maybeCapture — threshold (group 1)", () => {
 
   it("captures at/above the threshold, returns a stub, and stores the value", () => {
     const store = new VariableStore();
-    const value: string = _stringWithJsonLength(CAPTURE_THRESHOLD_CHARS); // 1000-byte JSON
+    const value: string = _stringWithJsonLength(CAPTURE_THRESHOLD_CHARS); // 4000-byte JSON
 
     const result = store.maybeCapture("t", value);
 
@@ -120,8 +120,8 @@ describe("VariableStore.maybeCapture — threshold (group 1)", () => {
 describe("VariableStore.maybeCapture — naming (group 2)", () => {
   it("assigns run-global names of the form <toolName>_<n>", () => {
     const store = new VariableStore();
-    store.maybeCapture("tool_a", _bigString(1500));
-    store.maybeCapture("tool_b", _bigString(1500));
+    store.maybeCapture("tool_a", _bigString(4500));
+    store.maybeCapture("tool_b", _bigString(4500));
 
     expect(store.names()).toEqual(["tool_a_1", "tool_b_2"]);
   });
@@ -130,12 +130,12 @@ describe("VariableStore.maybeCapture — naming (group 2)", () => {
 describe("VariableStore.maybeCapture — stub fields + total passthrough (group 3)", () => {
   it("emits variable/type/count/sizeBytes/preview/note for an array", () => {
     const store = new VariableStore();
-    // The first two items are small (so the preview stays an array, <= 300 chars);
+    // The first two items are small (so the preview stays an array, <= 1200 chars);
     // the third item is large so the whole value clears the capture threshold.
     const value: Array<Record<string, unknown>> = [
       { title: "h0", link: "https://example.com/0" },
       { title: "h1", link: "https://example.com/1" },
-      { title: "h2", note: "n".repeat(1200) },
+      { title: "h2", note: "n".repeat(4200) },
     ];
 
     const stub = _asStub(store.maybeCapture("feed_rss", value));
@@ -153,29 +153,29 @@ describe("VariableStore.maybeCapture — stub fields + total passthrough (group 
 
   it("passes totalCount through", () => {
     const store = new VariableStore();
-    const stub = _asStub(store.maybeCapture("q", { totalCount: 42, items: "i".repeat(1500) }));
+    const stub = _asStub(store.maybeCapture("q", { totalCount: 42, items: "i".repeat(4500) }));
     expect(stub.total).toBe(42);
   });
 
   it("passes total and matchingTotal through", () => {
-    expect(_asStub(new VariableStore().maybeCapture("q", { total: 7, items: "i".repeat(1500) })).total).toBe(7);
-    expect(_asStub(new VariableStore().maybeCapture("q", { matchingTotal: 9, items: "i".repeat(1500) })).total).toBe(9);
+    expect(_asStub(new VariableStore().maybeCapture("q", { total: 7, items: "i".repeat(4500) })).total).toBe(7);
+    expect(_asStub(new VariableStore().maybeCapture("q", { matchingTotal: 9, items: "i".repeat(4500) })).total).toBe(9);
   });
 
   it("omits total when no numeric counter key is present", () => {
-    const stub = _asStub(new VariableStore().maybeCapture("q", { items: "i".repeat(1500) }));
+    const stub = _asStub(new VariableStore().maybeCapture("q", { items: "i".repeat(4500) }));
     expect(stub.total).toBeUndefined();
   });
 
   it("ignores a non-numeric counter value", () => {
-    const stub = _asStub(new VariableStore().maybeCapture("q", { totalCount: "many", items: "i".repeat(1500) }));
+    const stub = _asStub(new VariableStore().maybeCapture("q", { totalCount: "many", items: "i".repeat(4500) }));
     expect(stub.total).toBeUndefined();
   });
 });
 
 describe("VariableStore.maybeCapture — itemSchema (group 4)", () => {
 it("recurses through nested objects until atomic leaves", () => {
-const value = { name: "a", meta: { age: 5, active: true }, pad: "i".repeat(1200) };
+const value = { name: "a", meta: { age: 5, active: true }, pad: "i".repeat(4200), pad2: "j".repeat(4200) };
 const itemSchema = _asStub(new VariableStore().maybeCapture("v", value)).itemSchema as {
 type: string;
 properties: Record<string, unknown>;
@@ -190,9 +190,9 @@ expect(meta.properties.active).toBe("boolean");
 
   it("suffixes '?' for a key present in only some sampled items", () => {
     const value = [
-      { title: "a", link: "l1", media_content: "m1", pad: "i".repeat(400) },
-      { title: "b", link: "l2", pad: "i".repeat(400) },
-      { title: "c", link: "l3", media_content: "m3", pad: "i".repeat(400) },
+      { title: "a", link: "l1", media_content: "m1", pad: "i".repeat(1500) },
+      { title: "b", link: "l2", pad: "i".repeat(1500) },
+      { title: "c", link: "l3", media_content: "m3", pad: "i".repeat(1500) },
     ];
     // Array variables wrap their itemSchema as {type:"array", items:<item schema>}.
     const stub = _asStub(new VariableStore().maybeCapture("v", value));
@@ -207,7 +207,7 @@ expect(meta.properties.active).toBe("boolean");
 
   it("collapses objects deeper than ITEM_SCHEMA_MAX_DEPTH to 'object'", () => {
     // Two string fields so FIX-1 extraction does not fire (it needs exactly one).
-    const value = { a: { b: { c: { d: "deep" } } }, pad: "i".repeat(1200), pad2: "j".repeat(100) };
+    const value = { a: { b: { c: { d: "deep" } } }, pad: "i".repeat(4200), pad2: "j".repeat(4200) };
     const schema = _asStub(new VariableStore().maybeCapture("v", value));
     const c = (schema.itemSchema as { properties: { a: { properties: { b: { properties: Record<string, unknown> } } } } })
       .properties.a.properties.b.properties.c;
@@ -216,8 +216,8 @@ expect(meta.properties.active).toBe("boolean");
 
   it("builds an array-of-objects union schema", () => {
     const value = [
-      { title: "a", views: 10, pad: "i".repeat(600) },
-      { title: "b", views: 20, pad: "i".repeat(600) },
+      { title: "a", views: 10, pad: "i".repeat(2200) },
+      { title: "b", views: 20, pad: "i".repeat(2200) },
     ];
     const stub = _asStub(new VariableStore().maybeCapture("v", value));
     expect(stub.type).toBe("array");
@@ -230,11 +230,11 @@ expect(meta.properties.active).toBe("boolean");
 
   it("treats a scalar variable as type:string with no itemSchema and a bounded preview", () => {
     const store = new VariableStore();
-    const stub = _asStub(store.maybeCapture("v", _bigString(2000)));
+    const stub = _asStub(store.maybeCapture("v", _bigString(4500)));
     expect(stub.type).toBe("string");
     expect(stub.itemSchema).toBeUndefined();
     expect(typeof stub.preview).toBe("string");
-    expect((stub.preview as string).length).toBeLessThanOrEqual(300 + 4); // JSON.stringify adds quotes/ellipsis
+    expect((stub.preview as string).length).toBeLessThanOrEqual(1200 + 4); // JSON.stringify adds quotes/ellipsis
   });
 });
 
@@ -248,7 +248,8 @@ describe("VariableStore.maybeCapture — key normalization (group 5)", () => {
       "a-b": "dash",
       "a.b": "dot",
       nested: { "dc:creator": "me" },
-      pad: "i".repeat(1200),
+      pad: "i".repeat(4200),
+      pad2: "j".repeat(4200),
     };
 
     const stub = _asStub(store.maybeCapture("v", value));
@@ -269,7 +270,7 @@ describe("VariableStore.maybeCapture — key normalization (group 5)", () => {
 
     // itemSchema keys match the stored (normalized) keys.
     expect(Object.keys(props).sort()).toEqual(
-      ["a_b", "a_b_2", "class_", "media_content", "_0abc", "nested", "pad"].sort(),
+      ["a_b", "a_b_2", "class_", "media_content", "_0abc", "nested", "pad", "pad2"].sort(),
     );
     expect((props.nested as { properties: Record<string, unknown> }).properties.dc_creator).toBe("string");
   });
@@ -281,14 +282,14 @@ describe("VariableStore.resolveInput (group 6)", () => {
 
   beforeEach(() => {
     store = new VariableStore();
-    store.maybeCapture("res", _bigString(1500));
+    store.maybeCapture("res", _bigString(4500));
     name = store.names()[0];
   });
 
   it("resolves a rule-1 object reference", () => {
     const resolved = store.resolveInput({ content: _makeRef(name) });
     expect(resolved.error).toBeUndefined();
-    expect((resolved.input as { content: string }).content).toBe(_bigString(1500));
+    expect((resolved.input as { content: string }).content).toBe(_bigString(4500));
   });
 
   it("passes through a ref-shaped object that carries extra keys", () => {
@@ -301,7 +302,7 @@ describe("VariableStore.resolveInput (group 6)", () => {
   it("unwraps a rule-2 stringified reference", () => {
     const resolved = store.resolveInput({ content: JSON.stringify(_makeRef(name)) });
     expect(resolved.error).toBeUndefined();
-    expect((resolved.input as { content: string }).content).toBe(_bigString(1500));
+    expect((resolved.input as { content: string }).content).toBe(_bigString(4500));
   });
 
   it("passes through a non-reference JSON string", () => {
@@ -337,7 +338,7 @@ describe("VariableStore — eviction (group 7)", () => {
   it("evicts FIFO to keep at most MAX_VARIABLES_PER_RUN", () => {
     const store = new VariableStore();
     for (let i: number = 0; i < MAX_VARIABLES_PER_RUN + 1; i++) {
-      store.maybeCapture("a", _bigString(1200));
+      store.maybeCapture("a", _bigString(4500));
     }
     const names = store.names();
     expect(names).toHaveLength(MAX_VARIABLES_PER_RUN);
@@ -391,7 +392,7 @@ describe("VariableStore.maybeCapture — edge cases (group 8)", () => {
 describe("wrapToolSetWithVariables — end to end (group 9)", () => {
   it("resolves a ref in args and stubs a large result", async () => {
     const store = new VariableStore();
-    store.maybeCapture("payload", _bigString(1500));
+    store.maybeCapture("payload", _bigString(4500));
     const refName = store.names()[0];
 
     let receivedInput: unknown = "unset";
@@ -400,7 +401,7 @@ describe("wrapToolSetWithVariables — end to end (group 9)", () => {
       inputSchema: z.object({ content: z.union([z.string(), variableRefSchema]) }),
       execute: async (input: { content: unknown }): Promise<unknown> => {
         receivedInput = input;
-        return `RESULT_${"z".repeat(1500)}`;
+        return `RESULT_${"z".repeat(4500)}`;
       },
     };
 
@@ -409,7 +410,7 @@ describe("wrapToolSetWithVariables — end to end (group 9)", () => {
       .execute({ content: _makeRef(refName) }, _options());
 
     // Ref resolved: the tool received the raw stored string.
-    expect((receivedInput as { content: string }).content).toBe(_bigString(1500));
+    expect((receivedInput as { content: string }).content).toBe(_bigString(4500));
     // Result stubbed (>= threshold). The counter is run-global, so the payload was
     // captured first (payload_1) and this echo result second (echo_2).
     expect(_asStub(result).variable).toBe("echo_2");
@@ -417,7 +418,7 @@ describe("wrapToolSetWithVariables — end to end (group 9)", () => {
 
   it("returns an unknown_variable error object (not a throw) for an unknown ref", async () => {
     const store = new VariableStore();
-    store.maybeCapture("payload", _bigString(1500));
+    store.maybeCapture("payload", _bigString(4500));
 
     const fakeTool = {
       inputSchema: _capableContentSchema(),
@@ -434,7 +435,7 @@ describe("wrapToolSetWithVariables — end to end (group 9)", () => {
 
   it("does not stub results for a tool that defines toModelOutput, but still resolves refs", async () => {
     const store = new VariableStore();
-    store.maybeCapture("payload", _bigString(1500));
+    store.maybeCapture("payload", _bigString(4500));
     const refName = store.names()[0];
 
     const fakeTool = {
@@ -448,7 +449,7 @@ describe("wrapToolSetWithVariables — end to end (group 9)", () => {
       execute: (i: unknown, o: ToolExecutionOptions<never>) => Promise<unknown>;
     }).execute({ content: _makeRef(refName) }, _options());
 
-    expect(result).toBe(`raw:${_bigString(1500)}`); // resolved, but NOT stubbed
+    expect(result).toBe(`raw:${_bigString(4500)}`); // resolved, but NOT stubbed
     // Only the payload ref source was captured; the echo result was not re-stubbed.
     expect(store.names()).toEqual(["payload_1"]);
   });
@@ -461,7 +462,7 @@ describe("wrapToolSetWithVariables — end to end (group 9)", () => {
 
   it("composes OUTERMOST over the reasoning wrapper: reasoning stripped AND ref resolved", async () => {
     const store = new VariableStore();
-    store.maybeCapture("payload", _bigString(1500));
+    store.maybeCapture("payload", _bigString(4500));
     const refName = store.names()[0];
 
     let receivedInput: unknown = "unset";
@@ -482,7 +483,7 @@ describe("wrapToolSetWithVariables — end to end (group 9)", () => {
     );
 
     const received = receivedInput as { content: string; reasoning?: unknown };
-    expect(received.content).toBe(_bigString(1500)); // ref resolved
+    expect(received.content).toBe(_bigString(4500)); // ref resolved
     expect(received).not.toHaveProperty("reasoning"); // reasoning stripped by inner wrapper
   });
 });
@@ -577,7 +578,7 @@ describe("VariableStore.maybeCapture — FIX-1 primary-payload extraction (group
 
   it("file-wrapper → stores the text payload with scalar meta", () => {
     const store = new VariableStore();
-    const content: string = "x".repeat(1500);
+    const content: string = "x".repeat(4500);
 
     const stub = _asStub(store.maybeCapture("run_cmd", { content, bytes: 1502 }));
 
@@ -589,7 +590,7 @@ describe("VariableStore.maybeCapture — FIX-1 primary-payload extraction (group
 
   it("two array fields → no extraction (whole object captured, no meta)", () => {
     const store = new VariableStore();
-    const value = { a: ["x".repeat(600)], b: ["y".repeat(600)] };
+    const value = { a: ["x".repeat(2200)], b: ["y".repeat(2200)] };
 
     const stub = _asStub(store.maybeCapture("v", value));
 
@@ -602,7 +603,7 @@ describe("VariableStore.maybeCapture — FIX-1 primary-payload extraction (group
     const store = new VariableStore();
     const rows: Array<Record<string, unknown>> = [];
     for (let i: number = 1; i <= 10; i++) {
-      rows.push({ id: i, payload: "p".repeat(180) });
+      rows.push({ id: i, payload: "p".repeat(500) });
     }
     const stub = _asStub(store.maybeCapture("v", { rows, note: "short", total: 5 }));
 
@@ -613,7 +614,7 @@ describe("VariableStore.maybeCapture — FIX-1 primary-payload extraction (group
 
   it("a small array field blocks the string rule (whole object captured)", () => {
     const store = new VariableStore();
-    const value = { rows: [1, 2, 3], text: "z".repeat(1500) };
+    const value = { rows: [1, 2, 3], text: "z".repeat(4500) };
 
     const stub = _asStub(store.maybeCapture("v", value));
 
@@ -624,7 +625,7 @@ describe("VariableStore.maybeCapture — FIX-1 primary-payload extraction (group
 
   it("meta caps at 8 fields in original key order", () => {
     const store = new VariableStore();
-    const rows: Array<Record<string, unknown>> = [{ id: 1, payload: "p".repeat(1500) }];
+    const rows: Array<Record<string, unknown>> = [{ id: 1, payload: "p".repeat(4500) }];
     const wrapper: Record<string, unknown> = { rows };
     for (let i: number = 1; i <= 10; i++) {
       wrapper[`f${i}`] = i;
@@ -637,17 +638,18 @@ describe("VariableStore.maybeCapture — FIX-1 primary-payload extraction (group
 
   it("meta drops trailing fields while over 500 serialized chars", () => {
     const store = new VariableStore();
-    const rows: Array<Record<string, unknown>> = [{ id: 1, payload: "p".repeat(1500) }];
+    const rows: Array<Record<string, unknown>> = [{ id: 1, payload: "p".repeat(4500) }];
     const s1: string = "a".repeat(400);
     const stub = _asStub(store.maybeCapture("v", { rows, s1, s2: "b".repeat(100) }));
 
-    // {s1,s2} serializes > 500 chars → trailing s2 dropped; s1 alone fits.
-    expect(stub.meta).toEqual({ s1 });
+    // Long secondary strings are truncated so key diagnostics survive.
+    expect(stub.meta?.s1).toContain("aaa");
+    expect((stub.meta?.s1 as string).length).toBeLessThanOrEqual(301);
   });
 
   it("meta omitted when no scalar wrapper fields remain", () => {
     const store = new VariableStore();
-    const rows: Array<Record<string, unknown>> = [{ id: 1, payload: "p".repeat(1500) }];
+    const rows: Array<Record<string, unknown>> = [{ id: 1, payload: "p".repeat(4500) }];
     const stub = _asStub(store.maybeCapture("v", { rows, info: { nested: true } }));
 
     expect(stub.meta).toBeUndefined();
@@ -656,7 +658,7 @@ describe("VariableStore.maybeCapture — FIX-1 primary-payload extraction (group
 
   it("no extraction → behavior identical to before (whole object, no meta)", () => {
     const store = new VariableStore();
-    const value = { alpha: "a".repeat(600), beta: "b".repeat(600) };
+    const value = { alpha: "a".repeat(2200), beta: "b".repeat(2200) };
 
     const stub = _asStub(store.maybeCapture("v", value));
 
@@ -670,9 +672,9 @@ describe("VariableStore.maybeCapture — FIX-1 primary-payload extraction (group
 describe("VariableStore — hardening (group 12)", () => {
   it("resolve AFTER eviction → unknown_variable listing the REMAINING names", () => {
     const store = new VariableStore();
-    store.maybeCapture("v", _bigString(1200)); // v_1, oldest — will be evicted
+    store.maybeCapture("v", _bigString(4500)); // v_1, oldest — will be evicted
     for (let i: number = 0; i < MAX_VARIABLES_PER_RUN; i++) {
-      store.maybeCapture("v", _bigString(1200));
+      store.maybeCapture("v", _bigString(4500));
     }
     expect(store.names()).toHaveLength(MAX_VARIABLES_PER_RUN);
     expect(store.names()).not.toContain("v_1");
@@ -692,7 +694,7 @@ describe("VariableStore — hardening (group 12)", () => {
     let raw: Record<string, unknown>;
     try {
       raw = JSON.parse(
-        `{"__proto__":"${"p".repeat(800)}","pad":"${"i".repeat(800)}","extra":"e"}`,
+        `{"__proto__":"${"p".repeat(2200)}","pad":"${"i".repeat(2200)}","extra":"e"}`,
       ) as Record<string, unknown>;
     } catch {
       throw new Error("test fixture JSON must parse");
@@ -703,15 +705,15 @@ describe("VariableStore — hardening (group 12)", () => {
     expect(stub.type).toBe("object"); // multiple strings → no extraction
     const stored = store.get("v_1") as Record<string, unknown>;
     expect(Object.prototype.hasOwnProperty.call(stored, "__proto__")).toBe(true);
-    expect(Object.getOwnPropertyDescriptor(stored, "__proto__")?.value).toBe("p".repeat(800));
+    expect(Object.getOwnPropertyDescriptor(stored, "__proto__")?.value).toBe("p".repeat(2200));
     expect(Object.getPrototypeOf(stored)).toBe(Object.prototype);
   });
 
   it("partial object-typed key → optional:true (never \"[object Object]?\")", () => {
     const store = new VariableStore();
     const value = [
-      { id: 1, opts: { a: 1 }, pad: "x".repeat(500) },
-      { id: 2, pad: "y".repeat(500) },
+      { id: 1, opts: { a: 1 }, pad: "x".repeat(2200) },
+      { id: 2, pad: "y".repeat(2200) },
     ];
 
     const stub = _asStub(store.maybeCapture("v", value));
@@ -722,7 +724,7 @@ describe("VariableStore — hardening (group 12)", () => {
 
   it("malformed refs pass through as literals (no error)", () => {
     const store = new VariableStore();
-    store.maybeCapture("v", _bigString(1500));
+    store.maybeCapture("v", _bigString(4500));
 
     for (const malformed of [
       { type: "variable" }, // missing name
@@ -738,7 +740,7 @@ describe("VariableStore — hardening (group 12)", () => {
   it("empty array → itemSchema omits items (no fabricated type)", () => {
     const store = new VariableStore();
     const stub = _asStub(
-      store.maybeCapture("v", { items: [], pad1: "a".repeat(600), pad2: "b".repeat(600) }),
+      store.maybeCapture("v", { items: [], pad1: "a".repeat(2200), pad2: "b".repeat(2200) }),
     );
 
     expect(stub.type).toBe("object");
@@ -775,4 +777,41 @@ describe("VariableStore — hardening (group 12)", () => {
 
     expect(result).toBe("got:plain literal");
   });
+
+describe("VariableStore — real run_cmd/read_file wrappers", () => {
+  it("stores run_cmd stdout (not stderr) and preserves diagnostics in meta", () => {
+    const store = new VariableStore();
+    const stdout: string = "out ".repeat(1200);
+    const stderr: string = "err ".repeat(50);
+    const stub = _asStub(store.maybeCapture("run_cmd", {
+      stdout,
+      stderr,
+      exitCode: 2,
+      status: "failed",
+      error: "boom",
+      timedOut: false,
+    }));
+
+    expect(stub.type).toBe("string");
+    expect(store.get("run_cmd_1")).toContain(stdout.slice(0, 100));
+    expect(store.get("run_cmd_1")).toContain("[stderr]");
+    expect(store.get("run_cmd_1")).toContain(stderr.trim());
+    expect(stub.meta).toMatchObject({ exitCode: 2, status: "failed", error: "boom" });
+    expect(stub.meta?.stderr).toContain("err");
+  });
+
+  it("stores read_file content without the wrapper object", () => {
+    const store = new VariableStore();
+    const content: string = "line\n".repeat(1200);
+    const stub = _asStub(store.maybeCapture("read_file", {
+      success: true,
+      content,
+      message: "File read successfully.",
+    }));
+
+    expect(stub.type).toBe("string");
+    expect(store.get("read_file_1")).toBe(content);
+    expect(stub.meta).toMatchObject({ success: true });
+  });
+});
 });

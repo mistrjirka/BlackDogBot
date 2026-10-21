@@ -73,6 +73,10 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "For workspace files, pass just the filename (e.g. 'notes.txt'); use a full absolute path only for files outside the workspace. " +
     "Args: filePath (string, default '').",
 
+  inspect_variable:
+    "Read a bounded slice of a large stored tool result. Use the exact variable name from a stub; " +
+    "continue at nextOffset if needed. Args: name (string, required); offset (number, default 0); maxChars (number, default 4000, max 24000).",
+
   read_image:
     "Read an image file and provide it to the model as media content (for vision-capable models). " +
     "Supports png/jpg/jpeg/gif/webp/bmp/svg up to 10MB. " +

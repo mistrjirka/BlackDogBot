@@ -15,6 +15,12 @@ export type StatusType =
   | "web_crawl"
   | "http_request";
 
+export interface ICompactionEvent {
+  beforeTokens: number;
+  afterTokens: number;
+  at: number;
+}
+
 export interface IStatusState {
   type: StatusType;
   message: string;
@@ -48,6 +54,7 @@ export class StatusService {
   private static _instance: StatusService | null = null;
   private _currentState: IStatusState | null = null;
   private _contextTokens: number = 0;
+  private _lastCompactionEvent: ICompactionEvent | null = null;
   private _inFlightCount: number = 0;
   private _encoder: ReturnType<typeof getEncoding> | null = null;
   private _spinnerIndex: number = 0;
@@ -166,6 +173,22 @@ export class StatusService {
    */
   public getContextTokens(): number {
     return this._contextTokens;
+  }
+
+  public getContextWindow(): number {
+    return this._currentState?.contextWindow ?? 0;
+  }
+
+  public setCompactionEvent(beforeTokens: number, afterTokens: number): void {
+    this._lastCompactionEvent = {
+      beforeTokens,
+      afterTokens,
+      at: Date.now(),
+    };
+  }
+
+  public getLastCompactionEvent(): ICompactionEvent | null {
+    return this._lastCompactionEvent;
   }
 
   public setStatus(

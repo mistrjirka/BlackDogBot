@@ -47,6 +47,8 @@ type TGenerateFn = (input: { messages: ModelMessage[]; abortSignal: AbortSignal 
 //#region Constants
 
 const MAX_TOOL_REBUILD_RESTARTS: number = 2;
+/** Global step budget across retries/steering within one user task. */
+const MAX_TASK_STEPS: number = 500;
 const SESSION_COMPACTION_HEADROOM_TOKENS: number = 4000;
 
 //#endregion Constants
@@ -60,6 +62,8 @@ interface IDuplicateLoopEscalationState {
 
 export interface IChatSession {
   messages: ModelMessage[];
+  /** In-flight messages captured from prepareStep; used to survive retries/steering. */
+  inFlightMessages: ModelMessage[] | null;
   lastActivityAt: number;
   messageSender: MessageSender;
   photoSender: (imageBuffer: Buffer, caption: string | null) => Promise<string | null>;
@@ -71,8 +75,10 @@ export interface IChatSession {
   pendingToolRebuild: ICreateTableRebuildInfo | null;
   toolRebuildCount: number;
   terminateCurrentRun: boolean;
+  totalSteps: number;
   steeringQueue: string[];
   isSteeringAbort: boolean;
+  isRunning: boolean;
   duplicateLoopEscalation: IDuplicateLoopEscalationState;
   currentUserTask: string;
 }
@@ -99,6 +105,7 @@ export class MainAgent extends BaseAgentBase {
   private _sessions: Map<string, IChatSession>;
   private _currentChatId: string | null;
   private _adminControl: AdminControl;
+  private _runQueue: Promise<void>;
 
   //#endregion Data members
 
@@ -114,6 +121,7 @@ export class MainAgent extends BaseAgentBase {
     this._sessions = new Map<string, IChatSession>();
     this._currentChatId = null;
     this._adminControl = createAdminControl(this._sessions, this._logger);
+    this._runQueue = Promise.resolve();
   }
 
   //#endregion Constructors
@@ -181,6 +189,7 @@ export class MainAgent extends BaseAgentBase {
 
       this._sessions.set(chatId, {
         messages: saved?.messages ?? [],
+        inFlightMessages: null,
         lastActivityAt: saved?.lastActivityAt ?? Date.now(),
         messageSender,
         photoSender,
@@ -192,8 +201,10 @@ export class MainAgent extends BaseAgentBase {
         pendingToolRebuild: null,
         toolRebuildCount: 0,
         terminateCurrentRun: false,
+        totalSteps: 0,
         steeringQueue: [],
         isSteeringAbort: false,
+        isRunning: false,
         duplicateLoopEscalation: {
           activeSignature: null,
           adviserAttemptsRemaining: DuplicateLoopHandler.MAX_ATTEMPTS,
@@ -253,6 +264,16 @@ export class MainAgent extends BaseAgentBase {
     const permission = channelRegistry.getPermission(platform, chatId);
 
     const combinedOnStepAsync = async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
+      session.totalSteps += 1;
+      if (session.totalSteps > MAX_TASK_STEPS && !session.terminateCurrentRun) {
+        session.terminateCurrentRun = true;
+        this._logger.warn("Global task step budget exceeded; terminating current run", {
+          chatId,
+          totalSteps: session.totalSteps,
+          maxTaskSteps: MAX_TASK_STEPS,
+        });
+      }
+
       this._logger.debug("MainAgent combinedOnStep callback invoked", {
         chatId,
         stepNumber,
@@ -421,7 +442,7 @@ export class MainAgent extends BaseAgentBase {
       },
       (): string | null => null,
       (): AbortSignal | null => session.abortController?.signal ?? null,
-      undefined,
+      (): boolean => session.terminateCurrentRun,
       this._createDuplicateToolLoopCallback(chatId),
     );
   }
@@ -483,7 +504,58 @@ export class MainAgent extends BaseAgentBase {
    * @param imageAttachments - Optional array of image attachments with buffer and media type
    * @returns Promise resolving to agent result with response text and step count
    */
+  /**
+   * Persist active sessions before shutdown. If a run has an in-flight
+   * snapshot, save that instead of the last completed snapshot so daemon
+   * restarts do not discard completed tool work.
+   */
+  public async shutdownAsync(): Promise<void> {
+    for (const [chatId, session] of this._sessions) {
+      session.terminateCurrentRun = true;
+      try {
+        session.abortController?.abort();
+      } catch {
+        // Best-effort: continue saving.
+      }
+
+      if (session.inFlightMessages && session.inFlightMessages.length > 0) {
+        session.messages = [...session.inFlightMessages];
+      }
+
+      try {
+        await this._saveSessionAsync(chatId);
+      } catch (error: unknown) {
+        this._logger.warn("Failed to persist session during shutdown", {
+          chatId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
   public async processMessageForChatAsync(
+    chatId: string,
+    userMessage: string,
+    imageAttachments?: IChatImageAttachment[],
+  ): Promise<IAgentResult> {
+    // The MainAgent has one active ToolLoopAgent and one in-flight snapshot
+    // sink. Serialize user tasks so concurrent chats cannot overwrite each other.
+    const previousRun: Promise<void> = this._runQueue;
+    const runGate: { release: () => void } = { release: (): void => {} };
+    this._runQueue = new Promise<void>((resolve: () => void): void => {
+      runGate.release = resolve;
+    });
+
+    await previousRun;
+
+    try {
+      return await this._processMessageForChatInnerAsync(chatId, userMessage, imageAttachments);
+    } finally {
+      runGate.release();
+    }
+  }
+
+  private async _processMessageForChatInnerAsync(
     chatId: string,
     userMessage: string,
     imageAttachments?: IChatImageAttachment[],
@@ -498,9 +570,14 @@ export class MainAgent extends BaseAgentBase {
     }
 
     session.lastActivityAt = Date.now();
+    session.inFlightMessages = null;
+    session.steeringQueue = [];
+    session.isSteeringAbort = false;
+    session.isRunning = false;
     session.pendingToolRebuild = null;
     session.toolRebuildCount = 0;
     session.terminateCurrentRun = false;
+    session.totalSteps = 0;
     session.currentUserTask = userMessage;
 
     this._logger.debug("Processing user message", { chatId, messageLength: userMessage.length });
@@ -565,6 +642,16 @@ export class MainAgent extends BaseAgentBase {
         content: userContent,
       };
 
+      // Tool-rebuild restarts inject a synthetic user message. Keep it in the
+      // in-flight snapshot so buildMessagesForCall does not ignore it.
+      if (isRebuildRestart) {
+        if (session.inFlightMessages) {
+          session.inFlightMessages = [...session.inFlightMessages, userModelMessage];
+        }
+        // Append exactly once; a later steering/retry must not duplicate it.
+        isRebuildRestart = false;
+      }
+
       // Reuse the AbortController from initializeForChatAsync (created during session
       // setup so /cancel works during initialization). If one doesn't exist, create it.
       let abortController: AbortController = session.abortController ?? new AbortController();
@@ -583,6 +670,11 @@ export class MainAgent extends BaseAgentBase {
         prepareStepCompactedMessages = compactedMessages;
       });
 
+      // Bind this run to the agent instance built for this chat. Another chat's
+      // initialization may replace this._agent before a retry; the retry must
+      // still use the original agent/tool set.
+      const activeAgent = this._agent!;
+
       try {
         // Delegate generation loop with full retry logic to orchestrator.
         // Returns a result (text, stepCount), whether fallback is needed,
@@ -594,7 +686,7 @@ export class MainAgent extends BaseAgentBase {
          userModelMessage,
          aiProviderService,
          async (input: { messages: ModelMessage[]; abortSignal: AbortSignal }): Promise<any> => {
-           const response = await this._agent!.generate({
+           const response = await activeAgent.generate({
              messages: input.messages,
              abortSignal: input.abortSignal,
            });
@@ -614,30 +706,32 @@ export class MainAgent extends BaseAgentBase {
 
         // Handle empty response or failed fallback — persist conversation even on failure
         if (genResult.shouldFallback) {
-          const fallbackFromEmpty: boolean = await this._activateFallbackAndReinitializeAsync(
+          await this._activateFallbackAndReinitializeAsync(
             chatId,
             session,
             "empty_response_exhausted",
           );
 
-          // Only update compaction model if fallback was NOT activated (fallback already handles it)
-          if (!fallbackFromEmpty) {
-            compactionModel = genResult.compactionModel;
-          }
+          // Always use the currently active provider for post-failure compaction.
+          compactionModel = AiProviderService.getInstance().getModel();
 
-          // If prepareStep compacted messages, use them as the base (they include the compacted user message)
-          // Otherwise, append the original user message to session
-          if (prepareStepCompactedMessages) {
-            session.messages = prepareStepCompactedMessages;
-            // Append only the response messages (user message is already in compacted form)
-            const responseMsgs: unknown[] = genResult.responseMessages ?? [];
-            for (const responseMsg of responseMsgs) {
+          // If we have an in-flight snapshot or a checkpoint base, persist that
+          // instead of rebuilding from the stale session snapshot. Append only
+          // the latest response messages.
+          const fallbackBaseMessages: ModelMessage[] | null =
+            this._getInFlightMessages(session) ?? prepareStepCompactedMessages;
+          const fallbackResponseMessages: unknown[] = genResult.responseMessages ?? [];
+          if (fallbackBaseMessages) {
+            session.messages = [...fallbackBaseMessages];
+            for (const responseMsg of fallbackResponseMessages) {
               session.messages.push(responseMsg as ModelMessage);
             }
           } else {
             // Append response to session and compact even on failure
             _appendResponseToSession(session.messages, userModelMessage, undefined);
           }
+          session.inFlightMessages = null;
+          prepareStepCompactedMessages = null;
 
           session.messages = await _compactSessionMessagesAsync(
             session.messages,
@@ -654,23 +748,26 @@ export class MainAgent extends BaseAgentBase {
           this._logger.error("Model returned error response after all retries", { chatId });
         } else if (result.text.trim()) {
         // On success with text — append response, compact, and return
-          // If prepareStep compacted messages, use them as the base (they include the compacted user message)
-          // Otherwise, append the original user message to session
-          if (prepareStepCompactedMessages) {
-            session.messages = prepareStepCompactedMessages;
-            // Append only the response messages (user message is already in compacted form)
-            const responseMsgs: unknown[] = genResult.responseMessages ?? [];
-            for (const responseMsg of responseMsgs) {
+          // Persist the latest in-flight snapshot or checkpoint base, then append
+          // the final response. This prevents a retry/steer from discarding tool work.
+          const successBaseMessages: ModelMessage[] | null =
+            this._getInFlightMessages(session) ?? prepareStepCompactedMessages;
+          const successResponseMessages: unknown[] = genResult.responseMessages ?? [];
+          if (successBaseMessages) {
+            session.messages = [...successBaseMessages];
+            for (const responseMsg of successResponseMessages) {
               session.messages.push(responseMsg as ModelMessage);
             }
-            this._logger.info("Using prepareStep compacted messages for session", {
+            this._logger.info("Using in-flight messages for session", {
               chatId,
-              compactedMessageCount: (prepareStepCompactedMessages as ModelMessage[]).length,
-              responseMessageCount: responseMsgs.length,
+              baseMessageCount: successBaseMessages.length,
+              responseMessageCount: successResponseMessages.length,
             });
           } else {
             _appendResponseToSession(session.messages, userModelMessage, genResult.responseMessages);
           }
+          session.inFlightMessages = null;
+          prepareStepCompactedMessages = null;
 
           session.messages = await _compactSessionMessagesAsync(
             session.messages,
@@ -679,6 +776,18 @@ export class MainAgent extends BaseAgentBase {
               this._compactionTokenThreshold,
               this._contextWindow,
             );
+        } else {
+          // Empty text without a fallback signal: still persist the in-flight
+          // work so the next turn does not silently lose the whole task.
+          const emptyBaseMessages: ModelMessage[] | null =
+            this._getInFlightMessages(session) ?? prepareStepCompactedMessages;
+          if (emptyBaseMessages) {
+            session.messages = [...emptyBaseMessages];
+          } else {
+            _appendResponseToSession(session.messages, userModelMessage, undefined);
+          }
+          session.inFlightMessages = null;
+          prepareStepCompactedMessages = null;
         }
       } catch (error: unknown) {
         if (error instanceof Error && error.name === "AbortError") {
@@ -688,6 +797,7 @@ export class MainAgent extends BaseAgentBase {
             continueAfterSteeringAbort = true;
           } else {
             // Drop the store on the clean stop path (see throw-path note below).
+            session.inFlightMessages = null;
             this._currentVariableStore = null;
             return { text: "Operation was stopped.", stepsCount: 0 };
           }
@@ -697,6 +807,7 @@ export class MainAgent extends BaseAgentBase {
             loopInfo: error.loopInfo.summaryString,
           });
           this._resetDuplicateLoopEscalation(chatId);
+          session.inFlightMessages = null;
           // Drop the store on the hard-stop path.
           this._currentVariableStore = null;
           return {
@@ -708,15 +819,21 @@ export class MainAgent extends BaseAgentBase {
             chatId,
             error: error.message,
           });
+          session.inFlightMessages = null;
           this._currentVariableStore = null;
           return {
             text: `Context compaction failed: ${error.message}\n\nThe conversation was not truncated; fix the summary provider and retry, or run /clear.`,
             stepsCount: 0,
           };
         } else {
-          // NOTE (accepted residual): a terminal throw here leaves _currentVariableStore
-          // set. It is overwritten by the next run's `new VariableStore()` and no tool
-          // execution happens in between, so nothing stale is observable. No clear needed.
+          // Persist the latest in-flight snapshot before propagating a terminal
+          // error, so completed tool work is not silently discarded.
+          const terminalInFlight: ModelMessage[] | null = this._getInFlightMessages(session);
+          if (terminalInFlight) {
+            session.messages = [...terminalInFlight];
+            session.inFlightMessages = null;
+            await this._saveSessionAsync(chatId).catch(() => {});
+          }
           throw error;
         }
       } finally {
@@ -742,7 +859,6 @@ export class MainAgent extends BaseAgentBase {
       ) {
         session.toolRebuildCount++;
         session.pendingToolRebuild = null;
-        session.terminateCurrentRun = false;
 
         this._logger.info("Tool rebuild detected, restarting generate with new tools", {
           chatId,
@@ -766,7 +882,6 @@ export class MainAgent extends BaseAgentBase {
           pendingTool: pendingToolName,
         });
         session.pendingToolRebuild = null;
-        session.terminateCurrentRun = false;
       }
 
       // No rebuild needed — return result
@@ -834,6 +949,10 @@ export class MainAgent extends BaseAgentBase {
     return session.pendingToolRebuild;
   }
 
+  private _getInFlightMessages(session: IChatSession): ModelMessage[] | null {
+    return session.inFlightMessages;
+  }
+
   private async _runGenerationCycleAsync(
     chatId: string,
     session: IChatSession,
@@ -845,6 +964,12 @@ export class MainAgent extends BaseAgentBase {
     // Note: status management (beginInFlight/endInFlight) is handled externally in processMessageForChatAsync
     // to avoid double-calling. This method focuses purely on the generate-and-retry loop.
 
+    session.isRunning = true;
+    this.setMessagesSink((messages: ModelMessage[]): void => {
+      session.inFlightMessages = [...messages];
+    });
+
+    try {
     const orchestrationResult = await RetryOrchestrator.runCycle({
       chatId,
       logger: this._logger,
@@ -854,7 +979,12 @@ export class MainAgent extends BaseAgentBase {
       contextWindow: this._contextWindow,
       generateFn,
       buildMessagesForCall: () => {
-        const messagesForCall: ModelMessage[] = [...session.messages, userModelMessage];
+        // Prefer the latest in-flight snapshot from prepareStep. This preserves
+        // tool results and checkpoint compaction across retries and steering aborts.
+        const baseMessages: ModelMessage[] = session.inFlightMessages
+          ? [...session.inFlightMessages]
+          : [...session.messages, userModelMessage];
+        const messagesForCall: ModelMessage[] = baseMessages;
 
         while (session.steeringQueue.length > 0) {
           const steeringMessage: string = session.steeringQueue.shift() as string;
@@ -869,9 +999,13 @@ export class MainAgent extends BaseAgentBase {
           });
         }
 
+        // Snapshot the initial user/steering turn too, so an abort before the
+        // first prepareStep cannot lose a drained steering message.
+        session.inFlightMessages = [...messagesForCall];
         return messagesForCall;
       },
       abortSignal,
+      shouldTerminate: (): boolean => session.terminateCurrentRun,
       resetTokenCounters: () => {
         this._totalInputTokens = 0;
         this._lastPrepareStepEstimatedTokens = null;
@@ -883,14 +1017,17 @@ export class MainAgent extends BaseAgentBase {
         // TODO: Implement model output emission via BrainInterfaceService when integration is finalized
       },
       onContextExceededCompaction: async (): Promise<ModelMessage[]> => {
+        const sourceMessages: ModelMessage[] =
+          this._getInFlightMessages(session) ?? session.messages;
         const compacted: ModelMessage[] = await _compactSessionMessagesAsync(
-          session.messages,
+          sourceMessages,
           _aiProviderService.getModel(),
           this._logger,
           this._compactionTokenThreshold,
           this._contextWindow,
         );
         session.messages = compacted;
+        session.inFlightMessages = compacted;
         return compacted;
       },
     });
@@ -906,6 +1043,10 @@ export class MainAgent extends BaseAgentBase {
     }
 
     return { result: resultCopy, shouldFallback: false, compactionModel: _aiProviderService.getModel(), responseMessages: orchestrationResult.responseMessages };
+    } finally {
+      session.isRunning = false;
+      this.setMessagesSink(null);
+    }
   }
 
 private async _activateFallbackAndReinitializeAsync(

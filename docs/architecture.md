@@ -172,7 +172,7 @@ Each channel has a permission level that controls available tools:
 The agent proactively manages context window usage:
 
 - **Token Counting**: Uses tiktoken (cl100k_base) for accurate counting
-- **Compaction**: Checkpoint summary at 90% of context window (configurable via `ai.compactionThreshold`; single trigger knob)
+- **Compaction**: Checkpoint summary at a configurable fraction of the context window (`ai.compactionThreshold`, default 0.90)
 - **Cache-preserving checkpoint**: reuses the existing prompt prefix and keeps the current tool cycle; falls back to plain text if native structured output is unavailable, and errors out if the summary fails
 - **Reactive Compaction**: On 400 "context exceeded" errors, compacts and retries
 - **API-Level Logging**: INFO-level logs show token breakdown per request

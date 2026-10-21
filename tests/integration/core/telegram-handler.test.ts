@@ -273,8 +273,8 @@ describe("TelegramHandler", () => {
 
     const replySpy: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined);
     const ctx1: Context = makeCtx({ chatId: 100, text: "first", replyImpl: replySpy });
-    const ctx2: Context = makeCtx({ chatId: 100, text: "second", replyImpl: replySpy });
-    const ctx3: Context = makeCtx({ chatId: 100, text: "third", replyImpl: replySpy });
+    const ctx2: Context = makeCtx({ chatId: 100, text: "/queue second", replyImpl: replySpy });
+    const ctx3: Context = makeCtx({ chatId: 100, text: "/queue third", replyImpl: replySpy });
     const handler: TelegramHandler = TelegramHandler.getInstance();
 
     const firstCall: Promise<void> = handler.handleMessageAsync(ctx1);
@@ -467,7 +467,7 @@ describe("TelegramHandler", () => {
     const queuedCtx: Context = makeCtx({
       chatId: 100,
       messageId: 102,
-      text: "queued2",
+      text: "/queue queued2",
       replyImpl: async (): Promise<{ message_id: number }> => ({ message_id: 5002 }),
     });
     (queuedCtx as unknown as { api?: unknown }).api = { deleteMessage: deleteSpy, editMessageText: vi.fn().mockResolvedValue(undefined) };
@@ -475,7 +475,7 @@ describe("TelegramHandler", () => {
     const queuedCtx2: Context = makeCtx({
       chatId: 100,
       messageId: 104,
-      text: "queued3",
+      text: "/queue queued3",
       replyImpl: async (): Promise<{ message_id: number }> => ({ message_id: 5004 }),
     });
     (queuedCtx2 as unknown as { api?: unknown }).api = { deleteMessage: deleteSpy, editMessageText: vi.fn().mockResolvedValue(undefined) };

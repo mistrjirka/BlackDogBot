@@ -24,7 +24,7 @@ import { type ZodType, z } from "zod";
 //#region Constants
 
 /** Results below this many characters are inline exactly as before (never stored). */
-export const CAPTURE_THRESHOLD_CHARS: number = 1000;
+export const CAPTURE_THRESHOLD_CHARS: number = 4000;
 
 /** Maximum number of variables retained in a single run (FIFO eviction beyond this). */
 export const MAX_VARIABLES_PER_RUN: number = 50;
@@ -42,7 +42,7 @@ export const ITEM_SCHEMA_SAMPLE_SIZE: number = 5;
 export const ITEM_SCHEMA_MAX_DEPTH: number = 3;
 
 /** Maximum serialized length of a stub preview. */
-export const PREVIEW_MAX_CHARS: number = 300;
+export const PREVIEW_MAX_CHARS: number = 1200;
 
 /**
  * JS reserved words / ES keywords. A normalized key that lands on one gets a
@@ -381,10 +381,35 @@ function _extractPrimaryPayload(result: unknown, wholeBytes: number): IExtractio
     return { payload: result, extracted: false };
   }
 
-  // String rule (only when no array field is present): exactly one string-valued
-  // field holding >= 50% of the serialized bytes.
-  const stringFields: Array<[string, unknown]> = entries.filter(([, value]) => typeof value === "string");
-  if (stringFields.length === 1) {
+  // Explicit primary fields for common wrappers. Prefer stdout over stderr and
+  // content over message even when the secondary string is larger.
+  if (typeof result.stdout === "string" || typeof result.stderr === "string") {
+    const stdoutText: string = typeof result.stdout === "string" ? result.stdout : "";
+    const stderrText: string = typeof result.stderr === "string" ? result.stderr : "";
+    const stdoutBytes: number = Buffer.byteLength(stdoutText, "utf8");
+    const stderrBytes: number = Buffer.byteLength(stderrText, "utf8");
+    if (stdoutBytes + stderrBytes >= wholeBytes / 2) {
+      // Keep both channels readable in the stored payload; stderr alone is
+      // often the only diagnostic on a failed command.
+      const combined: string = stderrText.length > 0
+        ? `${stdoutText}${stdoutText.length > 0 ? "\n" : ""}[stderr]\n${stderrText}`
+        : stdoutText;
+      return { payload: combined, meta: _extractMeta(result, "stdout"), extracted: true };
+    }
+  }
+
+  if (typeof result.content === "string"
+    && Buffer.byteLength(result.content, "utf8") >= wholeBytes / 2) {
+    return { payload: result.content, meta: _extractMeta(result, "content"), extracted: true };
+  }
+
+  // Generic string rule: the largest string-valued field must hold >= 50% of the
+  // serialized bytes.
+  const stringFields: Array<[string, unknown]> = entries
+    .filter(([, value]) => typeof value === "string")
+    .sort((a, b) => Buffer.byteLength(JSON.stringify(b[1]) ?? "", "utf8")
+      - Buffer.byteLength(JSON.stringify(a[1]) ?? "", "utf8"));
+  if (stringFields.length > 0) {
     const [key, value] = stringFields[0];
     if (Buffer.byteLength(JSON.stringify(value) ?? "", "utf8") >= wholeBytes / 2) {
       return { payload: value, meta: _extractMeta(result, key), extracted: true };
@@ -399,20 +424,39 @@ function _extractPrimaryPayload(result: unknown, wholeBytes: number): IExtractio
  * exceeds 500 chars. Returns undefined when nothing remains (meta then omitted).
  */
 function _extractMeta(result: Record<string, unknown>, payloadKey: string): Record<string, ScalarMetaValue> | undefined {
+  const priorityKeys: string[] = [
+    "exitCode", "status", "error", "timedOut", "durationMs", "signal", "stderr", "message",
+  ];
+  const orderedKeys: string[] = [
+    ...priorityKeys.filter((key: string): boolean => key in result && key !== payloadKey),
+    ...Object.keys(result).filter((key: string): boolean => key !== payloadKey && !priorityKeys.includes(key)),
+  ];
+
   const meta: Record<string, ScalarMetaValue> = {};
-  for (const [key, value] of Object.entries(result)) {
-    if (key === payloadKey || !_isScalarMetaValue(value)) {
+  for (const key of orderedKeys) {
+    const value: unknown = result[key];
+    if (!_isScalarMetaValue(value)) {
       continue;
     }
+
+    const normalizedValue: ScalarMetaValue = typeof value === "string" && value.length > 300
+      ? `${value.slice(0, 300)}…`
+      : value;
+
+    meta[key] = normalizedValue;
     if (Object.keys(meta).length >= 8) {
       break;
     }
-    meta[key] = value;
+
+    while (JSON.stringify(meta).length > 500 && Object.keys(meta).length > 1) {
+      const lastKey: string | undefined = Object.keys(meta).at(-1);
+      if (lastKey === undefined) {
+        break;
+      }
+      delete meta[lastKey];
+    }
   }
-  while (Object.keys(meta).length > 0 && JSON.stringify(meta).length > 500) {
-    const keys: string[] = Object.keys(meta);
-    delete meta[keys[keys.length - 1]];
-  }
+
   return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
@@ -766,7 +810,7 @@ function _buildStub(
     variable: name,
     type,
     sizeBytes,
-    note: `Full data is stored in this run's blackboard, not a shell variable. Use {"type":"variable","name":"${name}"} only in an input field that supports references; run_cmd cannot read it.`,
+    note: `Full data is stored in this run's blackboard, not a shell variable. Use inspect_variable with name "${name}" to read it, or {"type":"variable","name":"${name}"} only in an input field that supports references; run_cmd cannot read it.`,
   };
 
   if (type === "array") {

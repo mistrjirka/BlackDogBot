@@ -397,4 +397,38 @@ describe("BaseAgentBase compaction token tracking", () => {
 
     expect(checkpointCompaction.compactWithCheckpointAsync).toHaveBeenCalledOnce();
   });
+
+  it("captures the latest prepareStep messages through the messages sink", async () => {
+    const agent: TestAgent = new TestAgent({ contextWindow: 100_000 });
+    agent.buildAgentPublic({} as LanguageModel, "Test instructions", {});
+    const captured: ModelMessage[][] = [];
+    agent.setMessagesSink((messages: ModelMessage[]): void => {
+      captured.push(messages);
+    });
+
+    vi.mocked(tokenTracker.estimateRequestLikeTokens).mockReturnValue({
+      breakdown: {
+        total: 1,
+        messages: 0,
+        image: 0,
+        tools: 0,
+        system: 0,
+        overhead: 0,
+        messageCount: 1,
+        toolCount: 0,
+      },
+    } as IRequestLikeTokenEstimate);
+    vi.mocked(tokenTracker.estimateRequestLikeTokensByBytes).mockReturnValue({
+      estimatedTokens: 1,
+      requestSizeBytes: 0,
+      messageCount: 1,
+      toolCount: 0,
+    } as IRequestLikeByteTokenEstimate);
+    vi.mocked(tokenTracker.countTokens).mockReturnValue(1);
+
+    const messages: ModelMessage[] = [{ role: "user", content: "hello" }];
+    await agent.callPrepareStepAsync(0, messages);
+
+    expect(captured[0]).toEqual(messages);
+  });
 });

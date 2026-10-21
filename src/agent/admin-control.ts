@@ -8,6 +8,7 @@ export interface ChatSessionState {
   paused: boolean;
   resumeResolve?: (() => void) | null;
   abortController: AbortController | null;
+  isRunning?: boolean;
   readonly steeringQueue: string[];
   isSteeringAbort: boolean;
 }
@@ -59,6 +60,7 @@ export class AdminControl {
     }
 
     session.isSteeringAbort = false;
+    session.steeringQueue.length = 0;
     session.abortController.abort();
     this._logger.info("Chat stopped.", { chatId });
     return true;
@@ -72,14 +74,17 @@ export class AdminControl {
       return false;
     }
 
+    if (session.isRunning !== true || !session.abortController || session.abortController.signal.aborted) {
+      this._logger.warn("Cannot steer: no active generation", { chatId });
+      return false;
+    }
+
     session.steeringQueue.push(message);
     this._logger.info("Steering message queued", { chatId, queueLength: session.steeringQueue.length });
 
-    if (session.abortController && !session.abortController.signal.aborted) {
-      session.isSteeringAbort = true;
-      session.abortController.abort();
-      this._logger.info("Aborted current LLM call for steering", { chatId });
-    }
+    session.isSteeringAbort = true;
+    session.abortController.abort();
+    this._logger.info("Aborted current LLM call for steering", { chatId });
 
     return true;
   }

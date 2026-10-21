@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   _buildProgressText,
+  _parseQueueCommand,
   _tryEditMessageTextAsync,
 } from "../../src/platforms/telegram/handler.js";
 import type { LoggerService } from "../../src/services/logger.service.js";
@@ -35,6 +36,17 @@ describe("Telegram progress message length", () => {
     const text: string = _buildProgressText("⚙️ Working...", [`Step 1: ${"x".repeat(6000)}`]);
 
     expect(text).toBe("⚙️ Working...");
+  });
+
+  it("renders context usage and a compaction line in the progress trace", () => {
+    const text: string = _buildProgressText(
+      "⚙️ Working...",
+      ["Step 4: run_cmd", "Context compaction: 92k → 41.2k"],
+      "📊 54.4k / 128k context (42%)",
+    );
+
+    expect(text).toContain("📊 54.4k / 128k context (42%)");
+    expect(text).toContain("Context compaction: 92k → 41.2k");
   });
 });
 
@@ -83,4 +95,18 @@ describe("editMessageText MESSAGE_TOO_LONG handling", () => {
     expect(succeeded).toBe(true);
     expect(editMessageText).toHaveBeenCalledTimes(1);
   });
+
+describe("queue command parsing", () => {
+  it("extracts the queued text from /queue", () => {
+    expect(_parseQueueCommand("/queue continue with the report")).toBe("continue with the report");
+    expect(_parseQueueCommand("/queue@BlackDogBot continue")).toBe("continue");
+    expect(_parseQueueCommand("/queue")).toBe("");
+  });
+
+  it("does not treat normal messages or other commands as /queue", () => {
+    expect(_parseQueueCommand("continue with the report")).toBeNull();
+    expect(_parseQueueCommand("/steer keep going")).toBeNull();
+    expect(_parseQueueCommand("/queuefoo bar")).toBeNull();
+  });
+});
 });

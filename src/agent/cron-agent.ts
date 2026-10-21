@@ -18,6 +18,7 @@ import {
   listSkillsTool,
   getSkillFileTool,
   createReadImageTool,
+  createInspectVariableTool,
   createTableTool,
   FileReadTracker,
 } from "../tools/index.js";
@@ -298,6 +299,7 @@ export class CronAgent extends BaseAgentBase {
       send_message: createSendMessageToolWithHistory(messageSender, taskIdProvider, executionContext),
       get_previous_message: createGetPreviousMessageTool(executionContext),
       create_table: wrapCreateTableTool(createTableTool, onCreateTableRebuild),
+      inspect_variable: createInspectVariableTool(() => this._currentVariableStore),
     };
 
     if (supportsVision) {
@@ -362,6 +364,10 @@ export class CronAgent extends BaseAgentBase {
 
       resolvedTools[toolName] = tool;
     }
+
+    // inspect_variable is infrastructure for reading captured stubs; expose it
+    // even when older task definitions do not list it explicitly.
+    resolvedTools.inspect_variable = createInspectVariableTool(() => this._currentVariableStore);
 
     if (effectiveToolNames.includes("delegate_agent")) {
       attachDelegateAgentTool(resolvedTools, AiProviderService.getInstance().getModel());

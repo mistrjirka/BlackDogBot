@@ -52,7 +52,8 @@ export function setupTelegramCommands(bot: Bot): void {
       "/factory_reset — Full nuclear reset: delete all jobs, knowledge, tasks, skills, prompts, workspace, logs, and chat history",
       "/update_prompts — Update all prompts from source defaults",
       "/cancel — Stop current generation and delete the active prompt",
-      "/steer <message> — Queue a steering message to guide the next response",
+      "/steer <message> — Explicitly steer the current run (mid-run text is steered automatically)",
+      "/queue <message> — Queue a message until the current run finishes",
       "/notifications_enable — Enable cron notifications for this chat",
       "/notifications_disable — Disable cron notifications for this chat",
       "/status — Show current chat status",
@@ -101,11 +102,11 @@ export function setupTelegramCommands(bot: Bot): void {
     const success: boolean = mainAgent.steerChat(chatId, message.trim());
 
     if (success) {
-      await ctx.reply("↩️ Steering message queued. The agent will be guided on its next turn.");
+      await ctx.reply("↪️ Steering the current run. The agent will see this on its next turn.");
     } else {
-      await ctx.reply("⚠️ Could not queue steering message. The chat may not be active.");
+      await ctx.reply("⚠️ Could not steer. The chat may not be active.");
     }
-    logger.info("Steering message queued via /steer command.", { chatId, message: message.trim().substring(0, 50) });
+    logger.info("Steering message injected via /steer command.", { chatId, message: message.trim().substring(0, 50) });
   });
 
   // /reset command

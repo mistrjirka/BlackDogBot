@@ -77,7 +77,7 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
   }
 
   contextParts.push(
-    `Tool boundary: run_cmd executes a literal command in an OS shell; it is not a persistent code/data environment and cannot access per-run blackboard variables. Never translate a stored variable name into $NAME or use shell/Python to retrieve stored data.`,
+    `Tool boundary: run_cmd executes a literal command in an OS shell; it is not a persistent code/data environment and cannot access per-run blackboard variables. Never translate a stored blackboard variable name into $NAME or use shell/Python to retrieve blackboard data. This restriction applies only to the in-memory blackboard; fetching web/API data with run_cmd, curl, or Python is allowed when needed.`,
   );
 
   contextParts.push(

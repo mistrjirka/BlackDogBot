@@ -194,6 +194,7 @@ export abstract class BaseAgentBase {
   protected _shouldTerminateRunCallback: (() => boolean) | null;
   protected _onDuplicateToolLoop: OnDuplicateToolLoopCallback | null;
   protected _compactionSink: CompactionSinkCallback | null;
+  protected _messagesSink: ((messages: ModelMessage[]) => void) | null;
   /** Live blackboard store for the current run (null outside a run). Single-flight assumption: one active run per agent instance (matches the single-slot `_agent` design). */
   protected _currentVariableStore: VariableStore | null;
 
@@ -215,6 +216,7 @@ export abstract class BaseAgentBase {
     this._shouldTerminateRunCallback = null;
     this._onDuplicateToolLoop = options?.onDuplicateToolLoop ?? null;
     this._compactionSink = null;
+    this._messagesSink = null;
     this._currentVariableStore = null;
   }
 
@@ -229,6 +231,15 @@ export abstract class BaseAgentBase {
    */
   public setCompactionSink(callback: CompactionSinkCallback | null): void {
     this._compactionSink = callback;
+  }
+
+  /**
+   * Register a callback receiving the latest in-flight messages from prepareStep.
+   * MainAgent uses this to survive retries and steering aborts without losing
+   * completed tool work.
+   */
+  public setMessagesSink(callback: ((messages: ModelMessage[]) => void) | null): void {
+    this._messagesSink = callback;
   }
 
   /**
@@ -602,6 +613,11 @@ export abstract class BaseAgentBase {
           throw Object.assign(new Error("Operation was stopped."), { name: "AbortError" });
         }
 
+        // Preserve the latest in-flight state for retries/steering aborts.
+        if (self._messagesSink) {
+          self._messagesSink([...messages]);
+        }
+
         // Memory diagnostics: log heap/RSS at every step to track leaks
         const mem = process.memoryUsage();
         logger.info("Memory usage at prepareStep", {
@@ -867,10 +883,14 @@ export abstract class BaseAgentBase {
             compactionTokenThreshold,
             self._contextWindow,
           );
+          statusService.setCompactionEvent(tokenCount, postCompactionTokenCount);
 
           // Notify the caller about the compaction so they can persist the compacted messages
           if (self._compactionSink) {
             self._compactionSink(compactionResult.messages);
+          }
+          if (self._messagesSink) {
+            self._messagesSink([...compactionResult.messages]);
           }
 
           return { messages: compactionResult.messages, activeTools: activeToolNames };

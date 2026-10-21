@@ -8,6 +8,8 @@
 | `/help` | Show command help. |
 | `/clear` | Clear conversation history for this chat. |
 | `/cancel` | Stop the current generation and clear the active prompt. |
+| `/steer <message>` | Explicitly steer the current run. Mid-run text messages are steered automatically. |
+| `/queue <message>` | Queue a message until the current run finishes instead of steering it. |
 | `/reset [name\|all]` | Reset one prompt (or all prompts) to factory defaults. |
 | `/update_prompts` | Refresh prompts from source defaults. |
 | `/factory_reset` | Wipe local data and restore factory defaults. |

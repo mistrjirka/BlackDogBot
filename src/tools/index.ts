@@ -27,6 +27,7 @@ export { listTimedTool } from "./list-timed.tool.js";
 export { getTimedTool } from "./get-timed.tool.js";
 export { runTimedTool } from "./run-timed.tool.js";
 export { createReadFileTool } from "./read-file.tool.js";
+export { createInspectVariableTool } from "./inspect-variable.tool.js";
 export { createReadImageTool } from "./read-image.tool.js";
 export { createWriteFileTool } from "./write-file.tool.js";
 export { appendFileTool } from "./append-file.tool.js";
