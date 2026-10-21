@@ -412,6 +412,7 @@ export class TelegramHandler {
       // Initialize the main agent with a sender bound to this chat
       const sender = this._messagingService.createSenderForChat("telegram", chatId);
       const photoSender = this._messagingService.createPhotoSenderForChat("telegram", chatId);
+      const fileSender = this._messagingService.createFileSenderForChat("telegram", chatId);
 
       // Send initial progress message
       try {
@@ -462,7 +463,7 @@ export class TelegramHandler {
             )
           : undefined;
 
-      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
+      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram", fileSender);
 
       // Start typing indicator
       const typingInterval: ReturnType<typeof setInterval> = setInterval(async () => {
@@ -990,6 +991,7 @@ export class TelegramHandler {
 
       const sender = this._messagingService.createSenderForChat("telegram", chatId);
       const photoSender = this._messagingService.createPhotoSenderForChat("telegram", chatId);
+      const fileSender = this._messagingService.createFileSenderForChat("telegram", chatId);
 
       if (bot) {
         try {
@@ -1008,7 +1010,7 @@ export class TelegramHandler {
           ? createProgressOnStep(progressMsgId, bot.api, chatId, this._logger, stepLogs, buildProgressText, "queue-progress-step", undefined, undefined, compactionState)
           : undefined;
 
-      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
+      await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram", fileSender);
 
       await this._messagingService.sendChatActionAsync("telegram", chatId, "typing").catch(() => {});
 

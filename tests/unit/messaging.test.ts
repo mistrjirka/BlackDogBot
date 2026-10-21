@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { InputFile } from "grammy";
 
 import {
   MessagingService,
@@ -7,6 +8,7 @@ import {
 import { TelegramAdapter } from "../../src/platforms/telegram/adapter.js";
 import { LoggerService } from "../../src/services/logger.service.js";
 import type {
+  IOutgoingFile,
   IOutgoingMessage,
   IOutgoingPhoto,
 } from "../../src/shared/types/messaging.types.js";
@@ -17,6 +19,7 @@ function createFakeAdapter(platform: "telegram" | "console" | "api"): IPlatformA
     platform,
     sendMessageAsync: vi.fn().mockResolvedValue("msg-123"),
     sendPhotoAsync: vi.fn().mockResolvedValue("photo-123"),
+    sendFileAsync: vi.fn().mockResolvedValue("file-123"),
     sendChatActionAsync: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -172,6 +175,87 @@ describe("MessagingService", () => {
     );
   });
 
+  it("should create a file sender function bound to a specific chat", async () => {
+    const service: MessagingService = MessagingService.getInstance();
+    const adapter: IPlatformAdapter = createFakeAdapter("telegram");
+
+    service.registerAdapter(adapter);
+
+    const fileSender = service.createFileSenderForChat("telegram", "chat-42");
+
+    const fileBuffer: Buffer = Buffer.from("report contents");
+    const result: string | null = await fileSender(fileBuffer, "report.txt", "Weekly report");
+
+    expect(result).toBe("file-123");
+    expect(adapter.sendFileAsync).toHaveBeenCalledWith({
+      fileBuffer,
+      fileName: "report.txt",
+      caption: "Weekly report",
+      platform: "telegram",
+      userId: "chat-42",
+    });
+  });
+
+  it("should send a file via sendFileAsync", async () => {
+    const service: MessagingService = MessagingService.getInstance();
+    const adapter: IPlatformAdapter = createFakeAdapter("telegram");
+
+    service.registerAdapter(adapter);
+
+    const file: IOutgoingFile = {
+      fileBuffer: Buffer.from("pdf"),
+      fileName: "report.pdf",
+      caption: null,
+      platform: "telegram",
+      userId: "user-99",
+    };
+
+    const messageId: string | null = await service.sendFileAsync(file);
+
+    expect(messageId).toBe("file-123");
+    expect(adapter.sendFileAsync).toHaveBeenCalledWith(file);
+  });
+
+  it("should throw when sending a file with no adapter registered", async () => {
+    const service: MessagingService = MessagingService.getInstance();
+
+    const file: IOutgoingFile = {
+      fileBuffer: Buffer.from("data"),
+      fileName: "data.bin",
+      caption: null,
+      platform: "api",
+      userId: "user-1",
+    };
+
+    await expect(service.sendFileAsync(file)).rejects.toThrow(
+      "No messaging adapter registered for platform: api",
+    );
+  });
+
+  it("should throw when the adapter does not support files", async () => {
+    const service: MessagingService = MessagingService.getInstance();
+    const adapter: IPlatformAdapter = {
+      platform: "telegram",
+      sendMessageAsync: vi.fn().mockResolvedValue("msg-123"),
+      sendPhotoAsync: vi.fn().mockResolvedValue("photo-123"),
+      sendChatActionAsync: vi.fn().mockResolvedValue(undefined),
+    };
+
+    service.registerAdapter(adapter);
+
+    const file: IOutgoingFile = {
+      fileBuffer: Buffer.from("data"),
+      fileName: "data.bin",
+      caption: null,
+      platform: "telegram",
+      userId: "user-1",
+    };
+
+    await expect(service.sendFileAsync(file)).rejects.toThrow(
+      "Platform telegram does not support file sending",
+    );
+  });
+
   it("should silently ignore sendChatActionAsync when no adapter registered", async () => {
     const service: MessagingService = MessagingService.getInstance();
 
@@ -228,6 +312,30 @@ describe("TelegramAdapter", () => {
     expect(sendMessageMock).toHaveBeenCalledWith("12345", "Test message", {
       parse_mode: "HTML",
     });
+  });
+
+  it("should send a file as a Telegram document", async () => {
+    const sendDocumentMock = vi.fn().mockResolvedValue({ message_id: 123 });
+    const fakeBot = { api: { sendDocument: sendDocumentMock } } as unknown as import("grammy").Bot;
+    const adapter: TelegramAdapter = new TelegramAdapter(fakeBot);
+
+    const file: IOutgoingFile = {
+      fileBuffer: Buffer.from("report"),
+      fileName: "report.txt",
+      caption: "Report caption",
+      platform: "telegram",
+      userId: "12345",
+    };
+
+    const result: string | null = await adapter.sendFileAsync(file);
+
+    expect(result).toBe("123");
+    expect(sendDocumentMock).toHaveBeenCalledTimes(1);
+
+    const [chatId, inputFile, options] = sendDocumentMock.mock.calls[0];
+    expect(chatId).toBe("12345");
+    expect(inputFile).toBeInstanceOf(InputFile);
+    expect(options).toEqual({ caption: "Report caption" });
   });
 });
 

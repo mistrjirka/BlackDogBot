@@ -2,6 +2,7 @@ import { Client, TextChannel, AttachmentBuilder } from "discord.js";
 
 import type { IPlatformAdapter } from "../../services/messaging.service.js";
 import type {
+  IOutgoingFile,
   IOutgoingMessage,
   IOutgoingPhoto,
   MessagePlatform,
@@ -76,6 +77,28 @@ export class DiscordAdapter implements IPlatformAdapter {
       return sent.id;
     } catch (error) {
       console.error("Discord photo send error:", error);
+      return null;
+    }
+  }
+
+  public async sendFileAsync(file: IOutgoingFile): Promise<string | null> {
+    try {
+      const channel = await this._client.channels.fetch(file.userId);
+
+      if (!channel || !channel.isTextBased()) {
+        return null;
+      }
+
+      const attachment = new AttachmentBuilder(file.fileBuffer, { name: file.fileName });
+
+      const sent = await (channel as TextChannel).send({
+        content: file.caption ?? undefined,
+        files: [attachment],
+      });
+
+      return sent.id;
+    } catch (error) {
+      console.error("Discord file send error:", error);
       return null;
     }
   }

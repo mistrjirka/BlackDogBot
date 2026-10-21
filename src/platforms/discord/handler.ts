@@ -193,9 +193,17 @@ export class DiscordHandler {
       // Create sender for this channel
       const sender = this._messagingService.createSenderForChat("discord", channelId);
       const photoSender = this._messagingService.createPhotoSenderForChat("discord", channelId);
+      const fileSender = this._messagingService.createFileSenderForChat("discord", channelId);
 
       // Initialize agent for this chat
-      await this._mainAgent.initializeForChatAsync(channelId, sender, photoSender, undefined, "discord");
+      await this._mainAgent.initializeForChatAsync(
+        channelId,
+        sender,
+        photoSender,
+        undefined,
+        "discord",
+        fileSender,
+      );
 
       // Start typing indicator loop
       const typingInterval: ReturnType<typeof setInterval> = setInterval(async () => {

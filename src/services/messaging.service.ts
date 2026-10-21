@@ -1,6 +1,8 @@
 import { LoggerService } from "./logger.service.js";
 import { TelegramOutboxService, type ITelegramOutboxMessage } from "./telegram-outbox.service.js";
 import {
+  type FileSender,
+  type IOutgoingFile,
   type IOutgoingMessage,
   type IOutgoingPhoto,
   type MessagePlatform,
@@ -13,6 +15,7 @@ export interface IPlatformAdapter {
   platform: MessagePlatform;
   sendMessageAsync(message: IOutgoingMessage): Promise<string | null>;
   sendPhotoAsync(photo: IOutgoingPhoto): Promise<string | null>;
+  sendFileAsync?(file: IOutgoingFile): Promise<string | null>;
   sendChatActionAsync(userId: string, action: string): Promise<void>;
 }
 
@@ -220,6 +223,31 @@ export class MessagingService {
     return messageId;
   }
 
+  public async sendFileAsync(file: IOutgoingFile): Promise<string | null> {
+    const adapter: IPlatformAdapter | undefined = this._adapters.get(file.platform);
+
+    if (!adapter) {
+      this._logger.error("No adapter registered for platform", { platform: file.platform });
+      throw new Error(`No messaging adapter registered for platform: ${file.platform}`);
+    }
+
+    if (!adapter.sendFileAsync) {
+      throw new Error(`Platform ${file.platform} does not support file sending`);
+    }
+
+    const messageId: string | null = await adapter.sendFileAsync(file);
+
+    this._logger.debug("File sent via adapter", {
+      platform: file.platform,
+      userId: file.userId,
+      fileName: file.fileName,
+      sizeBytes: file.fileBuffer.length,
+      messageId,
+    });
+
+    return messageId;
+  }
+
   public async sendChatActionAsync(platform: MessagePlatform, userId: string, action: string): Promise<void> {
     const adapter: IPlatformAdapter | undefined = this._adapters.get(platform);
 
@@ -256,6 +284,24 @@ export class MessagingService {
       };
 
       return this.sendPhotoAsync(outgoing);
+    };
+  }
+
+  public createFileSenderForChat(platform: MessagePlatform, userId: string): FileSender {
+    return async (
+      fileBuffer: Buffer,
+      fileName: string,
+      caption: string | null,
+    ): Promise<string | null> => {
+      const outgoing: IOutgoingFile = {
+        fileBuffer,
+        fileName,
+        caption,
+        platform,
+        userId,
+      };
+
+      return this.sendFileAsync(outgoing);
     };
   }
 

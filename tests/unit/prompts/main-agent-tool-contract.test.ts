@@ -21,6 +21,7 @@ const _thisDir: string = path.dirname(fileURLToPath(import.meta.url));
 const _PROMPTS_DIR: string = path.resolve(_thisDir, "..", "..", "..", "src", "defaults", "prompts");
 
 const mockMessageSender: MessageSender = async (_message: string): Promise<string | null> => null;
+const mockFileSender = async (): Promise<string | null> => null;
 
 /**
  * Backtick-quoted tokens that look like tool names (snake_case with at least
@@ -94,7 +95,7 @@ function _extractSnakeCaseBacktickTokens(prompt: string): Set<string> {
 }
 
 function _chatStaticToolNames(): Set<string> {
-  const baseTools = createBaseToolSet(mockMessageSender, new FileReadTracker());
+  const baseTools = createBaseToolSet(mockMessageSender, new FileReadTracker(), mockFileSender);
   return new Set<string>([...Object.keys(baseTools), ..._CHAT_STATIC_EXTRA_TOOLS]);
 }
 

@@ -36,7 +36,7 @@ import { redactSensitiveData } from "../utils/log-redaction.js";
 import * as toolRegistry from "../helpers/tool-registry.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
 import type { IToolCallSummary } from "./base-agent.js";
-import type { MessagePlatform } from "../shared/types/messaging.types.js";
+import type { FileSender, MessagePlatform } from "../shared/types/messaging.types.js";
 import { getCurrentTimeContext } from "../utils/time.js";
 
 import { DuplicateLoopHandler } from "./duplicate-loop-handler.js";
@@ -71,6 +71,7 @@ export interface IChatSession {
   lastActivityAt: number;
   messageSender: MessageSender;
   photoSender: (imageBuffer: Buffer, caption: string | null) => Promise<string | null>;
+  fileSender: FileSender | null;
   onStepAsync?: OnStepCallback;
   platform: MessagePlatform;
   paused: boolean;
@@ -171,6 +172,7 @@ export class MainAgent extends BaseAgentBase {
    * @param photoSender - Callback function for sending photos; returns message ID or null
    * @param onStepAsync - Optional callback invoked after each agent step with tool call summaries
    * @param platform - Messaging platform identifier (default: "telegram")
+   * @param fileSender - Optional callback for sending documents; enables the send_file tool
    * @returns Promise that resolves when initialization is complete
    */
   public async initializeForChatAsync(
@@ -179,6 +181,7 @@ export class MainAgent extends BaseAgentBase {
     photoSender: (imageBuffer: Buffer, caption: string | null) => Promise<string | null>,
     onStepAsync?: OnStepCallback,
     platform: MessagePlatform = "telegram",
+    fileSender: FileSender | null = null,
   ): Promise<void> {
     this._currentChatId = chatId;
 
@@ -196,6 +199,7 @@ export class MainAgent extends BaseAgentBase {
         lastActivityAt: saved?.lastActivityAt ?? Date.now(),
         messageSender,
         photoSender,
+        fileSender,
         onStepAsync,
         platform,
         paused: false,
@@ -239,6 +243,7 @@ export class MainAgent extends BaseAgentBase {
     const session: IChatSession = this._sessions.get(chatId)!;
     session.messageSender = messageSender;
     session.photoSender = photoSender;
+    session.fileSender = fileSender;
     session.onStepAsync = onStepAsync;
     session.platform = platform;
 
@@ -260,6 +265,7 @@ export class MainAgent extends BaseAgentBase {
         await ToolHotReloadService.getInstance().triggerRebuildAsync(chatId);
       },
       () => this._currentVariableStore,
+      fileSender,
     );
 
     // Capture permission and skill names for hot-reload callback scope
@@ -477,6 +483,7 @@ export class MainAgent extends BaseAgentBase {
           session.photoSender,
           session.onStepAsync,
           session.platform,
+          session.fileSender,
         );
         refreshedCount++;
       } catch (error: unknown) {
@@ -606,6 +613,7 @@ export class MainAgent extends BaseAgentBase {
           session.photoSender,
           session.onStepAsync,
           session.platform,
+          session.fileSender,
         );
       }
     } catch (error: unknown) {
@@ -1100,6 +1108,7 @@ private async _activateFallbackAndReinitializeAsync(
       session.photoSender,
       session.onStepAsync,
       session.platform,
+      session.fileSender,
     );
 
     return true;

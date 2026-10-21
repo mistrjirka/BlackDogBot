@@ -148,6 +148,20 @@ export const sendMessageToolInputSchema = z.object({
     .describe("Message to send to the user"),
 });
 
+export const sendFileToolInputSchema = z.object({
+  filePath: z.string()
+    .min(1)
+    .describe(
+      "Path to the file to send. Relative paths resolve against the workspace directory (~/.blackdogbot/workspace/). " +
+      "Only files inside the workspace or uploads directory can be sent.",
+    ),
+  caption: z.string()
+    .max(1024)
+    .nullable()
+    .optional()
+    .describe("Optional caption to display with the file (max 1024 characters)"),
+});
+
 export const searchKnowledgeToolInputSchema = z.object({
   query: z.string()
     .min(1)

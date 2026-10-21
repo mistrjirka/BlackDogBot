@@ -11,6 +11,7 @@ export {
 	type MessageSender,
 	type TaskIdProvider,
 } from "./knowledge-tool-factory.js";
+export { createSendFileTool, MAX_SEND_FILE_BYTES } from "./send-file.tool.js";
 export { createGetPreviousMessageTool } from "./get-previous-message.tool.js";
 export { modifyPromptTool } from "./modify-prompt.tool.js";
 export { listPromptsTool } from "./list-prompts.tool.js";

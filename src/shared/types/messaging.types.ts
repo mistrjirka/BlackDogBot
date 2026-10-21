@@ -26,6 +26,20 @@ export interface IOutgoingPhoto {
   userId: string;
 }
 
+export interface IOutgoingFile {
+  fileBuffer: Buffer;
+  fileName: string;
+  caption: string | null;
+  platform: MessagePlatform;
+  userId: string;
+}
+
+export type FileSender = (
+  fileBuffer: Buffer,
+  fileName: string,
+  caption: string | null,
+) => Promise<string | null>;
+
 export interface IMessageHandler {
   handleMessageAsync(message: IIncomingMessage): Promise<void>;
 }

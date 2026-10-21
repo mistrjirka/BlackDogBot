@@ -2,6 +2,7 @@ import { Bot, InputFile } from "grammy";
 
 import type { IPlatformAdapter } from "../../services/messaging.service.js";
 import type {
+  IOutgoingFile,
   IOutgoingMessage,
   IOutgoingPhoto,
   MessagePlatform,
@@ -90,6 +91,27 @@ export class TelegramAdapter implements IPlatformAdapter {
     );
 
     return String(sentMessage.message_id);
+  }
+
+  public async sendFileAsync(file: IOutgoingFile): Promise<string | null> {
+    const chatId: string = file.userId;
+
+    try {
+      const sentMessage = await this._bot.api.sendDocument(
+        chatId,
+        new InputFile(file.fileBuffer, file.fileName),
+        {
+          caption: file.caption ?? undefined,
+        },
+      );
+
+      return String(sentMessage.message_id);
+    } catch (error: unknown) {
+      if (this._isChatNotFoundError(error)) {
+        throw new ChatNotFoundError(chatId);
+      }
+      throw error;
+    }
   }
 
   public async sendChatActionAsync(userId: string, action: string): Promise<void> {

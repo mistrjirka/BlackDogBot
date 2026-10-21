@@ -33,11 +33,13 @@ import {
   getTimedTool,
   runTimedTool,
   createReadImageTool,
+  createSendFileTool,
   loadSkillTool,
   listSkillsTool,
   getSkillFileTool,
   type FileReadTracker,
 } from "../tools/index.js";
+import type { FileSender } from "../shared/types/messaging.types.js";
 import { createKnowledgeToolFactory } from "../tools/knowledge-tool-factory.js";
 import { LoggerService } from "../services/logger.service.js";
 import { ChannelRegistryService } from "../services/channel-registry.service.js";
@@ -62,8 +64,9 @@ export async function assembleToolsForChat(
   platform: MessagePlatform = "telegram",
   onCreateTableAsync?: (info: ICreateTableRebuildInfo) => void | Promise<void>,
   getVariableStore?: () => VariableStore | null,
+  fileSender?: FileSender | null,
 ): Promise<ToolSet> {
-  const tools = createBaseToolSet(messageSender, readTracker);
+  const tools = createBaseToolSet(messageSender, readTracker, fileSender);
 
   // Add read_image if vision is supported
   if (aiProviderService?.getSupportsVision()) {
@@ -152,7 +155,11 @@ export function createAgentBaseToolSet(
   };
 }
 
-export function createBaseToolSet(messageSender: MessageSender, readTracker: FileReadTracker): ToolSet {
+export function createBaseToolSet(
+  messageSender: MessageSender,
+  readTracker: FileReadTracker,
+  fileSender?: FileSender | null,
+): ToolSet {
   const knowledgeToolFactory = createKnowledgeToolFactory({
     knowledgeService: knowledge,
     messageService: {
@@ -169,6 +176,10 @@ export function createBaseToolSet(messageSender: MessageSender, readTracker: Fil
     get_timed: getTimedTool,
     run_timed: runTimedTool,
   };
+
+  if (fileSender) {
+    tools.send_file = createSendFileTool(fileSender);
+  }
 
   // Add cron/timed tools separately for clarity
   tools.add_once = addOnceTool;
