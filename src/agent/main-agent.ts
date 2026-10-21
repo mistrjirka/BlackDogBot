@@ -17,7 +17,7 @@ import {
   type IDuplicateToolCallLoopInfo,
 } from "./base-agent.js";
 import { McpService } from "../services/mcp.service.js";
-import { DEFAULT_AGENT_MAX_STEPS } from "../shared/constants.js";
+import { MAIN_AGENT_MAX_STEPS } from "../shared/limits.js";
 import { FileReadTracker } from "../tools/index.js";
 import type { MessageSender } from "../tools/index.js";
 import { ToolHotReloadService } from "../services/tool-hot-reload.service.js";
@@ -112,12 +112,7 @@ export class MainAgent extends BaseAgentBase {
   //#region Constructors
 
   private constructor() {
-    const rawSteps: number = parseInt(
-      process.env.BLACKDOGBOT_MAIN_AGENT_MAX_STEPS ?? "",
-      10,
-    );
-
-    super({ maxSteps: isNaN(rawSteps) ? DEFAULT_AGENT_MAX_STEPS : rawSteps });
+    super({ maxSteps: MAIN_AGENT_MAX_STEPS });
     this._sessions = new Map<string, IChatSession>();
     this._currentChatId = null;
     this._adminControl = createAdminControl(this._sessions, this._logger);

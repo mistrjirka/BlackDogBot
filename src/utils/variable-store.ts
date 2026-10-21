@@ -1,6 +1,11 @@
 import { type Tool, type ToolExecutionOptions, type ToolSet } from "ai";
 import { type ZodType, z } from "zod";
 
+import {
+  CAPTURE_THRESHOLD_CHARS,
+  PREVIEW_MAX_CHARS,
+} from "../shared/limits.js";
+
 /**
  * Blackboard variable store (Phase 1 — Blackboard Core).
  *
@@ -23,8 +28,7 @@ import { type ZodType, z } from "zod";
 
 //#region Constants
 
-/** Results below this many characters are inline exactly as before (never stored). */
-export const CAPTURE_THRESHOLD_CHARS: number = 4000;
+export { CAPTURE_THRESHOLD_CHARS, PREVIEW_MAX_CHARS };
 
 /** Maximum number of variables retained in a single run (FIFO eviction beyond this). */
 export const MAX_VARIABLES_PER_RUN: number = 50;
@@ -40,9 +44,6 @@ export const ITEM_SCHEMA_SAMPLE_SIZE: number = 5;
 
 /** itemSchema recursion depth; objects deeper than this collapse to "object". */
 export const ITEM_SCHEMA_MAX_DEPTH: number = 3;
-
-/** Maximum serialized length of a stub preview. */
-export const PREVIEW_MAX_CHARS: number = 1200;
 
 /**
  * JS reserved words / ES keywords. A normalized key that lands on one gets a

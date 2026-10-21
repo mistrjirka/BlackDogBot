@@ -5,6 +5,14 @@ import { McpService } from "../services/mcp.service.js";
 import { McpRegistryService } from "../services/mcp-registry.service.js";
 import type { IMcpServerEntry } from "../shared/types/mcp.types.js";
 import { PROMPT_MAIN_AGENT } from "../shared/constants.js";
+import {
+  CAPTURE_THRESHOLD_CHARS,
+  INSPECT_VARIABLE_DEFAULT_CHARS,
+  INSPECT_VARIABLE_MAX_CHARS,
+  PREVIEW_MAX_CHARS,
+  READ_DB_DEFAULT_LIMIT,
+  formatCharLimit,
+} from "../shared/limits.js";
 
 //#region Public functions
 
@@ -78,6 +86,13 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
 
   contextParts.push(
     `Tool boundary: run_cmd executes a literal command in an OS shell; it is not a persistent code/data environment and cannot access per-run blackboard variables. Never translate a stored blackboard variable name into $NAME or use shell/Python to retrieve blackboard data. This restriction applies only to the in-memory blackboard; fetching web/API data with run_cmd, curl, or Python is allowed when needed.`,
+  );
+
+  contextParts.push(
+    `Configured tool limits: large tool results are captured above ${formatCharLimit(CAPTURE_THRESHOLD_CHARS)} characters; ` +
+    `stub previews show up to ${formatCharLimit(PREVIEW_MAX_CHARS)} characters; ` +
+    `inspect_variable reveals up to ${formatCharLimit(INSPECT_VARIABLE_MAX_CHARS)} characters per call ` +
+    `(default ${formatCharLimit(INSPECT_VARIABLE_DEFAULT_CHARS)}); database reads default to ${READ_DB_DEFAULT_LIMIT} rows.`,
   );
 
   contextParts.push(

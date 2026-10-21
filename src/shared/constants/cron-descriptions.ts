@@ -1,3 +1,10 @@
+import {
+  INSPECT_VARIABLE_DEFAULT_CHARS,
+  INSPECT_VARIABLE_MAX_CHARS,
+  READ_DB_DEFAULT_LIMIT,
+  formatCharLimit,
+} from "../limits.js";
+
 /**
  * Tool descriptions for the scheduled task (cron) agent.
  * Injected into the verifier prompt so the LLM knows what each tool does.
@@ -75,7 +82,8 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
 
   inspect_variable:
     "Read a bounded slice of a large stored tool result. Use the exact variable name from a stub; " +
-    "continue at nextOffset if needed. Args: name (string, required); offset (number, default 0); maxChars (number, default 4000, max 24000).",
+    "continue at nextOffset if needed. " +
+    `Args: name (string, required); offset (number, default 0); maxChars (number, default ${formatCharLimit(INSPECT_VARIABLE_DEFAULT_CHARS)}, max ${formatCharLimit(INSPECT_VARIABLE_MAX_CHARS)}).`,
 
   read_image:
     "Read an image file and provide it to the model as media content (for vision-capable models). " +
@@ -163,7 +171,7 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "This is a read-only operation and does not modify data. " +
     "Args: tableName (string, required); " +
     "where (string, optional SQL WHERE predicates only; ORDER BY and LIMIT belong in orderBy/limit args, not in where); " +
-    "orderBy (string, optional ORDER BY only); limit (number, optional, default 20 or BLACKDOGBOT_READ_DB_DEFAULT_LIMIT, max 50); offset (number, optional, default 0); columns (string[], optional). " +
+    `orderBy (string, optional ORDER BY only); limit (number, optional, default ${READ_DB_DEFAULT_LIMIT}, max 50); offset (number, optional, default 0); columns (string[], optional). ` +
     "Returns matchingTotal, returnedCount, remainingCount, nextOffset, and continuationHint for pagination.",
 
   "update_table_<tableName>":

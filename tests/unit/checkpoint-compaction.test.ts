@@ -244,4 +244,29 @@ describe("compactWithCheckpointAsync", () => {
     expect(typeof content).toBe("string");
     expect(content).toContain("IMAGES FROM THE ORIGINAL USER REQUEST WERE OMITTED");
   });
+
+  it("does not treat a [STEER] message as the latest user request", async () => {
+    vi.mocked(llmRetry.generateTextWithRetryAsync).mockResolvedValue({ text: "summary" });
+
+    const messages: ModelMessage[] = [
+      { role: "user", content: "real task goal" },
+      ...buildHistory().slice(1),
+      { role: "user", content: "[STEER] correction for the current run" },
+    ];
+
+    const result = await compactWithCheckpointAsync({
+      messages,
+      model,
+      logger,
+      instructions: "SYSTEM PROMPT",
+      tools,
+      countTokens,
+      structuredMode: "tool_emulated",
+      supportsVision: false,
+      archiveDir: null,
+    });
+
+    expect(result.messages[0].content).toContain("real task goal");
+    expect(result.messages[0].content).not.toContain("[STEER]");
+  });
 });

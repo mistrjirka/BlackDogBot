@@ -67,6 +67,20 @@ ai:
 
 At the trigger, the agent keeps the current tool call and its result, summarizes the older prefix with the same system prompt and tool set (so the provider can reuse the prompt cache), and continues from the summary plus the preserved tool state. If the summary call fails, the run errors out rather than silently truncating history.
 
+## Tool Output Limits
+
+These are environment-configurable and are also surfaced in the tool descriptions/system context:
+
+```bash
+BLACKDOGBOT_CAPTURE_THRESHOLD_CHARS=4000        # larger results become stored variables
+BLACKDOGBOT_PREVIEW_MAX_CHARS=1200              # stub preview size
+BLACKDOGBOT_INSPECT_VARIABLE_MAX_CHARS=24000    # max chars per inspect_variable call
+BLACKDOGBOT_INSPECT_VARIABLE_DEFAULT_CHARS=4000 # default inspect_variable slice
+BLACKDOGBOT_READ_DB_DEFAULT_LIMIT=20            # default read_from_database rows (max 50)
+BLACKDOGBOT_MAIN_AGENT_MAX_STEPS=300
+BLACKDOGBOT_CRON_AGENT_MAX_STEPS=300
+```
+
 ## Messaging Platforms
 
 ### Telegram

@@ -1,11 +1,24 @@
 import { tool } from "ai";
 import { z } from "zod";
+import {
+  INSPECT_VARIABLE_DEFAULT_CHARS,
+  INSPECT_VARIABLE_MAX_CHARS,
+  formatCharLimit,
+} from "../shared/limits.js";
 import { VariableStore } from "../utils/variable-store.js";
 
 const inspectVariableInputSchema = z.object({
   name: z.string().min(1).describe("Case-sensitive variable name shown in a stored-result stub (e.g. searxng_1)."),
   offset: z.number().int().nonnegative().default(0).describe("Character offset in the stored value, starting at 0."),
-  maxChars: z.number().int().min(1).max(24000).default(4000).describe("Maximum characters to reveal (1–24000). Read only the segment you need."),
+  maxChars: z.number()
+    .int()
+    .min(1)
+    .max(INSPECT_VARIABLE_MAX_CHARS)
+    .default(INSPECT_VARIABLE_DEFAULT_CHARS)
+    .describe(
+      `Maximum characters to reveal (1–${formatCharLimit(INSPECT_VARIABLE_MAX_CHARS)}; ` +
+      `default ${formatCharLimit(INSPECT_VARIABLE_DEFAULT_CHARS)}). Read only the segment you need.`,
+    ),
 });
 
 type InspectResult =

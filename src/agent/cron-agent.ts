@@ -9,6 +9,7 @@ import { PROMPT_CRON_AGENT } from "../shared/constants.js";
 import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { ConfigService } from "../services/config.service.js";
+import { CRON_AGENT_MAX_STEPS } from "../shared/limits.js";
 import { McpService } from "../services/mcp.service.js";
 import { getCurrentTimeContext } from "../utils/time.js";
 import {
@@ -45,13 +46,7 @@ export class CronAgent extends BaseAgentBase {
   //#region Constructors
 
   private constructor() {
-    const cronAgentDefaultMaxSteps: number = 300;
-    const rawSteps: number = parseInt(
-      process.env.BLACKDOGBOT_CRON_AGENT_MAX_STEPS ?? "",
-      10,
-    );
-
-    super({ maxSteps: isNaN(rawSteps) ? cronAgentDefaultMaxSteps : rawSteps });
+    super({ maxSteps: CRON_AGENT_MAX_STEPS });
   }
 
   //#endregion Constructors

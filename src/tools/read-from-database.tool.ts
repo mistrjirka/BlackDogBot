@@ -3,26 +3,13 @@ import { z } from "zod";
 
 import * as litesql from "../helpers/litesql.js";
 import type { IQueryResult } from "../helpers/litesql.js";
+import { READ_DB_DEFAULT_LIMIT } from "../shared/limits.js";
 import { DEFAULT_DATABASE } from "../config/database.js";
 
 const SQL_CLAUSES_IN_WHERE_REGEX = /\b(ORDER\s+BY|LIMIT|SELECT|JOIN|GROUP\s+BY|HAVING)\b|;/i;
 const SQL_CLAUSES_IN_ORDER_BY_REGEX = /\b(WHERE|LIMIT|SELECT|JOIN|GROUP\s+BY|HAVING)\b|;/i;
 const IDENTIFIER_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const _DefaultReadDbLimit = _resolveDefaultReadDbLimit();
-
-function _resolveDefaultReadDbLimit(): number {
-  const rawValue: string = (process.env.BLACKDOGBOT_READ_DB_DEFAULT_LIMIT ?? "").trim();
-  if (rawValue.length === 0) {
-    return 20;
-  }
-
-  const parsedValue: number = Number.parseInt(rawValue, 10);
-  if (!Number.isFinite(parsedValue)) {
-    return 20;
-  }
-
-  return Math.min(50, Math.max(1, parsedValue));
-}
+const _DefaultReadDbLimit: number = READ_DB_DEFAULT_LIMIT;
 
 function _buildTableNameSchema(tableNames: string[]): z.ZodType<string> {
   const normalizedNames: string[] = tableNames
@@ -66,7 +53,7 @@ export function buildReadFromDatabaseTool(tableNames: string[]): ToolSet[string]
       .int()
       .min(1)
       .max(50)
-      .describe("Maximum number of rows to return (default from BLACKDOGBOT_READ_DB_DEFAULT_LIMIT or 20, max 50)")
+      .describe(`Maximum number of rows to return (default ${_DefaultReadDbLimit}, max 50)`)
       .optional(),
     offset: z.number()
       .int()
