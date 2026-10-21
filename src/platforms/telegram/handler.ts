@@ -1004,8 +1004,8 @@ export class TelegramHandler {
       }
 
       const onStepAsync: OnStepCallback | undefined =
-        progressMsgId !== null
-          ? createProgressOnStep(progressMsgId, bot!.api, chatId, this._logger, stepLogs, buildProgressText, "queue-progress-step", undefined, undefined, compactionState)
+        progressMsgId !== null && bot
+          ? createProgressOnStep(progressMsgId, bot.api, chatId, this._logger, stepLogs, buildProgressText, "queue-progress-step", undefined, undefined, compactionState)
           : undefined;
 
       await this._mainAgent.initializeForChatAsync(chatId, sender, photoSender, onStepAsync, "telegram");
@@ -1023,10 +1023,10 @@ export class TelegramHandler {
           await sender(result.text);
         }
 
-        if (progressMsgId !== null) {
+        if (progressMsgId !== null && bot) {
           const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
           await _tryEditMessageTextAsync(
-            bot!.api,
+            bot.api,
             this._logger,
             chatId,
             progressMsgId,
@@ -1068,10 +1068,10 @@ export class TelegramHandler {
         totalStepsCount += result.stepsCount;
       }
 
-      if (progressMsgId !== null) {
+      if (progressMsgId !== null && bot) {
         const stepWord: string = totalStepsCount === 1 ? "step" : "steps";
         await _tryEditMessageTextAsync(
-          bot!.api,
+          bot.api,
           this._logger,
           chatId,
           progressMsgId,
@@ -1103,9 +1103,9 @@ export class TelegramHandler {
         retryable: errorDetails.isRetryable,
       });
 
-      if (progressMsgId !== null) {
+      if (progressMsgId !== null && bot) {
         await _tryEditMessageTextAsync(
-          bot!.api,
+          bot.api,
           this._logger,
           chatId,
           progressMsgId,

@@ -913,15 +913,20 @@ export class AiProviderCore {
         let choicesWithReasoningContentField: number = 0;
 
         for (const choice of json.choices) {
-          const hasReasoningContent = choice.message?.reasoning_content;
-          const hasEmptyContent = !choice.message?.content || choice.message.content === "";
-          const hasToolCalls =
-            Array.isArray(choice.message?.tool_calls) &&
-            choice.message.tool_calls.length > 0;
+          const message = choice.message;
+          if (!message) {
+            continue;
+          }
 
-          const rawContent: string | undefined = choice.message?.content;
-          const reasoningContent: string = typeof choice.message?.reasoning_content === "string"
-            ? choice.message.reasoning_content
+          const hasReasoningContent = message.reasoning_content;
+          const hasEmptyContent = !message.content || message.content === "";
+          const hasToolCalls =
+            Array.isArray(message.tool_calls) &&
+            message.tool_calls.length > 0;
+
+          const rawContent: string | undefined = message.content;
+          const reasoningContent: string = typeof message.reasoning_content === "string"
+            ? message.reasoning_content
             : "";
 
           const thinkTagMatches: RegExpMatchArray[] = typeof rawContent === "string"
@@ -981,36 +986,36 @@ export class AiProviderCore {
 
           if (hasToolCalls && typeof rawContent === "string" && rawContent.trim().length > 0) {
             const parsed = parseToolCallReasoningFromContent(rawContent);
-            const existingReasoning: string = choice.message?.reasoning_content?.trim() ?? "";
+            const existingReasoning: string = message.reasoning_content?.trim() ?? "";
 
             if (existingReasoning.length === 0 && parsed.reasoningContent) {
-              choice.message!.reasoning_content = parsed.reasoningContent;
+              message.reasoning_content = parsed.reasoningContent;
               modified = true;
             }
 
             if (parsed.cleanedContent.length === 0) {
-              delete choice.message!.content;
+              delete message.content;
               modified = true;
             } else if (parsed.cleanedContent !== rawContent) {
-              choice.message!.content = parsed.cleanedContent;
+              message.content = parsed.cleanedContent;
               modified = true;
             }
           }
 
           if (!hasToolCalls && hasGemmaChannelTags && typeof rawContent === "string" && rawContent.trim().length > 0) {
             const parsed = parseToolCallReasoningFromContent(rawContent);
-            const existingReasoning: string = choice.message?.reasoning_content?.trim() ?? "";
+            const existingReasoning: string = message.reasoning_content?.trim() ?? "";
 
             if (existingReasoning.length === 0 && parsed.reasoningContent) {
-              choice.message!.reasoning_content = parsed.reasoningContent;
+              message.reasoning_content = parsed.reasoningContent;
               modified = true;
             }
 
             if (parsed.cleanedContent.length === 0) {
-              delete choice.message!.content;
+              delete message.content;
               modified = true;
             } else if (parsed.cleanedContent !== rawContent) {
-              choice.message!.content = parsed.cleanedContent;
+              message.content = parsed.cleanedContent;
               modified = true;
             }
           }
@@ -1025,8 +1030,8 @@ export class AiProviderCore {
               );
             }
 
-            choice.message!.content = choice.message!.reasoning_content;
-            delete choice.message!.reasoning_content;
+            message.content = message.reasoning_content;
+            delete message.reasoning_content;
             modified = true;
           }
         }
@@ -1730,14 +1735,15 @@ export class AiProviderCore {
           }, timeoutMs);
 
           // Forward caller's abort signal so cancellation still works
-          if (init.signal) {
-            if (init.signal.aborted) {
+          const callerSignal = init.signal;
+          if (callerSignal) {
+            if (callerSignal.aborted) {
               clearTimeout(timeoutId);
-              throw init.signal.reason ?? new DOMException("Aborted", "AbortError");
+              throw callerSignal.reason ?? new DOMException("Aborted", "AbortError");
             }
-            init.signal.addEventListener("abort", () => {
+            callerSignal.addEventListener("abort", () => {
               clearTimeout(timeoutId);
-              controller.abort(init.signal!.reason);
+              controller.abort(callerSignal.reason);
             }, { once: true });
           }
 

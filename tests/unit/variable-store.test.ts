@@ -16,6 +16,7 @@ import { addKnowledgeToolInputSchema, writeFileToolInputSchema } from "../../src
 import { buildPerTableToolsAsync } from "../../src/utils/per-table-tools.js";
 import * as litesql from "../../src/helpers/litesql.js";
 import { resetSingletons } from "../utils/test-helpers.js";
+import { makeToolExecutionOptions, privateOf } from "../utils/casts.js";
 
 vi.mock("../../src/helpers/litesql.js");
 
@@ -35,7 +36,7 @@ interface IStub {
 }
 
 function _asStub(value: unknown): IStub {
-  return value as unknown as IStub;
+  return privateOf<IStub>(value);
 }
 
 /** A string whose JSON serialization is exactly `jsonChars` bytes (accounting for the surrounding quotes). */
@@ -52,7 +53,7 @@ function _makeRef(name: string): { type: "variable"; name: string } {
 }
 
 function _options(): ToolExecutionOptions<never> {
-  return { toolCallId: "call_1", messages: [] } as unknown as ToolExecutionOptions<never>;
+  return makeToolExecutionOptions();
 }
 
 /**

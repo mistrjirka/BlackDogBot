@@ -1,4 +1,5 @@
 import { tool, type ToolSet } from "ai";
+import type { z } from "zod";
 
 import { Client } from "@modelcontextprotocol/sdk/client";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -384,15 +385,29 @@ export class McpService {
 
   private _createTransport(entry: IMcpServerEntry): Transport {
     if (entry.transport === "stdio") {
+      if (!entry.config.command) {
+        throw new Error(`MCP server "${entry.id}" is missing its stdio command`);
+      }
+
+      const inheritedEnv: Record<string, string> = Object.fromEntries(
+        Object.entries(process.env).filter(
+          (entry: [string, string | undefined]): entry is [string, string] => entry[1] !== undefined,
+        ),
+      );
+
       return new StdioClientTransport({
-        command: entry.config.command!,
+        command: entry.config.command,
         args: entry.config.args ?? [],
-        env: { ...process.env as Record<string, string>, ...entry.config.env },
+        env: { ...inheritedEnv, ...entry.config.env },
         stderr: "pipe",
       });
     }
 
-    const url = new URL(entry.config.url!);
+    if (!entry.config.url) {
+      throw new Error(`MCP server "${entry.id}" is missing its URL`);
+    }
+
+    const url = new URL(entry.config.url);
     const headers = entry.config.headers ?? {};
 
     // SSE transport for servers that only expose an SSE endpoint (e.g.
@@ -524,15 +539,23 @@ function _convertMcpToolToAiSdk(
   const inputSchema = jsonSchemaToZod(mcpTool.inputSchema);
   const outputSchema = mcpTool.outputSchema;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- MCP schema conversion produces a type incompatible with AI SDK's strict inputSchema type - dynamic tool definitions require flexible typing
   return tool({
     description,
-    inputSchema: inputSchema as any,
+    // MCP schemas are dynamic; jsonSchemaToZod returns a ZodType whose exact
+    // generic cannot be inferred at this boundary.
+    inputSchema: inputSchema as unknown as z.ZodTypeAny,
     execute: async (input: unknown) => {
       try {
+        if (typeof input !== "object" || input === null || Array.isArray(input)) {
+          return {
+            isError: true,
+            content: [{ type: "text", text: "MCP tool input must be an object." }],
+          };
+        }
+
         const result = await client.callTool({
           name: mcpTool.name,
-          arguments: input as Record<string, string | number | boolean>,
+          arguments: input as Record<string, unknown>,
         });
         return result;
       } catch (error) {
@@ -545,8 +568,7 @@ function _convertMcpToolToAiSdk(
     toModelOutput: ({ output }: { output: unknown }) => {
       return _convertMcpResultToModelOutput(output, outputSchema);
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- toModelOutput is an MCP-specific extension not in the standard AI SDK tool interface
-  } as any);
+  });
 }
 
 /**

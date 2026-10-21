@@ -42,7 +42,7 @@ import { getCurrentTimeContext } from "../utils/time.js";
 import { DuplicateLoopHandler } from "./duplicate-loop-handler.js";
 import { RetryOrchestrator } from "./retry-orchestrator.js";
 
-type TGenerateFn = (input: { messages: ModelMessage[]; abortSignal: AbortSignal }) => Promise<{ text: string; steps?: unknown[]; totalUsage?: Record<string, number | undefined>; usage?: Record<string, number | undefined>; response?: { messages?: unknown[] } }>;
+type TGenerateFn = (input: { messages: ModelMessage[]; abortSignal: AbortSignal }) => Promise<{ text: string; steps?: unknown[]; totalUsage?: Record<string, number | undefined>; usage?: Record<string, number | undefined>; response?: { messages?: ModelMessage[] } }>;
 
 //#region Constants
 
@@ -684,7 +684,11 @@ export class MainAgent extends BaseAgentBase {
       // Bind this run to the agent instance built for this chat. Another chat's
       // initialization may replace this._agent before a retry; the retry must
       // still use the original agent/tool set.
-      const activeAgent: ToolLoopAgent = this._agents.get(chatId) ?? this._agent!;
+      const perChatAgent: ToolLoopAgent | undefined = this._agents.get(chatId);
+      if (!perChatAgent) {
+        throw new Error(`Agent not initialized for chat ${chatId}. Reinitialization is required.`);
+      }
+      const activeAgent: ToolLoopAgent = perChatAgent;
 
       try {
         // Delegate generation loop with full retry logic to orchestrator.
@@ -731,11 +735,11 @@ export class MainAgent extends BaseAgentBase {
           // the latest response messages.
           const fallbackBaseMessages: ModelMessage[] | null =
             this._getInFlightMessages(session) ?? prepareStepCompactedMessages;
-          const fallbackResponseMessages: unknown[] = genResult.responseMessages ?? [];
+          const fallbackResponseMessages: ModelMessage[] = genResult.responseMessages ?? [];
           if (fallbackBaseMessages) {
             session.messages = [...fallbackBaseMessages];
             for (const responseMsg of fallbackResponseMessages) {
-              session.messages.push(responseMsg as ModelMessage);
+              session.messages.push(responseMsg);
             }
           } else {
             // Append response to session and compact even on failure
@@ -763,11 +767,11 @@ export class MainAgent extends BaseAgentBase {
           // the final response. This prevents a retry/steer from discarding tool work.
           const successBaseMessages: ModelMessage[] | null =
             this._getInFlightMessages(session) ?? prepareStepCompactedMessages;
-          const successResponseMessages: unknown[] = genResult.responseMessages ?? [];
+          const successResponseMessages: ModelMessage[] = genResult.responseMessages ?? [];
           if (successBaseMessages) {
             session.messages = [...successBaseMessages];
             for (const responseMsg of successResponseMessages) {
-              session.messages.push(responseMsg as ModelMessage);
+              session.messages.push(responseMsg);
             }
             this._logger.info("Using in-flight messages for session", {
               chatId,
@@ -972,7 +976,7 @@ export class MainAgent extends BaseAgentBase {
     _aiProviderService: AiProviderService,
     generateFn: TGenerateFn,
     abortSignal: AbortSignal,
-): Promise<{ result: IAgentResult; shouldFallback: boolean; compactionModel: LanguageModel; responseMessages?: unknown[] }> {
+): Promise<{ result: IAgentResult; shouldFallback: boolean; compactionModel: LanguageModel; responseMessages?: ModelMessage[] }> {
     // Note: status management (beginInFlight/endInFlight) is handled externally in processMessageForChatAsync
     // to avoid double-calling. This method focuses purely on the generate-and-retry loop.
 
@@ -1225,7 +1229,7 @@ export type { IAgentResult };
 function _appendResponseToSession(
   sessionMessages: ModelMessage[],
   userMessage: ModelMessage,
-  responseMessages?: unknown[],
+  responseMessages?: ModelMessage[],
 ): void {
   sessionMessages.push(userMessage);
 
@@ -1234,7 +1238,7 @@ function _appendResponseToSession(
   }
 
   for (const responseMsg of responseMessages) {
-    sessionMessages.push(responseMsg as ModelMessage);
+    sessionMessages.push(responseMsg);
   }
 }
 

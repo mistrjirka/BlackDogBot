@@ -4,6 +4,7 @@ import type { MessagingService } from "../services/messaging.service.js";
 import type { LoggerService } from "../services/logger.service.js";
 import type * as ToolRegistry from "../helpers/tool-registry.js";
 import type { MainAgent } from "../agent/main-agent.js";
+import type { IConfig } from "../shared/types/config.types.js";
 
 //#region Platform Types
 
@@ -31,7 +32,7 @@ export interface IPlatformDeps {
 /**
  * Platform configuration is stored in config.yaml under this key.
  */
-export type ConfigKey = "telegram" | "discord" | string;
+export type ConfigKey = keyof Pick<IConfig, "telegram" | "discord">;
 
 /**
  * Defines a messaging platform integration.

@@ -26,7 +26,7 @@ interface IGenerateCallOutput {
   steps?: unknown[];
   totalUsage?: Record<string, number | undefined>;
   usage?: Record<string, number | undefined>;
-  response?: { messages?: unknown[] };
+  response?: { messages?: ModelMessage[] };
 }
 
 type TGenerateFn = (input: IGenerateCallInput) => Promise<IGenerateCallOutput>;
@@ -79,7 +79,7 @@ export interface IRunCycleResult {
   /** True when a fallback provider activation is needed (all retries exhausted or non-retryable error). */
   shouldFallback: boolean;
   /** Raw provider response messages to persist in session history. */
-  responseMessages?: unknown[];
+  responseMessages?: ModelMessage[];
 }
 
 //#region Constants

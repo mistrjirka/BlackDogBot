@@ -33,6 +33,7 @@ import type {
 import * as tokenTracker from "../../src/utils/token-tracker.js";
 import * as checkpointCompaction from "../../src/utils/checkpoint-compaction.js";
 import { resetSingletons } from "../utils/test-helpers.js";
+import { privateOf, setPrivate } from "../utils/casts.js";
 
 class TestAgent extends BaseAgentBase {
   constructor(options?: { maxSteps?: number; contextWindow?: number }) {
@@ -48,9 +49,9 @@ class TestAgent extends BaseAgentBase {
     messages: ModelMessage[],
     steps: Array<{ usage?: { inputTokens?: number } }> = [],
   ): Promise<unknown> {
-    const internalAgent = (this as unknown as {
+    const internalAgent = privateOf<{
       _agent: { settings: { prepareStep: (input: unknown) => Promise<unknown> } } | null;
-    })._agent;
+    }>(this)._agent;
 
     if (!internalAgent?.settings?.prepareStep) {
       throw new Error("prepareStep is not available in test agent");
@@ -97,7 +98,7 @@ describe("BaseAgentBase compaction token tracking", () => {
 
     agent.buildAgentPublic(model, "Test instructions", {});
 
-    (agent as unknown as { _tokenEstimateCorrectionFactor: number })._tokenEstimateCorrectionFactor = 1;
+    setPrivate<{ _tokenEstimateCorrectionFactor: number }>(agent, "_tokenEstimateCorrectionFactor", 1);
 
     vi.mocked(tokenTracker.estimateRequestLikeTokens)
       .mockReturnValueOnce({
@@ -167,7 +168,7 @@ describe("BaseAgentBase compaction token tracking", () => {
 
     agent.buildAgentPublic(model, "Test instructions", {});
 
-    (agent as unknown as { _tokenEstimateCorrectionFactor: number })._tokenEstimateCorrectionFactor = 1;
+    setPrivate<{ _tokenEstimateCorrectionFactor: number }>(agent, "_tokenEstimateCorrectionFactor", 1);
 
     vi.mocked(tokenTracker.estimateRequestLikeTokens)
       .mockReturnValueOnce({
@@ -236,7 +237,7 @@ describe("BaseAgentBase compaction token tracking", () => {
 
     agent.buildAgentPublic(model, "Test instructions", {});
 
-    (agent as unknown as { _tokenEstimateCorrectionFactor: number })._tokenEstimateCorrectionFactor = 1.08;
+    setPrivate<{ _tokenEstimateCorrectionFactor: number }>(agent, "_tokenEstimateCorrectionFactor", 1.08);
 
     vi.mocked(tokenTracker.estimateRequestLikeTokens)
       .mockReturnValueOnce({
@@ -311,7 +312,7 @@ describe("BaseAgentBase compaction token tracking", () => {
     const agent: TestAgent = new TestAgent({ contextWindow: 100_000 });
     const model: LanguageModel = {} as LanguageModel;
     agent.buildAgentPublic(model, "Test instructions", {});
-    (agent as unknown as { _tokenEstimateCorrectionFactor: number })._tokenEstimateCorrectionFactor = 1;
+    setPrivate<{ _tokenEstimateCorrectionFactor: number }>(agent, "_tokenEstimateCorrectionFactor", 1);
 
     vi.mocked(tokenTracker.estimateRequestLikeTokens).mockReturnValue({
       breakdown: {
@@ -344,7 +345,7 @@ describe("BaseAgentBase compaction token tracking", () => {
     const agent: TestAgent = new TestAgent({ contextWindow: 100_000 });
     const model: LanguageModel = {} as LanguageModel;
     agent.buildAgentPublic(model, "Test instructions", {});
-    (agent as unknown as { _tokenEstimateCorrectionFactor: number })._tokenEstimateCorrectionFactor = 1;
+    setPrivate<{ _tokenEstimateCorrectionFactor: number }>(agent, "_tokenEstimateCorrectionFactor", 1);
 
     vi.mocked(tokenTracker.estimateRequestLikeTokens)
       .mockReturnValueOnce({

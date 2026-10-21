@@ -1,4 +1,12 @@
-import { generateText, Output, dynamicTool, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
+import {
+  generateText,
+  Output,
+  dynamicTool,
+  type LanguageModel,
+  type ModelMessage,
+  type ToolChoice,
+  type ToolSet,
+} from "ai";
 import type { SharedV4ProviderOptions } from "@ai-sdk/provider";
 import type { z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -336,8 +344,8 @@ export async function generateTextWithRetryAsync(options: IGenerateTextOptions):
       ...promptArgs,
       ...(options.system ? { instructions: options.system } : {}),
       ...(options.tools ? { tools: options.tools } : {}),
-      ...(options.activeTools ? { activeTools: options.activeTools as never } : {}),
-      ...(options.toolChoice ? { toolChoice: options.toolChoice as never } : {}),
+      ...(options.activeTools ? { activeTools: options.activeTools as Array<keyof ToolSet> } : {}),
+      ...(options.toolChoice ? { toolChoice: options.toolChoice as ToolChoice<ToolSet> } : {}),
       maxRetries: 0,
       abortSignal: linkedSignal,
     });
@@ -383,8 +391,8 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(options:
         ...promptArgs,
         ...(options.system ? { instructions: options.system } : {}),
         ...(options.tools ? { tools: options.tools } : {}),
-        ...(options.activeTools ? { activeTools: options.activeTools as never } : {}),
-        ...(options.toolChoice ? { toolChoice: options.toolChoice as never } : {}),
+        ...(options.activeTools ? { activeTools: options.activeTools as Array<keyof ToolSet> } : {}),
+        ...(options.toolChoice ? { toolChoice: options.toolChoice as ToolChoice<ToolSet> } : {}),
         output: Output.object({ schema: options.schema }),
         ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}),
         maxRetries: 0,

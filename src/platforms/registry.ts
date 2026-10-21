@@ -95,7 +95,6 @@ export class PlatformManager {
         continue;
       }
 
-      // @ts-expect-error - Dynamic config access
       const platformConfig = config[configKey];
 
       // Check if enabled

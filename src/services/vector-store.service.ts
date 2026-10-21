@@ -157,13 +157,13 @@ export class VectorStoreService {
     const results: IVectorSearchResult[] = rawResults.map(
       (raw: Record<string, unknown>) => {
         const row = raw as Record<string, unknown>;
-        const distance: number = (row._distance as number) ?? 0;
+        const distance: number = typeof row._distance === "number" ? row._distance : 0;
 
         return {
-          id: row.id as string,
-          content: row.content as string,
-          collection: row.collection as string,
-          metadata: row.metadata as string,
+          id: _readRequiredString(row, "id"),
+          content: _readRequiredString(row, "content"),
+          collection: _readRequiredString(row, "collection"),
+          metadata: _readRequiredString(row, "metadata"),
           score: 1 - distance,
         };
       },
@@ -201,18 +201,13 @@ export class VectorStoreService {
     const existingRow = existingRows[0] as Record<string, unknown>;
 
     const mergedRecord: IVectorRecord = {
-      id: existingRow.id as string,
-      content:
-        updates.content ?? (existingRow.content as string),
-      collection:
-        updates.collection ?? (existingRow.collection as string),
-      vector:
-        updates.vector ?? (existingRow.vector as number[]),
-      metadata:
-        updates.metadata ?? (existingRow.metadata as string),
-      createdAt: existingRow.createdAt as string,
-      updatedAt:
-        updates.updatedAt ?? new Date().toISOString(),
+      id: _readRequiredString(existingRow, "id"),
+      content: updates.content ?? _readRequiredString(existingRow, "content"),
+      collection: updates.collection ?? _readRequiredString(existingRow, "collection"),
+      vector: updates.vector ?? _readRequiredNumberArray(existingRow, "vector"),
+      metadata: updates.metadata ?? _readRequiredString(existingRow, "metadata"),
+      createdAt: _readRequiredString(existingRow, "createdAt"),
+      updatedAt: updates.updatedAt ?? new Date().toISOString(),
     };
 
     await table.delete(`id = '${id}'`);
@@ -251,4 +246,20 @@ export class VectorStoreService {
   }
 
   //#endregion Private methods
+}
+
+function _readRequiredString(row: Record<string, unknown>, key: string): string {
+  const value: unknown = row[key];
+  if (typeof value !== "string") {
+    throw new Error(`Malformed vector row: expected string field "${key}"`);
+  }
+  return value;
+}
+
+function _readRequiredNumberArray(row: Record<string, unknown>, key: string): number[] {
+  const value: unknown = row[key];
+  if (!Array.isArray(value) || !value.every((item: unknown): boolean => typeof item === "number")) {
+    throw new Error(`Malformed vector row: expected number[] field "${key}"`);
+  }
+  return value;
 }

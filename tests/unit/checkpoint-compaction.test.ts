@@ -19,14 +19,9 @@ import {
   findCheckpointCutoff,
 } from "../../src/utils/checkpoint-compaction.js";
 import * as llmRetry from "../../src/utils/llm-retry.js";
-import type { LoggerService } from "../../src/services/logger.service.js";
+import { makeLoggerMock } from "../utils/casts.js";
 
-const logger = {
-  info: vi.fn(),
-  warn: vi.fn(),
-  debug: vi.fn(),
-  error: vi.fn(),
-} as unknown as LoggerService;
+const logger = makeLoggerMock();
 
 const model = {} as LanguageModel;
 const tools: ToolSet = {};

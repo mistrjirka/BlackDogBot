@@ -16,9 +16,13 @@ const turndownService = new TurndownService({
 // Add custom rule for Telegram links (e.g., ?q=%23Breaking -> #Breaking)
 turndownService.addRule("telegramLinks", {
   filter: "a",
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- turndownService callback node param is untyped; DOM node behavior is well-known
-  replacement: function (content, node: any) {
-    const href = node.getAttribute("href");
+  replacement: function (
+    content: string,
+    node: { getAttribute?: (name: string) => string | null },
+  ): string {
+    const href: string | null = typeof node.getAttribute === "function"
+      ? node.getAttribute("href")
+      : null;
     if (href && href.startsWith("?q=")) {
       // Decode URL-encoded hashtags/mentions (e.g., ?q=%23Breaking -> #Breaking)
       const decoded = decodeURIComponent(href.substring(3));

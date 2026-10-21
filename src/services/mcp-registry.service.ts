@@ -184,8 +184,17 @@ export class McpRegistryService {
         ) {
           const file = parsed as IMcpServersFile;
 
-          for (const [id, config] of Object.entries(file.mcpServers)) {
-            this._servers.set(id, _entryFromConfig(id, config));
+          for (const [id, rawConfig] of Object.entries(file.mcpServers)) {
+            const validation = mcpServerConfigSchema.safeParse(rawConfig);
+            if (!validation.success) {
+              this._logger.warn("Skipping invalid MCP server config", {
+                serverId: id,
+                error: validation.error.message,
+              });
+              continue;
+            }
+
+            this._servers.set(id, _entryFromConfig(id, validation.data));
           }
 
           this._logger.info("Loaded MCP servers from mcp-servers.json", {

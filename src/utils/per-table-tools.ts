@@ -77,7 +77,16 @@ export async function buildPerTableToolsAsync(): Promise<IPerTableToolsResult> {
       continue;
     }
 
-    const perTableTool = _buildWriteToolForTable(DEFAULT_DATABASE, tableName, schemaResult.schema!.columns);
+    const tableSchema = schemaResult.schema;
+    if (!tableSchema) {
+      logger.warn("Table schema missing during per-table write tool generation", {
+        database: DEFAULT_DATABASE,
+        table: tableName,
+      });
+      continue;
+    }
+
+    const perTableTool = _buildWriteToolForTable(DEFAULT_DATABASE, tableName, tableSchema.columns);
     tools[`write_table_${tableName}`] = perTableTool;
   }
 
@@ -135,7 +144,16 @@ export async function buildUpdateTableToolsAsync(): Promise<IPerTableToolsResult
       continue;
     }
 
-    tools[`update_table_${tableName}`] = createUpdateTableTool(tableName, schemaResult.schema!.columns);
+    const tableSchema = schemaResult.schema;
+    if (!tableSchema) {
+      logger.warn("Table schema missing during per-table update tool generation", {
+        database: DEFAULT_DATABASE,
+        table: tableName,
+      });
+      continue;
+    }
+
+    tools[`update_table_${tableName}`] = createUpdateTableTool(tableName, tableSchema.columns);
   }
 
   logger.info("Per-table update tools built", {

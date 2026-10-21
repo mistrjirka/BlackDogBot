@@ -1,4 +1,4 @@
-import type { Tool, ToolSet } from "ai";
+import type { Tool, ToolExecutionOptions, ToolSet } from "ai";
 import {
   thinkTool,
   createTableTool,
@@ -196,12 +196,15 @@ export function wrapCreateTableTool(
     return originalTool;
   }
 
+  interface ICreateTableToolResult {
+    success?: boolean;
+    [key: string]: unknown;
+  }
+
   return {
     ...originalTool,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK execute callback options are untyped; tool input schema is the source of truth
-    execute: async (input: unknown, options: any): Promise<unknown> => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI SDK execute callback result is untyped; tool output schema is the source of truth
-      const result: any = await originalExecute(input, options);
+    execute: async (input: unknown, options: ToolExecutionOptions<unknown>): Promise<unknown> => {
+      const result = await originalExecute(input, options) as ICreateTableToolResult;
 
       if (result?.success === true && onCreateTableAsync) {
         const tableName: string = typeof input === "object" && input !== null
