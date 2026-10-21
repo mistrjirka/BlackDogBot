@@ -13,15 +13,22 @@ interface ISearxngResult {
 
 function formatResultsAsMarkdown(
   query: string,
-  numberOfResults: number,
+  numberOfResults: number | undefined,
   results: ISearxngResult[],
+  unresponsiveEngines: Array<[string, string]> = [],
 ): string {
+  const warning = unresponsiveEngines.length > 0
+    ? `Search coverage incomplete (unresponsive engines: ${unresponsiveEngines.map(([name]) => name).join(", ")}).\n\n`
+    : "";
+  const header = `## Search Results for "${query}"\n\n${warning}`;
   if (results.length === 0) {
-    return `## Search Results for "${query}"\n\nNo results found.`;
+    return `${header}No results found in this search.`;
   }
 
-  let markdown = `## Search Results for "${query}"\n\n`;
-  markdown += `Found ${numberOfResults} results. Showing ${results.length}:\n\n`;
+  let markdown = header;
+  markdown += typeof numberOfResults === "number" && Number.isFinite(numberOfResults) && numberOfResults > 0
+    ? `Showing ${results.length} results (backend estimate: ${numberOfResults}).\n\n`
+    : `Showing ${results.length} results; total index coverage is unknown.\n\n`;
 
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
@@ -69,6 +76,7 @@ export const searxngTool = tool({
         searchResult.query,
         searchResult.number_of_results,
         searchResult.results,
+        searchResult.unresponsive_engines,
       );
 
       return { results: formattedMarkdown };

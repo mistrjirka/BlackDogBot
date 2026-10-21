@@ -9,6 +9,7 @@ import { PROMPT_CRON_AGENT } from "../shared/constants.js";
 import { PromptService } from "../services/prompt.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { ConfigService } from "../services/config.service.js";
+import { McpService } from "../services/mcp.service.js";
 import { getCurrentTimeContext } from "../utils/time.js";
 import {
   createSendMessageToolWithHistory,
@@ -27,6 +28,7 @@ import { StatusService } from "../services/status.service.js";
 import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/per-table-tools.js";
 import { redactSensitiveData } from "../utils/log-redaction.js";
 import { attachDelegateAgentTool } from "./delegate-agent.js";
+import { VariableStore } from "../utils/variable-store.js";
 
 
 
@@ -220,8 +222,13 @@ export class CronAgent extends BaseAgentBase {
       "Execute the scheduled task according to your instructions.",
     );
 
+    // Shared store across the rebuild-restart loop: re-entering processMessageAsync
+    // per restart would otherwise lose pre-restart variables (the dominant
+    // RSS -> create_table -> write_table relay). Created before while(true) so it
+    // outlives every restart; processMessageAsync borrows it (ownsStore=false).
+    const variableStore: VariableStore = new VariableStore();
     while (true) {
-      const result: IAgentResult = await this.processMessageAsync(currentInstruction);
+      const result: IAgentResult = await this.processMessageAsync(currentInstruction, undefined, variableStore);
 
       if (pendingRebuild !== null && rebuildCount < maxRebuildRestarts) {
         const info: ICreateTableRebuildInfo = pendingRebuild;
@@ -331,6 +338,17 @@ export class CronAgent extends BaseAgentBase {
     availableTools.list_skills = listSkillsTool;
     availableTools.load_skill = loadSkillTool;
     availableTools.get_skill_file = getSkillFileTool;
+
+    // Recover MCP servers that failed to connect earlier. Throttled internally.
+    await McpService.getInstance().ensureConnectedAsync();
+
+    // Merge every tool discovered from connected MCP servers. Each server
+    // contributes its current mcp.<serverId>.<toolName> tools; missing servers
+    // simply leave no such entries, and unknown task tool names are skipped below.
+    const mcpTools = McpService.getInstance().getTools();
+    for (const [name, toolDef] of Object.entries(mcpTools)) {
+      availableTools[name] = toolDef as Tool;
+    }
 
     const resolvedTools: ToolSet = {};
     const effectiveToolNames: string[] = toolNames;

@@ -2,6 +2,7 @@ import { tool, type ToolSet } from "ai";
 
 import { Client } from "@modelcontextprotocol/sdk/client";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
@@ -25,6 +26,20 @@ interface IMcpServerConnection {
 }
 
 //#endregion Types
+
+//#region Constants
+
+/** Delays before each reconnect retry during the initial connection attempt. */
+const CONNECT_RETRY_DELAYS_MS: readonly number[] = [1000, 3000];
+
+/**
+ * Minimum time between on-demand reconnect attempts for a server that is
+ * configured but not connected. Prevents every agent build from stalling on
+ * the retry backoff while an MCP server is down.
+ */
+const RECONNECT_COOLDOWN_MS: number = 30_000;
+
+//#endregion Constants
 
 //#region McpService
 
@@ -59,6 +74,8 @@ export class McpService {
   private _combinedTools: ToolSet;
   private _serverResults: Map<string, IMcpServerToolsResult>;
   private _refreshPromise: Promise<void> | null;
+  private _ensurePromise: Promise<void> | null;
+  private _lastConnectAttemptAt: Map<string, number>;
 
   //#endregion Data Members
 
@@ -71,6 +88,8 @@ export class McpService {
     this._combinedTools = {};
     this._serverResults = new Map();
     this._refreshPromise = null;
+    this._ensurePromise = null;
+    this._lastConnectAttemptAt = new Map();
   }
 
   //#endregion Constructor
@@ -162,6 +181,64 @@ export class McpService {
   }
 
   /**
+   * Reconnect enabled servers that are configured but not currently connected.
+   *
+   * This is an on-demand recovery path for transient failures (for example an
+   * MCP container that was still starting when the process booted). Attempts
+   * are throttled per server so an unavailable server does not add the retry
+   * backoff to every agent build.
+   */
+  public async ensureConnectedAsync(): Promise<void> {
+    if (this._refreshPromise) {
+      await this._refreshPromise;
+      return;
+    }
+
+    if (this._ensurePromise) {
+      return this._ensurePromise;
+    }
+
+    this._ensurePromise = this._doEnsureConnectedAsync();
+
+    try {
+      await this._ensurePromise;
+    } finally {
+      this._ensurePromise = null;
+    }
+  }
+
+  private async _doEnsureConnectedAsync(): Promise<void> {
+    const now: number = Date.now();
+    const pending: IMcpServerEntry[] = this._registry.getAllServers().filter(
+      (entry: IMcpServerEntry): boolean => {
+        if (!entry.enabled || this._connections.has(entry.id)) {
+          return false;
+        }
+
+        const lastAttemptAt: number = this._lastConnectAttemptAt.get(entry.id) ?? 0;
+        return now - lastAttemptAt >= RECONNECT_COOLDOWN_MS;
+      },
+    );
+
+    if (pending.length === 0) {
+      return;
+    }
+
+    for (const entry of pending) {
+      const result: IMcpServerToolsResult = await this._connectServerAsync(entry);
+      this._serverResults.set(entry.id, result);
+    }
+
+    this._rebuildCombinedTools();
+
+    this._logger.info("MCP on-demand reconnect finished", {
+      attempted: pending.map((entry: IMcpServerEntry): string => entry.id),
+      connectedServers: this._connections.size,
+      totalTools: Object.keys(this._combinedTools).length,
+    });
+  }
+
+  /**
    * Get per-server discovery results (tool counts, warnings, errors).
    */
   public getServerResults(): Map<string, IMcpServerToolsResult> {
@@ -191,6 +268,7 @@ export class McpService {
 
     this._combinedTools = {};
     this._serverResults = new Map();
+    this._lastConnectAttemptAt.clear();
   }
 
   //#endregion Public Methods
@@ -198,6 +276,45 @@ export class McpService {
   //#region Private Methods - Connection
 
   private async _connectServerAsync(entry: IMcpServerEntry): Promise<IMcpServerToolsResult> {
+    this._lastConnectAttemptAt.set(entry.id, Date.now());
+
+    const maxAttempts: number = CONNECT_RETRY_DELAYS_MS.length + 1;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const result: IMcpServerToolsResult = await this._connectServerOnceAsync(entry);
+
+      if (!result.error) {
+        return result;
+      }
+
+      if (attempt < maxAttempts) {
+        const delayMs: number = CONNECT_RETRY_DELAYS_MS[attempt - 1];
+        this._logger.warn("Retrying MCP server connection", {
+          serverId: entry.id,
+          attempt,
+          maxAttempts,
+          delayMs,
+          error: result.error,
+        });
+        await new Promise<void>((resolve: () => void): void => {
+          setTimeout(resolve, delayMs);
+        });
+        continue;
+      }
+
+      return result;
+    }
+
+    // Unreachable, but keeps the compiler satisfied.
+    return {
+      serverId: entry.id,
+      loadedToolNames: [],
+      warnings: [],
+      error: "MCP connection attempts exhausted",
+    };
+  }
+
+  private async _connectServerOnceAsync(entry: IMcpServerEntry): Promise<IMcpServerToolsResult> {
     const result: IMcpServerToolsResult = {
       serverId: entry.id,
       loadedToolNames: [],
@@ -217,20 +334,14 @@ export class McpService {
       const { tools: mcpTools } = await client.listTools();
       const tools: ToolSet = {};
 
-      for (const mcpTool of mcpTools) {
-        if (entry.strictOutputSchema && !mcpTool.outputSchema) {
-          const warning = `Skipped tool "${mcpTool.name}" — missing outputSchema (strict mode)`;
-          result.warnings.push(warning);
-          this._logger.warn(warning, { serverId: entry.id, tool: mcpTool.name });
-          continue;
-        }
+      const { kept, warnings } = filterMcpToolsForServer(entry, mcpTools);
 
-        if (!mcpTool.outputSchema) {
-          const warning = `Tool "${mcpTool.name}" has no outputSchema — results may be unstructured`;
-          result.warnings.push(warning);
-          this._logger.warn(warning, { serverId: entry.id, tool: mcpTool.name });
-        }
+      for (const warning of warnings) {
+        result.warnings.push(warning);
+        this._logger.warn(warning, { serverId: entry.id });
+      }
 
+      for (const mcpTool of kept) {
         const namespacedName = `mcp.${entry.id}.${mcpTool.name}`;
         const aiSdkTool = _convertMcpToolToAiSdk(client, mcpTool, entry.id);
         tools[namespacedName] = aiSdkTool;
@@ -281,10 +392,20 @@ export class McpService {
       });
     }
 
-    // HTTP transport using StreamableHTTP (not deprecated SSE)
     const url = new URL(entry.config.url!);
     const headers = entry.config.headers ?? {};
 
+    // SSE transport for servers that only expose an SSE endpoint (e.g.
+    // Crawl4AI at /mcp/sse). Configured headers are passed via requestInit:
+    // the SDK merges them into both the initial SSE GET (via _commonHeaders)
+    // and the follow-up MCP POSTs, so Authorization propagates on both legs.
+    if (entry.transport === "sse") {
+      return new SSEClientTransport(url, {
+        requestInit: { headers },
+      });
+    }
+
+    // Default HTTP transport using StreamableHTTP
     return new StreamableHTTPClientTransport(url, {
       requestInit: { headers },
     });
@@ -298,6 +419,7 @@ export class McpService {
     }
 
     this._connections.delete(id);
+    this._lastConnectAttemptAt.delete(id);
 
     try {
       // Add timeout to prevent hung servers from blocking shutdown
@@ -334,6 +456,58 @@ export class McpService {
 }
 
 //#endregion McpService
+
+//#region Tool Filtering
+
+/** Minimal shape of a discovered MCP tool needed for filtering decisions. */
+export interface IMcpDiscoveredTool {
+  name: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+}
+
+/**
+ * Decide which discovered MCP tools to expose for a server entry.
+ *
+ * Pure function (exported for focused unit tests). Rules, in order:
+ * 1. When `allowedTools` is set, only listed server-side tool names are kept
+ *    (least privilege — e.g. an allowlist of ["md", "crawl"]).
+ * 2. When `strictOutputSchema` is true (the default), tools without
+ *    outputSchema are skipped. When explicitly false, they load with an
+ *    "unstructured results" warning (e.g. Crawl4AI tools define none).
+ *
+ * Strict mode is never relaxed globally — only per server via explicit config.
+ */
+export function filterMcpToolsForServer(
+  entry: Pick<IMcpServerEntry, "strictOutputSchema" | "allowedTools">,
+  mcpTools: IMcpDiscoveredTool[],
+): { kept: IMcpDiscoveredTool[]; warnings: string[] } {
+  const kept: IMcpDiscoveredTool[] = [];
+  const warnings: string[] = [];
+
+  for (const mcpTool of mcpTools) {
+    if (entry.allowedTools && !entry.allowedTools.includes(mcpTool.name)) {
+      warnings.push(`Skipped tool "${mcpTool.name}" — not in allowedTools allowlist`);
+      continue;
+    }
+
+    if (entry.strictOutputSchema && !mcpTool.outputSchema) {
+      warnings.push(`Skipped tool "${mcpTool.name}" — missing outputSchema (strict mode)`);
+      continue;
+    }
+
+    if (!mcpTool.outputSchema) {
+      warnings.push(`Tool "${mcpTool.name}" has no outputSchema — results may be unstructured`);
+    }
+
+    kept.push(mcpTool);
+  }
+
+  return { kept, warnings };
+}
+
+//#endregion Tool Filtering
 
 //#region Private Functions
 

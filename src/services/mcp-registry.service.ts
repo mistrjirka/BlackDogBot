@@ -95,13 +95,7 @@ export class McpRegistryService {
       throw new Error(`Invalid MCP server config: ${validation.error.message}`);
     }
 
-    const entry: IMcpServerEntry = {
-      id,
-      transport: config.command ? "stdio" : "http",
-      config,
-      enabled: true,
-      strictOutputSchema: true,
-    };
+    const entry: IMcpServerEntry = _entryFromConfig(id, validation.data);
 
     this._servers.set(id, entry);
     await this._saveAsync();
@@ -191,13 +185,7 @@ export class McpRegistryService {
           const file = parsed as IMcpServersFile;
 
           for (const [id, config] of Object.entries(file.mcpServers)) {
-            this._servers.set(id, {
-              id,
-              transport: config.command ? "stdio" : "http",
-              config,
-              enabled: true,
-              strictOutputSchema: true,
-            });
+            this._servers.set(id, _entryFromConfig(id, config));
           }
 
           this._logger.info("Loaded MCP servers from mcp-servers.json", {
@@ -245,3 +233,25 @@ export class McpRegistryService {
 }
 
 //#endregion McpRegistryService
+
+//#region Private Functions
+
+/**
+ * Build a runtime entry from a stored/validated server config.
+ * Transport honors an explicit remote selector ("sse" for SSE-only servers
+ * such as Crawl4AI); strict mode defaults to true; the tool allowlist is
+ * carried through when present. The full config (including these custom
+ * settings) is what _saveAsync persists, so they round-trip through the file.
+ */
+function _entryFromConfig(id: string, config: IMcpServerConfig): IMcpServerEntry {
+  return {
+    id,
+    transport: config.command ? "stdio" : (config.transport ?? "http"),
+    config,
+    enabled: true,
+    strictOutputSchema: config.strictOutputSchema ?? true,
+    allowedTools: config.allowedTools,
+  };
+}
+
+//#endregion Private Functions

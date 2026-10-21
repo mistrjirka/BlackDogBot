@@ -11,6 +11,7 @@ import {
   SQLITE_TO_ZOD_TYPE,
   isDateLikeColumn,
 } from "./sqlite-type-mappings.js";
+import { variableRefSchema, VARIABLE_REF_DESCRIPTION } from "../shared/schemas/tool-schemas.js";
 
 const WRITE_TO_TABLE_DESCRIPTION: string =
   "Insert rows into the \"{tableName}\" table. " +
@@ -206,7 +207,10 @@ function _buildWriteToolForTable(
   return dynamicTool({
     description,
     inputSchema: z.object({
-      data: dataSchema,
+      // Variable-capable sink: an array of rows OR a reference to a stored variable
+      // (resolve/normalizer wrapper unwraps the ref before execute). Union is applied
+      // at the tool level, not the array level, so buildZodSchemaForColumns is unchanged.
+      data: z.union([dataSchema, variableRefSchema.describe(VARIABLE_REF_DESCRIPTION)]),
     }),
     execute: async (input: unknown): Promise<{
       success: boolean;
@@ -216,6 +220,14 @@ function _buildWriteToolForTable(
       message: string;
     }> => {
       const { data } = input as { data: Record<string, unknown>[] };
+      // Belt-and-braces (C1.1): refs resolve to the payload array before execute, so a
+      // non-array here is a programmer/model error — fail loudly, never data.map-crash.
+      if (!Array.isArray(data)) {
+        throw new Error(
+          `write_table_${tableName}: "data" must be an array of rows, received ${typeof data}. ` +
+          `To pass stored rows, use {"type":"variable","name":"<variable_name>"} so the reference resolves to an array before execute.`,
+        );
+      }
       const timestampColumns: Record<string, string> = {};
 
       // Auto-fill timestamp columns if missing

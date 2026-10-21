@@ -19,8 +19,9 @@ export interface ISearxngResult {
 
 export interface ISearxngClientResponse {
   query: string;
-  number_of_results: number;
+  number_of_results?: number;
   results: ISearxngResult[];
+  unresponsive_engines?: Array<[string, string]>;
 }
 
 export async function searchSearxngAsync(
@@ -74,5 +75,10 @@ export async function searchSearxngAsync(
   }
 
   const searchResult: ISearxngClientResponse = await response.json() as ISearxngClientResponse;
+  // SearXNG does not reliably honor max_results. Enforce the tool's limit on
+  // our side so large responses do not crowd out useful evidence in context.
+  if (options?.maxResults !== undefined) {
+    searchResult.results = searchResult.results.slice(0, options.maxResults);
+  }
   return searchResult;
 }

@@ -3,6 +3,7 @@ import { type LanguageModel, type ModelMessage } from "ai";
 
 import { AGENT_EMPTY_RESPONSE_RETRIES, CONTEXT_EXCEEDED_RETRIES } from "./base-agent.js";
 import { DuplicateToolLoopHardStopError } from "./base-agent.js";
+import { CheckpointCompactionError } from "../utils/checkpoint-compaction.js";
 import type { LoggerService } from "../services/logger.service.js";
 import { apply429BackoffAsync } from "../utils/rate-limit-retry.js";
 import {
@@ -200,6 +201,10 @@ export class RetryOrchestrator {
         };
       } catch (genError: unknown) {
         if (genError instanceof DuplicateToolLoopHardStopError) {
+          throw genError;
+        }
+
+        if (genError instanceof CheckpointCompactionError) {
           throw genError;
         }
 

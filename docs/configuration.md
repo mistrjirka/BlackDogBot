@@ -54,6 +54,19 @@ ai:
       tpm: 200000
 ```
 
+## Context Compaction
+
+Compaction is controlled by a single number: the fraction of the model context window that triggers a checkpoint summary. The default is `0.90` (90%).
+
+```yaml
+ai:
+  provider: openai-compatible
+  compactionThreshold: 0.90        # 50%-94%; single trigger knob
+  disableThinkingOnStructuredOutput: true  # llama.cpp: enable_thinking=false for JSON schema calls
+```
+
+At the trigger, the agent keeps the current tool call and its result, summarizes the older prefix with the same system prompt and tool set (so the provider can reuse the prompt cache), and continues from the summary plus the preserved tool state. If the summary call fails, the run errors out rather than silently truncating history.
+
 ## Messaging Platforms
 
 ### Telegram
@@ -126,11 +139,14 @@ logging:
 
 ## Optional Services
 
+SearXNG is configured in `config.yaml`:
+
 ```yaml
 services:
   searxngUrl: http://localhost:18731
-  crawl4aiUrl: http://localhost:18732
 ```
+
+Crawl4AI is configured as a remote MCP server in `~/.blackdogbot/mcp-servers.json`, not as a `services.crawl4aiUrl` entry. The standard local entry uses `url: "http://127.0.0.1:18732/mcp/sse"`, `transport: "sse"`, `strictOutputSchema: false`, and an `Authorization: Bearer <token>` header. Keep both the token environment file and `mcp-servers.json` private (`chmod 600`). If `allowedTools` is omitted, all tools discovered from the MCP server are exposed subject to channel permissions.
 
 ## Data Paths
 

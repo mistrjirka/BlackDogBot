@@ -9,6 +9,8 @@ import {
 
 import { LoggerService } from "../services/logger.service.js";
 import { StatusService } from "../services/status.service.js";
+import { ConfigService } from "../services/config.service.js";
+import { AiProviderService } from "../services/ai-provider.service.js";
 import { DEFAULT_AGENT_MAX_STEPS, HARD_GATE_THRESHOLD_PERCENTAGE } from "../shared/constants.js";
 import {
   getDuplicateToolCallLoopInfo,
@@ -18,7 +20,9 @@ import {
 export type { IDuplicateToolCallLoopInfo };
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
-import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
+import { VariableStore, wrapToolSetWithVariables } from "../utils/variable-store.js";
+import { compactWithCheckpointAsync } from "../utils/checkpoint-compaction.js";
+import { getSessionsDir } from "../utils/paths.js";
 import {
   getConnectionRetryDelayMs,
   getDisableThinkingOnRetry,
@@ -47,10 +51,10 @@ import { extractLastAssistantToolCalls } from "../utils/tool-call-tracker.js";
 const DEFAULT_CONTEXT_WINDOW: number = 128_000;
 
 /**
- * Percentage of context window to use as compaction threshold.
- * When token count exceeds this percentage, older messages are summarized.
+ * Default fraction of the context window that triggers checkpoint compaction.
+ * Overridable via `ai.compactionThreshold`; kept below the internal hard gate.
  */
-const COMPACTION_THRESHOLD_PERCENTAGE: number = 0.70;
+const DEFAULT_COMPACTION_THRESHOLD_FRACTION: number = 0.90;
 
 /**
  * Hard gate threshold for blocking requests at the fetch level.
@@ -81,12 +85,6 @@ const MAX_429_RETRIES: number = 8;
  * (e.g., invalid JSON provider responses on unstable models).
  */
 const MAX_GENERIC_RETRIES: number = 3;
-
-/**
- * Token budget reserved for predictive compaction headroom.
- * Compaction triggers earlier by this amount to leave room for the next turn.
- */
-const COMPACTION_HEADROOM_TOKENS: number = 4000;
 
 /**
  * Initial safety factor applied to local token estimates.
@@ -184,6 +182,7 @@ export abstract class BaseAgentBase {
   protected _initialized: boolean;
   protected _maxSteps: number;
   protected _contextWindow: number;
+  protected _compactionThresholdFraction: number;
   protected _compactionTokenThreshold: number;
   protected _totalInputTokens: number = 0;
   protected _forceCompactionOnNextStep: boolean = false;
@@ -195,6 +194,8 @@ export abstract class BaseAgentBase {
   protected _shouldTerminateRunCallback: (() => boolean) | null;
   protected _onDuplicateToolLoop: OnDuplicateToolLoopCallback | null;
   protected _compactionSink: CompactionSinkCallback | null;
+  /** Live blackboard store for the current run (null outside a run). Single-flight assumption: one active run per agent instance (matches the single-slot `_agent` design). */
+  protected _currentVariableStore: VariableStore | null;
 
   //#endregion Data members
 
@@ -207,12 +208,14 @@ export abstract class BaseAgentBase {
     this._initialized = false;
     this._maxSteps = options?.maxSteps ?? DEFAULT_AGENT_MAX_STEPS;
     this._contextWindow = options?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-    this._compactionTokenThreshold = Math.floor(this._contextWindow * COMPACTION_THRESHOLD_PERCENTAGE);
+    this._compactionThresholdFraction = _resolveCompactionThresholdFraction();
+    this._compactionTokenThreshold = Math.floor(this._contextWindow * this._compactionThresholdFraction);
     this._tokenEstimateCorrectionFactor = INITIAL_TOKEN_ESTIMATE_CORRECTION_FACTOR;
     this._lastPrepareStepEstimatedTokens = null;
     this._shouldTerminateRunCallback = null;
     this._onDuplicateToolLoop = options?.onDuplicateToolLoop ?? null;
     this._compactionSink = null;
+    this._currentVariableStore = null;
   }
 
   //#endregion Constructors
@@ -235,19 +238,31 @@ export abstract class BaseAgentBase {
    */
   public updateContextWindow(contextWindow: number): void {
     this._contextWindow = contextWindow;
-    this._compactionTokenThreshold = Math.floor(contextWindow * COMPACTION_THRESHOLD_PERCENTAGE);
+    this._compactionThresholdFraction = _resolveCompactionThresholdFraction();
+    this._compactionTokenThreshold = Math.floor(contextWindow * this._compactionThresholdFraction);
     this._logger.info("Context window updated", {
       contextWindow,
+      compactionThresholdFraction: this._compactionThresholdFraction,
       compactionThreshold: this._compactionTokenThreshold,
     });
   }
 
-  public async processMessageAsync(userMessage: string, abortSignal?: AbortSignal): Promise<IAgentResult> {
+  public async processMessageAsync(
+    userMessage: string,
+    abortSignal?: AbortSignal,
+    variableStore?: VariableStore,
+  ): Promise<IAgentResult> {
     this._ensureInitialized();
 
     this._logger.debug("Processing user message", { messageLength: userMessage.length });
 
     const statusService: StatusService = StatusService.getInstance();
+
+    // Own the store when the caller did not supply one (per-run default); otherwise
+    // borrow the caller's store so it survives across a cron rebuild-restart loop.
+    const previousStore: VariableStore | null = this._currentVariableStore;
+    const ownsStore: boolean = variableStore === undefined;
+    this._currentVariableStore = variableStore ?? new VariableStore();
 
     try {
       // Set status to show AI is thinking (in-flight)
@@ -505,6 +520,8 @@ export abstract class BaseAgentBase {
       return { text: "Unexpected error.", stepsCount: 0 };
     } finally {
       statusService.endInFlight();
+      // Restore prior ownership: drop a store we created, keep the caller's.
+      this._currentVariableStore = ownsStore ? null : previousStore;
     }
   }
 
@@ -540,10 +557,15 @@ export abstract class BaseAgentBase {
       ...(extraTools ?? {}),
     };
 
-    // Wrap tools with optional reasoning field augmentation.
-    const allTools: ToolSet = wrapToolSetWithReasoning(rawTools, {
-      logger: this._logger,
-    });
+    // Wrap tools with optional reasoning field augmentation, then the variable
+    // blackboard OUTERMOST so refs resolve before reasoning is stripped and the
+    // store is read lazily (hot-reloaded rebuilds see the live store).
+    const allTools: ToolSet = wrapToolSetWithVariables(
+      wrapToolSetWithReasoning(rawTools, {
+        logger: this._logger,
+      }),
+      (): VariableStore | null => this._currentVariableStore,
+    );
 
     /** Names of the base tools (always visible). */
     const baseToolNames: string[] = Object.keys(tools);
@@ -751,45 +773,32 @@ export abstract class BaseAgentBase {
         // Message-only token count (what compaction can actually reduce)
         const messageTokensEstimated = countTokens(messages);
 
-        // Fixed overhead that compaction cannot reduce (tools + system + JSON structure)
-        const fixedOverheadTokens = Math.max(0, tokenCount - messageTokensEstimated);
-
-        // Soft threshold based on compactable budget only
-        const compactableThreshold = Math.max(1200, compactionTokenThreshold - COMPACTION_HEADROOM_TOKENS);
-
-        // Only trigger soft compaction when message tokens exceed compactable budget
-        const messageBasedSoftTrigger = messageTokensEstimated > compactableThreshold;
-
         // Update status service with context info (including percentage for UI display)
         const statusService: StatusService = StatusService.getInstance();
         statusService.setContextTokensWithThreshold(tokenCount, compactionTokenThreshold, self._contextWindow);
 
-        // Check if compaction is needed (predictive trigger with headroom)
-        // Triggers earlier to leave room for the next turn/tool result
+        // Single configurable trigger: full request estimate vs. the context
+        // window fraction. The hard gate remains an internal safety net.
         const hardLimit: number = Math.floor(self._contextWindow * HARD_GATE_THRESHOLD_PERCENTAGE);
         const exceedsHardLimitEstimate: boolean = tokenCount > hardLimit;
         const shouldCompact: boolean =
-          exceedsHardLimitEstimate || // Hard limit still uses full request estimate
-          messageBasedSoftTrigger ||  // Soft trigger uses message-only budget
+          tokenCount >= compactionTokenThreshold ||
+          exceedsHardLimitEstimate ||
           self._forceCompactionOnNextStep;
 
         if (shouldCompact) {
           const forcedCompaction: boolean = self._forceCompactionOnNextStep;
           self._forceCompactionOnNextStep = false;
-          const aggressiveCompaction: boolean = exceedsHardLimitEstimate;
 
           logger.info("Compacting agent history", {
             tokenCount,
             messageTokensEstimated,
-            fixedOverheadTokens,
-            compactableThreshold,
             threshold: compactionTokenThreshold,
-            messageBasedSoftTrigger,
+            thresholdFraction: self._compactionThresholdFraction,
             hardLimit,
             exceedsHardLimitEstimate,
             messageCount: messages.length,
             forced: forcedCompaction,
-            aggressiveCompaction,
             correctionFactor: self._tokenEstimateCorrectionFactor,
             estimationSource,
             rawEstimatedInputTokens: self._rawEstimatedInputTokens,
@@ -797,24 +806,21 @@ export abstract class BaseAgentBase {
             providerInputTokens: this._providerInputTokens,
           });
 
-          // Use summary-only compaction (no truncation)
-          const compactionTargetTokens: number = aggressiveCompaction
-            ? Math.max(1200, Math.floor(self._contextWindow * 0.30))
-            : Math.max(1200, Math.floor(self._contextWindow * 0.40));
-
-          const compactionResult = await compactMessagesSummaryOnlyAsync(
+          const compactionResult = await compactWithCheckpointAsync({
             messages,
-            compactionModel,
+            model: compactionModel,
             logger,
-            compactionTargetTokens,
-            (msgs: ModelMessage[]): number => countTokens(msgs),
-            forcedCompaction || aggressiveCompaction,
-            {
-              contextWindow: self._contextWindow,
-            },
-          );
+            instructions,
+            tools: allTools,
+            activeTools: activeToolNames,
+            countTokens: (msgs: ModelMessage[]): number => countTokens(msgs),
+            structuredMode: AiProviderService.getInstance().getStructuredOutputMode(),
+            supportsVision: AiProviderService.getInstance().getSupportsVision(),
+            abortSignal: getAbortSignal?.() ?? undefined,
+            archiveDir: getSessionsDir(),
+          });
 
-          logger.info("Summary-only compaction completed", {
+          logger.info("Checkpoint compaction completed", {
             originalTokens: compactionResult.originalTokens,
             compactedTokens: compactionResult.compactedTokens,
             reduction: compactionResult.originalTokens - compactionResult.compactedTokens,
@@ -826,8 +832,8 @@ export abstract class BaseAgentBase {
           const postMessageTokensEstimated = countTokens(compactionResult.messages);
           logger.info("Post-compaction message budget check", {
             postMessageTokensEstimated,
-            postCompactableThreshold: compactableThreshold,
-            stillAboveCompactableThreshold: postMessageTokensEstimated > compactableThreshold,
+            threshold: compactionTokenThreshold,
+            stillAboveTrigger: postMessageTokensEstimated >= compactionTokenThreshold,
           });
 
           const postCompactionEstimate: IRequestLikeByteTokenEstimate | null = estimateRequestLikeTokensByBytes(
@@ -907,5 +913,18 @@ export abstract class BaseAgentBase {
 //#endregion BaseAgent
 
 //#region Private functions
+
+function _resolveCompactionThresholdFraction(): number {
+  try {
+    const configured: number | undefined = ConfigService.getInstance().getConfig().ai.compactionThreshold;
+    if (typeof configured === "number" && Number.isFinite(configured)) {
+      return Math.min(0.94, Math.max(0.5, configured));
+    }
+  } catch {
+    // Config may not be initialized in focused unit tests.
+  }
+
+  return DEFAULT_COMPACTION_THRESHOLD_FRACTION;
+}
 
 //#endregion Private functions

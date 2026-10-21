@@ -77,8 +77,9 @@ logging:
 
 services:
   searxngUrl: http://localhost:18731
-  crawl4aiUrl: http://localhost:18732
 ```
+
+Crawl4AI is registered separately as an MCP server in `~/.blackdogbot/mcp-servers.json`; the install script creates this entry when you enable Crawl4AI.
 
 ### 3. Set Up Docker Services (Optional)
 
@@ -102,9 +103,41 @@ services:
     image: unclecode/crawl4ai:latest
     container_name: blackdogbot-crawl4ai
     ports:
-      - "18732:11235"
+      - "127.0.0.1:18732:11235"
+    environment:
+      CRAWL4AI_API_TOKEN: ${CRAWL4AI_API_TOKEN:?Set in ~/.blackdogbot/.env}
+    shm_size: 3g
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
 ```
+
+Create a private token file before starting Compose (the installer does this for you):
+
+```bash
+umask 077
+printf 'CRAWL4AI_API_TOKEN=%s\n' "$(openssl rand -hex 32)" > ~/.blackdogbot/.env
+chmod 600 ~/.blackdogbot/.env
+```
+
+Crawl4AI is connected through its native MCP SSE endpoint at `http://127.0.0.1:18732/mcp/sse`. Its `mcp-servers.json` entry uses `transport: "sse"`, `strictOutputSchema: false`, and an `Authorization: Bearer <token>` header. Keep that file private (`chmod 600`); omitting `allowedTools` exposes all tools discovered from the server.
+
+For a manual MCP setup, add this to `~/.blackdogbot/mcp-servers.json` (replace the placeholder with the token from `.env`):
+
+```json
+{
+  "mcpServers": {
+    "crawl4ai": {
+      "url": "http://127.0.0.1:18732/mcp/sse",
+      "transport": "sse",
+      "headers": { "Authorization": "Bearer <token>" },
+      "strictOutputSchema": false
+    }
+  }
+}
+```
+
+Then restrict the file permissions with `chmod 600 ~/.blackdogbot/mcp-servers.json`.
 
 **Important:** SearXNG requires a `settings.yml` file to enable JSON API access and disable bot detection for local use.
 

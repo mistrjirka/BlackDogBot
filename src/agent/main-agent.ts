@@ -28,7 +28,9 @@ import { ConfigService } from "../services/config.service.js";
 import { saveSessionAsync as _saveSessionAsync, loadSessionAsync as _loadSessionAsync, type IPersistedSession } from "./session-manager.js";
 import { AdminControl, createAdminControl } from "./admin-control.js";
 import { buildPerTableToolsWithUpdatesAsync } from "../utils/per-table-tools.js";
+import { VariableStore } from "../utils/variable-store.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
+import { CheckpointCompactionError } from "../utils/checkpoint-compaction.js";
 import { countTokens } from "../utils/token-tracker.js";
 import { redactSensitiveData } from "../utils/log-redaction.js";
 import * as toolRegistry from "../helpers/tool-registry.js";
@@ -209,6 +211,11 @@ export class MainAgent extends BaseAgentBase {
     const contextWindow: number = aiProviderService.getContextWindow();
     this.updateContextWindow(contextWindow);
 
+    // Recover MCP servers that failed to connect earlier (e.g. the container
+    // was still starting at boot). Throttled internally, so this is cheap when
+    // everything is already connected.
+    await McpService.getInstance().ensureConnectedAsync();
+
     const instructions: string = await buildMainAgentPromptAsync();
 
     const readTracker: FileReadTracker = new FileReadTracker();
@@ -238,6 +245,7 @@ export class MainAgent extends BaseAgentBase {
         session.pendingToolRebuild = info;
         await ToolHotReloadService.getInstance().triggerRebuildAsync(chatId);
       },
+      () => this._currentVariableStore,
     );
 
     // Capture permission and skill names for hot-reload callback scope
@@ -333,6 +341,8 @@ export class MainAgent extends BaseAgentBase {
     this._logger.debug("MainAgent _buildAgent completed", {
       chatId,
       hasOnStepCallback: onStepAsync !== undefined,
+      toolCount: Object.keys(filteredTools).length,
+      toolNames: Object.keys(filteredTools).sort(),
     });
 
     // Register hot-reload callback for per-table tools
@@ -368,15 +378,22 @@ export class MainAgent extends BaseAgentBase {
         chatId,
         hasOnStepCallback: onStepAsync !== undefined,
         toolCount: Object.keys(reFilteredTools).length,
+        toolNames: Object.keys(reFilteredTools).sort(),
       });
 
       this._logger.info("Agent tools hot-reloaded", {
         chatId,
         toolCount: Object.keys(reFilteredTools).length,
+        toolNames: Object.keys(reFilteredTools).sort(),
       });
     });
 
-    this._logger.info("MainAgent initialized for chat.", { chatId, permission });
+    this._logger.info("MainAgent initialized for chat.", {
+      chatId,
+      permission,
+      toolCount: Object.keys(filteredTools).length,
+      toolNames: Object.keys(filteredTools).sort(),
+    });
   }
 
   private _buildAgentForChat(
@@ -508,6 +525,11 @@ export class MainAgent extends BaseAgentBase {
       });
       throw error;
     }
+
+    // Blackboard store is created here — before the outer while(true) — so it
+    // outlives rebuild-restart `continue`s and is visible to hot-reloaded tool
+    // rebuilds during this run.
+    this._currentVariableStore = new VariableStore();
 
     let currentUserMessage: string = userMessage;
     // Set when the loop restarts after a tool rebuild: the synthetic restart
@@ -665,6 +687,8 @@ export class MainAgent extends BaseAgentBase {
             session.isSteeringAbort = false;
             continueAfterSteeringAbort = true;
           } else {
+            // Drop the store on the clean stop path (see throw-path note below).
+            this._currentVariableStore = null;
             return { text: "Operation was stopped.", stepsCount: 0 };
           }
         } else if (error instanceof DuplicateToolLoopHardStopError) {
@@ -673,11 +697,26 @@ export class MainAgent extends BaseAgentBase {
             loopInfo: error.loopInfo.summaryString,
           });
           this._resetDuplicateLoopEscalation(chatId);
+          // Drop the store on the hard-stop path.
+          this._currentVariableStore = null;
           return {
             text: "model wasnt able to complete request reason: duplicate tool calls\n\nrecommendation: run /clear",
             stepsCount: 0,
           };
+        } else if (error instanceof CheckpointCompactionError) {
+          this._logger.error("Checkpoint compaction failed; refusing deterministic truncation", {
+            chatId,
+            error: error.message,
+          });
+          this._currentVariableStore = null;
+          return {
+            text: `Context compaction failed: ${error.message}\n\nThe conversation was not truncated; fix the summary provider and retry, or run /clear.`,
+            stepsCount: 0,
+          };
         } else {
+          // NOTE (accepted residual): a terminal throw here leaves _currentVariableStore
+          // set. It is overwritten by the next run's `new VariableStore()` and no tool
+          // execution happens in between, so nothing stale is observable. No clear needed.
           throw error;
         }
       } finally {
@@ -737,6 +776,8 @@ export class MainAgent extends BaseAgentBase {
     }
 
     this._resetDuplicateLoopEscalation(chatId);
+    // Drop the store once the run is fully done.
+    this._currentVariableStore = null;
     return finalResult;
   }
 

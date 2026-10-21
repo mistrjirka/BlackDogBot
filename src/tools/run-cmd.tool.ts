@@ -30,7 +30,7 @@ const INTERACTIVE_PROMPT_PATTERNS: RegExp[] = [
 const IDLE_PROMPT_DETECTION_MS: number = 3000;
 
 export const runCmdTool = tool({
-  description: "Execute a shell command and return stdout, stderr, and exit code.",
+  description: "Execute a real OS shell command and return stdout, stderr, and exit code. This is not a persistent code/data sandbox and cannot access BlackDogBot's per-run blackboard variables; command must be a literal shell string. Use for local/system commands, and for web requests when no dedicated web tool is available or suitable.",
   inputSchema: runCmdToolInputSchema,
   execute: async ({ command, cwd, timeout, mode, deterministicInputDetection }: IRunCmdInput): Promise<IRunCmdOutput> => {
     const logger: LoggerService = LoggerService.getInstance();

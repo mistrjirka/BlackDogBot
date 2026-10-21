@@ -1,0 +1,49 @@
+diff --git a/src/services/ai-provider/ai-provider-core.ts b/src/services/ai-provider/ai-provider-core.ts
+index d0600df..bc97589 100644
+--- a/src/services/ai-provider/ai-provider-core.ts
++++ b/src/services/ai-provider/ai-provider-core.ts
+@@ -2524,10 +2524,23 @@ export class AiProviderCore {
+ 
+       let responseText: string | null = null;
+       let responseTruncated: boolean = false;
++      let responseUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
+       try {
+         const raw: string = await response.clone().text();
+         responseTruncated = raw.length > LLM_TRACE_MAX_RESPONSE_CHARS;
+         responseText = responseTruncated ? raw.slice(0, LLM_TRACE_MAX_RESPONSE_CHARS) : raw;
++        // Extract provider usage from the FULL body before the 6000-char cap drops it
++        // (it is the last field of OpenAI-compatible responses; large tool-call
++        // responses exceed the cap). Trace-only; fire-and-forget semantics unchanged.
++        try {
++          const parsedResponse: unknown = JSON.parse(raw);
++          const candidate = (parsedResponse as { usage?: unknown })?.usage;
++          if (candidate !== null && typeof candidate === "object") {
++            responseUsage = candidate as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
++          }
++        } catch {
++          // non-JSON response body — no usage to record
++        }
+       } catch {
+         responseText = null;
+       }
+@@ -2541,6 +2554,7 @@ export class AiProviderCore {
+         requestBody,
+         response: responseText,
+         responseTruncated,
++        usage: responseUsage,
+       });
+     } catch (error: unknown) {
+       LoggerService.getInstance().warn("LLM trace append failed", {
+diff --git a/src/services/ai-provider/llm-trace.ts b/src/services/ai-provider/llm-trace.ts
+index ae3c39b..7711097 100644
+--- a/src/services/ai-provider/llm-trace.ts
++++ b/src/services/ai-provider/llm-trace.ts
+@@ -27,6 +27,8 @@ export interface ILlmTraceRecord {
+   requestBody: unknown;
+   response: string | null;
+   responseTruncated: boolean;
++  /** Provider-reported usage, extracted from the FULL response before the char cap. */
++  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
+ }
+ 
+ /**

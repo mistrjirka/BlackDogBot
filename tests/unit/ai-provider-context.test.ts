@@ -62,16 +62,16 @@ describe("AiProviderService - Context Management", () => {
   });
 
   describe("getHardLimitTokens", () => {
-    it("should return 85% of default context window", () => {
-      const expectedHardLimit: number = Math.floor(128_000 * 0.85);
+    it("should return 95% of default context window", () => {
+      const expectedHardLimit: number = Math.floor(128_000 * 0.95);
 
       const hardLimit: number = service.getHardLimitTokens();
 
       expect(hardLimit).toBe(expectedHardLimit);
-      expect(hardLimit).toBe(108_800);
+      expect(hardLimit).toBe(121_600);
     });
 
-    it("should return 85% of configured context window", () => {
+    it("should return 95% of configured context window", () => {
       const configWithContextWindow: IAiConfig = {
         ...mockOpenRouterConfig,
         openrouter: {
@@ -83,11 +83,11 @@ describe("AiProviderService - Context Management", () => {
       service.initialize(configWithContextWindow);
       const hardLimit: number = service.getHardLimitTokens();
 
-      expect(hardLimit).toBe(Math.floor(200_000 * 0.85));
-      expect(hardLimit).toBe(170_000);
+      expect(hardLimit).toBe(Math.floor(200_000 * 0.95));
+      expect(hardLimit).toBe(190_000);
     });
 
-    it("should floor the result when 85% is not an integer", () => {
+    it("should floor the result when 95% is not an integer", () => {
       const configWithContextWindow: IAiConfig = {
         ...mockOpenRouterConfig,
         openrouter: {
@@ -99,7 +99,7 @@ describe("AiProviderService - Context Management", () => {
       service.initialize(configWithContextWindow);
       const hardLimit: number = service.getHardLimitTokens();
 
-      expect(hardLimit).toBe(85_000);
+      expect(hardLimit).toBe(95_000);
     });
   });
 

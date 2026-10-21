@@ -22,7 +22,6 @@ import {
   readFromDatabaseTool,
   deleteFromDatabaseTool,
   searxngTool,
-  crawl4aiTool,
   searchTimedTool,
   addOnceTool,
   addIntervalTool,
@@ -51,6 +50,8 @@ import { attachDelegateAgentTool } from "./delegate-agent.js";
 import type { IFileReadTracker } from "../utils/file-tools-helper.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
 import type { ICreateTableRebuildInfo } from "../shared/types/tool-rebuild.types.js";
+import { createInspectVariableTool } from "../tools/inspect-variable.tool.js";
+import type { VariableStore } from "../utils/variable-store.js";
 
 export async function assembleToolsForChat(
   chatId: string,
@@ -60,6 +61,7 @@ export async function assembleToolsForChat(
   mcpService?: McpService,
   platform: MessagePlatform = "telegram",
   onCreateTableAsync?: (info: ICreateTableRebuildInfo) => void | Promise<void>,
+  getVariableStore?: () => VariableStore | null,
 ): Promise<ToolSet> {
   const tools = createBaseToolSet(messageSender, readTracker);
 
@@ -71,6 +73,9 @@ export async function assembleToolsForChat(
   tools.list_skills = listSkillsTool;
   tools.load_skill = loadSkillTool;
   tools.get_skill_file = getSkillFileTool;
+  if (getVariableStore) {
+    tools.inspect_variable = createInspectVariableTool(getVariableStore);
+  }
 
   // Merge MCP tools from connected servers
   const mcpTools: ToolSet = mcpService?.getTools() ?? {};
@@ -138,7 +143,6 @@ export function createAgentBaseToolSet(
     list_timed: listTimedTool,
     fetch_rss: fetchRssTool,
     searxng: searxngTool,
-    crawl4ai: crawl4aiTool,
     search_timed: searchTimedTool,
     list_tables: listTablesTool,
     get_table_schema: getTableSchemaTool,

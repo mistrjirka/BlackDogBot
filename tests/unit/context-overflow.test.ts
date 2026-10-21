@@ -73,11 +73,11 @@ describe("Context Overflow Prevention", () => {
   describe("Threshold constants", () => {
     it("should define correct threshold percentages", () => {
       // Arrange / Act / Assert
-      expect(HARD_GATE_THRESHOLD_PERCENTAGE).toBe(0.85);
+      expect(HARD_GATE_THRESHOLD_PERCENTAGE).toBe(0.95);
       expect(CONTEXT_EXCEEDED_RETRIES).toBe(2);
     });
 
-    it("should calculate proactive compaction threshold at 70% of context window", () => {
+    it("should calculate proactive compaction threshold at 90% of context window", () => {
       // Arrange
       const agent: TestAgent = new TestAgent({ contextWindow: 100_000 });
 
@@ -85,10 +85,10 @@ describe("Context Overflow Prevention", () => {
       const threshold: number = agent.compactionTokenThreshold;
 
       // Assert
-      expect(threshold).toBe(70_000); // 70% of 100000
+      expect(threshold).toBe(90_000); // 90% of 100000
     });
 
-    it("should calculate hard gate at 85% of context window", () => {
+    it("should calculate hard gate at 95% of context window", () => {
       // Arrange
       const configWithContextWindow: IAiConfig = {
         ...mockOpenRouterConfig,
@@ -104,7 +104,7 @@ describe("Context Overflow Prevention", () => {
       const hardLimit: number = aiProviderService.getHardLimitTokens();
 
       // Assert
-      expect(hardLimit).toBe(Math.floor(128_000 * 0.85)); // 108800
+      expect(hardLimit).toBe(Math.floor(128_000 * 0.95)); // 121600
     });
   });
 
@@ -241,17 +241,17 @@ describe("Context Overflow Prevention", () => {
       aiProviderService.initialize(configWithContextWindow);
 
       // Act
-      const compactionThreshold: number = agent.compactionTokenThreshold; // 70%
-      const hardGateThreshold: number = aiProviderService.getHardLimitTokens(); // 85%
+      const compactionThreshold: number = agent.compactionTokenThreshold; // 90%
+      const hardGateThreshold: number = aiProviderService.getHardLimitTokens(); // 95%
 
       // Assert
-      expect(compactionThreshold).toBe(89_600); // 128000 * 0.70
-      expect(hardGateThreshold).toBe(108_800); // 128000 * 0.85
+      expect(compactionThreshold).toBe(115_200); // 128000 * 0.90
+      expect(hardGateThreshold).toBe(121_600); // 128000 * 0.95
       expect(hardGateThreshold).toBeGreaterThan(compactionThreshold);
       
       // The gap between compaction and hard gate provides a safety buffer
       const buffer: number = hardGateThreshold - compactionThreshold;
-      expect(buffer).toBe(19_200); // 15% of context window
+      expect(buffer).toBe(6_400); // 5% of context window
     });
 
     it("should maintain threshold relationship across different context windows", async () => {
@@ -276,8 +276,8 @@ describe("Context Overflow Prevention", () => {
         const hardGateThreshold: number = aiProviderService.getHardLimitTokens();
 
         // Assert
-        expect(compactionThreshold).toBe(Math.floor(contextWindow * 0.70));
-        expect(hardGateThreshold).toBe(Math.floor(contextWindow * 0.85));
+        expect(compactionThreshold).toBe(Math.floor(contextWindow * 0.90));
+        expect(hardGateThreshold).toBe(Math.floor(contextWindow * 0.95));
         expect(hardGateThreshold).toBeGreaterThan(compactionThreshold);
 
         // Clean up for next iteration

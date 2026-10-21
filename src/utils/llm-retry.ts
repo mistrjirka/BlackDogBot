@@ -1,4 +1,4 @@
-import { generateText, Output, dynamicTool, type LanguageModel } from "ai";
+import { generateText, Output, dynamicTool, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
 import type { SharedV4ProviderOptions } from "@ai-sdk/provider";
 import type { z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -39,18 +39,30 @@ const CALL_TYPE_POLICY: Record<LlmCallType, { maxAttempts: number; timeoutMs: nu
 
 //#region Interfaces
 
+export type LlmToolChoice = "auto" | "none" | "required" | { type: "tool"; toolName: string };
+
 export interface IGenerateTextOptions {
   model: LanguageModel;
-  prompt: string;
+  prompt?: string;
+  messages?: ModelMessage[];
   system?: string;
+  tools?: ToolSet;
+  activeTools?: string[];
+  toolChoice?: LlmToolChoice;
   retryOptions?: ILlmRetryOptions;
 }
 
 export interface IGenerateObjectOptions<T extends z.ZodType> {
   model: LanguageModel;
-  prompt: string;
+  prompt?: string;
+  messages?: ModelMessage[];
   schema: T;
   system?: string;
+  tools?: ToolSet;
+  activeTools?: string[];
+  toolChoice?: LlmToolChoice;
+  /** When false, never fall back to tool-emulated/tool-auto structured output. */
+  allowToolFallback?: boolean;
   retryOptions?: ILlmRetryOptions;
 }
 
@@ -124,6 +136,36 @@ function estimateTokensFromPromptAndSystem(prompt: string, system?: string): num
   const promptBytes: number = Buffer.byteLength(prompt, "utf8");
   const systemBytes: number = system ? Buffer.byteLength(system, "utf8") : 0;
   return Math.ceil((promptBytes + systemBytes) / 4);
+}
+
+function estimateTokensFromMessagesAndSystem(messages: ModelMessage[], system?: string): number {
+  const messagesBytes: number = Buffer.byteLength(JSON.stringify(messages), "utf8");
+  const systemBytes: number = system ? Buffer.byteLength(system, "utf8") : 0;
+  return Math.ceil((messagesBytes + systemBytes) / 4);
+}
+
+type TPromptArgs =
+  | { prompt: string; messages?: never }
+  | { messages: ModelMessage[]; prompt?: never };
+
+function buildPromptArgs(options: IGenerateTextOptions | IGenerateObjectOptions<z.ZodType>): TPromptArgs {
+  if (options.prompt !== undefined && options.messages !== undefined) {
+    throw new Error("Provide exactly one of prompt or messages");
+  }
+
+  if (options.prompt === undefined && options.messages === undefined) {
+    throw new Error("Provide one of prompt or messages");
+  }
+
+  return options.messages !== undefined
+    ? { messages: options.messages }
+    : { prompt: options.prompt as string };
+}
+
+function estimateInputTokens(options: IGenerateTextOptions | IGenerateObjectOptions<z.ZodType>): number {
+  return options.messages !== undefined
+    ? estimateTokensFromMessagesAndSystem(options.messages, options.system)
+    : estimateTokensFromPromptAndSystem(options.prompt as string, options.system);
 }
 
 //#endregion Private Helpers
@@ -282,13 +324,23 @@ export async function generateTextWithRetryAsync(options: IGenerateTextOptions):
   const policy = getRetryPolicy(callType);
   const maxAttempts = retryOptions.maxAttempts ?? policy.maxAttempts;
   const timeoutMs = getEffectiveTimeout(retryOptions.timeoutMs, policy.timeoutMs);
-  const inputTokensEstimate: number = estimateTokensFromPromptAndSystem(options.prompt, options.system);
+  const promptArgs = buildPromptArgs(options);
+  const inputTokensEstimate: number = estimateInputTokens(options);
   const providerKey: string = AiProviderService.getInstance().getActiveProvider();
   const result = await executeLlmCallWithRetryAsync<{ text: string }>({
     llmCallId: randomUUID(), callType, maxAttempts, timeoutMs, inputTokensEstimate,
     abortSignal: retryOptions.abortSignal, providerKey,
   }, async (linkedSignal: AbortSignal | undefined): Promise<ILlmCallResult<{ text: string }>> => {
-    const result = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { instructions: options.system } : {}), maxRetries: 0, abortSignal: linkedSignal });
+    const result = await generateText({
+      model: options.model,
+      ...promptArgs,
+      ...(options.system ? { instructions: options.system } : {}),
+      ...(options.tools ? { tools: options.tools } : {}),
+      ...(options.activeTools ? { activeTools: options.activeTools as never } : {}),
+      ...(options.toolChoice ? { toolChoice: options.toolChoice as never } : {}),
+      maxRetries: 0,
+      abortSignal: linkedSignal,
+    });
     const inputTokens: number = result.totalUsage?.inputTokens ?? result.usage?.inputTokens ?? inputTokensEstimate;
     const outputTokens: number = result.totalUsage?.outputTokens ?? result.usage?.outputTokens ?? estimateTokensFromTextByBytes(result.text ?? "");
     return { result: { text: result.text ?? "" }, inputTokens, outputTokens };
@@ -304,13 +356,19 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(options:
   const aiProviderService: AiProviderService = AiProviderService.getInstance();
   const providerKey: string = aiProviderService.getActiveProvider();
   const structuredMode = aiProviderService.getStructuredOutputMode();
+
+  if (options.allowToolFallback === false && structuredMode !== "native_json_schema") {
+    throw new Error(`Structured output unavailable (resolved mode: ${structuredMode})`);
+  }
+
   const providerOptions: SharedV4ProviderOptions | undefined = aiProviderService.getStructuredProviderOptions();
   const retryOptions = options.retryOptions ?? {};
   const callType = retryOptions.callType ?? "schema_extraction";
   const policy = getRetryPolicy(callType);
   const maxAttempts = retryOptions.maxAttempts ?? policy.maxAttempts;
   const timeoutMs = getEffectiveTimeout(retryOptions.timeoutMs, policy.timeoutMs);
-  const inputTokensEstimate: number = estimateTokensFromPromptAndSystem(options.prompt, options.system);
+  const promptArgs = buildPromptArgs(options);
+  const inputTokensEstimate: number = estimateInputTokens(options);
   const result = await executeLlmCallWithRetryAsync<{ object: z.infer<T> }>({
     llmCallId: randomUUID(), callType, maxAttempts, timeoutMs, inputTokensEstimate,
     abortSignal: retryOptions.abortSignal, providerKey, structuredMode,
@@ -320,11 +378,22 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(options:
     const emitterTool = dynamicTool({ description: "Emit final structured output. Call this tool once with JSON matching the exact schema.", inputSchema: options.schema, execute: async (input: unknown): Promise<{ object: z.infer<T> }> => ({ object: input as z.infer<T> }) });
     let object: z.infer<T>;
     if (structuredMode === "native_json_schema") {
-      const generated = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { instructions: options.system } : {}), output: Output.object({ schema: options.schema }), ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}), maxRetries: 0, abortSignal: linkedSignal });
+      const generated = await generateText({
+        model: options.model,
+        ...promptArgs,
+        ...(options.system ? { instructions: options.system } : {}),
+        ...(options.tools ? { tools: options.tools } : {}),
+        ...(options.activeTools ? { activeTools: options.activeTools as never } : {}),
+        ...(options.toolChoice ? { toolChoice: options.toolChoice as never } : {}),
+        output: Output.object({ schema: options.schema }),
+        ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}),
+        maxRetries: 0,
+        abortSignal: linkedSignal,
+      });
       if (generated.output === undefined || generated.output === null) throw new Error("No structured output generated: model did not return parseable JSON matching the schema." + (generated.text ? ` Raw text: ${generated.text.substring(0, 200)}` : ""));
       object = generated.output;
     } else if (structuredMode === "tool_emulated") {
-      const generated = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { instructions: `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.` } : { instructions: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.` }), tools: { [emitToolName]: emitterTool }, toolChoice: { type: "tool", toolName: emitToolName }, ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}), maxRetries: 0, abortSignal: linkedSignal });
+      const generated = await generateText({ model: options.model, ...promptArgs, ...(options.system ? { instructions: `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.` } : { instructions: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.` }), tools: { [emitToolName]: emitterTool }, toolChoice: { type: "tool", toolName: emitToolName }, ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}), maxRetries: 0, abortSignal: linkedSignal });
       const emitted = generated.toolResults.find((item) => item.toolName === emitToolName);
       const maybeOutput = emitted?.output as { object?: unknown } | undefined;
       if (!maybeOutput || maybeOutput.object === undefined) throw new Error("Tool-emulated structured output failed: no emit_structured_output tool result returned.");
@@ -334,7 +403,7 @@ export async function generateObjectWithRetryAsync<T extends z.ZodType>(options:
       for (let round: number = 1; round <= 3; round++) {
         const roundSuffix: string = round === 1 ? "" : `\n\nPrevious attempt did not call ${emitToolName}. Retry and call only ${emitToolName} with valid JSON.`;
         try {
-          const generated = await generateText({ model: options.model, prompt: options.prompt, ...(options.system ? { instructions: `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.${roundSuffix}` } : { instructions: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.${roundSuffix}` }), tools: { [emitToolName]: emitterTool }, ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}), maxRetries: 0, abortSignal: linkedSignal });
+          const generated = await generateText({ model: options.model, ...promptArgs, ...(options.system ? { instructions: `${options.system}\n\nReturn final answer only via the tool ${emitToolName}. Do not answer in plain text.${roundSuffix}` } : { instructions: `Return final answer only via the tool ${emitToolName}. Do not answer in plain text.${roundSuffix}` }), tools: { [emitToolName]: emitterTool }, ...(requestProviderOptions ? { providerOptions: requestProviderOptions } : {}), maxRetries: 0, abortSignal: linkedSignal });
           const emitted = generated.toolResults.find((item) => item.toolName === emitToolName);
           const maybeOutput = emitted?.output as { object?: unknown } | undefined;
           if (maybeOutput && maybeOutput.object !== undefined) { parsed = options.schema.parse(maybeOutput.object) as z.infer<T>; break; }

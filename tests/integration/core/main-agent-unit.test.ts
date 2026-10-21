@@ -54,7 +54,6 @@ logging:
 
 services:
   searxngUrl: http://localhost:18731
-  crawl4aiUrl: http://localhost:18732
 `;
 
 /**

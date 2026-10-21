@@ -23,6 +23,21 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
   "drop_table",
 ]);
 
+/**
+ * MCP tools safe for read_only channels. Crawl4AI's page-fetch, conversion,
+ * screenshot, PDF, and library-query tools are remote reads. Its execute_js
+ * tool is deliberately excluded because arbitrary page scripts can mutate
+ * remote state. Other MCP servers remain blocked by default.
+ */
+const MCP_READ_ONLY_SAFE_TOOLS: ReadonlySet<string> = new Set([
+  "mcp.crawl4ai.md",
+  "mcp.crawl4ai.html",
+  "mcp.crawl4ai.screenshot",
+  "mcp.crawl4ai.pdf",
+  "mcp.crawl4ai.crawl",
+  "mcp.crawl4ai.ask",
+]);
+
 export const TIMED_VALID_TOOL_NAMES = [
   "add_once",
   "add_interval",
@@ -44,6 +59,7 @@ const CORE_TOOL_NAMES: string[] = [
   "wait_for_cmd",
   "stop_cmd",
   "read_file",
+  "inspect_variable",
   "read_image",
   "write_file",
   "append_file",
@@ -62,7 +78,6 @@ const CORE_TOOL_NAMES: string[] = [
   "edit_interval",
   "edit_instructions",
   "searxng",
-  "crawl4ai",
   "list_tables",
   "create_table",
   "drop_table",
@@ -106,7 +121,7 @@ export function isToolAllowed(toolName: string, permission: ChannelPermission): 
   }
 
   if (permission === "read_only" && toolName.startsWith("mcp.")) {
-    return false;
+    return MCP_READ_ONLY_SAFE_TOOLS.has(toolName);
   }
 
   if (permission === "read_only" && toolName.startsWith("write_table_")) {

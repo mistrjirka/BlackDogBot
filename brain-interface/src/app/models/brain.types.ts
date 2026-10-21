@@ -240,7 +240,7 @@ export interface IStatusState {
   inputTokens?: number;
   contextTokens?: number;
   contextWindow?: number;      // Full context window from model
-  compactionThreshold?: number; // 75% of context window
+  compactionThreshold?: number; // configurable compaction trigger (fraction of window)
   contextPercentage?: number;
 }
 

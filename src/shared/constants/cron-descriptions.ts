@@ -106,9 +106,33 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Use short specific queries (typically 2-5 words); do not paste full headlines or source domain names. " +
     "Args: query (string, required); categories (string[], optional); maxResults (number, default 10); safesearch (0|1|2, optional); language (string, optional).",
 
-  crawl4ai:
-    "Fetch and parse a web page using Crawl4AI. Returns the page content in markdown format. " +
-    "Args: url (string, required); selector (string, optional, CSS selector to extract specific content).",
+  "mcp.crawl4ai.md":
+    "Fetch a web page and return its content as markdown using Crawl4AI. " +
+    "Args and extraction options are described by the MCP tool schema.",
+
+  "mcp.crawl4ai.html":
+    "Fetch and preprocess page HTML using Crawl4AI. " +
+    "Args are described by the MCP tool schema.",
+
+  "mcp.crawl4ai.screenshot":
+    "Capture a rendered page screenshot using Crawl4AI. " +
+    "Args, including optional wait and output-path settings, are described by the MCP tool schema.",
+
+  "mcp.crawl4ai.pdf":
+    "Generate a PDF from a web page using Crawl4AI. " +
+    "Args are described by the MCP tool schema.",
+
+  "mcp.crawl4ai.execute_js":
+    "Run JavaScript in the target page through Crawl4AI. This can cause side effects on the remote site; use only when the task requires page interaction. " +
+    "Args are described by the MCP tool schema.",
+
+  "mcp.crawl4ai.crawl":
+    "Crawl one or more URLs using Crawl4AI. " +
+    "Args and crawl options are described by the MCP tool schema.",
+
+  "mcp.crawl4ai.ask":
+    "Query Crawl4AI's own library documentation/context. " +
+    "Args are described by the MCP tool schema.",
 
   list_tables:
     "List all tables in the internal default database (read-only). " +

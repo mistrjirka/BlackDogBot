@@ -193,11 +193,12 @@ setup_docker_services() {
     
     if prompt_yesno "Set up Crawl4AI for web scraping?" "y"; then
         SETUP_CRAWL4AI=true
-        CRAWL4AI_URL="http://localhost:$CRAWL4AI_PORT"
-        print_info "Crawl4AI will be available at $CRAWL4AI_URL"
+        CRAWL4AI_URL="http://127.0.0.1:$CRAWL4AI_PORT/mcp/sse"
+        print_info "Crawl4AI MCP will be available at $CRAWL4AI_URL"
     else
         SETUP_CRAWL4AI=false
-        prompt_input "Crawl4AI URL (if you have your own instance)" "" CRAWL4AI_URL
+        prompt_input "Crawl4AI MCP SSE endpoint URL (e.g. https://host/mcp/sse)" "" CRAWL4AI_URL
+        prompt_input "Crawl4AI API token (if required)" "" CRAWL4AI_API_TOKEN
     fi
     
     START_SERVICES=false
@@ -311,21 +312,39 @@ EOF
     fi
 
     if [ "$SETUP_CRAWL4AI" = true ]; then
+        # Crawl4AI 0.9+ requires an API token for access from outside the
+        # container. Keep it in a private Compose .env file, never in YAML.
+        CRAWL4AI_ENV_FILE="$CONFIG_DIR/.env"
+        CRAWL4AI_API_TOKEN="$(grep '^CRAWL4AI_API_TOKEN=' "$CRAWL4AI_ENV_FILE" 2>/dev/null | tail -n 1 | cut -d= -f2- || true)"
+        if [ -z "$CRAWL4AI_API_TOKEN" ]; then
+            CRAWL4AI_API_TOKEN="$(openssl rand -hex 32)"
+            CRAWL4AI_ENV_TMP="$CRAWL4AI_ENV_FILE.tmp"
+            if [ -f "$CRAWL4AI_ENV_FILE" ]; then
+                grep -v '^CRAWL4AI_API_TOKEN=' "$CRAWL4AI_ENV_FILE" > "$CRAWL4AI_ENV_TMP" || true
+            else
+                : > "$CRAWL4AI_ENV_TMP"
+            fi
+            printf 'CRAWL4AI_API_TOKEN=%s\n' "$CRAWL4AI_API_TOKEN" >> "$CRAWL4AI_ENV_TMP"
+            chmod 600 "$CRAWL4AI_ENV_TMP"
+            mv "$CRAWL4AI_ENV_TMP" "$CRAWL4AI_ENV_FILE"
+        fi
+        chmod 600 "$CRAWL4AI_ENV_FILE"
+
         cat >> "$COMPOSE_FILE" << EOF
   crawl4ai:
     image: unclecode/crawl4ai:latest
     container_name: blackdogbot-crawl4ai
     ports:
-      - "${CRAWL4AI_PORT}:11235"
+      - "127.0.0.1:${CRAWL4AI_PORT}:11235"
     environment:
-      - CRAWL4AI_API_TOKEN=
+      CRAWL4AI_API_TOKEN: \${CRAWL4AI_API_TOKEN:?Set in $CRAWL4AI_ENV_FILE}
+    shm_size: 3g
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-
 EOF
     fi
     
@@ -722,12 +741,41 @@ logging:
   level: ${LOG_LEVEL}
 EOF
 
-    # Only write services block if at least one URL is set
-    if [ -n "$SEARXNG_URL" ] || [ -n "$CRAWL4AI_URL" ]; then
+    # SearXNG is a normal HTTP service config. Crawl4AI is registered as an
+    # MCP server so its tools are discovered from the upstream server.
+    if [ -n "$SEARXNG_URL" ]; then
         echo "" >> "$CONFIG_FILE"
         echo "services:" >> "$CONFIG_FILE"
-        [ -n "$SEARXNG_URL" ] && echo "  searxngUrl: ${SEARXNG_URL}" >> "$CONFIG_FILE"
-        [ -n "$CRAWL4AI_URL" ] && echo "  crawl4aiUrl: ${CRAWL4AI_URL}" >> "$CONFIG_FILE"
+        echo "  searxngUrl: ${SEARXNG_URL}" >> "$CONFIG_FILE"
+    fi
+
+    if [ -n "$CRAWL4AI_URL" ]; then
+        CONFIG_DIR="$CONFIG_DIR" CRAWL4AI_URL="$CRAWL4AI_URL" CRAWL4AI_API_TOKEN="${CRAWL4AI_API_TOKEN:-}" node <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const file = path.join(process.env.CONFIG_DIR, "mcp-servers.json");
+let config = { mcpServers: {} };
+if (fs.existsSync(file)) config = JSON.parse(fs.readFileSync(file, "utf8"));
+if (!config.mcpServers || typeof config.mcpServers !== "object" || Array.isArray(config.mcpServers)) {
+  throw new Error("Invalid mcp-servers.json: expected an mcpServers object");
+}
+const previous = config.mcpServers.crawl4ai || {};
+const headers = { ...(previous.headers || {}) };
+if (process.env.CRAWL4AI_API_TOKEN) headers.Authorization = `Bearer ${process.env.CRAWL4AI_API_TOKEN}`;
+else delete headers.Authorization;
+const server = {
+  ...previous,
+  url: process.env.CRAWL4AI_URL,
+  transport: "sse",
+  strictOutputSchema: false,
+};
+delete server.allowedTools; // expose all discovered tools unless the operator configures an allowlist later
+if (Object.keys(headers).length) server.headers = headers;
+else delete server.headers;
+config.mcpServers.crawl4ai = server;
+fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+fs.chmodSync(file, 0o600);
+NODE
     fi
 
     print_success "Created $CONFIG_FILE"

@@ -38,7 +38,11 @@ const CONNECTION_ERROR_KEYWORDS: string[] = [
   "socket hang up",
   "request timed out",
   "timed out",
+  "loading model",
+  "service unavailable",
 ];
+
+const TRANSIENT_SERVER_STATUS_CODES: number[] = [502, 503, 504];
 
 const CONNECTION_RETRY_INITIAL_DELAY_MS: number = 10_000;
 const CONNECTION_RETRY_MULTIPLIER: number = 2;
@@ -73,6 +77,10 @@ export function isRetryableApiError(error: unknown): boolean {
       return false;
     }
 
+    if (TRANSIENT_SERVER_STATUS_CODES.includes(error.statusCode ?? 0)) {
+      return true;
+    }
+
     if (error.isRetryable === true) {
       return true;
     }
@@ -99,6 +107,9 @@ export function isRetryableApiError(error: unknown): boolean {
 
 export function isConnectionError(error: unknown): boolean {
   if (APICallError.isInstance(error)) {
+    if (TRANSIENT_SERVER_STATUS_CODES.includes(error.statusCode ?? 0)) {
+      return true;
+    }
     const responseBody: string = typeof error.responseBody === "string"
       ? error.responseBody
       : JSON.stringify(error.responseBody ?? "");

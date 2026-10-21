@@ -14,14 +14,14 @@ vi.mock("../../src/utils/token-tracker.js", async () => {
   };
 });
 
-vi.mock("../../src/utils/summarization-compaction.js", async () => {
-  const actual = await vi.importActual<typeof import("../../src/utils/summarization-compaction.js")>(
-    "../../src/utils/summarization-compaction.js",
+vi.mock("../../src/utils/checkpoint-compaction.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/utils/checkpoint-compaction.js")>(
+    "../../src/utils/checkpoint-compaction.js",
   );
 
   return {
     ...actual,
-    compactMessagesSummaryOnlyAsync: vi.fn(),
+    compactWithCheckpointAsync: vi.fn(),
   };
 });
 
@@ -31,7 +31,7 @@ import type {
   IRequestLikeTokenEstimate,
 } from "../../src/utils/token-tracker.js";
 import * as tokenTracker from "../../src/utils/token-tracker.js";
-import * as summarizationCompaction from "../../src/utils/summarization-compaction.js";
+import * as checkpointCompaction from "../../src/utils/checkpoint-compaction.js";
 import { resetSingletons } from "../utils/test-helpers.js";
 
 class TestAgent extends BaseAgentBase {
@@ -137,13 +137,17 @@ describe("BaseAgentBase compaction token tracking", () => {
       .mockReturnValueOnce(74_000)
       .mockReturnValueOnce(25_000);
 
-    vi.mocked(summarizationCompaction.compactMessagesSummaryOnlyAsync)
+    vi.mocked(checkpointCompaction.compactWithCheckpointAsync)
       .mockResolvedValue({
         messages: [{ role: "system", content: "[COMPACTED]" } as ModelMessage],
         passes: 1,
         originalTokens: 74_000,
         compactedTokens: 25_000,
         converged: true,
+        dagPath: [],
+        dagNodeVisitCounts: {},
+        dagTerminationReason: "checkpoint_plain_text",
+        maxLevelReached: "L1",
       });
 
     const messages: ModelMessage[] = [
@@ -152,7 +156,7 @@ describe("BaseAgentBase compaction token tracking", () => {
 
     await agent.callPrepareStepAsync(0, messages);
 
-    expect(summarizationCompaction.compactMessagesSummaryOnlyAsync).toHaveBeenCalledOnce();
+    expect(checkpointCompaction.compactWithCheckpointAsync).toHaveBeenCalledOnce();
     expect(agent.totalInputTokens).toBe(30_000);
     expect(agent.estimatedInputTokens).toBe(30_000);
   });
@@ -203,13 +207,17 @@ describe("BaseAgentBase compaction token tracking", () => {
       .mockReturnValueOnce(76_000)
       .mockReturnValueOnce(26_000);
 
-    vi.mocked(summarizationCompaction.compactMessagesSummaryOnlyAsync)
+    vi.mocked(checkpointCompaction.compactWithCheckpointAsync)
       .mockResolvedValue({
         messages: [{ role: "system", content: "[COMPACTED-2]" } as ModelMessage],
         passes: 1,
         originalTokens: 76_000,
         compactedTokens: 26_000,
         converged: true,
+        dagPath: [],
+        dagNodeVisitCounts: {},
+        dagTerminationReason: "checkpoint_plain_text",
+        maxLevelReached: "L1",
       });
 
     const messages: ModelMessage[] = [
@@ -272,13 +280,17 @@ describe("BaseAgentBase compaction token tracking", () => {
       { role: "system", content: "[COMPACTED-3]" } as ModelMessage,
     ];
 
-    vi.mocked(summarizationCompaction.compactMessagesSummaryOnlyAsync)
+    vi.mocked(checkpointCompaction.compactWithCheckpointAsync)
       .mockResolvedValue({
         messages: compactedMessages,
         passes: 1,
         originalTokens: 74_000,
         compactedTokens: 25_000,
         converged: true,
+        dagPath: [],
+        dagNodeVisitCounts: {},
+        dagTerminationReason: "checkpoint_plain_text",
+        maxLevelReached: "L1",
       });
 
     const result = await agent.callPrepareStepAsync(0, [
@@ -293,5 +305,96 @@ describe("BaseAgentBase compaction token tracking", () => {
     );
     expect(agent.totalInputTokens).toBe(expectedCorrectedTokens);
     expect(agent.estimatedInputTokens).toBe(expectedCorrectedTokens);
+  });
+
+  it("uses one 90% trigger and does not compact below it", async () => {
+    const agent: TestAgent = new TestAgent({ contextWindow: 100_000 });
+    const model: LanguageModel = {} as LanguageModel;
+    agent.buildAgentPublic(model, "Test instructions", {});
+    (agent as unknown as { _tokenEstimateCorrectionFactor: number })._tokenEstimateCorrectionFactor = 1;
+
+    vi.mocked(tokenTracker.estimateRequestLikeTokens).mockReturnValue({
+      breakdown: {
+        total: 89_999,
+        messages: 72_000,
+        image: 0,
+        tools: 10_000,
+        system: 0,
+        overhead: 7_999,
+        messageCount: 84,
+        toolCount: 51,
+      },
+    } as IRequestLikeTokenEstimate);
+    vi.mocked(tokenTracker.estimateRequestLikeTokensByBytes).mockReturnValue({
+      estimatedTokens: 89_999,
+      requestSizeBytes: 0,
+      messageCount: 84,
+      toolCount: 51,
+    } as IRequestLikeByteTokenEstimate);
+    vi.mocked(tokenTracker.countTokens).mockReturnValue(72_000);
+
+    await agent.callPrepareStepAsync(0, [
+      { role: "user", content: "Just below the trigger" } as ModelMessage,
+    ]);
+
+    expect(checkpointCompaction.compactWithCheckpointAsync).not.toHaveBeenCalled();
+  });
+
+  it("triggers at exactly 90% of the context window", async () => {
+    const agent: TestAgent = new TestAgent({ contextWindow: 100_000 });
+    const model: LanguageModel = {} as LanguageModel;
+    agent.buildAgentPublic(model, "Test instructions", {});
+    (agent as unknown as { _tokenEstimateCorrectionFactor: number })._tokenEstimateCorrectionFactor = 1;
+
+    vi.mocked(tokenTracker.estimateRequestLikeTokens)
+      .mockReturnValueOnce({
+        breakdown: {
+          total: 90_000,
+          messages: 72_000,
+          image: 0,
+          tools: 10_000,
+          system: 0,
+          overhead: 8_000,
+          messageCount: 84,
+          toolCount: 51,
+        },
+      } as IRequestLikeTokenEstimate)
+      .mockReturnValueOnce({
+        breakdown: {
+          total: 30_000,
+          messages: 20_000,
+          image: 0,
+          tools: 10_000,
+          system: 0,
+          overhead: 0,
+          messageCount: 4,
+          toolCount: 51,
+        },
+      } as IRequestLikeTokenEstimate);
+    vi.mocked(tokenTracker.estimateRequestLikeTokensByBytes).mockReturnValue({
+      estimatedTokens: 90_000,
+      requestSizeBytes: 0,
+      messageCount: 84,
+      toolCount: 51,
+    } as IRequestLikeByteTokenEstimate);
+    vi.mocked(tokenTracker.countTokens).mockReturnValueOnce(72_000).mockReturnValueOnce(20_000);
+
+    vi.mocked(checkpointCompaction.compactWithCheckpointAsync).mockResolvedValue({
+      messages: [{ role: "user", content: "[COMPACTED]" } as ModelMessage],
+      passes: 1,
+      originalTokens: 72_000,
+      compactedTokens: 20_000,
+      converged: true,
+      dagPath: [],
+      dagNodeVisitCounts: {},
+      dagTerminationReason: "checkpoint_plain_text",
+      maxLevelReached: "L1",
+    });
+
+    await agent.callPrepareStepAsync(0, [
+      { role: "user", content: "At the trigger" } as ModelMessage,
+    ]);
+
+    expect(checkpointCompaction.compactWithCheckpointAsync).toHaveBeenCalledOnce();
   });
 });

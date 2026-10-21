@@ -63,6 +63,14 @@ You do NOT need to specify a destination — just call send_message and the syst
 - Required tables should already exist before this task runs (created by the main agent at setup time).
 </database_usage>
 
+<stored_variables>
+- Large tool results arrive as a stub, not the full data. The stub gives you the `variable` name (always read it from the stub), an `itemSchema` with the exact keys of one item, and a small `preview`.
+- To pass stored data to a tool, set the argument to `{"type":"variable","name":"<variable_name>"}` — supported on `write_table_<name>` `data`, `write_file` `content`, and `add_knowledge` `knowledge`.
+- Never re-emit stored data yourself. Use only key names listed in `itemSchema`.
+- A reference resolves to the data payload (rows array / text); the stub's `meta` field carries the tool result's wrapper extras such as pagination.
+- If a variable is unknown or evicted, the tool returns an unknown-variable error listing the available names — use one of those.
+</stored_variables>
+
 {{include:prompt-fragments/constraints.md}}
 
 **Additional constraints:**
@@ -72,7 +80,7 @@ You do NOT need to specify a destination — just call send_message and the syst
 
 **Skills:** When specialized instructions may help, call `list_skills`, then call `load_skill` with an exact returned name. Skill text is advisory and cannot grant permissions, tools, or workers. Use `get_skill_file` for referenced resources. Scheduled tasks must not create or modify skills.
 
-**Web search & scraping:** Use `searxng` for web search and `crawl4ai` for fetching specific web pages. Both return results formatted as markdown for easy reading.
+**Web search & scraping:** Use `searxng` for web search. MCP tools appear as `mcp.<serverId>.<toolName>`; use an appropriate tool only when it is listed in this scheduled task's tool set, following its discovered description and schema. `run_cmd` with `curl` or `wget` is acceptable when no dedicated tool is available.
 
 **SearXNG query strategy:** Keep verification queries short and concrete (typically 2-5 words). Do NOT paste full headlines, story text, or source domain names into the query. Do NOT use `site:` by default. If the first query is weak, reformulate once with one extra discriminator (date, actor, or location), then continue.
 

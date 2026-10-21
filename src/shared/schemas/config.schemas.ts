@@ -127,6 +127,14 @@ const lmStudioSchema = z.object({
 const aiConfigSchema = z.object({
   provider: z.enum(["openrouter", "openai-compatible", "lm-studio"])
     .describe("Active AI provider"),
+  compactionThreshold: z.number()
+    .min(0.5)
+    .max(0.94)
+    .default(0.90)
+    .describe("Context-window fraction that triggers checkpoint compaction (single knob). Default: 0.90. Must stay below the internal hard gate."),
+  disableThinkingOnStructuredOutput: z.boolean()
+    .default(false)
+    .describe("When true, structured-output requests disable model thinking (llama.cpp chat_template_kwargs.enable_thinking=false)."),
   generationTimeoutMs: z.number()
     .int()
     .positive()
@@ -252,10 +260,6 @@ const servicesConfigSchema = z.object({
     .url()
     .default("http://localhost:18731")
     .describe("SearXNG instance URL"),
-  crawl4aiUrl: z.string()
-    .url()
-    .default("http://localhost:18732")
-    .describe("Crawl4AI instance URL"),
 });
 
 const brainInterfaceConfigSchema = z.object({

@@ -84,10 +84,9 @@ const TOOL_CALLING_PROBE_TIMEOUT_MS: number = CAPABILITY_PROBE_TIMEOUT_MS;
 const VISION_PROBE_MAX_TOKENS: number = 128;
 const CAPABILITY_CACHE_FILE_NAME: string = "capabilities.json";
 // Bump when the probe contract changes so stale cached results are ignored and
-// re-probed (v2: the structured-output probe mirrors the production request by
-// injecting reasoning_format where supported — pre-v2 "native_json_schema"
-// positives can be false).
-const CAPABILITY_CACHE_KEY_VERSION: string = "v2";
+// re-probed (v3: native JSON-schema probes no longer combine response_format
+// with reasoning_format "none"; thinking is disabled via chat_template_kwargs).
+const CAPABILITY_CACHE_KEY_VERSION: string = "v3";
 const tinyProbePngBase64: string = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAJ0lEQVR4nO3NMQ0AAAwDoPpXWSlVsWMJGCA9FoFAIBAIBAKBQPAlGMclgJeVJrNbAAAAAElFTkSuQmCC";
 
 export const STRUCTURED_OUTPUT_STRATEGY_AUTO: StructuredOutputMode = "auto";
@@ -286,9 +285,10 @@ export class AiProviderCore {
         },
       };
 
-      // Mirror the production wrapper: inject reasoning_format when supported.
-      if (provider !== "openrouter" && this._supportsReasoningFormat) {
-        probeBody.reasoning_format = "none";
+      // Mirror the production wrapper: native JSON-schema requests must not
+      // combine reasoning_format "none" with response_format on llama.cpp.
+      if (provider !== "openrouter" && this._aiConfig?.disableThinkingOnStructuredOutput === true) {
+        probeBody.chat_template_kwargs = { enable_thinking: false };
       }
 
       const response = await fetch(`${baseUrl}/v1/chat/completions`, {
@@ -707,6 +707,12 @@ export class AiProviderCore {
         },
       },
     };
+
+    // Native JSON-schema requests must not send reasoning_format "none" to
+    // llama.cpp; disable thinking via the chat template instead.
+    if (provider !== "openrouter" && this._aiConfig?.disableThinkingOnStructuredOutput === true) {
+      probeBody.chat_template_kwargs = { enable_thinking: false };
+    }
 
     const response: Response = await fetch(endpointUrl, {
       method: "POST",
@@ -1972,21 +1978,41 @@ export class AiProviderCore {
                 modified = true;
               }
 
-              // Inject reasoning_format: "none" for llama.cpp servers
-              // This disables server-side think-tag extraction so we can handle it client-side
-              if (this._supportsReasoningFormat && !body.reasoning_format) {
+              const isStructuredRequest: boolean = Boolean(body.response_format);
+
+              // Inject reasoning_format: "none" for llama.cpp servers.
+              // This disables server-side think-tag extraction so we can handle it client-side.
+              // Native JSON-schema requests must NOT combine reasoning_format "none" with
+              // response_format: llama.cpp's grammar root then omits the optional reasoning
+              // rule and sampler initialization fails with 400.
+              if (!isStructuredRequest && this._supportsReasoningFormat && !body.reasoning_format) {
                 body.reasoning_format = "none";
+                modified = true;
+              }
+
+              if (isStructuredRequest && body.reasoning_format !== undefined) {
+                delete body.reasoning_format;
                 modified = true;
               }
 
               const requestBehavior: IRequestBehaviorProfile = this._resolveRequestBehaviorForCurrentCall();
 
-              if (requestBehavior.reasoningFormat && body.reasoning_format !== requestBehavior.reasoningFormat) {
+              if (!isStructuredRequest && requestBehavior.reasoningFormat && body.reasoning_format !== requestBehavior.reasoningFormat) {
                 body.reasoning_format = requestBehavior.reasoningFormat;
                 modified = true;
               }
 
-              if (
+              if (isStructuredRequest && this._aiConfig?.disableThinkingOnStructuredOutput === true) {
+                const mergedChatTemplateKwargs: Record<string, unknown> = {
+                  ...((body.chat_template_kwargs as Record<string, unknown> | undefined) ?? {}),
+                  ...(requestBehavior.chatTemplateKwargs ?? {}),
+                  enable_thinking: false,
+                };
+                if (JSON.stringify(body.chat_template_kwargs ?? null) !== JSON.stringify(mergedChatTemplateKwargs)) {
+                  body.chat_template_kwargs = mergedChatTemplateKwargs;
+                  modified = true;
+                }
+              } else if (
                 requestBehavior.chatTemplateKwargs &&
                 JSON.stringify(body.chat_template_kwargs ?? null) !== JSON.stringify(requestBehavior.chatTemplateKwargs)
               ) {
@@ -2524,10 +2550,23 @@ export class AiProviderCore {
 
       let responseText: string | null = null;
       let responseTruncated: boolean = false;
+      let responseUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
       try {
         const raw: string = await response.clone().text();
         responseTruncated = raw.length > LLM_TRACE_MAX_RESPONSE_CHARS;
         responseText = responseTruncated ? raw.slice(0, LLM_TRACE_MAX_RESPONSE_CHARS) : raw;
+        // Extract provider usage from the FULL body before the 6000-char cap drops it
+        // (it is the last field of OpenAI-compatible responses; large tool-call
+        // responses exceed the cap). Trace-only; fire-and-forget semantics unchanged.
+        try {
+          const parsedResponse: unknown = JSON.parse(raw);
+          const candidate = (parsedResponse as { usage?: unknown })?.usage;
+          if (candidate !== null && typeof candidate === "object") {
+            responseUsage = candidate as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+          }
+        } catch {
+          // non-JSON response body — no usage to record
+        }
       } catch {
         responseText = null;
       }
@@ -2541,6 +2580,7 @@ export class AiProviderCore {
         requestBody,
         response: responseText,
         responseTruncated,
+        usage: responseUsage,
       });
     } catch (error: unknown) {
       LoggerService.getInstance().warn("LLM trace append failed", {

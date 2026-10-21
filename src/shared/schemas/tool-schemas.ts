@@ -2,6 +2,34 @@ import { z } from "zod";
 import { skillStateInfoSchema } from "./skill.schemas.js";
 import { MAX_DELEGATE_AGENT_OUTPUT_LENGTH } from "../constants.js";
 
+//#region Variable reference schema (blackboard)
+
+// Single source of truth lives in the variable store. Imported for the unions
+// below and re-exported so the per-table write tools can build their
+// variable-capable unions from tool-schemas.js (see Phase 1 — Blackboard Core).
+import { variableRefSchema, VARIABLE_REF_DESCRIPTION } from "../../utils/variable-store.js";
+export { variableRefSchema, VARIABLE_REF_DESCRIPTION };
+
+/**
+ * Variable-capable field: the RUNTIME schema is a `literal | variable-reference`
+ * union (so the model's JSON schema describes the ref and validation accepts it),
+ * while the STATIC input type is narrowed to the resolved `literal` type. The
+ * `wrapToolSetWithVariables` wrapper unwraps refs before `execute`, so execute
+ * genuinely receives the resolved literal — this decouples ai-sdk's strict
+ * schema↔execute input check (Phase 1 — Blackboard Core). Per-branch descriptions
+ * are preserved (literal branch + VARIABLE_REF_DESCRIPTION on the ref branch).
+ */
+function _variableCapable<LITERAL extends z.ZodType>(
+  literal: LITERAL,
+): z.ZodType<z.infer<LITERAL>, z.ZodTypeDef, z.infer<LITERAL>> {
+  return z.union([
+    literal,
+    variableRefSchema.describe(VARIABLE_REF_DESCRIPTION),
+  ]) as unknown as z.ZodType<z.infer<LITERAL>, z.ZodTypeDef, z.infer<LITERAL>>;
+}
+
+//#endregion Variable reference schema (blackboard)
+
 //#region Think Tool
 
 export const thinkToolInputSchema = z.object({
@@ -13,7 +41,7 @@ export const thinkToolInputSchema = z.object({
 export const runCmdToolInputSchema = z.object({
   command: z.string()
     .min(1)
-    .describe("Shell command to execute"),
+    .describe("Literal shell command to execute. Not a blackboard variable reference; run_cmd cannot access stored variables."),
   cwd: z.string()
     .default("~/.blackdogbot")
     .describe("Working directory"),
@@ -135,9 +163,7 @@ export const searchKnowledgeToolInputSchema = z.object({
 });
 
 export const addKnowledgeToolInputSchema = z.object({
-  knowledge: z.string()
-    .min(1)
-    .describe("Knowledge content to store"),
+  knowledge: _variableCapable(z.string().min(1).describe("Knowledge content to store")),
   collection: z.string()
     .default("default")
     .describe("Target collection"),
@@ -241,7 +267,13 @@ export const CRON_VALID_TOOL_NAMES = [
   "fetch_rss",
   "searxng",
   "search_timed",
-  "crawl4ai",
+  "mcp.crawl4ai.md",
+  "mcp.crawl4ai.crawl",
+  "mcp.crawl4ai.html",
+  "mcp.crawl4ai.screenshot",
+  "mcp.crawl4ai.pdf",
+  "mcp.crawl4ai.execute_js",
+  "mcp.crawl4ai.ask",
   "list_tables",
   "get_table_schema",
   "create_table",
@@ -581,8 +613,7 @@ export const writeFileToolInputSchema = z.object({
   filePath: z.string()
     .default("")
     .describe("Path to the file. Use just a filename (e.g. 'notes.txt') for the default workspace directory. Only specify a full absolute path when you need to access files outside the workspace. For most tasks, do NOT specify a path — just use the filename."),
-  content: z.string()
-    .describe("Content to write to the file"),
+  content: _variableCapable(z.string().describe("Content to write to the file")),
 });
 
 export const appendFileToolInputSchema = z.object({
@@ -691,15 +722,6 @@ export const searchTimedToolInputSchema = z.object({
     .max(1)
     .default(0.4)
     .describe("Fuzzy match threshold (0-1, lower is stricter)"),
-});
-
-export const crawl4aiToolInputSchema = z.object({
-  url: z.string()
-    .url()
-    .describe("URL of the web page to crawl"),
-  selector: z.string()
-    .optional()
-    .describe("Optional CSS selector to extract specific content"),
 });
 
 const TASK_ID_PLACEHOLDER = "TASK_ID_PLACEHOLDER";

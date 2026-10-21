@@ -29,6 +29,21 @@ describe("context-error helpers", () => {
     expect(isConnectionError(error)).toBe(true);
   });
 
+  it("classifies model-loading 503s as connection errors for exponential backoff", () => {
+    const error: APICallError = new APICallError({
+      message: "Service Unavailable",
+      url: "http://localhost:2345/v1/chat/completions",
+      requestBodyValues: { model: "Ornith" },
+      statusCode: 503,
+      responseBody: '{"error":{"message":"Loading model","code":503}}',
+      isRetryable: false,
+    });
+
+    expect(isRetryableApiError(error)).toBe(true);
+    expect(isConnectionError(error)).toBe(true);
+    expect(getConnectionRetryDelayMs(1)).toBe(10_000);
+  });
+
   it("keeps non-connection parse retry behavior unchanged", () => {
     const error: Error = new Error("invalid json response from provider");
 

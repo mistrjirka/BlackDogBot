@@ -45,6 +45,7 @@ const _CHAT_STATIC_EXTRA_TOOLS: string[] = [
   "get_skill_file",
   "delegate_agent",
   "create_table",
+  "inspect_variable",
 ];
 
 async function _resolveIncludesAsync(content: string, depth: number): Promise<string> {
@@ -126,5 +127,25 @@ describe("main-agent prompt tool contract", () => {
 
     expect(prompt).toContain("create_table");
     expect(_chatStaticToolNames().has("create_table")).toBe(true);
+  });
+
+  it("teaches the variable reference shape (blackboard Phase 1)", async () => {
+    const prompt: string = await _loadMainAgentPromptAsync();
+
+    // Guards the "use {\"type\":\"variable\",\"name\":...}" teaching against deletion.
+    expect(prompt).toContain("\"type\":\"variable\"");
+    // Stored-variables section marker + every variable-capable sink named.
+    expect(prompt).toContain("Stored variables");
+    expect(prompt).toContain("write_table_<name>");
+    expect(prompt).toContain("write_file");
+    expect(prompt).toContain("add_knowledge");
+    expect(prompt).toContain("Use `inspect_variable`");
+    expect(prompt).toContain("not shell environment variables");
+    expect(prompt).toContain("run_cmd` accepts a literal shell command");
+    const runCmd = createBaseToolSet(mockMessageSender, new FileReadTracker()).run_cmd;
+    expect(runCmd?.description).toContain("cannot access BlackDogBot's per-run blackboard variables");
+    // Stub `meta` token teaching (FIX-1 wrapper extras) — plain backticked word, no
+    // snake_case underscores, so the token-lint extractor ignores it by construction.
+    expect(prompt).toContain("`meta`");
   });
 });

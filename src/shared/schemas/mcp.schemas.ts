@@ -7,6 +7,9 @@ export const mcpServerConfigSchema = z.object({
   env: z.record(z.string(), z.string()).optional(),
   url: z.string().url().optional(),
   headers: z.record(z.string(), z.string()).optional(),
+  transport: z.enum(["sse", "http"]).optional(),
+  strictOutputSchema: z.boolean().optional(),
+  allowedTools: z.string().min(1).array().optional(),
 }).refine(
   (config) => !!config.command || !!config.url,
   "Server must have either 'command' (stdio) or 'url' (http/sse)",

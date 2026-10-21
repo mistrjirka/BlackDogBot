@@ -21,9 +21,9 @@ services:
     image: unclecode/crawl4ai:latest
     container_name: blackdogbot-crawl4ai
     ports:
-      - "18732:11235"
+      - "127.0.0.1:18732:11235"
     environment:
-      - CRAWL4AI_API_TOKEN=
+      CRAWL4AI_API_TOKEN: ${CRAWL4AI_API_TOKEN:?Set with --env-file ~/.blackdogbot/.env}
     shm_size: 3g
     restart: unless-stopped
     healthcheck:

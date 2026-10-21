@@ -27,6 +27,8 @@ export interface ILlmTraceRecord {
   requestBody: unknown;
   response: string | null;
   responseTruncated: boolean;
+  /** Provider-reported usage, extracted from the FULL response before the char cap. */
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
 }
 
 /**

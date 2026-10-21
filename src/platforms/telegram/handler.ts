@@ -67,6 +67,10 @@ const TOOL_PRIMARY_KEY: Record<string, string> = {
 const PROMPT_UPDATE_NOTICE_TEXT: string =
   "A new BlackDogBot update changed default prompts. Run /update_prompts to apply them.";
 
+const TELEGRAM_EDIT_MAX_LENGTH: number = 4096;
+/** Stay safely below Telegram's edit limit after adding status/HTML wrappers. */
+const PROGRESS_MAX_LENGTH: number = 3900;
+
 interface IPendingTelegramMessage {
   text: string;
   messageId: number | null;
@@ -84,10 +88,35 @@ interface ITelegramEditApi {
   editMessageText: (chatId: string, messageId: number, text: string, options?: Record<string, unknown>) => Promise<unknown>;
 }
 
-function _buildProgressText(status: string, stepLogs: string[]): string {
+export function _buildProgressText(status: string, stepLogs: string[]): string {
   if (stepLogs.length === 0) {
     return status;
   }
+
+  let visibleLogs: string[] = [...stepLogs];
+  let text: string = _renderProgressText(status, visibleLogs);
+
+  // Older steps are dropped first so the newest activity stays visible and
+  // every blockquote remains well-formed. A hard character slice here would
+  // risk splitting HTML tags or entities.
+  while (text.length > PROGRESS_MAX_LENGTH && visibleLogs.length > 1) {
+    visibleLogs.shift();
+    text = _renderProgressText(status, ["… (earlier steps hidden)", ...visibleLogs]);
+  }
+
+  if (text.length > PROGRESS_MAX_LENGTH) {
+    // A single step is unusually large; fall back to the status line.
+    return status;
+  }
+
+  return text;
+}
+
+function _renderProgressText(status: string, stepLogs: string[]): string {
+  if (stepLogs.length === 0) {
+    return status;
+  }
+
   const compactLogs: string[] = _compactStepLogs(stepLogs, MAX_BLOCKQUOTE_LENGTH);
   const blockquotes: string = compactLogs
     .map((block: string): string => `<blockquote expandable>${_escapeTelegramHtml(block)}</blockquote>`)
@@ -1118,7 +1147,6 @@ export class TelegramHandler {
 const RESPONSE_TRUNCATE_LENGTH: number = 5000;
 const TOOL_ARG_TRUNCATE_STEPS: number[] = [500, 250, 125];
 const MAX_BLOCKQUOTE_LENGTH: number = 3000;
-const TELEGRAM_EDIT_MAX_LENGTH: number = 4096;
 
 function _truncateArg(arg: string, maxLength: number): string {
   if (arg.length <= maxLength) return arg;
@@ -1254,7 +1282,7 @@ function _detectThinkLeakInModelText(text: string): { hasThinkTags: boolean; has
   };
 }
 
-async function _tryEditMessageTextAsync(
+export async function _tryEditMessageTextAsync(
   editApi: { editMessageText: (chatId: string, messageId: number, text: string, options?: Record<string, unknown>) => Promise<unknown> },
   logger: LoggerService,
   chatId: string,
@@ -1268,7 +1296,9 @@ async function _tryEditMessageTextAsync(
     return true;
   } catch (error: unknown) {
     const errorMessage: string = error instanceof Error ? error.message : String(error);
-    const lowerError: string = errorMessage.toLowerCase();
+    // Telegram reports `MESSAGE_TOO_LONG` (underscored) in grammY errors, so
+    // normalize separators before matching prose-style messages.
+    const lowerError: string = errorMessage.toLowerCase().replaceAll("_", " ");
 
     if (lowerError.includes("message is not modified") || lowerError.includes("message not modified")) {
       logger.debug("Telegram editMessageText skipped (not modified)", {

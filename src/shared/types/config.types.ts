@@ -83,6 +83,10 @@ export interface IProviderCapabilitySummary {
 
 export interface IAiConfig {
   provider: AiProvider;
+  /** Context-window fraction that triggers checkpoint compaction. Default 0.90. */
+  compactionThreshold?: number;
+  /** Disable model thinking for structured-output requests (llama.cpp). */
+  disableThinkingOnStructuredOutput?: boolean;
   fallbacks?: IAiFallbackEntry[];
   generationTimeoutMs?: number;
   openrouter?: IOpenRouterConfig;
@@ -133,7 +137,6 @@ export interface ILoggingConfig {
 
 export interface IServicesConfig {
   searxngUrl: string;
-  crawl4aiUrl: string;
 }
 
 export interface IBrainInterfaceConfig {
