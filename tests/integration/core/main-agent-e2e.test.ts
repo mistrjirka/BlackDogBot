@@ -8,8 +8,6 @@ import { resetSingletons } from "../../utils/test-helpers.js";
 import { AiProviderService } from "../../../src/services/ai-provider.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { PromptService } from "../../../src/services/prompt.service.js";
-import { EmbeddingService } from "../../../src/services/embedding.service.js";
-import { VectorStoreService } from "../../../src/services/vector-store.service.js";
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
 import * as litesql from "../../../src/helpers/litesql.js";
 import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
@@ -70,24 +68,6 @@ describe("MainAgent E2E", () => {
 
     const loadedConfig = configService.getConfig();
 
-    const embeddingService: EmbeddingService = EmbeddingService.getInstance();
-
-    await embeddingService.initializeAsync(
-      loadedConfig.knowledge.embeddingModelPath,
-      loadedConfig.knowledge.embeddingDtype,
-      loadedConfig.knowledge.embeddingDevice,
-      loadedConfig.knowledge.embeddingProvider,
-      loadedConfig.knowledge.embeddingOpenRouterModel,
-      loadedConfig.knowledge.embeddingOpenRouterApiKey ?? loadedConfig.ai.openrouter?.apiKey,
-    );
-
-    const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
-
-    await vectorStoreService.initializeAsync(
-      undefined,
-      embeddingService.getDimension(),
-    );
-
     const skillLoaderService: SkillLoaderService = SkillLoaderService.getInstance();
 
     await skillLoaderService.loadAllSkillsAsync([]);
@@ -120,10 +100,6 @@ describe("MainAgent E2E", () => {
   }, 600000);
 
   afterAll(async () => {
-    const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
-
-    await vectorStoreService.closeAsync();
-
     process.env.HOME = originalHome;
     resetSingletons();
     await fs.rm(tempDir, { recursive: true, force: true });

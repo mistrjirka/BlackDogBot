@@ -70,6 +70,8 @@ export interface ITestEnvironment {
 export function createTestEnvironment(prefix: string): ITestEnvironment {
   let tempDir = "";
   let originalHome = "";
+  let originalHfHome: string | undefined;
+  let originalTransformersCache: string | undefined;
 
   return {
     get tempDir() {
@@ -82,6 +84,14 @@ export function createTestEnvironment(prefix: string): ITestEnvironment {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `blackdogbot-${prefix}-`));
       originalHome = process.env.HOME ?? os.homedir();
       process.env.HOME = tempDir;
+
+      // Keep the model cache outside the temporary HOME; otherwise every test
+      // file that initializes embeddings redownloads the ONNX model.
+      originalHfHome = process.env.HF_HOME;
+      originalTransformersCache = process.env.TRANSFORMERS_CACHE;
+      const sharedHfHome: string = originalHfHome ?? path.join(originalHome, ".cache", "huggingface");
+      process.env.HF_HOME = sharedHfHome;
+      process.env.TRANSFORMERS_CACHE = originalTransformersCache ?? sharedHfHome;
 
       resetSingletons();
 
@@ -103,6 +113,16 @@ export function createTestEnvironment(prefix: string): ITestEnvironment {
         }
       }
       process.env.HOME = originalHome;
+      if (originalHfHome === undefined) {
+        delete process.env.HF_HOME;
+      } else {
+        process.env.HF_HOME = originalHfHome;
+      }
+      if (originalTransformersCache === undefined) {
+        delete process.env.TRANSFORMERS_CACHE;
+      } else {
+        process.env.TRANSFORMERS_CACHE = originalTransformersCache;
+      }
     },
   };
 }

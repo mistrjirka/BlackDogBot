@@ -10,8 +10,6 @@ import { AiProviderService } from "../../../src/services/ai-provider.service.js"
 import { LoggerService } from "../../../src/services/logger.service.js";
 import { RateLimiterService } from "../../../src/services/rate-limiter.service.js";
 import { PromptService } from "../../../src/services/prompt.service.js";
-import { EmbeddingService } from "../../../src/services/embedding.service.js";
-import { VectorStoreService } from "../../../src/services/vector-store.service.js";
 import * as knowledge from "../../../src/helpers/knowledge.js";
 import { SkillLoaderService } from "../../../src/services/skill-loader.service.js";
 import * as litesql from "../../../src/helpers/litesql.js";
@@ -138,25 +136,6 @@ describe("TelegramHandler", () => {
 
     const loadedConfig = configService.getConfig();
 
-    const embeddingService: EmbeddingService = EmbeddingService.getInstance();
-
-    await embeddingService.initializeAsync(
-      loadedConfig.knowledge.embeddingModelPath,
-      loadedConfig.knowledge.embeddingDtype,
-      loadedConfig.knowledge.embeddingDevice,
-      loadedConfig.knowledge.embeddingProvider,
-      loadedConfig.knowledge.embeddingOpenRouterModel,
-      loadedConfig.knowledge.embeddingOpenRouterApiKey ?? loadedConfig.ai.openrouter?.apiKey,
-    );
-
-    const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
-    const lanceDbPath: string = path.join(tempDir, ".blackdogbot", "knowledge", "lancedb");
-
-    await vectorStoreService.initializeAsync(
-      lanceDbPath,
-      embeddingService.getDimension(),
-    );
-
     const skillLoaderService: SkillLoaderService = SkillLoaderService.getInstance();
 
     await skillLoaderService.loadAllSkillsAsync([]);
@@ -173,10 +152,6 @@ describe("TelegramHandler", () => {
   }, 600000);
 
   afterAll(async () => {
-    const vectorStoreService: VectorStoreService = VectorStoreService.getInstance();
-
-    await vectorStoreService.closeAsync();
-
     process.env.HOME = originalHome;
     resetSingletons();
     await fs.rm(tempDir, { recursive: true, force: true });

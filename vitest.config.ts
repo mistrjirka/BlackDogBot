@@ -1,4 +1,6 @@
 import { defineConfig } from "vitest/config";
+import os from "node:os";
+import path from "node:path";
 
 export default defineConfig({
   test: {
@@ -20,6 +22,9 @@ export default defineConfig({
       "**/.{idea,git,cache,output,temp}/**",
       "**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build,eslint,prettier}.config.*",
       "tests/integration/core/variable-store.e2e.test.ts",
+      // Real-provider / model-in-the-loop tests are on-demand only:
+      // `pnpm test:integration` (vitest.integration.config.ts) runs them.
+      "tests/integration/core/**/*e2e.test.ts",
     ],
     coverage: {
       provider: "v8",
@@ -27,7 +32,10 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: ["src/index.ts", "src/defaults/**"],
     },
-    testTimeout: 90000,
-    hookTimeout: 600000,
+    testTimeout: 30000,
+    hookTimeout: 60000,
+    env: {
+      BLACKDOGBOT_MODELS_DIR: path.join(os.homedir(), ".blackdogbot", "models"),
+    },
   },
 });
