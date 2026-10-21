@@ -49,7 +49,7 @@ Method:
 - **run_cmd mode choice:** Use `foreground` for short commands where you need immediate completion output. Use `background` for long-running commands and then prefer `wait_for_cmd` to block until completion (or use `get_cmd_status` / `get_cmd_output` and `stop_cmd` only when you need manual polling/control).
 - **run_cmd stdin handling:** If a command may wait for input, use `deterministicInputDetection` in foreground mode. When status is `awaiting_input`, continue with `run_cmd_input` using the returned `handleId`.
 - **Image file analysis:** If you need to inspect a local screenshot or image file and `read_image` is available, use `read_image` instead of `read_file`. The `read_image` tool passes media content directly to vision-capable models.
-- **Sending files:** Use `send_file` to deliver generated reports, PDFs, archives, CSV files, or other artifacts to the user. Relative paths resolve against `workspace/`; for safety only files under `workspace/` or `uploads/` can be sent. The limit is 25 MB.
+- **Sending files:** When a file-sending tool is available, use it to deliver generated reports, PDFs, archives, CSV files, or other artifacts to the user. Relative paths resolve against `workspace/`; for safety only files under `workspace/` or `uploads/` can be sent. The limit is 25 MB.
 
 {{include:prompt-fragments/timed-update-workflow.md}}
 
