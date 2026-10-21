@@ -15,6 +15,9 @@ interface IBufferMarker {
 
 const _BufferMarkerType: IBufferMarker["__type"] = "Buffer";
 
+/** Per-chat write queue: prevents overlapping writes from corrupting a session file. */
+const _saveQueues: Map<string, Promise<void>> = new Map();
+
 /**
  * Persists a chat session to disk.
  * Serializes session messages and metadata to JSON, handling Buffer objects by encoding as base64.
@@ -23,19 +26,40 @@ const _BufferMarkerType: IBufferMarker["__type"] = "Buffer";
  * @returns Promise that resolves when the session has been written to disk
  */
 export async function saveSessionAsync<ParsedSession extends IPersistedSession>(sessions: Map<string, ParsedSession>, chatId: string): Promise<void> {
-  const session = sessions.get(chatId);
-  if (!session) {
+  if (!sessions.has(chatId)) {
     return;
   }
 
-  const persistable: IPersistedSession = {
-    messages: session.messages,
-    lastActivityAt: session.lastActivityAt as number,
-  };
+  const previous: Promise<void> = _saveQueues.get(chatId) ?? Promise.resolve();
+  const next: Promise<void> = previous
+    .catch((): void => {
+      // A failed earlier save must not block later saves.
+    })
+    .then(async (): Promise<void> => {
+      const session = sessions.get(chatId);
+      if (!session) {
+        return;
+      }
 
-  await ensureDirectoryExistsAsync(getSessionsDir());
-  const filePath: string = getSessionFilePath(chatId);
-  await fs.writeFile(filePath, JSON.stringify(persistable, _sessionStringifyReplacer, 2), "utf-8");
+      const persistable: IPersistedSession = {
+        messages: session.messages,
+        lastActivityAt: session.lastActivityAt as number,
+      };
+
+      await ensureDirectoryExistsAsync(getSessionsDir());
+      const filePath: string = getSessionFilePath(chatId);
+      await fs.writeFile(filePath, JSON.stringify(persistable, _sessionStringifyReplacer, 2), "utf-8");
+    });
+
+  _saveQueues.set(chatId, next);
+
+  try {
+    await next;
+  } finally {
+    if (_saveQueues.get(chatId) === next) {
+      _saveQueues.delete(chatId);
+    }
+  }
 }
 
 /**

@@ -623,7 +623,7 @@ describe("VariableStore.maybeCapture — FIX-1 primary-payload extraction (group
     expect(store.get("v_1")).toEqual(value);
   });
 
-  it("meta caps at 8 fields in original key order", () => {
+  it("meta caps at 10 fields in original key order", () => {
     const store = new VariableStore();
     const rows: Array<Record<string, unknown>> = [{ id: 1, payload: "p".repeat(4500) }];
     const wrapper: Record<string, unknown> = { rows };
@@ -633,10 +633,10 @@ describe("VariableStore.maybeCapture — FIX-1 primary-payload extraction (group
 
     const stub = _asStub(store.maybeCapture("v", wrapper));
 
-    expect(Object.keys(stub.meta ?? {})).toEqual(["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"]);
+    expect(Object.keys(stub.meta ?? {})).toEqual(["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10"]);
   });
 
-  it("meta drops trailing fields while over 500 serialized chars", () => {
+  it("meta drops trailing fields while over 1000 serialized chars", () => {
     const store = new VariableStore();
     const rows: Array<Record<string, unknown>> = [{ id: 1, payload: "p".repeat(4500) }];
     const s1: string = "a".repeat(400);

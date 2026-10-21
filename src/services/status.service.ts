@@ -55,6 +55,8 @@ export class StatusService {
   private _currentState: IStatusState | null = null;
   private _contextTokens: number = 0;
   private _lastCompactionEvent: ICompactionEvent | null = null;
+  private _chatContexts: Map<string, { tokens: number; window: number }> = new Map();
+  private _chatCompactions: Map<string, ICompactionEvent> = new Map();
   private _inFlightCount: number = 0;
   private _encoder: ReturnType<typeof getEncoding> | null = null;
   private _spinnerIndex: number = 0;
@@ -189,6 +191,33 @@ export class StatusService {
 
   public getLastCompactionEvent(): ICompactionEvent | null {
     return this._lastCompactionEvent;
+  }
+
+  public setChatContext(chatId: string, tokens: number, window: number): void {
+    this._chatContexts.set(chatId, { tokens, window });
+  }
+
+  public getChatContext(chatId: string): { tokens: number; window: number } | null {
+    return this._chatContexts.get(chatId) ?? null;
+  }
+
+  public setChatCompaction(chatId: string, beforeTokens: number, afterTokens: number): void {
+    const event: ICompactionEvent = {
+      beforeTokens,
+      afterTokens,
+      at: Date.now(),
+    };
+    this._chatCompactions.set(chatId, event);
+    this._lastCompactionEvent = event;
+  }
+
+  public getChatCompaction(chatId: string): ICompactionEvent | null {
+    return this._chatCompactions.get(chatId) ?? null;
+  }
+
+  public clearChatStatus(chatId: string): void {
+    this._chatContexts.delete(chatId);
+    this._chatCompactions.delete(chatId);
   }
 
   public setStatus(

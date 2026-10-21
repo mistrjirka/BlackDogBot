@@ -195,6 +195,7 @@ export abstract class BaseAgentBase {
   protected _onDuplicateToolLoop: OnDuplicateToolLoopCallback | null;
   protected _compactionSink: CompactionSinkCallback | null;
   protected _messagesSink: ((messages: ModelMessage[]) => void) | null;
+  protected _statusChatId: string | null;
   /** Live blackboard store for the current run (null outside a run). Single-flight assumption: one active run per agent instance (matches the single-slot `_agent` design). */
   protected _currentVariableStore: VariableStore | null;
 
@@ -217,6 +218,7 @@ export abstract class BaseAgentBase {
     this._onDuplicateToolLoop = options?.onDuplicateToolLoop ?? null;
     this._compactionSink = null;
     this._messagesSink = null;
+    this._statusChatId = null;
     this._currentVariableStore = null;
   }
 
@@ -240,6 +242,10 @@ export abstract class BaseAgentBase {
    */
   public setMessagesSink(callback: ((messages: ModelMessage[]) => void) | null): void {
     this._messagesSink = callback;
+  }
+
+  public setStatusChatId(chatId: string | null): void {
+    this._statusChatId = chatId;
   }
 
   /**
@@ -792,6 +798,9 @@ export abstract class BaseAgentBase {
         // Update status service with context info (including percentage for UI display)
         const statusService: StatusService = StatusService.getInstance();
         statusService.setContextTokensWithThreshold(tokenCount, compactionTokenThreshold, self._contextWindow);
+        if (self._statusChatId) {
+          statusService.setChatContext(self._statusChatId, tokenCount, self._contextWindow);
+        }
 
         // Single configurable trigger: full request estimate vs. the context
         // window fraction. The hard gate remains an internal safety net.
@@ -884,6 +893,10 @@ export abstract class BaseAgentBase {
             self._contextWindow,
           );
           statusService.setCompactionEvent(tokenCount, postCompactionTokenCount);
+          if (self._statusChatId) {
+            statusService.setChatContext(self._statusChatId, postCompactionTokenCount, self._contextWindow);
+            statusService.setChatCompaction(self._statusChatId, tokenCount, postCompactionTokenCount);
+          }
 
           // Notify the caller about the compaction so they can persist the compacted messages
           if (self._compactionSink) {

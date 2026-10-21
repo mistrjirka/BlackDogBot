@@ -1,5 +1,5 @@
 
-import { ToolSet, LanguageModel, type ModelMessage } from "ai";
+import { ToolSet, LanguageModel, ToolLoopAgent, type ModelMessage } from "ai";
 
 import { assembleToolsForChat } from "./tool-assembly.js";
 import type { ICreateTableRebuildInfo } from "../shared/types/tool-rebuild.types.js";
@@ -64,6 +64,8 @@ export interface IChatSession {
   messages: ModelMessage[];
   /** In-flight messages captured from prepareStep; used to survive retries/steering. */
   inFlightMessages: ModelMessage[] | null;
+  pendingContextRecoveryUserText: string | null;
+  skipNextUserAppend: boolean;
   lastActivityAt: number;
   messageSender: MessageSender;
   photoSender: (imageBuffer: Buffer, caption: string | null) => Promise<string | null>;
@@ -106,6 +108,7 @@ export class MainAgent extends BaseAgentBase {
   private _currentChatId: string | null;
   private _adminControl: AdminControl;
   private _runQueue: Promise<void>;
+  private _agents: Map<string, ToolLoopAgent>;
 
   //#endregion Data members
 
@@ -117,6 +120,7 @@ export class MainAgent extends BaseAgentBase {
     this._currentChatId = null;
     this._adminControl = createAdminControl(this._sessions, this._logger);
     this._runQueue = Promise.resolve();
+    this._agents = new Map();
   }
 
   //#endregion Constructors
@@ -185,6 +189,8 @@ export class MainAgent extends BaseAgentBase {
       this._sessions.set(chatId, {
         messages: saved?.messages ?? [],
         inFlightMessages: null,
+        pendingContextRecoveryUserText: null,
+        skipNextUserAppend: false,
         lastActivityAt: saved?.lastActivityAt ?? Date.now(),
         messageSender,
         photoSender,
@@ -440,6 +446,10 @@ export class MainAgent extends BaseAgentBase {
       (): boolean => session.terminateCurrentRun,
       this._createDuplicateToolLoopCallback(chatId),
     );
+
+    if (this._agent) {
+      this._agents.set(chatId, this._agent);
+    }
   }
 
   /**
@@ -565,7 +575,13 @@ export class MainAgent extends BaseAgentBase {
     }
 
     session.lastActivityAt = Date.now();
-    session.inFlightMessages = null;
+    this.setStatusChatId(chatId);
+    const isContextRecoveryRetry: boolean = session.pendingContextRecoveryUserText === userMessage;
+    session.pendingContextRecoveryUserText = null;
+    session.skipNextUserAppend = isContextRecoveryRetry;
+    if (!isContextRecoveryRetry) {
+      session.inFlightMessages = null;
+    }
     session.steeringQueue = [];
     session.isSteeringAbort = false;
     session.isRunning = false;
@@ -668,7 +684,7 @@ export class MainAgent extends BaseAgentBase {
       // Bind this run to the agent instance built for this chat. Another chat's
       // initialization may replace this._agent before a retry; the retry must
       // still use the original agent/tool set.
-      const activeAgent = this._agent!;
+      const activeAgent: ToolLoopAgent = this._agents.get(chatId) ?? this._agent!;
 
       try {
         // Delegate generation loop with full retry logic to orchestrator.
@@ -827,6 +843,7 @@ export class MainAgent extends BaseAgentBase {
           if (terminalInFlight) {
             session.messages = [...terminalInFlight];
             session.inFlightMessages = null;
+            session.pendingContextRecoveryUserText = userMessage;
             await this._saveSessionAsync(chatId).catch(() => {});
           }
           throw error;
@@ -978,7 +995,10 @@ export class MainAgent extends BaseAgentBase {
         // tool results and checkpoint compaction across retries and steering aborts.
         const baseMessages: ModelMessage[] = session.inFlightMessages
           ? [...session.inFlightMessages]
-          : [...session.messages, userModelMessage];
+          : session.skipNextUserAppend
+            ? [...session.messages]
+            : [...session.messages, userModelMessage];
+        session.skipNextUserAppend = false;
         const messagesForCall: ModelMessage[] = baseMessages;
 
         while (session.steeringQueue.length > 0) {
@@ -1122,13 +1142,20 @@ private async _activateFallbackAndReinitializeAsync(
    */
   public clearChatHistory(chatId: string): void {
     this._adminControl.clearChatHistory(chatId);
+    this._agents.delete(chatId);
+    StatusService.getInstance().clearChatStatus(chatId);
   }
 
   /**
    * Clears message history for all chat sessions.
    */
   public clearAllChatHistory(): void {
+    const chatIds: string[] = Array.from(this._sessions.keys());
     this._adminControl.clearAllChatHistory();
+    for (const chatId of chatIds) {
+      this._agents.delete(chatId);
+      StatusService.getInstance().clearChatStatus(chatId);
+    }
   }
 
   //#endregion Public methods

@@ -379,8 +379,8 @@ function _buildSummaryContent(
 
   if (preservedUserText.length > 0) {
     const boundedUserText: string =
-      preservedUserText.length > 4000
-        ? `${preservedUserText.slice(0, 4000)}…`
+      preservedUserText.length > 8000
+        ? `${preservedUserText.slice(0, 8000)}…`
         : preservedUserText;
     sections.push(`\n[LATEST USER REQUEST]\n${boundedUserText}`);
   }
@@ -392,7 +392,7 @@ function _buildSummaryContent(
   if (additionalUserRequests.length > 0) {
     sections.push(
       `\n[RECENT USER REQUESTS]\n${additionalUserRequests
-        .map((request: string): string => `- ${request.length > 2000 ? `${request.slice(0, 2000)}…` : request}`)
+        .map((request: string): string => `- ${request.length > 4000 ? `${request.slice(0, 4000)}…` : request}`)
         .join("\n")}`,
     );
   }

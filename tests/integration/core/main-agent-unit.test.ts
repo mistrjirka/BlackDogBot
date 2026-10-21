@@ -255,6 +255,7 @@ describe("MainAgent unit", () => {
     };
 
     (mainAgent as unknown as { _agent: unknown })._agent = fakeAgent;
+    (mainAgent as unknown as { _agents: Map<string, unknown> })._agents.set("chat-steer", fakeAgent);
 
     const runPromise: Promise<{ text: string; stepsCount: number }> = mainAgent.processMessageForChatAsync(
       "chat-steer",
@@ -377,11 +378,13 @@ describe("MainAgent unit", () => {
       summaryString: "6x(edit_interval({\"taskId\":\"t1\"}))",
     };
 
-    (mainAgent as unknown as { _agent: unknown })._agent = {
+    const hardStopAgent = {
       generate: vi.fn(async () => {
         throw new DuplicateToolLoopHardStopError(loopInfo);
       }),
     };
+    (mainAgent as unknown as { _agent: unknown })._agent = hardStopAgent;
+    (mainAgent as unknown as { _agents: Map<string, unknown> })._agents.set("chat-hard-stop", hardStopAgent);
 
     const result = await mainAgent.processMessageForChatAsync("chat-hard-stop", "do the task");
 
@@ -403,7 +406,7 @@ describe("MainAgent unit", () => {
     session!.duplicateLoopEscalation.activeSignature = "edit_interval({\"taskId\":\"t1\"})";
     session!.duplicateLoopEscalation.adviserAttemptsRemaining = 0;
 
-    (mainAgent as unknown as { _agent: unknown })._agent = {
+    const resetAgent = {
       generate: vi.fn(async () => {
         return {
           text: "Done, updated schedule.",
@@ -413,6 +416,8 @@ describe("MainAgent unit", () => {
         };
       }),
     };
+    (mainAgent as unknown as { _agent: unknown })._agent = resetAgent;
+    (mainAgent as unknown as { _agents: Map<string, unknown> })._agents.set("chat-reset", resetAgent);
 
     const result = await mainAgent.processMessageForChatAsync("chat-reset", "please update schedule");
 

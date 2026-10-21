@@ -445,11 +445,11 @@ function _extractMeta(result: Record<string, unknown>, payloadKey: string): Reco
       : value;
 
     meta[key] = normalizedValue;
-    if (Object.keys(meta).length >= 8) {
+    if (Object.keys(meta).length >= 10) {
       break;
     }
 
-    while (JSON.stringify(meta).length > 500 && Object.keys(meta).length > 1) {
+    while (JSON.stringify(meta).length > 1000 && Object.keys(meta).length > 1) {
       const lastKey: string | undefined = Object.keys(meta).at(-1);
       if (lastKey === undefined) {
         break;

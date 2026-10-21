@@ -137,10 +137,11 @@ function _formatTokenCount(tokens: number): string {
   return `${Math.max(0, Math.round(tokens))}`;
 }
 
-function _buildContextUsageLine(): string {
+function _buildContextUsageLine(chatId: string): string {
   const status: StatusService = StatusService.getInstance();
-  const tokens: number = status.getContextTokens();
-  const window: number = status.getContextWindow() || AiProviderService.getInstance().getContextWindow();
+  const chatContext = status.getChatContext(chatId);
+  const tokens: number = chatContext?.tokens ?? 0;
+  const window: number = chatContext?.window ?? 0;
 
   if (tokens <= 0 || window <= 0) {
     return "";
@@ -152,6 +153,18 @@ function _buildContextUsageLine(): string {
 
 function _formatCompactionLine(beforeTokens: number, afterTokens: number): string {
   return `Context compaction: ${_formatTokenCount(beforeTokens)} → ${_formatTokenCount(afterTokens)}`;
+}
+
+function _appendCompactionIfNew(
+  stepLogs: string[],
+  compactionState: { lastSeenAt: number },
+  chatId: string,
+): void {
+  const compactionEvent = StatusService.getInstance().getChatCompaction(chatId);
+  if (compactionEvent && compactionEvent.at > compactionState.lastSeenAt) {
+    compactionState.lastSeenAt = compactionEvent.at;
+    stepLogs.push(_formatCompactionLine(compactionEvent.beforeTokens, compactionEvent.afterTokens));
+  }
 }
 
 export function _parseQueueCommand(text: string): string | null {
@@ -186,11 +199,7 @@ function createProgressOnStep(
     onStepStarted?.(stepNumber, toolCalls);
 
     if (compactionState) {
-      const compactionEvent = StatusService.getInstance().getLastCompactionEvent();
-      if (compactionEvent && compactionEvent.at > compactionState.lastSeenAt) {
-        compactionState.lastSeenAt = compactionEvent.at;
-        stepLogs.push(_formatCompactionLine(compactionEvent.beforeTokens, compactionEvent.afterTokens));
-      }
+      _appendCompactionIfNew(stepLogs, compactionState, chatId);
     }
 
     const filteredToolCalls: IToolCallSummary[] = toolCalls.filter((tc: IToolCallSummary): boolean => tc.name !== "think");
@@ -375,13 +384,13 @@ export class TelegramHandler {
     // Progress message state
     let progressMsgId: number | null = null;
     const stepLogs: string[] = [];
-    const existingCompactionEvent = StatusService.getInstance().getLastCompactionEvent();
+    const existingCompactionEvent = StatusService.getInstance().getChatCompaction(chatId);
     const compactionState: { lastSeenAt: number } = {
       lastSeenAt: existingCompactionEvent?.at ?? 0,
     };
 
     const buildProgressText = (status: string): string =>
-      _buildProgressText(status, stepLogs, _buildContextUsageLine());
+      _buildProgressText(status, stepLogs, _buildContextUsageLine(chatId));
 
     try {
       const incoming: IIncomingMessage = {
@@ -480,6 +489,7 @@ export class TelegramHandler {
         // Update progress message to done
         if (progressMsgId !== null) {
           const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
+          _appendCompactionIfNew(stepLogs, compactionState, chatId);
           const doneProgressText: string = buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`);
           const edited: boolean = await _tryEditMessageTextAsync(
             ctx.api,
@@ -575,6 +585,7 @@ export class TelegramHandler {
     } catch (error: unknown) {
       // Update progress message to error state
       if (progressMsgId !== null) {
+        _appendCompactionIfNew(stepLogs, compactionState, chatId);
         const errorProgressText: string = buildProgressText("❌ Error");
         const edited: boolean = await _tryEditMessageTextAsync(
           ctx.api,
@@ -955,13 +966,13 @@ export class TelegramHandler {
 
     let progressMsgId: number | null = null;
     const stepLogs: string[] = [];
-    const existingCompactionEvent = StatusService.getInstance().getLastCompactionEvent();
+    const existingCompactionEvent = StatusService.getInstance().getChatCompaction(chatId);
     const compactionState: { lastSeenAt: number } = {
       lastSeenAt: existingCompactionEvent?.at ?? 0,
     };
 
     const buildProgressText = (status: string): string =>
-      _buildProgressText(status, stepLogs, _buildContextUsageLine());
+      _buildProgressText(status, stepLogs, _buildContextUsageLine(chatId));
 
     const hasAnyImageAttachment: boolean = queuedMessages.some(
       (queuedMessage: IPendingTelegramMessage): boolean => queuedMessage.imageAttachments.length > 0,
@@ -1019,7 +1030,10 @@ export class TelegramHandler {
             this._logger,
             chatId,
             progressMsgId,
-            buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`),
+            ((): string => {
+              _appendCompactionIfNew(stepLogs, compactionState, chatId);
+              return buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`);
+            })(),
             "HTML",
             "queue-progress-done",
           );
@@ -1061,7 +1075,10 @@ export class TelegramHandler {
           this._logger,
           chatId,
           progressMsgId,
-          buildProgressText(`✅ Done (${totalStepsCount} ${stepWord})`),
+          ((): string => {
+            _appendCompactionIfNew(stepLogs, compactionState, chatId);
+            return buildProgressText(`✅ Done (${totalStepsCount} ${stepWord})`);
+          })(),
           "HTML",
           "queue-progress-done-images",
         );
@@ -1092,7 +1109,10 @@ export class TelegramHandler {
           this._logger,
           chatId,
           progressMsgId,
-          buildProgressText("❌ Error"),
+          ((): string => {
+            _appendCompactionIfNew(stepLogs, compactionState, chatId);
+            return buildProgressText("❌ Error");
+          })(),
           "HTML",
           "queue-progress-error",
         );
