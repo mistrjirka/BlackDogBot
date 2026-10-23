@@ -258,6 +258,27 @@ describe("MCP Agent Integration", () => {
       expect(Object.keys(toolsAfter)).toEqual(Object.keys(toolsBefore));
     });
 
+    it("detects an MCP server added externally and reloads its toolset without a daemon restart", async () => {
+      const configPath = path.join(tempDir, ".blackdogbot", "mcp-servers.json");
+      const original = await fs.readFile(configPath, "utf8");
+      const mcpService = McpService.getInstance();
+      try {
+        const edited = JSON.parse(original);
+        edited.mcpServers.external = {
+          command: "npx", args: ["tsx", "tests/mocks/mcp-test-server.ts"],
+        };
+        await fs.writeFile(configPath, JSON.stringify(edited));
+        await mcpService.ensureConnectedAsync();
+        expect(Object.keys(mcpService.getTools())).toContain("mcp.external.echo");
+        expect(Object.keys(mcpService.getTools())).toContain("mcp.test.echo");
+      } finally {
+        await fs.writeFile(configPath, original);
+        await mcpService.ensureConnectedAsync();
+      }
+      expect(Object.keys(mcpService.getTools())).not.toContain("mcp.external.echo");
+      expect(Object.keys(mcpService.getTools())).toContain("mcp.test.echo");
+    });
+
     it("should clear all state on closeAsync", async () => {
       // Use a separate registry/service pair for this test
       const registry = McpRegistryService.getInstance();

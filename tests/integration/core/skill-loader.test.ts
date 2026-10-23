@@ -452,11 +452,11 @@ describe("SkillLoaderService", () => {
 
     const all: ISkill[] = service.getAllSkills();
 
-    expect(all).toHaveLength(4);
+    expect(all).toHaveLength(6);
 
     const names: string[] = all.map((s: ISkill) => s.name).sort();
 
-    expect(names).toEqual(["coding-workflow", "news-digest", "skill-a", "skill-b"]);
+    expect(names).toEqual(["coding-workflow", "mcp-management", "news-digest", "safe-self-development", "skill-a", "skill-b"]);
   });
 
   it("should return only available skills (setuped + model invocation enabled)", async () => {
@@ -473,7 +473,7 @@ describe("SkillLoaderService", () => {
 
     const available: ISkill[] = service.getAvailableSkills();
 
-    expect(available.map((skill: ISkill) => skill.name).sort()).toEqual(["coding-workflow", "news-digest", "ready-skill"]);
+    expect(available.map((skill: ISkill) => skill.name).sort()).toEqual(["coding-workflow", "mcp-management", "news-digest", "ready-skill", "safe-self-development"]);
   });
 
   it("should handle missing skills directory gracefully", async () => {
@@ -482,7 +482,7 @@ describe("SkillLoaderService", () => {
     await expect(service.loadAllSkillsAsync()).resolves.toBeUndefined();
     const all: ISkill[] = service.getAllSkills();
 
-    expect(all.map((skill: ISkill) => skill.name)).toEqual(["coding-workflow", "news-digest"]);
+    expect(all.map((skill: ISkill) => skill.name)).toEqual(["coding-workflow", "mcp-management", "news-digest", "safe-self-development"]);
   });
 
   it("bounds the number of skill directories scanned per root", async () => {
@@ -511,8 +511,8 @@ describe("SkillLoaderService", () => {
     await service.loadAllSkillsAsync();
     const all: ISkill[] = service.getAllSkills();
 
-    expect(all).toHaveLength(3);
-    expect(all.map((skill: ISkill) => skill.name).sort()).toEqual(["coding-workflow", "news-digest", "valid-skill"]);
+    expect(all).toHaveLength(5);
+    expect(all.map((skill: ISkill) => skill.name).sort()).toEqual(["coding-workflow", "mcp-management", "news-digest", "safe-self-development", "valid-skill"]);
   });
 
   it("rejects SKILL.md symlinks that escape the skill directory", async () => {
@@ -549,8 +549,8 @@ describe("SkillLoaderService", () => {
     await service.loadAllSkillsAsync();
     const all: ISkill[] = service.getAllSkills();
 
-    expect(all).toHaveLength(3);
-    expect(all.map((skill: ISkill) => skill.name).sort()).toEqual(["coding-workflow", "good-skill", "news-digest"]);
+    expect(all).toHaveLength(5);
+    expect(all.map((skill: ISkill) => skill.name).sort()).toEqual(["coding-workflow", "good-skill", "mcp-management", "news-digest", "safe-self-development"]);
   });
 
   it("should skip regular files in skills directory (not directories)", async () => {
@@ -566,8 +566,8 @@ describe("SkillLoaderService", () => {
     await service.loadAllSkillsAsync();
     const all: ISkill[] = service.getAllSkills();
 
-    expect(all).toHaveLength(3);
-    expect(all.map((skill: ISkill) => skill.name).sort()).toEqual(["coding-workflow", "news-digest", "real-skill"]);
+    expect(all).toHaveLength(5);
+    expect(all.map((skill: ISkill) => skill.name).sort()).toEqual(["coding-workflow", "mcp-management", "news-digest", "real-skill", "safe-self-development"]);
   });
 
   it("should return undefined for a non-existent skill via getSkill", async () => {

@@ -24,6 +24,8 @@ interface IMcpServerConnection {
   transport: Transport;
   tools: ToolSet;
   serverId: string;
+  /** Used to detect edited server configuration without a daemon restart. */
+  configSignature: string;
 }
 
 type TModelOutputPart =
@@ -129,10 +131,11 @@ export class McpService {
     for (const [id] of this._connections) {
       const entry = this._registry.getServer(id);
 
-      if (!entry || !entry.enabled) {
+      const configChanged = !!entry && this._connections.get(id)?.configSignature !== JSON.stringify(entry.config);
+      if (!entry || !entry.enabled || configChanged) {
         this._logger.info("Closing MCP server connection", {
           serverId: id,
-          reason: !entry ? "removed" : "disabled",
+          reason: !entry ? "removed" : !entry.enabled ? "disabled" : "config changed",
         });
         await this._closeConnectionAsync(id);
       }
@@ -194,6 +197,10 @@ export class McpService {
    * backoff to every agent build.
    */
   public async ensureConnectedAsync(): Promise<void> {
+    if (await this._registry.reloadIfChangedAsync()) {
+      await this.refreshAsync();
+      return;
+    }
     if (this._refreshPromise) {
       await this._refreshPromise;
       return;
@@ -359,6 +366,7 @@ export class McpService {
         transport,
         tools,
         serverId: entry.id,
+        configSignature: JSON.stringify(entry.config),
       });
 
       this._logger.info("Connected to MCP server", {

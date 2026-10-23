@@ -1,4 +1,4 @@
-import { writeFile, readFile, mkdir } from "fs/promises";
+import { writeFile, readFile, mkdir, rename, unlink } from "fs/promises";
 import { existsSync } from "fs";
 import { dirname } from "path";
 
@@ -7,7 +7,7 @@ import type {
   IMcpServersFile,
   IMcpServerEntry,
 } from "../shared/types/mcp.types.js";
-import { mcpServerConfigSchema } from "../shared/schemas/mcp.schemas.js";
+import { mcpServerConfigSchema, mcpServersFileSchema } from "../shared/schemas/mcp.schemas.js";
 import { LoggerService } from "./logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { getMcpServersFilePath } from "../utils/paths.js";
@@ -72,6 +72,68 @@ export class McpRegistryService {
     await this._loadAsync();
   }
 
+  /**
+   * Re-read the registry after external edits (e.g. an agent using run_cmd).
+   * Reject invalid files without disrupting currently connected servers.
+   * Returns true only when effective validated server configurations changed.
+   */
+  public async reloadIfChangedAsync(): Promise<boolean> {
+    let text: string;
+    try {
+      text = await readFile(this._filePath, "utf-8");
+    } catch (error: unknown) {
+      this._logger.warn("Cannot reload MCP configuration; preserving working registry", {
+        error: extractErrorMessage(error),
+      });
+      return false;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      this._logger.warn("MCP configuration has invalid JSON; preserving working registry");
+      return false;
+    }
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
+        !("mcpServers" in parsed) || !(parsed as { mcpServers?: unknown }).mcpServers ||
+        typeof (parsed as { mcpServers: unknown }).mcpServers !== "object" ||
+        Array.isArray((parsed as { mcpServers: unknown }).mcpServers)) {
+      this._logger.warn("MCP configuration is missing mcpServers; preserving working registry");
+      return false;
+    }
+
+    const next = new Map<string, IMcpServerEntry>();
+    const configs = (parsed as IMcpServersFile).mcpServers;
+    for (const [id, config] of Object.entries(configs)) {
+      if (!VALID_SERVER_ID_RE.test(id)) {
+        this._logger.warn("MCP configuration contains an invalid server id; preserving working registry", { id });
+        return false;
+      }
+      const validation = mcpServerConfigSchema.safeParse(config);
+      if (!validation.success) {
+        this._logger.warn("Invalid MCP server entry; preserving working registry", {
+          id, error: validation.error.message,
+        });
+        return false;
+      }
+      next.set(id, _entryFromConfig(id, validation.data));
+    }
+
+    const currentSignature = JSON.stringify(
+      [...this._servers].map(([id, entry]) => [id, entry.config]),
+    );
+    const nextSignature = JSON.stringify(
+      [...next].map(([id, entry]) => [id, entry.config]),
+    );
+    if (currentSignature === nextSignature) return false;
+
+    this._servers = next;
+    this._logger.info("Externally edited MCP configuration reloaded", { serverCount: next.size });
+    return true;
+  }
+
   //#endregion Public Methods - Lifecycle
 
   //#region Public Methods - Server Management
@@ -83,6 +145,7 @@ export class McpRegistryService {
    * @param config VS Code / Claude Desktop format server config
    */
   public async addServerAsync(id: string, config: IMcpServerConfig): Promise<IMcpServerEntry> {
+    await this._assertConfigurationWritableAsync();
     if (!VALID_SERVER_ID_RE.test(id)) {
       throw new Error(
         `Invalid server id "${id}". Only alphanumeric, dash, and underscore characters are allowed.`,
@@ -97,8 +160,16 @@ export class McpRegistryService {
 
     const entry: IMcpServerEntry = _entryFromConfig(id, validation.data);
 
+    await this.reloadIfChangedAsync();
+    const previous = this._servers.get(id);
     this._servers.set(id, entry);
-    await this._saveAsync();
+    try {
+      await this._saveAsync();
+    } catch (error) {
+      if (previous) this._servers.set(id, previous);
+      else this._servers.delete(id);
+      throw error;
+    }
 
     this._logger.info("Added/updated MCP server", {
       id,
@@ -114,10 +185,17 @@ export class McpRegistryService {
    * @returns true if server was found and removed
    */
   public async removeServerAsync(id: string): Promise<boolean> {
+    await this._assertConfigurationWritableAsync();
+    await this.reloadIfChangedAsync();
+    const previous = this._servers.get(id);
     const existed = this._servers.delete(id);
 
     if (existed) {
-      await this._saveAsync();
+      try { await this._saveAsync(); }
+      catch (error) {
+        if (previous) this._servers.set(id, previous);
+        throw error;
+      }
       this._logger.info("Removed MCP server", { id });
     }
 
@@ -128,14 +206,16 @@ export class McpRegistryService {
    * Enable or disable an MCP server without removing its config.
    */
   public async setEnabledAsync(id: string, enabled: boolean): Promise<boolean> {
+    await this._assertConfigurationWritableAsync();
+    await this.reloadIfChangedAsync();
     const entry = this._servers.get(id);
 
-    if (!entry) {
-      return false;
-    }
+    if (!entry) return false;
 
+    const old = entry.enabled;
     entry.enabled = enabled;
-    await this._saveAsync();
+    try { await this._saveAsync(); }
+    catch (error) { entry.enabled = old; throw error; }
 
     this._logger.info("Updated MCP server enabled state", { id, enabled });
     return true;
@@ -213,6 +293,25 @@ export class McpRegistryService {
     }
   }
 
+  private async _assertConfigurationWritableAsync(): Promise<void> {
+    let content: string;
+    try {
+      content = await readFile(this._filePath, "utf-8");
+    } catch (error) {
+      if (typeof error === "object" && error && "code" in error &&
+          (error as { code: unknown }).code === "ENOENT") return;
+      throw error;
+    }
+    try {
+      const file = mcpServersFileSchema.parse(JSON.parse(content));
+      if (Object.keys(file.mcpServers).some(id => !VALID_SERVER_ID_RE.test(id))) {
+        throw new Error("Invalid server identifier");
+      }
+    } catch {
+      throw new Error("Refusing to overwrite invalid MCP registry; repair or restore its JSON first.");
+    }
+  }
+
   private async _saveAsync(): Promise<void> {
     try {
       const dir = dirname(this._filePath);
@@ -230,11 +329,19 @@ export class McpRegistryService {
       }
 
       const content: string = JSON.stringify(file, null, 2);
-      await writeFile(this._filePath, content, "utf-8");
+      const tempPath = this._filePath + ".tmp-" + process.pid + "-" + Date.now();
+      try {
+        await writeFile(tempPath, content, { encoding: "utf-8", mode: 0o600, flag: "wx" });
+        await rename(tempPath, this._filePath);
+      } catch (error) {
+        await unlink(tempPath).catch(() => {});
+        throw error;
+      }
     } catch (error) {
       this._logger.error("Failed to save mcp-servers.json", {
         error: extractErrorMessage(error),
       });
+      throw error;
     }
   }
 
