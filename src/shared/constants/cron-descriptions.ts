@@ -16,17 +16,15 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "No validation beyond required argument; no error conditions possible.",
 
   run_cmd:
-    "Execute a shell command and return a structured result object. " +
-    "Modes: foreground waits for terminal status (or awaiting_input); background returns immediately with status=running and handleId for follow-up tools. " +
-    "Output fields include: status, stdout, stderr, exitCode, handleId, timedOut, durationMs, signal, deterministic, error. stdout/stderr are separate channels and both matter for diagnostics. " +
-    "Status values: running (process active), awaiting_input (process waiting for stdin), completed (finished normally), timed_out (exceeded timeout), killed (received termination signal), failed (non-zero exit code). " +
-    "handleId is present when status is running or awaiting_input; null when status is terminal (completed, timed_out, killed, failed). " +
-    "Background mode lifecycle: returns handle immediately; use get_cmd_status/wait_for_cmd to monitor; process continues running until completion, timeout, or explicit stop via stop_cmd. " +
-    "Args: command (string, required); cwd (string, default ~/.blackdogbot); timeout (ms, default 30000); mode (foreground|background, default foreground); deterministicInputDetection (boolean, default true).",
+    "Run a shell command inside a PTY terminal. Terminal stdout/stderr are combined in stdout; stderr contains only PTY wrapper errors. " +
+    "Foreground waits for completion or a recognizable input prompt; background immediately provides a handleId. " +
+    "Processes continue between calls until exit, timeout, or bot restart. Files persist on disk. " +
+    "Use wait_for_cmd/get_cmd_output/get_cmd_status/stop_cmd to monitor and control the running command. " +
+    "Args: command (required); cwd (default ~/.blackdogbot); timeout (wall-clock ms including time between calls, default foreground 30000/background 600000, 0 disables deadline); mode (foreground|background, default foreground).",
 
   run_cmd_input:
-    "Send input to a running command waiting for stdin. " +
-    "Args: handleId (string, required); input (string, required); closeStdin (boolean, default true).",
+    "Send repeated input to a PTY command by handleId, including control characters such as Ctrl+C. " +
+    "Args: handleId (required); input (required); appendNewline (default true, false for raw keys); closeStdin (default false).",
 
   get_cmd_status:
     "Get the current status of a command handle. " +
@@ -39,7 +37,7 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Args: handleId (string, required); channel (stdout|stderr|both, default both); maxBytes (number, default 65536).",
 
   wait_for_cmd:
-    "Wait for a command handle to reach terminal status (or awaiting_input) and return status plus output. " +
+    "Wait for a command handle to reach terminal status (or awaiting_input) and return status plus output. This wait limit does not kill the process or change its execution deadline. " +
     "Args: handleId (string, required); timeoutMs (number, default 120000); maxBytes (number, default 65536).",
 
   stop_cmd:

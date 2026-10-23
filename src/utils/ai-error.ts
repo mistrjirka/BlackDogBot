@@ -1,10 +1,11 @@
 import { APICallError } from "ai";
-import { extractErrorMessage } from "./error.js";
+import { extractErrorMessage, extractErrorCauses } from "./error.js";
 
 //#region Interfaces
 
 export interface IAiErrorDetails {
   message: string;
+  causes?: ReturnType<typeof extractErrorCauses>;
   providerMessage: string | null;
   provider: string | null;
   model: string | null;
@@ -27,6 +28,7 @@ export interface IAiErrorDetails {
 export function extractAiErrorDetails(error: unknown): IAiErrorDetails {
   const details: IAiErrorDetails = {
     message: extractErrorMessage(error),
+    causes: extractErrorCauses(error),
     providerMessage: null,
     provider: null,
     model: null,

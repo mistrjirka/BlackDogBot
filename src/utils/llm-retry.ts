@@ -19,6 +19,7 @@ import { extractAiErrorDetails, formatAiErrorForLog } from "./ai-error.js";
 import { getConnectionRetryDelayMs, isConnectionError } from "./context-error.js";
 import { apply429BackoffAsync } from "./rate-limit-retry.js";
 import { runWithLlmCallTypeAsync } from "./llm-call-context.js";
+import { LlmRequestTimeoutError } from "./llm-fetch.js";
 
 //#region Types
 
@@ -280,7 +281,7 @@ async function executeLlmCallWithRetryAsync<T>(
           ...(isStructured ? { structuredMode: ctx.structuredMode } : {}),
           error: errorMessage,
         });
-        if (isAbort) break;
+        if (isAbort || ctx.abortSignal?.aborted || extractAiErrorDetails(error).causes?.some(cause => cause.name === LlmRequestTimeoutError.name)) break;
         if (extractAiErrorDetails(error).statusCode === 429) {
           await apply429BackoffAsync({
             logger,

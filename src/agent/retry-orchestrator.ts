@@ -13,6 +13,7 @@ import {
   isRetryableApiError,
 } from "../utils/context-error.js";
 import { extractAiErrorDetails } from "../utils/ai-error.js";
+import { LlmRequestTimeoutError, LlmIncompleteResponseError } from "../utils/llm-fetch.js";
 
 //#region Types
 
@@ -62,6 +63,8 @@ export interface IRetryOrchestratorConfig {
   shouldTerminate?: () => boolean;
   /** Reset token counters before each retry attempt (mirrors MainAgent `_totalInputTokens`). */
   resetTokenCounters: () => void;
+  /** Increases after each completed step, even if a later step fails. */
+  getProgressVersion?: () => number;
   /** Called with provider-reported input tokens after successfully generated response. Mirrors `_totalInputTokens = x`. */
   totalInputTokensSink: (value: number) => void;
   /** Emit model output text via brain interface emitter. Wrapped in try/catch inside runCycle. */
@@ -133,6 +136,7 @@ export class RetryOrchestrator {
       // Reset token count so prepareStep doesn't use stale values from a failed attempt
       resetTokenCounters();
 
+      const progressBeforeAttempt = config.getProgressVersion?.();
       const llmStartTime: number = Date.now();
       try {
         const generateResult = await generateFn({
@@ -140,6 +144,15 @@ export class RetryOrchestrator {
           abortSignal,
         });
 
+
+        const lastStep = generateResult.steps?.at(-1) as { finishReason?: string } | undefined;
+        if (lastStep?.finishReason === "length") {
+          throw new LlmIncompleteResponseError("Agent output ended because a generation/context limit was reached.");
+        }
+        if (typeof generateResult.text === "string" &&
+            /^\s*<think>/.test(generateResult.text) && !generateResult.text.includes("</think>")) {
+          throw new LlmIncompleteResponseError("Agent output contains an unfinished reasoning block.");
+        }
 
         const latencyMs: number = Date.now() - llmStartTime;
         const stepsCount: number = generateResult.steps?.length || 1;
@@ -209,6 +222,14 @@ export class RetryOrchestrator {
           responseMessages: undefined,
         };
       } catch (genError: unknown) {
+        if (abortSignal.aborted) throw genError;
+        if (config.getProgressVersion?.() !== progressBeforeAttempt) {
+          _genericRetries = 0;
+          _429Retries = 0;
+          contextRetries = 0;
+          logger.info("Completed steps reset consecutive error retries", { chatId });
+        }
+
         if (genError instanceof DuplicateToolLoopHardStopError) {
           throw genError;
         }
@@ -222,6 +243,24 @@ export class RetryOrchestrator {
         }
 
         const aiErrorDetails = extractAiErrorDetails(genError);
+        logger.warn("Generation attempt failed", { chatId, ...aiErrorDetails });
+
+        if (aiErrorDetails.causes?.some(cause => cause.name === LlmIncompleteResponseError.name)) {
+          return {
+            result: { text: "The model did not finish its answer. Completed tool work is preserved. Send continue to resume.", stepsCount: 0 },
+            shouldFallback: true,
+          };
+        }
+
+        // The transport already retried a response timeout with a longer
+        // deadline. Do not repeat the same unlimited generation three more times.
+        if (aiErrorDetails.causes?.some(cause => cause.name === LlmRequestTimeoutError.name)) {
+          return {
+            result: { text: "The model did not finish within the response timeout. Completed tool work is preserved. Send continue to resume.", stepsCount: 0 },
+            shouldFallback: true,
+          };
+        }
+
 
         // Handle context size exceeded errors with reactive compaction
         if (isContextExceededApiError(genError) && contextRetries < CONTEXT_EXCEEDED_RETRIES) {

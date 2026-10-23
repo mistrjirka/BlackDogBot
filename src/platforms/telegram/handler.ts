@@ -491,7 +491,8 @@ export class TelegramHandler {
         if (progressMsgId !== null) {
           const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
           _appendCompactionIfNew(stepLogs, compactionState, chatId);
-          const doneProgressText: string = buildProgressText(`✅ Done (${result.stepsCount} ${stepWord})`);
+          const label: string = result.incomplete ? "⚠️ Incomplete" : "✅ Done";
+          const doneProgressText: string = buildProgressText(`${label} (${result.stepsCount} ${stepWord})`);
           const edited: boolean = await _tryEditMessageTextAsync(
             ctx.api,
             this._logger,
@@ -499,10 +500,10 @@ export class TelegramHandler {
             progressMsgId,
             doneProgressText,
             "HTML",
-            "progress-done",
+            result.incomplete ? "progress-incomplete" : "progress-done",
           );
           if (edited) {
-            this._logger.debug("Telegram progress marked done", {
+            this._logger.debug(result.incomplete ? "Telegram progress marked incomplete" : "Telegram progress marked done", {
               chatId,
               stepsCount: result.stepsCount,
               progressLength: doneProgressText.length,
@@ -526,7 +527,10 @@ export class TelegramHandler {
             });
           }
 
-          const htmlText: string = markdownToTelegramHtml(_withSplitNotice(result.text));
+          const renderedText: string = result.text.trimStart().startsWith("<think>") && !result.text.includes("</think>")
+            ? "The model did not finish generating an answer. Previous tool results are preserved; send continue to resume."
+            : result.text;
+          const htmlText: string = markdownToTelegramHtml(_withSplitNotice(renderedText));
           const chunks: string[] = splitTelegramMessage(htmlText);
           for (let i: number = 0; i < chunks.length; i++) {
             const options: Record<string, unknown> = {

@@ -10,10 +10,13 @@ const terminalStatuses: Set<ProcessStatus> = new Set(["completed", "failed", "ti
 const pollIntervalMs: number = 100;
 
 export const waitForCmdTool = tool({
-  description: "Wait for a running command to finish (or await input) and return final status plus output.",
+  description: "Wait for a running command to finish (or await input) and return status plus output. timeoutMs only limits this wait. It does not kill the command or change its execution deadline.",
   inputSchema: waitForCmdToolInputSchema,
   execute: async ({ handleId, timeoutMs, maxBytes }: IInput): Promise<Record<string, unknown>> => {
     const processService: CommandProcessService = CommandProcessService.getInstance();
+    if (!processService.getEntry(handleId)) {
+      return { handleId, status: "failed", completed: false, error: "Unknown handle" };
+    }
     const waitStartAt: number = Date.now();
 
     let waitTimedOut: boolean = false;

@@ -23,3 +23,17 @@ export function extractErrorMessage(error: unknown): string {
 }
 
 //#endregion Public Functions
+
+/** Bounded cause chain only. Never serialize request objects or credentials. */
+export function extractErrorCauses(error: unknown): { name: string; message: string; code?: string }[] {
+  const causes: { name: string; message: string; code?: string }[] = [];
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current instanceof Error && causes.length < 8 && !seen.has(current)) {
+    seen.add(current);
+    const code = (current as Error & { code?: unknown }).code;
+    causes.push({ name: current.name, message: current.message, ...(typeof code === "string" ? { code } : {}) });
+    current = current.cause;
+  }
+  return causes;
+}

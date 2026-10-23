@@ -1004,6 +1004,7 @@ export class MainAgent extends BaseAgentBase {
       compactionThreshold: this._compactionTokenThreshold,
       contextWindow: this._contextWindow,
       generateFn,
+      getProgressVersion: () => this._generationProgressVersion,
       buildMessagesForCall: () => {
         // Prefer the latest in-flight snapshot from prepareStep. This preserves
         // tool results and checkpoint compaction across retries and steering aborts.
@@ -1068,6 +1069,7 @@ export class MainAgent extends BaseAgentBase {
 
     // Handle fallback when retries exhausted or non-retryable errors
     if (orchestrationResult.shouldFallback) {
+      resultCopy.incomplete = true;
       return { result: resultCopy, shouldFallback: true, compactionModel: _aiProviderService.getModel(), responseMessages: undefined };
     }
 

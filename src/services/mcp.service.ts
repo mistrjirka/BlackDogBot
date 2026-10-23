@@ -28,7 +28,7 @@ interface IMcpServerConnection {
 
 type TModelOutputPart =
   | { type: "text"; text: string }
-  | { type: "file-data"; data: string; mediaType: string };
+  | { type: "file"; data: { type: "data"; data: string }; mediaType: string };
 
 //#endregion Types
 
@@ -580,8 +580,8 @@ function _convertMcpToolToAiSdk(
  *
  * Handles multimodal content:
  * - text → { type: "text", text }
- * - image → { type: "file-data", data, mediaType }
- * - audio → { type: "file-data", data, mediaType }
+ * - image → { type: "file", data: { type: "data", data }, mediaType }
+ * - audio → { type: "file", data: { type: "data", data }, mediaType }
  */
 function _convertMcpResultToModelOutput(
   output: unknown,
@@ -625,16 +625,16 @@ function _convertMcpResultToModelOutput(
 
       case "image":
         modelParts.push({
-          type: 'file-data',
-          data: String(item.data ?? ""),
+          type: "file",
+          data: { type: "data", data: String(item.data ?? "") },
           mediaType: String(item.mimeType ?? "image/png"),
         });
         break;
 
       case "audio":
         modelParts.push({
-          type: 'file-data',
-          data: String(item.data ?? ""),
+          type: "file",
+          data: { type: "data", data: String(item.data ?? "") },
           mediaType: String(item.mimeType ?? "audio/mpeg"),
         });
         break;

@@ -14,6 +14,7 @@ export interface ILlmMessage {
 }
 
 export interface ILlmChoice {
+  finish_reason?: string | null;
   message?: ILlmMessage;
 }
 

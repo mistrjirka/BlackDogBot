@@ -65,7 +65,7 @@ describe("AiProviderService reasoning diagnostics", () => {
             message: {
               role: "assistant",
               content: "",
-              reasoning_content: "internal reasoning",
+              reasoning_content: '{"value":"structured"}',
             },
           },
         ],

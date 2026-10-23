@@ -1,3 +1,4 @@
+import { LlmRequestTimeoutError, LlmIncompleteResponseError } from "../utils/llm-fetch.js";
 import { sleepAsync } from "../utils/sleep.js";
 import {
   ToolLoopAgent,
@@ -109,6 +110,8 @@ const TOKEN_ESTIMATE_CORRECTION_WEIGHT: number = 0.30;
 export interface IAgentResult {
   text: string;
   stepsCount: number;
+  /** Generation stopped without delivering a completed answer. */
+  incomplete?: boolean;
 }
 
 export interface IToolCallSummary {
@@ -185,6 +188,7 @@ export abstract class BaseAgentBase {
   protected _compactionThresholdFraction: number;
   protected _compactionTokenThreshold: number;
   protected _totalInputTokens: number = 0;
+  protected _generationProgressVersion: number = 0;
   protected _forceCompactionOnNextStep: boolean = false;
   protected _tokenEstimateCorrectionFactor: number;
   protected _lastPrepareStepEstimatedTokens: number | null;
@@ -311,12 +315,23 @@ export abstract class BaseAgentBase {
           throw new Error("Agent not available for generation");
         }
 
+        const progressBeforeAttempt = this._generationProgressVersion;
         try {
           result = await currentAgent.generate({ prompt: userMessage, abortSignal });
+          if (result.steps?.at(-1)?.finishReason === "length") {
+            throw new LlmIncompleteResponseError("Model returned a truncated answer.");
+          }
         } catch (error: unknown) {
+          if (this._generationProgressVersion !== progressBeforeAttempt) {
+            _genericRetries = 0;
+            _429Retries = 0;
+            contextRetries = 0;
+          }
+          if (abortSignal?.aborted) throw error;
           const currentAgentAttempt: number = attempt;
           const totalAgentAttempts: number = AGENT_EMPTY_RESPONSE_RETRIES + 1;
           const aiErrorDetails = extractAiErrorDetails(error);
+          if (aiErrorDetails.causes?.some(cause => (cause.name === LlmRequestTimeoutError.name || cause.name === LlmIncompleteResponseError.name))) throw error;
           const isRetriable429: boolean =
             aiErrorDetails.statusCode === 429 &&
             _429Retries < MAX_429_RETRIES;
@@ -618,6 +633,9 @@ export abstract class BaseAgentBase {
         if (abortSignal?.aborted) {
           throw Object.assign(new Error("Operation was stopped."), { name: "AbortError" });
         }
+
+        // A completed SDK step starts a fresh consecutive-error budget.
+        if (stepNumber > 0) self._generationProgressVersion++;
 
         // Preserve the latest in-flight state for retries/steering aborts.
         if (self._messagesSink) {

@@ -79,8 +79,7 @@ Services in `src/services/` that manage shared state:
 | :--- | :--- |
 | **AiProviderService** | LLM model instances and providers |
 | **ChannelRegistryService** | Channel permissions and notifications |
-| **CommandDetectorLinuxService** | Linux command detection |
-| **CommandProcessService** | Command process lifecycle |
+| **CommandProcessService** | PTY execution, process lifecycle and interactive input (util-linux script on Linux) |
 | **ConfigService** | Parsed config cache |
 | **CronMessageHistoryService** | Scheduled task message history |
 | **EmbeddingService** | Loaded embedding model |

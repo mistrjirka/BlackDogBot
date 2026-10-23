@@ -47,15 +47,12 @@ export const runCmdToolInputSchema = z.object({
     .describe("Working directory"),
   timeout: z.number()
     .int()
-    .positive()
-    .default(30000)
-    .describe("Timeout in milliseconds"),
+    .nonnegative()
+    .optional()
+    .describe("Wall-clock execution limit in ms, including time between tool calls. Default: foreground 30000, background 600000. Use 0 for no deadline and stop_cmd to clean up interactive processes. Independent of wait_for_cmd.timeoutMs."),
   mode: z.enum(["foreground", "background"])
     .default("foreground")
     .describe("'foreground' waits for output or stdin block; 'background' returns handleId immediately"),
-  deterministicInputDetection: z.boolean()
-    .default(true)
-    .describe("When true, run_cmd uses strace to detect stdin waiting deterministically"),
 });
 
 export const runCmdToolOutputSchema = z.object({
@@ -66,7 +63,7 @@ export const runCmdToolOutputSchema = z.object({
     .describe("Current command status"),
   handleId: z.string()
     .nullable()
-    .describe("Process handle for continuation/status queries (non-null when status=awaiting_input,running,failed-detector,background)"),
+    .describe("Process handle for continuation/status queries (non-null while running or awaiting input, and for background commands)"),
   timedOut: z.boolean()
     .default(false)
     .describe("True if the command was killed due to timeout"),
@@ -78,9 +75,6 @@ export const runCmdToolOutputSchema = z.object({
   signal: z.string()
     .nullable()
     .describe("Signal used to kill process, if any"),
-  deterministic: z.boolean()
-    .default(false)
-    .describe("Whether stdin-wait detection was performed via syscall tracing"),
   error: z.string()
     .nullable()
     .describe("Error message if status=failed"),
@@ -90,11 +84,16 @@ export const runCmdInputToolInputSchema = z.object({
   handleId: z.string()
     .min(1)
     .describe("Process handle returned by a previous run_cmd call"),
-  input: z.string()
-    .describe("Text to send to the process's stdin (a trailing newline is appended automatically)"),
-  closeStdin: z.boolean()
+  input: z.string().optional()
+    .describe(String.raw`Text sent as a decoded JSON string, not a shell command. Use this OR controlKey. Ctrl+C is {"input":"\u0003","appendNewline":false}; {"input":"\\u0003"} instead sends printable backslash text.`),
+  controlKey: z.enum(["CTRL_C", "CTRL_D", "CTRL_U", "TAB", "ENTER", "ESCAPE", "DELETE"]).optional()
+    .describe("Preferred for special keys; use instead of input, no newline added. DELETE is not Ctrl+U."),
+  appendNewline: z.boolean()
     .default(true)
-    .describe("Whether to close stdin after sending input (triggers process to continue)"),
+    .describe("Append newline for normal answers; false for raw keys, e.g. Ctrl+C"),
+  closeStdin: z.boolean()
+    .default(false)
+    .describe("Send the terminal EOF key (Ctrl+D) after writing; usually false"),
 });
 
 export const getCmdStatusToolInputSchema = z.object({

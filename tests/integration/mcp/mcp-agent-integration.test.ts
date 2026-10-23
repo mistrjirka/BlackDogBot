@@ -166,7 +166,7 @@ describe("MCP Agent Integration", () => {
       expect(textParts[1].text).toContain("Structured output");
     });
 
-    it("should convert MCP image content to file-data type for model", () => {
+    it("should convert MCP image content to current SDK file type for model", () => {
       const mcpService = McpService.getInstance();
       const tools = mcpService.getTools();
 
@@ -183,9 +183,9 @@ describe("MCP Agent Integration", () => {
       const output = toModelOutput({ output: mcpResult });
 
       expect(output.type).toBe("content");
-      const mediaParts = output.value.filter((p: any) => p.type === "file-data");
+      const mediaParts = output.value.filter((p: any) => p.type === "file");
       expect(mediaParts).toHaveLength(1);
-      expect(mediaParts[0].data).toBe("base64data");
+      expect(mediaParts[0].data).toEqual({ type: "data", data: "base64data" });
       expect(mediaParts[0].mediaType).toBe("image/png");
     });
 

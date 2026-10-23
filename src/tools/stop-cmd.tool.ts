@@ -8,7 +8,7 @@ import type { z } from "zod";
 type IInput = z.infer<typeof stopCmdToolInputSchema>;
 
 export const stopCmdTool = tool({
-  description: "Stop a running command by sending a signal (SIGTERM, SIGKILL, SIGINT). Use the handleId returned by a previous run_cmd call.",
+  description: "Stop a running command and its current child processes with SIGTERM, SIGKILL, or SIGINT. Waits for cleanup and output drain, escalating after 5 seconds. The handle remains available for final output/status until wait_for_cmd collects it. Use the handleId returned by a previous run_cmd call.",
   inputSchema: stopCmdToolInputSchema,
   execute: async ({ handleId, signal }: IInput): Promise<Record<string, unknown>> => {
     const logger: LoggerService = LoggerService.getInstance();
@@ -22,7 +22,6 @@ export const stopCmdTool = tool({
     );
 
     const status = processService.getStatus(handleId);
-    processService.removeHandle(handleId);
 
     return {
       success: result.success,

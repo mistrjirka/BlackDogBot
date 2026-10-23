@@ -8,9 +8,10 @@ describe("CommandProcessService", () => {
     service = CommandProcessService.getInstance();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     const handles = Array.from((service as any)._processes.keys()) as string[];
     for (const handleId of handles) {
+      await service.stopAsync(handleId, "SIGKILL");
       service.removeHandle(handleId);
     }
   });
@@ -22,7 +23,7 @@ describe("CommandProcessService", () => {
     expect(result.status).toBe("running");
 
     await new Promise<void>((resolve): void => {
-      result.child.on("exit", () => resolve());
+      result.child.on("close", () => resolve());
     });
 
     const status = service.getStatus(result.handleId);
@@ -33,7 +34,7 @@ describe("CommandProcessService", () => {
     const result = await service.spawnProcessAsync("echo test", "/tmp", 5000);
 
     await new Promise<void>((resolve): void => {
-      result.child.on("exit", () => resolve());
+      result.child.on("close", () => resolve());
     });
 
     const status = service.getStatus(result.handleId);
@@ -46,7 +47,7 @@ describe("CommandProcessService", () => {
   it("getStatus returns error for unknown handleId", () => {
     const status = service.getStatus("nonexistent-handle");
 
-    expect(status.status).toBe("completed");
+    expect(status.status).toBe("failed");
     expect(status.error).toContain("not found");
   });
 
@@ -54,7 +55,7 @@ describe("CommandProcessService", () => {
     const result = await service.spawnProcessAsync("echo hello world", "/tmp", 5000);
 
     await new Promise<void>((resolve): void => {
-      result.child.on("exit", () => resolve());
+      result.child.on("close", () => resolve());
     });
 
     const output = service.getOutput(result.handleId, "stdout", 1024);
@@ -91,7 +92,7 @@ describe("CommandProcessService", () => {
     const result = await service.spawnProcessAsync("echo hello", "/tmp", 5000);
 
     await new Promise<void>((resolve): void => {
-      result.child.on("exit", () => resolve());
+      result.child.on("close", () => resolve());
     });
 
     const handlesBefore = (service as any)._processes.size;

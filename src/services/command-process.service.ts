@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from "node:child_process";
+import fs from "node:fs/promises";
 
 import { LoggerService } from "./logger.service.js";
 
@@ -15,15 +16,13 @@ export interface IProcessEntry {
   stdout: Buffer;
   stderr: Buffer;
   timeoutTimer: NodeJS.Timeout | null;
+  termination?: Promise<void>;
+  closed?: boolean;
   lastReadOffsetStdout: number;
   lastReadOffsetStderr: number;
   signal: string | null;
   exitCode: number | null;
   error: string | null;
-  resolved: boolean;
-  promise: Promise<void>;
-  resolveFn: (() => void) | null;
-  rejectFn: ((error: Error) => void) | null;
 }
 
 export interface ISpawnResult {
@@ -105,10 +104,15 @@ export class CommandProcessService {
   ): Promise<ISpawnResult> {
     const handleId: string = this._generateHandleId();
 
-    this._logger.debug("Spawning process", { handleId, command, cwd, timeout });
+    this._logger.debug("Spawning process", { handleId, commandLength: command.length, cwd, timeout });
 
-    const child: ChildProcess = spawn(command, [], {
-      shell: true,
+    // util-linux script supplies one PTY for every command. The child sees a
+    // genuine terminal; -e preserves its exit status and -f streams output.
+    // Without a parent TTY, util-linux script starts with 0 rows / 0 cols.
+    // Set a usable size before the requested program starts (no new tool mode).
+    const terminalCommand: string = "stty rows 40 cols 120 2>/dev/null; " + command;
+    const child: ChildProcess = spawn("script", ["-q", "-e", "-f", "-c", terminalCommand, "/dev/null"], {
+      shell: false,
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env,
@@ -116,14 +120,6 @@ export class CommandProcessService {
 
     const stdout: Buffer = Buffer.alloc(0);
     const stderr: Buffer = Buffer.alloc(0);
-
-    let resolveFn: (() => void) | null = null;
-    let rejectFn: ((error: Error) => void) | null = null;
-
-    const promise: Promise<void> = new Promise<void>((resolve, reject): void => {
-      resolveFn = resolve;
-      rejectFn = reject;
-    });
 
     const entry: IProcessEntry = {
       child,
@@ -139,11 +135,13 @@ export class CommandProcessService {
       signal: null,
       exitCode: null,
       error: null,
-      resolved: false,
-      promise,
-      resolveFn,
-      rejectFn,
     };
+
+    // Input races with process exit can emit EPIPE on the stream even when
+    // write's callback receives the error. Keep that race from crashing the bot.
+    child.stdin?.on("error", (error: Error): void => {
+      this._logger.debug("Process stdin closed", { handleId, error: error.message });
+    });
 
     // Setup stdout handler
     child.stdout?.on("data", (data: Buffer): void => {
@@ -155,9 +153,10 @@ export class CommandProcessService {
       entry.stderr = this._appendBuffer(entry.stderr, data);
     });
 
-    // Setup exit handler
-    child.on("exit", (code: number | null, signal: string | null): void => {
-      if (entry.status === "running" || entry.status === "awaiting_input") {
+    // Wait for the terminal's output pipes to drain before publishing status.
+    child.on("close", (code: number | null, signal: string | null): void => {
+      entry.closed = true;
+      if (!entry.termination && (entry.status === "running" || entry.status === "awaiting_input")) {
         entry.status = code === 0 ? "completed" : "failed";
       }
       entry.exitCode = code;
@@ -168,7 +167,6 @@ export class CommandProcessService {
         entry.timeoutTimer = null;
       }
 
-      this._resolveEntry(entry);
       this._logger.debug("Process exited", { handleId, exitCode: code, signal });
     });
 
@@ -176,7 +174,6 @@ export class CommandProcessService {
     child.on("error", (error: Error): void => {
       entry.error = error.message;
       entry.status = "failed";
-      this._rejectEntry(entry, error);
       this._logger.error("Process error", { handleId, error: error.message });
     });
 
@@ -186,7 +183,11 @@ export class CommandProcessService {
     // Start timeout timer
     if (timeout > 0) {
       entry.timeoutTimer = setTimeout((): void => {
-        this._handleTimeout(entry);
+        void this._terminateAsync(entry, "SIGTERM", "timed_out").catch((error: unknown) => {
+          entry.error = error instanceof Error ? error.message : String(error);
+          entry.status = "failed";
+          this._logger.error("Process termination failed", { handleId, error: entry.error });
+        });
       }, timeout);
     }
 
@@ -210,18 +211,16 @@ export class CommandProcessService {
       throw new Error(`Process not found: ${handleId}`);
     }
 
-    if (entry.status === "awaiting_input") {
-      entry.status = "running";
-      this._logger.debug("Process resumed from awaiting_input", { handleId });
+    if (!["running", "awaiting_input"].includes(entry.status) || entry.termination || !entry.child.stdin?.writable || entry.child.stdin.destroyed) {
+      throw new Error(`Process is not accepting input: ${handleId} (${entry.status})`);
     }
 
-    if (entry.child.stdin) {
-      entry.child.stdin.write(input);
-
-      if (closeStdin) {
-        entry.child.stdin.end();
-      }
-    }
+    const wasAwaitingInput = entry.status === "awaiting_input";
+    const terminalInput = input + (closeStdin ? "\x04" : "");
+    await new Promise<void>((resolve, reject) => {
+      entry.child.stdin!.write(terminalInput, (error?: Error | null) => error ? reject(error) : resolve());
+    });
+    if (wasAwaitingInput && entry.status === "awaiting_input") entry.status = "running";
 
     const stdoutSinceLastRead: string = this._getOutputSince(entry, "stdout", entry.lastReadOffsetStdout);
     const stderrSinceLastRead: string = this._getOutputSince(entry, "stderr", entry.lastReadOffsetStderr);
@@ -241,7 +240,7 @@ export class CommandProcessService {
 
     if (!entry) {
       return {
-        status: "completed",
+        status: "failed",
         pid: null,
         exitCode: null,
         signal: null,
@@ -302,28 +301,16 @@ export class CommandProcessService {
       };
     }
 
-    if (entry.status === "completed" || entry.status === "killed" || entry.status === "timed_out") {
-      return {
-        success: false,
-        error: `Process already terminated: ${entry.status}`,
-      };
+    if (!["running", "awaiting_input"].includes(entry.status) || entry.termination) {
+      return { success: false, error: `Process already terminated or stopping: ${entry.status}` };
     }
 
     this._logger.info("Stopping process", { handleId, signal });
-
     try {
-      entry.child.kill(signal);
-      entry.status = "killed";
-
-      return {
-        success: true,
-      };
+      await this._terminateAsync(entry, signal, "killed");
+      return { success: true };
     } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        error: errorMessage,
-      };
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -387,50 +374,95 @@ export class CommandProcessService {
     return buffer.subarray(offset).toString("utf-8");
   }
 
-  private _resolveEntry(entry: IProcessEntry): void {
-    if (!entry.resolved) {
-      entry.resolved = true;
-      if (entry.resolveFn) {
-        entry.resolveFn();
-      }
-    }
-  }
-
-  private _rejectEntry(entry: IProcessEntry, error: Error): void {
-    if (!entry.resolved) {
-      entry.resolved = true;
-      if (entry.rejectFn) {
-        entry.rejectFn(error);
-      }
-    }
-  }
-
-  private _handleTimeout(entry: IProcessEntry): void {
-    this._logger.warn("Process timed out", { handleId: entry.handleId });
-
-    entry.status = "timed_out";
-
+  private async _readProcessAsync(pid: number): Promise<{ pid: number; start: string; running: boolean } | null> {
     try {
-      entry.child.kill("SIGTERM" as const);
+      const stat = await fs.readFile(`/proc/${pid}/stat`, "utf8");
+      // The command name can contain spaces and parentheses.
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      return { pid, start: fields[19], running: !["Z", "X"].includes(fields[0]) };
+    } catch (error: unknown) {
+      if (["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) return null;
+      throw error;
+    }
+  }
 
-      setTimeout((): void => {
-        if (entry.child.exitCode === null) {
-          this._logger.warn("Process did not exit after SIGTERM, sending SIGKILL", {
-            handleId: entry.handleId,
-          });
-            try {
-            entry.child.kill("SIGKILL" as const);
-          } catch {
-            // Process may have already exited
+  private async _collectProcessesAsync(rootPid: number): Promise<{ pid: number; start: string }[]> {
+    const targets: { pid: number; start: string }[] = [];
+    const queue = [rootPid];
+    const seen = new Set<number>();
+    while (queue.length) {
+      const pid = queue.shift()!;
+      if (seen.has(pid)) continue;
+      seen.add(pid);
+      const identity = await this._readProcessAsync(pid);
+      if (!identity) continue;
+      targets.push(identity);
+      try {
+        // Children can be created by any thread, not only the thread-group leader.
+        for (const tid of await fs.readdir(`/proc/${pid}/task`)) {
+          try {
+            const children = await fs.readFile(`/proc/${pid}/task/${tid}/children`, "utf8");
+            queue.push(...children.trim().split(/\s+/).filter(Boolean).map(Number));
+          } catch (error: unknown) {
+            if (!["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
           }
         }
-      }, TIMEOUT_GRACE_MS);
-    } catch (error: unknown) {
-      this._logger.error("Failed to kill timed out process", {
-        handleId: entry.handleId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      } catch (error: unknown) {
+        if (!["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      }
     }
+    return targets;
+  }
+
+  private async _terminateAsync(entry: IProcessEntry, signal: "SIGTERM" | "SIGKILL" | "SIGINT", status: "killed" | "timed_out"): Promise<void> {
+    if (entry.termination) return entry.termination;
+    if (entry.timeoutTimer) clearTimeout(entry.timeoutTimer);
+    entry.timeoutTimer = null;
+    entry.termination = (async (): Promise<void> => {
+      if (status === "timed_out") this._logger.warn("Process timed out", { handleId: entry.handleId });
+      // script's PTY child has a separate process group. Killing only the
+      // wrapper (especially with SIGKILL) does not reliably kill descendants.
+      const targets = await this._collectProcessesAsync(entry.pid);
+      const signalTargets = async (nextSignal: NodeJS.Signals): Promise<void> => {
+        for (const target of [...targets].reverse()) {
+          const current = await this._readProcessAsync(target.pid);
+          // A recycled PID must never receive our cleanup signal.
+          if (!current?.running || current.start !== target.start) continue;
+          try { process.kill(target.pid, nextSignal); }
+          catch (error: unknown) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+        }
+      };
+      await signalTargets(signal);
+      const deadline = Date.now() + (signal === "SIGKILL" ? 1000 : TIMEOUT_GRACE_MS);
+      while (Date.now() < deadline) {
+        const live = await Promise.all(targets.map(async target => {
+          const current = await this._readProcessAsync(target.pid);
+          return current?.running && current.start === target.start;
+        }));
+        if (!live.some(Boolean) && entry.closed) break;
+        await new Promise<void>(resolve => setTimeout(resolve, 25));
+      }
+      await signalTargets("SIGKILL");
+      const killDeadline = Date.now() + 1000;
+      while (true) {
+        const live = await Promise.all(targets.map(async target => {
+          const current = await this._readProcessAsync(target.pid);
+          return current?.running && current.start === target.start;
+        }));
+        if (!live.some(Boolean)) break;
+        if (Date.now() >= killDeadline) throw new Error("Child processes did not terminate after SIGKILL");
+        await new Promise<void>(resolve => setTimeout(resolve, 25));
+      }
+      // Publish a terminal status only after the wrapper closes and pipes drain.
+      if (!entry.closed) {
+        await new Promise<void>(resolve => {
+          if (entry.closed) return resolve();
+          entry.child.once("close", () => resolve());
+        });
+      }
+      entry.status = status;
+    })();
+    return entry.termination;
   }
 
   //#endregion Private methods

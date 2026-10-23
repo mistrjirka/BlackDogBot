@@ -42,6 +42,8 @@ import { createHash } from "node:crypto";
 import { ensureDirectoryExistsAsync, getCacheDir } from "../../utils/paths.js";
 import { ConfigService } from "../config.service.js";
 import { HARD_GATE_THRESHOLD_PERCENTAGE } from "../../shared/constants.js";
+import { fetchLlmAsync, LlmRequestTimeoutError, LlmIncompleteResponseError } from "../../utils/llm-fetch.js";
+import { extractErrorCauses } from "../../utils/error.js";
 
 interface IOpenRouterModelListEntry {
   id: string;
@@ -913,6 +915,9 @@ export class AiProviderCore {
         let choicesWithReasoningContentField: number = 0;
 
         for (const choice of json.choices) {
+          if (choice.finish_reason === "length") {
+            throw new LlmIncompleteResponseError("Model exceeded its response or context length before completing.");
+          }
           const message = choice.message;
           if (!message) {
             continue;
@@ -936,6 +941,11 @@ export class AiProviderCore {
             typeof rawContent === "string" &&
             (thinkTagMatches.length > 0 || rawContent.includes("</think>"));
           const hasReasoningField: boolean = reasoningContent.trim().length > 0;
+
+          if (typeof rawContent === "string" && /^\s*<think>/.test(rawContent) &&
+              !rawContent.includes("</think>") && !hasToolCalls) {
+            throw new LlmIncompleteResponseError("Model returned unfinished reasoning without a final answer.");
+          }
 
           const gemmaChannelMatches: RegExpMatchArray[] = typeof rawContent === "string"
             ? Array.from(rawContent.matchAll(/<\|channel>thought[\s\S]*?<channel\|>/g))
@@ -1002,7 +1012,8 @@ export class AiProviderCore {
             }
           }
 
-          if (!hasToolCalls && hasGemmaChannelTags && typeof rawContent === "string" && rawContent.trim().length > 0) {
+          if (!hasToolCalls && (hasGemmaChannelTags || thinkTagMatches.length > 0) &&
+              typeof rawContent === "string" && rawContent.trim().length > 0) {
             const parsed = parseToolCallReasoningFromContent(rawContent);
             const existingReasoning: string = message.reasoning_content?.trim() ?? "";
 
@@ -1021,12 +1032,22 @@ export class AiProviderCore {
           }
 
           if (hasReasoningContent && hasEmptyContent && !hasToolCalls) {
+            // Preserve LM Studio structured JSON compatibility, but never turn
+            // free-form private reasoning into user-visible assistant text.
+            let structuredResult = false;
+            try {
+              const value: unknown = JSON.parse(reasoningContent);
+              structuredResult = typeof value === "object" && value !== null;
+            } catch {
+              // Ordinary reasoning text is not a structured final answer.
+            }
+            if (!structuredResult) {
+              throw new LlmIncompleteResponseError("Provider returned only reasoning_content with no visible final answer.");
+            }
             if (!modified) {
               logger.warn(
-                "JSON structured output was found inside reasoning_content instead of content. " +
-                "This is usually caused by LM Studio artificially dividing reasoning content and content. " +
-                "Please disable the automatic division of reasoning and non-reasoning content in LM Studio settings. " +
-                "See: https://lmstudio.ai/docs/developer/openai-compat/structured-output"
+                "Provider returned structured JSON in reasoning_content with no visible content. " +
+                "Recovering the JSON output for compatibility; check the provider reasoning/output separation settings."
               );
             }
 
@@ -1729,35 +1750,47 @@ export class AiProviderCore {
           const timeoutMs: number = this._requestTimeoutMs * REQUEST_TIMEOUT_RETRY_MULTIPLIER ** timeoutAttempt;
           const controller: AbortController = new AbortController();
           let wasOurTimeout: boolean = false;
+          const startedAt = Date.now();
+          const progressId = setInterval(() => {
+            logger.info("Waiting for model response", { provider: providerName, elapsedMs: Date.now() - startedAt, timeoutMs, providerTimeoutAttempt: timeoutAttempt + 1 });
+          }, 30_000);
+          progressId.unref?.();
           const timeoutId: ReturnType<typeof setTimeout> = setTimeout(() => {
             wasOurTimeout = true;
             controller.abort();
           }, timeoutMs);
 
-          // Forward caller's abort signal so cancellation still works
+          // Remove listeners after every attempt, including a successful request.
           const callerSignal = init.signal;
-          if (callerSignal) {
-            if (callerSignal.aborted) {
-              clearTimeout(timeoutId);
-              throw callerSignal.reason ?? new DOMException("Aborted", "AbortError");
-            }
-            callerSignal.addEventListener("abort", () => {
-              clearTimeout(timeoutId);
-              controller.abort(callerSignal.reason);
-            }, { once: true });
-          }
+          const forwardAbort = (): void => { controller.abort(callerSignal?.reason); };
 
           try {
-            response = await fetch(url, { ...init, signal: controller.signal });
-            clearTimeout(timeoutId);
+            if (callerSignal?.aborted) {
+              throw callerSignal.reason ?? new DOMException("Aborted", "AbortError");
+            }
+            callerSignal?.addEventListener("abort", forwardAbort, { once: true });
+            response = await fetchLlmAsync(url, { ...init, signal: controller.signal });
+            // Non-streaming providers can flush headers before completing JSON.
+            // Keep the same deadline active until the entire body is received.
+            const body = await response.arrayBuffer();
+            response = new Response(response.status === 204 || response.status === 205 || response.status === 304 ? null : body, {
+              status: response.status, statusText: response.statusText, headers: response.headers,
+            });
             succeeded = true;
             break;
           } catch (error: unknown) {
-            clearTimeout(timeoutId);
             lastError = error;
+            logger.warn("Model request failed", {
+              provider: providerName,
+              elapsedMs: Date.now() - startedAt,
+              timeoutMs,
+              providerTimeoutAttempt: timeoutAttempt + 1,
+              failureType: callerSignal?.aborted ? "cancelled" : wasOurTimeout ? "response_timeout" : "transport",
+              errorCauses: extractErrorCauses(error),
+            });
 
-            // If caller aborted (not our timeout), propagate immediately
-            if (!wasOurTimeout) {
+            // User cancellation must never submit another generation request.
+            if (callerSignal?.aborted || !wasOurTimeout) {
               throw error;
             }
 
@@ -1776,10 +1809,7 @@ export class AiProviderCore {
                 concurrentCronTasks: schedulerService.getRunningTaskCount(),
                 queuedCronTasks: schedulerService.getQueuedTaskCount(),
               });
-              throw new Error(
-                `Cannot connect to API: request timed out after ${timeoutMs / 1000}s ` +
-                `(attempt ${timeoutAttempt + 1}/${REQUEST_TIMEOUT_MAX_ATTEMPTS})`,
-              );
+              throw new LlmRequestTimeoutError(timeoutMs, timeoutAttempt + 1, REQUEST_TIMEOUT_MAX_ATTEMPTS, error);
             }
 
             logger.warn("API request timed out, retrying with longer timeout", {
@@ -1793,6 +1823,10 @@ export class AiProviderCore {
               concurrentCronTasks: SchedulerService.getInstance().getRunningTaskCount(),
               queuedCronTasks: SchedulerService.getInstance().getQueuedTaskCount(),
             });
+          } finally {
+            clearTimeout(timeoutId);
+            clearInterval(progressId);
+            callerSignal?.removeEventListener("abort", forwardAbort);
           }
         }
 
@@ -1800,7 +1834,7 @@ export class AiProviderCore {
           throw lastError ?? new Error("All timeout retry attempts exhausted");
         }
       } else {
-        response = await fetch(url, init);
+        response = await fetchLlmAsync(url, init);
       }
 
       // Optional LLM request/response trace (BLACKDOG_LOG_LLM). Fire-and-forget:
@@ -1905,7 +1939,7 @@ export class AiProviderCore {
               maxRetries: LM_STUDIO_MODEL_RECOVERY_RETRIES,
             });
 
-            response = await fetch(url, init);
+            response = await fetchLlmAsync(url, init);
             // Trace the retry as its own HTTP request (the failed attempt
             // above was already traced), so self-healed requests show both.
             void this._appendLlmTraceAsync(

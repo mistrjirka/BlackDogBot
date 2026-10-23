@@ -7,18 +7,34 @@ import type { z } from "zod";
 
 type IInput = z.infer<typeof runCmdInputToolInputSchema>;
 
+const CONTROL_KEYS: Record<NonNullable<IInput["controlKey"]>, string> = {
+  CTRL_C: String.fromCharCode(3),
+  CTRL_D: String.fromCharCode(4),
+  CTRL_U: String.fromCharCode(21),
+  TAB: String.fromCharCode(9),
+  ENTER: String.fromCharCode(13),
+  ESCAPE: String.fromCharCode(27),
+  DELETE: String.fromCharCode(27) + "[3~",
+};
+
 export const runCmdInputTool = tool({
-  description: "Send input to a running command that is waiting for stdin. Use the handleId returned by a previous run_cmd call. A newline is automatically appended.",
+  description: "Send a decoded input string or use controlKey for special keys (CTRL_C, TAB, etc). Provide exactly one. Special keys never add a newline. Wait for application readiness after starting background commands. Terminal echo is not proof the program read input.",
   inputSchema: runCmdInputToolInputSchema,
-  execute: async ({ handleId, input, closeStdin }: IInput): Promise<Record<string, unknown>> => {
+  execute: async ({ handleId, input, controlKey, appendNewline, closeStdin }: IInput): Promise<Record<string, unknown>> => {
     const logger: LoggerService = LoggerService.getInstance();
     const processService: CommandProcessService = CommandProcessService.getInstance();
 
-    logger.info("run_cmd_input sending input", { handleId, inputLength: input.length, closeStdin });
+    logger.info("run_cmd_input sending input", { handleId, inputLength: input?.length ?? 0, controlKey, closeStdin });
 
     try {
-      // Auto-append newline if not already present
-      const finalInput: string = input.endsWith("\n") ? input : input + "\n";
+      if ((input === undefined) === (controlKey === undefined)) {
+        throw new Error("Provide exactly one of input or controlKey");
+      }
+      if (controlKey !== undefined && closeStdin) {
+        throw new Error("controlKey and closeStdin cannot be combined");
+      }
+      const text: string = controlKey === undefined ? input! : CONTROL_KEYS[controlKey];
+      const finalInput: string = controlKey === undefined && appendNewline !== false && !text.endsWith("\n") ? text + "\n" : text;
 
       const result = await processService.sendInputAsync(handleId, finalInput, closeStdin);
 
@@ -35,7 +51,7 @@ export const runCmdInputTool = tool({
 
       return {
         success: false,
-        status: "failed",
+        status: processService.getStatus(handleId).status,
         stdout: "",
         stderr: "",
         exitCode: null,

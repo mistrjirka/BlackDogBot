@@ -1,332 +1,75 @@
 import os from "node:os";
-import fs from "node:fs/promises";
-import path from "node:path";
-
 import { tool } from "ai";
-
 import { runCmdToolInputSchema, runCmdToolOutputSchema } from "../shared/schemas/tool-schemas.js";
 import { LoggerService } from "../services/logger.service.js";
 import { CommandProcessService, type ProcessStatus } from "../services/command-process.service.js";
-import { CommandDetectorLinuxService } from "../services/command-detector-linux.service.js";
 import { getBaseDir } from "../utils/paths.js";
 import type { z } from "zod";
 
 type IRunCmdInput = z.infer<typeof runCmdToolInputSchema>;
 type IRunCmdOutput = z.infer<typeof runCmdToolOutputSchema>;
+const OUTPUT_LIMIT = 65536;
+const PROMPT_CHECK_INTERVAL_MS = 75;
 
-const INTERACTIVE_PROMPT_PATTERNS: RegExp[] = [
-  /\[sudo\].*[: ]*$/im,
-  /password:\s*$/im,
-  /heslo[: ]*$/im,
-  /je vyzadovano heslo/i,
-  /je vyžadováno heslo/i,
-  /are you sure.*\[y\/n\]/i,
-  /do you want to continue.*\[y\/n\]/i,
-  /\[Y\/n\]/,
-  /\[y\/N\]/,
-  /passphrase:\s*$/im,
-];
-
-const IDLE_PROMPT_DETECTION_MS: number = 3000;
+// Heuristic only: an interactive program need not emit a detectable prompt.
+function looksLikeInputPrompt(output: string): boolean {
+  const lastLine = output.split(/[\r\n]/).at(-1)?.trimEnd() ?? "";
+  return /(?:password|passphrase|verification code|enter .{0,40}|continue|confirm|choice|select)\s*[:?]\s*$/i.test(lastLine) ||
+    /(?:\[y\/N\]|\[Y\/n\]|\(yes\/no\))\s*$/i.test(lastLine);
+}
 
 export const runCmdTool = tool({
-  description: "Execute a real OS shell command and return stdout, stderr, and exit code. This is not a persistent code/data sandbox and cannot access BlackDogBot's per-run blackboard variables; command must be a literal shell string. Use for local/system commands, and for web requests when no dedicated web tool is available or suitable.",
+  description: "Execute a shell command in a real PTY terminal. Files persist across commands; running processes stay reachable via handleId until completion or bot restart. PTY merges command stdout/stderr into stdout, with wrapper errors in stderr. Use foreground for short commands, background for interactive or long-running commands; use run_cmd_input to send subsequent text or raw keys. Execution timeout includes time spent thinking between calls. Use timeout=0 and stop_cmd for input/stop-controlled sessions. Commands cannot access BlackDogBot's per-run blackboard variables.",
   inputSchema: runCmdToolInputSchema,
-  execute: async ({ command, cwd, timeout, mode, deterministicInputDetection }: IRunCmdInput): Promise<IRunCmdOutput> => {
-    const logger: LoggerService = LoggerService.getInstance();
-    const processService: CommandProcessService = CommandProcessService.getInstance();
-    const detector: CommandDetectorLinuxService = CommandDetectorLinuxService.getInstance();
-
-    const resolvedCwd: string = cwd.startsWith("~")
-      ? cwd.replace("~", os.homedir())
-      : cwd || getBaseDir();
-
-    const normalizedCommand: string = _normalizeInteractiveCommand(command, deterministicInputDetection);
-    const childEnv: NodeJS.ProcessEnv = await _buildChildEnvAsync(normalizedCommand, deterministicInputDetection);
-
-    if (normalizedCommand !== command) {
-      logger.info("run_cmd command normalized for interactive stdin", {
-        originalCommand: command,
-        normalizedCommand,
-      });
-    }
-
-    logger.info("run_cmd starting", {
-      command: normalizedCommand,
-      cwd: resolvedCwd,
-      timeout,
-      mode,
-      deterministicInputDetection,
+  execute: async ({ command, cwd, timeout, mode }: IRunCmdInput): Promise<IRunCmdOutput> => {
+    const logger = LoggerService.getInstance();
+    const service = CommandProcessService.getInstance();
+    const resolvedCwd = cwd.startsWith("~") ? cwd.replace("~", os.homedir()) : cwd || getBaseDir();
+    logger.info("run_cmd starting", { commandLength: command.length, cwd: resolvedCwd, timeout, mode });
+    const start = Date.now();
+    const executionTimeout = timeout ?? (mode === "background" ? 600_000 : 30_000);
+    const { handleId } = await service.spawnProcessAsync(command, resolvedCwd, executionTimeout, {
+      ...process.env, TERM: process.env.TERM || "xterm-256color",
     });
-
-    // Strict mode pre-checks
-    if (deterministicInputDetection) {
-      if (process.platform !== "linux") {
-        return {
-          stdout: "",
-          stderr: "",
-          exitCode: null,
-          status: "failed",
-          handleId: null,
-          timedOut: false,
-          durationMs: null,
-          signal: null,
-          deterministic: false,
-          error: "Deterministic stdin detection is only available on Linux.",
-        };
-      }
-    }
-
-    // Start the process
-    const startTime: number = Date.now();
-    const { handleId, child } = await processService.spawnProcessAsync(
-      normalizedCommand,
-      resolvedCwd,
-      timeout,
-      childEnv,
-    );
-
-    const pid: number | undefined = child.pid;
-
-    // Background mode: return immediately
     if (mode === "background") {
       return {
-        stdout: "",
-        stderr: "",
-        exitCode: null,
-        status: "running",
-        handleId,
-        timedOut: false,
-        durationMs: null,
-        signal: null,
-        deterministic: false,
-        error: null,
+        stdout: "", stderr: "", exitCode: null, status: "running", handleId,
+        timedOut: false, durationMs: null, signal: null, error: null,
       };
     }
-
-    // Foreground mode
-    let detectorAvailable: boolean = false;
-    let detectorHandleId: string = "";
-    let heuristicInputDetectionUsed: boolean = false;
-
-    if (deterministicInputDetection && pid) {
-      // Start detector with per-handle callback
-      const startResult = await detector.startAsync(pid, (): void => {
-        processService.onStdinBlocked(handleId);
-        logger.info("run_cmd deterministic stdin block detected", { handleId, pid });
-      });
-
-      if (startResult.available) {
-        detectorAvailable = true;
-        detectorHandleId = startResult.handleId;
-      } else {
-        const detectorError: string = startResult.error ?? "Unknown detector error";
-
-        logger.warn("run_cmd deterministic detector unavailable, continuing without detector", {
-          handleId,
-          pid,
-          error: detectorError,
-        });
-      }
-    }
-
-    // Wait for process to complete or enter awaiting_input state
-    await new Promise<void>((resolve): void => {
-      let lastStdoutLength: number = 0;
-      let lastStderrLength: number = 0;
-      let lastOutputAt: number = Date.now();
-
-      const checkInterval: ReturnType<typeof setInterval> = setInterval((): void => {
-        const currentStatus: ProcessStatus = processService.getStatus(handleId).status;
-        const stdoutTail: string = processService.getOutput(handleId, "stdout", 4096).data;
-        const stderrTail: string = processService.getOutput(handleId, "stderr", 4096).data;
-
-        if (stdoutTail.length !== lastStdoutLength || stderrTail.length !== lastStderrLength) {
-          lastStdoutLength = stdoutTail.length;
-          lastStderrLength = stderrTail.length;
+    await new Promise<void>((resolve) => {
+      let prompted = false;
+      let lastOutput = "";
+      let lastOutputAt = Date.now();
+      const interval = setInterval(() => {
+        const status: ProcessStatus = service.getStatus(handleId).status;
+        const output = service.getOutput(handleId, "stdout", 4096).data;
+        if (output !== lastOutput) {
+          lastOutput = output;
           lastOutputAt = Date.now();
         }
-
-        if (
-          deterministicInputDetection &&
-          !detectorAvailable &&
-          !heuristicInputDetectionUsed &&
-          currentStatus === "running"
-        ) {
-          const combinedTail: string = `${stdoutTail}\n${stderrTail}`;
-
-          if (_looksLikeInteractivePrompt(command, combinedTail)) {
-            processService.onStdinBlocked(handleId);
-            heuristicInputDetectionUsed = true;
-            logger.info("run_cmd heuristic stdin prompt detected, switching to awaiting_input", {
-              handleId,
-              command: normalizedCommand,
-            });
-          } else if (_isLikelyInteractiveCommand(normalizedCommand) && Date.now() - lastOutputAt >= IDLE_PROMPT_DETECTION_MS) {
-            processService.onStdinBlocked(handleId);
-            heuristicInputDetectionUsed = true;
-            logger.info("run_cmd heuristic idle stdin wait detected, switching to awaiting_input", {
-              handleId,
-              command: normalizedCommand,
-              idleMs: Date.now() - lastOutputAt,
-            });
-          }
+        if (status === "running" && !prompted && Date.now() - lastOutputAt > 150 &&
+            looksLikeInputPrompt(lastOutput)) {
+          service.onStdinBlocked(handleId);
+          prompted = true;
         }
-
-        const effectiveStatus: ProcessStatus = processService.getStatus(handleId).status;
-
-        if (effectiveStatus !== "running") {
-          clearInterval(checkInterval);
+        if (service.getStatus(handleId).status !== "running") {
+          clearInterval(interval);
           resolve();
         }
-      }, 50);
+      }, PROMPT_CHECK_INTERVAL_MS);
     });
-
-    // Stop detector if still running
-    if (detectorAvailable && detectorHandleId) {
-      await detector.stopAsync(detectorHandleId);
-    }
-
-    const durationMs: number = Date.now() - startTime;
-    const finalStatus: ProcessStatus = processService.getStatus(handleId).status;
-    const entryStatus = processService.getStatus(handleId);
-
-    // Collect output
-    const stdoutResult: string = processService.getOutput(handleId, "stdout", 65536).data;
-    const stderrResult: string = processService.getOutput(handleId, "stderr", 65536).data;
-
-    // Build result based on final status
-    if (finalStatus === "awaiting_input") {
-      return {
-        stdout: stdoutResult,
-        stderr: stderrResult,
-        exitCode: null,
-        status: "awaiting_input",
-        handleId,
-        timedOut: false,
-        durationMs,
-        signal: null,
-        deterministic: detectorAvailable,
-        error: null,
-      };
-    }
-
-    // Terminal statuses — cleanup handle
-    processService.removeHandle(handleId);
-
-    if (finalStatus === "timed_out") {
-      return {
-        stdout: stdoutResult,
-        stderr: stderrResult,
-        exitCode: entryStatus.exitCode,
-        status: "timed_out",
-        handleId: null,
-        timedOut: true,
-        durationMs,
-        signal: entryStatus.signal,
-        deterministic: detectorAvailable,
-        error: null,
-      };
-    }
-
-    if (finalStatus === "killed") {
-      return {
-        stdout: stdoutResult,
-        stderr: stderrResult,
-        exitCode: entryStatus.exitCode,
-        status: "killed",
-        handleId: null,
-        timedOut: false,
-        durationMs,
-        signal: entryStatus.signal,
-        deterministic: detectorAvailable,
-        error: null,
-      };
-    }
-
-    if (finalStatus === "failed") {
-      return {
-        stdout: stdoutResult,
-        stderr: stderrResult,
-        exitCode: entryStatus.exitCode ?? 1,
-        status: "failed",
-        handleId: null,
-        timedOut: false,
-        durationMs,
-        signal: entryStatus.signal,
-        deterministic: detectorAvailable,
-        error: entryStatus.error,
-      };
-    }
-
-    // completed
+    const finalStatus = service.getStatus(handleId);
+    const stdout = service.getOutput(handleId, "stdout", OUTPUT_LIMIT).data;
+    const stderr = service.getOutput(handleId, "stderr", OUTPUT_LIMIT).data;
+    const running = finalStatus.status === "awaiting_input" || finalStatus.status === "running";
+    if (!running) service.removeHandle(handleId);
     return {
-      stdout: stdoutResult,
-      stderr: stderrResult,
-      exitCode: entryStatus.exitCode ?? 0,
-      status: "completed",
-      handleId: null,
-      timedOut: false,
-      durationMs,
-      signal: null,
-      deterministic: detectorAvailable,
-      error: null,
+      stdout, stderr, exitCode: finalStatus.exitCode, status: finalStatus.status,
+      handleId: running ? handleId : null,
+      timedOut: finalStatus.status === "timed_out",
+      durationMs: Date.now() - start, signal: finalStatus.signal,
+      error: finalStatus.error,
     };
   },
 });
-
-function _looksLikeInteractivePrompt(command: string, stderrOutput: string): boolean {
-  if (!command.toLowerCase().includes("sudo")) {
-    return false;
-  }
-
-  return INTERACTIVE_PROMPT_PATTERNS.some((pattern: RegExp): boolean => pattern.test(stderrOutput));
-}
-
-function _isLikelyInteractiveCommand(command: string): boolean {
-  return /\b(sudo|su|ssh|passwd|login|ftp|sftp)\b/i.test(command);
-}
-
-function _normalizeInteractiveCommand(command: string, deterministicInputDetection: boolean): string {
-  if (!deterministicInputDetection || !/\bsudo\b/i.test(command)) {
-    return command;
-  }
-
-  // Keep command semantics intact, but force sudo askpass mode.
-  // This allows stdin-provided passwords via run_cmd_input without requiring the model
-  // to explicitly write "-A" each time.
-  return command.replace(/\bsudo\b(?![^\n]*\s-(A|S)(\s|$))/gi, "sudo -A");
-}
-
-async function _buildChildEnvAsync(command: string, deterministicInputDetection: boolean): Promise<NodeJS.ProcessEnv> {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-
-  if (!deterministicInputDetection || !/\bsudo\b/i.test(command)) {
-    return env;
-  }
-
-  if (!env.SUDO_ASKPASS) {
-    const askpassPath: string = await _ensureAskpassScriptAsync();
-    env.SUDO_ASKPASS = askpassPath;
-  }
-
-  return env;
-}
-
-async function _ensureAskpassScriptAsync(): Promise<string> {
-  const scriptPath: string = path.join(getBaseDir(), "run-cmd-askpass.sh");
-
-  const scriptContent: string = [
-    "#!/usr/bin/env bash",
-    "set -euo pipefail",
-    "IFS= read -r password || true",
-    "printf \"%s\" \"${password}\"",
-    "",
-  ].join("\n");
-
-  await fs.mkdir(path.dirname(scriptPath), { recursive: true });
-  await fs.writeFile(scriptPath, scriptContent, { encoding: "utf-8", mode: 0o700 });
-  await fs.chmod(scriptPath, 0o700);
-
-  return scriptPath;
-}

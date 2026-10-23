@@ -26,6 +26,7 @@ vi.mock("ai", async () => {
   }
 
   return {
+    APICallError: { isInstance: (): boolean => false },
     tool: (definition: unknown): unknown => definition,
     ToolLoopAgent: FakeToolLoopAgent,
     isStepCount: (): unknown => ({}),
