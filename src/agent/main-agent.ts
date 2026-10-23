@@ -1046,7 +1046,7 @@ export class MainAgent extends BaseAgentBase {
       emitModelOutputAsync: async (_chatId2: string, _stepNumber: number, _text: string) => {
         // TODO: Implement model output emission via BrainInterfaceService when integration is finalized
       },
-      onContextExceededCompaction: async (): Promise<ModelMessage[]> => {
+      onContextExceededCompaction: async (): Promise<ModelMessage[] | null> => {
         const sourceMessages: ModelMessage[] =
           this._getInFlightMessages(session) ?? session.messages;
         const compacted: ModelMessage[] = await _compactSessionMessagesAsync(
@@ -1055,7 +1055,11 @@ export class MainAgent extends BaseAgentBase {
           this._logger,
           this._compactionTokenThreshold,
           this._contextWindow,
+          true,
         );
+        if (JSON.stringify(compacted) === JSON.stringify(sourceMessages)) {
+          return null;
+        }
         session.messages = compacted;
         session.inFlightMessages = compacted;
         return compacted;
@@ -1261,6 +1265,7 @@ async function _compactSessionMessagesAsync(
   logger: LoggerService,
   compactionThreshold: number,
   contextWindow: number,
+  forceCompaction: boolean = false,
 ): Promise<ModelMessage[]> {
   const targetTokens: number = Math.max(
     1200,
@@ -1268,7 +1273,7 @@ async function _compactSessionMessagesAsync(
   );
 
   const currentTokens: number = countTokens(messages);
-  if (currentTokens <= targetTokens) {
+  if (!forceCompaction && currentTokens <= targetTokens) {
     return messages;
   }
 
@@ -1278,7 +1283,7 @@ async function _compactSessionMessagesAsync(
     logger,
     targetTokens,
     (msgs: ModelMessage[]): number => countTokens(msgs),
-    false,
+    forceCompaction,
     {
       contextWindow,
     },

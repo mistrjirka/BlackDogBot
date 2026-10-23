@@ -43,6 +43,7 @@ import { ensureDirectoryExistsAsync, getCacheDir } from "../../utils/paths.js";
 import { ConfigService } from "../config.service.js";
 import { HARD_GATE_THRESHOLD_PERCENTAGE } from "../../shared/constants.js";
 import { fetchLlmAsync, LlmRequestTimeoutError, LlmIncompleteResponseError } from "../../utils/llm-fetch.js";
+import { bridgeMcpToolImages } from "../../utils/mcp-tool-image-bridge.js";
 import { extractErrorCauses } from "../../utils/error.js";
 
 interface IOpenRouterModelListEntry {
@@ -2074,6 +2075,17 @@ export class AiProviderCore {
                 body.parallel_tool_calls === undefined
               ) {
                 body.parallel_tool_calls = true;
+                modified = true;
+              }
+
+              // Bridge MCP screenshots to vision messages before counting tokens.
+              const bridgedImages = bridgeMcpToolImages(body);
+              if (bridgedImages.images || bridgedImages.rejected) {
+                LoggerService.getInstance().info("MCP screenshots converted to model vision content", {
+                  images: bridgedImages.images,
+                  rejected: bridgedImages.rejected,
+                  imageBytes: bridgedImages.bytes,
+                });
                 modified = true;
               }
 

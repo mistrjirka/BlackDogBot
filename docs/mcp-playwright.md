@@ -30,6 +30,6 @@ The sample is an **entry**, not a replacement for the whole existing configurati
 
 **Why `strictOutputSchema: false`?** Playwright MCP currently advertises no `outputSchema` for its tools. Strict discovery would silently hide every Playwright tool. This exception is restricted to the Playwright server, not global MCP policy.
 
-**Screenshots:** `browser_take_screenshot` returns both a local artifact path and a base64 `image/png` MCP content part. BlackDogBot converts image parts to AI SDK `file` model-output parts. The screenshot does **not** need to be reopened with `read_image`, and the image itself is not text.
+**Screenshots:** `browser_take_screenshot` returns both a local artifact path and a base64 `image/png` MCP content part. BlackDogBot converts image parts to AI SDK `file` model-output parts, then bridges them into actual multimodal `image_url` messages before sending OpenAI-compatible requests. The tool reply remains paired with its tool call, the model gets the image as untrusted visual context, and token accounting estimates image tokens instead of treating base64 as text. The screenshot does **not** need to be reopened with `read_image`.
 
 **Verification:** Ask Nate to navigate to `https://example.com`, take a screenshot, and describe what is visible. Verify `mcp.playwright.browser_take_screenshot` appears in the connected tool set. The browser is headless, uses a non-persistent profile, and saves artifacts outside the repository.

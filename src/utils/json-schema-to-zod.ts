@@ -68,6 +68,14 @@ export function jsonSchemaToZod(schema: JsonSchema | undefined | null): z.ZodTyp
     return z.unknown();
   }
 
+  // Preserve literal string enum constraints from MCP tool schemas. Without
+  // this, the model sees an unconstrained string (e.g. Playwright scale) and
+  // can generate values rejected by the MCP server.
+  if (Array.isArray(schema.enum) && schema.enum.length > 0 &&
+      schema.enum.every((value: unknown): value is string => typeof value === "string")) {
+    return z.enum(schema.enum as [string, ...string[]]);
+  }
+
   const type: unknown = schema.type;
 
   // Handle union types (type: ["string", "null"])

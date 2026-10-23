@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { APICallError } from "ai";
 import { RetryOrchestrator, type IRetryOrchestratorConfig } from "../../src/agent/retry-orchestrator.js";
 import { LlmRequestTimeoutError, LlmIncompleteResponseError } from "../../src/utils/llm-fetch.js";
 
@@ -58,6 +59,22 @@ describe("consecutive generation retries", () => {
     const result = await RetryOrchestrator.runCycle(config(generate));
     expect(result.shouldFallback).toBe(true);
     expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops without resending when context compaction made no progress", async () => {
+    const contextError = new APICallError({
+      message: "Context size exceeded", url: "http://localhost",
+      requestBodyValues: {}, statusCode: 400,
+      responseBody: "context_length_exceeded",
+    });
+    const generate = vi.fn().mockRejectedValue(contextError);
+    const options = config(generate);
+    options.onContextExceededCompaction = vi.fn().mockResolvedValue(null);
+    const result = await RetryOrchestrator.runCycle(options);
+    expect(result.shouldFallback).toBe(true);
+    expect(result.result.text).toContain("compaction could not reduce");
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(options.onContextExceededCompaction).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry cancellation with an arbitrary reason", async () => {

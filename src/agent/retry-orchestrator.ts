@@ -72,7 +72,8 @@ export interface IRetryOrchestratorConfig {
   /** Called when a context-exceeded error triggers compaction. The callback should compact
    *  session messages and return the new message list. If omitted, the retry continues
    *  without compaction (guaranteed to fail again with the same oversized context). */
-  onContextExceededCompaction?: () => Promise<ModelMessage[]>;
+  /** Return null when compaction cannot reduce the oversized context. */
+  onContextExceededCompaction?: () => Promise<ModelMessage[] | null>;
 }
 
 /** Outcome returned after one complete runCycle execution. */
@@ -139,8 +140,9 @@ export class RetryOrchestrator {
       const progressBeforeAttempt = config.getProgressVersion?.();
       const llmStartTime: number = Date.now();
       try {
+        const messagesForAttempt = buildMessagesForCall();
         const generateResult = await generateFn({
-          messages: buildMessagesForCall(),
+          messages: messagesForAttempt,
           abortSignal,
         });
 
@@ -267,14 +269,21 @@ export class RetryOrchestrator {
           contextRetries++;
 
           if (onContextExceededCompaction) {
-            await onContextExceededCompaction();
+            const compacted = await onContextExceededCompaction();
+            if (compacted === null) {
+              logger.warn("Context compaction made no progress; not resending identical oversized prompt", { chatId });
+              return {
+                result: { text: "Context remains too large and compaction could not reduce it. Completed tool results are preserved; consider starting a fresh task.", stepsCount: 0 },
+                shouldFallback: true,
+              };
+            }
             logger.info("Context compaction triggered, retrying with compacted messages", {
               chatId,
               contextRetry: contextRetries,
               maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
             });
           } else {
-            logger.warn("Context size exceeded but no compaction callback provided, retrying without compaction", {
+            logger.warn("Context size exceeded but no compaction callback provided, stopping unchanged request", {
               chatId,
               contextRetry: contextRetries,
               maxContextRetries: CONTEXT_EXCEEDED_RETRIES,
@@ -282,6 +291,12 @@ export class RetryOrchestrator {
             });
           }
 
+          if (!onContextExceededCompaction) {
+            return {
+              result: { text: "Context limit exceeded and no compaction handler is available.", stepsCount: 0 },
+              shouldFallback: true,
+            };
+          }
           attempt--; // Don't burn the empty-response retry limit
           continue;
         }

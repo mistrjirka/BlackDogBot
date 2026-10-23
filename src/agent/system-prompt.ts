@@ -102,7 +102,7 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
   const supportsVision: boolean = AiProviderService.getInstance().getSupportsVision();
   if (supportsVision) {
     contextParts.push(
-      "Vision capability: enabled. User-attached images are provided directly in the message content, so analyze them directly. Use read_image only for local files the user explicitly asked to inspect by path.",
+      "Vision capability: enabled. User-attached images are provided directly. MCP screenshots may appear as attached visual observations after tool results; inspect the image itself rather than relying only on page text. Use read_image only for local files the user explicitly asked to inspect by path.",
     );
   } else {
     contextParts.push(
