@@ -65,6 +65,27 @@ class GuardedReleaseTests(unittest.TestCase):
         self.assertTrue(self.old.exists())
         self.assertEqual(json.loads((self.state / "reports" / "latest.json").read_text())["status"], "healthy")
 
+    def test_docker_update_results_are_reported_after_healthy_app(self):
+        with patch.object(guard,"service_state",return_value=("active",444)), \
+             patch.object(guard,"restart_and_probe",return_value=(True,111.0)), \
+             patch.object(guard,"update_docker_services",return_value={"searxng":"CONTAINER_DEPLOY_STATUS searxng healthy","scrapling":"failed:CalledProcessError"}) as updates, \
+             patch.object(guard,"notify"):
+            result=guard.activate(self.state,"blackdogbot.service",self.new_sha,None,timeout=3)
+        self.assertTrue(result)
+        updates.assert_called_once()
+        report=json.loads((self.state/"reports/latest.json").read_text())
+        self.assertEqual(report["status"],"healthy")
+        self.assertEqual(report["container_updates"]["scrapling"],"failed:CalledProcessError")
+
+    def test_skip_container_updates_keeps_app_healthy(self):
+        with patch.object(guard,"service_state",return_value=("active",444)), \
+             patch.object(guard,"restart_and_probe",return_value=(True,111.0)), \
+             patch.object(guard,"update_docker_services") as updates, \
+             patch.object(guard,"notify"):
+            result=guard.activate(self.state,"blackdogbot.service",self.new_sha,None,timeout=3,update_containers=False)
+        self.assertTrue(result)
+        updates.assert_not_called()
+
     def test_refuses_activation_without_pretested_candidate(self):
         (self.new / ".blackdog-release-tested").unlink()
         with self.assertRaisesRegex(RuntimeError, "passing tests"):

@@ -1,4 +1,4 @@
-# Updating the Scrapling Docker MCP server
+# Guarded Docker updates: SearXNG and Scrapling
 
 BlackDogBot's default web stack is **SearXNG** for search, **Scrapling** for JavaScript-rendered page scraping and browser sessions, and **Playwright MCP** for complex site interaction. Crawl4AI was retired from the active host in October 2026; its old image and backups are retained for rollback.
 
@@ -30,7 +30,8 @@ docker image inspect pyd4vinci/scrapling:latest --format '{{index .RepoDigests 0
 Alternatively, the installed supervisor can check and report the newest official digest without restarting a service:
 
 ```bash
-python3 ~/.local/lib/blackdogbot/guarded-container-update.py --check-only
+python3 ~/.local/lib/blackdogbot/guarded-container-update.py --service scrapling --check-only
+python3 ~/.local/lib/blackdogbot/guarded-container-update.py --service searxng --check-only
 ```
 
 Compare the returned digest with the one in Compose. If identical, no update is necessary. If different, read upstream release notes for breaking changes, then run the guarded updater below. `docker pull` does not recreate a running container, but does download an image and move the local floating tag.
@@ -47,7 +48,7 @@ An explicitly requested upgrade uses `scripts/guarded-container-update.py`, inst
 ```bash
 systemd-run --user --collect --unit=blackdog-scrapling-upgrade-<unique-id> \
   /usr/bin/python3 /home/jirka/.local/lib/blackdogbot/guarded-container-update.py \
-  --image 'pyd4vinci/scrapling@sha256:<verified-64-hex-digest>' \
+  --service scrapling --update-latest \
   --chat-id '<authorized-telegram-chat-id>'
 ```
 
@@ -79,4 +80,13 @@ The probe tests genuine MCP tool discovery, JavaScript execution, a persistent b
 
 This does **not** guarantee success against every CAPTCHA or bot-protected website. Those outcomes depend on server-side defenses, network identity, and account context. Report detected blocks rather than inventing extracted content.
 
-The updater currently manages **Scrapling image upgrades only**; it intentionally does not automatically update or restart SearXNG, Playwright, or unrelated Docker services. Those require their own tested health probes and rollback policies.
+The same updater supports SearXNG with `--service searxng --update-latest`.
+It starts an isolated SearXNG container with the existing `settings.yml`,
+then verifies `/healthz` and the JSON search API before switching the
+production container and verifying again.
+
+On a successful guarded application activation, both services are checked and
+updated sequentially by default. The candidate is always resolved to an
+immutable digest, not deployed via floating `latest`. Each service has
+its own rollback, report and health probes. Playwright and unrelated
+containers are not restarted.

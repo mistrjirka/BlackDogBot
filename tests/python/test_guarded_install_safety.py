@@ -42,6 +42,21 @@ class InstallerSafetyTests(unittest.TestCase):
             self.assertNotEqual(proc.returncode, 0)
             self.assertEqual(file.read_text(), "existing secret: unchanged\n")
 
+    def test_user_service_script_avoids_privileged_system_units(self):
+        script=(SOURCE.parent/"scripts/install-user-service.sh").read_text()
+        self.assertIn("systemctl --user",script)
+        self.assertIn("WantedBy=default.target",script)
+        self.assertIn("refusing to overwrite",script)
+        self.assertNotIn("sudo systemctl",script)
+        self.assertNotIn("/etc/systemd/system",script)
+
+    def test_bootstrap_uses_tty_for_interactive_input(self):
+        bootstrap=(SOURCE.parent/"scripts/bootstrap.sh").read_text()
+        self.assertIn("</dev/tty",bootstrap)
+        self.assertIn("git clone",bootstrap)
+        self.assertIn("exec bash",bootstrap)
+        self.assertIn("already exists",bootstrap)
+
     def test_new_install_protects_created_files(self):
         with tempfile.TemporaryDirectory() as dirname:
             bash = function_source("preflight_fresh_install")

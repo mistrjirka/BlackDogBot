@@ -62,10 +62,48 @@ class GuardedContainerTests(unittest.TestCase):
         self.assertTrue(all("compose" not in args[0][0] for args in call.call_args_list))
         self.assertEqual(p.read_text(), self.compose)
 
+    def test_both_images_are_updated_independently(self):
+        searx_digest="searxng/searxng@sha256:"+"d"*64
+        updated, old = guard.replaced_image(self.compose, searx_digest, "searxng")
+        self.assertEqual(old, "searxng/searxng:latest")
+        self.assertIn(self.digest, updated)
+        self.assertIn(searx_digest, updated)
+        self.assertEqual(guard.replaced_image(updated,"searxng/searxng:latest","searxng")[0],self.compose)
+
+    def test_searxng_discovers_official_digest_only(self):
+        p=self.root/"compose.yaml"
+        p.write_text(self.compose)
+        candidate="searxng/searxng@sha256:"+"e"*64
+        with patch.object(guard,"command",side_effect=["pull successful",json.dumps([candidate])]) as call:
+            result=guard.check_for_update(p,"searxng")
+        self.assertEqual(result["status"],"update_available")
+        self.assertEqual(result["available_image"],candidate)
+        self.assertEqual(call.call_count,2)
+        self.assertEqual(p.read_text(),self.compose)
+
+    def test_unchanged_scraper_is_noop(self):
+        import argparse
+        args=argparse.Namespace(service="scrapling",compose=self.root/"compose.yaml",
+            probe=self.root/"probe.mjs",env_file=self.root/"scrapling.env",
+            searx_settings=self.root/"settings.yml",report_dir=self.root/"reports",
+            image=self.digest,chat_id=None,canary_port=18734,production_port=18733)
+        args.compose.write_text(self.compose)
+        args.probe.write_text("")
+        args.env_file.write_text("SCRAPLING_MCP_AUTH_TOKEN=fake")
+        args.env_file.chmod(0o600)
+        with patch.object(guard,"command") as call:
+            result=guard.update(args)
+        self.assertEqual(result["status"],"unchanged")
+        call.assert_not_called()
+
     def test_image_pinning_validation(self):
         self.assertTrue(guard.DIGEST_RE.fullmatch(self.digest))
+        updated, previous = guard.replaced_image(self.compose, "searxng/searxng@sha256:"+"c"*64, "searxng")
+        self.assertEqual(previous, "searxng/searxng:latest")
+        self.assertIn("searxng/searxng@sha256:"+"c"*64, updated)
+        self.assertIn(self.digest, updated)
         self.assertFalse(guard.DIGEST_RE.fullmatch("pyd4vinci/scrapling:latest"))
-        self.assertFalse(guard.DIGEST_RE.fullmatch("untrusted/image@sha256:"+"a"*64))
+        self.assertTrue(guard.DIGEST_RE.fullmatch("searxng/searxng@sha256:"+"a"*64))
 
 if __name__=="__main__":
     unittest.main()

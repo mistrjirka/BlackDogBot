@@ -170,7 +170,39 @@ def restart_and_probe(unit: str, old_pid: int, *, timeout: int = 75) -> tuple[bo
         return False, started
 
 
-def activate(state: Path, unit: str, ref: str, chat: str | None, *, timeout: int = 75) -> bool:
+def update_docker_services(state: Path, chat: str | None) -> dict[str, str]:
+    """After app health, independently test and update each enabled Compose service.
+
+    Failed service updates roll back their own image and never invalidate the
+    known-good BlackDogBot release. Results are saved in deployment reports.
+    """
+    compose = Path.home() / ".blackdogbot/docker-compose.yaml"
+    updater = Path.home() / ".local/lib/blackdogbot/guarded-container-update.py"
+    if not compose.is_file() or not updater.is_file():
+        return {"status": "skipped", "reason": "Compose or independent updater not installed"}
+    updates: dict[str, str] = {}
+    compose_text = compose.read_text()
+    for service in ("searxng", "scrapling"):
+        if f"  {service}:" not in compose_text:
+            updates[service] = "skipped:not_configured"
+            continue
+        # The updater determines whether the registry digest changed and whether
+        # the registry digest changed. Never run docker compose down or prune.
+        try:
+            arguments = ["python3", str(updater), "--service", service,
+                         "--update-latest", "--compose", str(compose)]
+            if chat:
+                arguments.extend(["--chat-id", chat])
+            response = run(arguments, timeout=1100)
+            status = response.stdout.strip().splitlines()[-1] if response.stdout.strip() else ""
+            updates[service] = status if response.returncode == 0 else "failed"
+        except Exception as exc:
+            updates[service] = "failed:" + type(exc).__name__
+            notify(state, chat, f"{service} container update failed; prior image retained or restored. Inspect container reports.")
+    return updates
+
+
+def activate(state: Path, unit: str, ref: str, chat: str | None, *, timeout: int = 75, update_containers: bool = True) -> bool:
     current = state / "current"
     if not current.is_symlink():
         raise RuntimeError("Guarded release launcher is not bootstrapped; refusing unguarded deployment")
@@ -186,9 +218,11 @@ def activate(state: Path, unit: str, ref: str, chat: str | None, *, timeout: int
     point_to(current, candidate)
     ok, started = restart_and_probe(unit, old_pid, timeout=timeout)
     if ok:
+        container_results = update_docker_services(state, chat) if update_containers else {"status": "skipped_by_request"}
         path = report(state, {"status": "healthy", "revision": rev, "previous": previous.name,
-                              "unit": unit, "activated_at": dt.datetime.now(dt.timezone.utc).isoformat()})
-        notify(state, chat, f"BlackDogBot: release {rev[:12]} is healthy. Verified startup and Telegram polling. Report: {path}")
+                              "unit": unit, "activated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                              "container_updates": container_results})
+        notify(state, chat, f"BlackDogBot: release {rev[:12]} healthy. Container updates: {container_results}. Report: {path}")
         return True
 
     journal = save_journal(unit, state, f"failed-{rev[:12]}", started)
@@ -257,6 +291,7 @@ def main() -> int:
     parser.add_argument("--unit", default=SERVICE_DEFAULT)
     parser.add_argument("--chat-id", help="Authorized Telegram chat to receive status notifications")
     parser.add_argument("--timeout", type=int, default=75)
+    parser.add_argument("--skip-container-updates", action="store_true", help="Deploy app only")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-zA-Z0-9_.@-]+\.service", args.unit):
         parser.error("Invalid systemd unit")
@@ -279,7 +314,8 @@ def main() -> int:
         if args.action == "bootstrap":
             rev = revision(args.repo.resolve(), args.revision)
             return 0 if bootstrap(state, args.unit, rev, args.chat_id) else 1
-        return 0 if activate(state, args.unit, args.revision, args.chat_id, timeout=args.timeout) else 1
+        return 0 if activate(state, args.unit, args.revision, args.chat_id, timeout=args.timeout,
+                             update_containers=not args.skip_container_updates) else 1
 
 
 if __name__ == "__main__":

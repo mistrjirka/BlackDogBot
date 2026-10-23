@@ -1,9 +1,9 @@
 # Install the independent self-update supervisor (one-time setup)
 
 **Compatibility:** this procedure works only when `blackdogbot.service` is a
-**user-level systemd service** with a guarded release launcher. The optional
-system-level service created by the current `install.sh` requires migration
-first. The installer itself is not an updater; never rerun it to upgrade code.
+**user-level systemd service** with a guarded release launcher. Fresh installs create user-level services and bootstrap guarded releases. Older
+root-managed system services require deliberate migration; never rerun
+`install.sh` as an upgrade.
 
 The `safe-self-development` skill contains the full architecture and development workflow. The release manager implementation is `scripts/guarded-release.py`. It is a regular Python program that runs through the user systemd manager **outside the BlackDogBot daemon**, not a new model-facing tool.
 

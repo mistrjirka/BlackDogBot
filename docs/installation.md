@@ -9,33 +9,46 @@
 
 ## Quick Install
 
-Run the interactive install script:
+For a fresh, non-root Linux installation, run in an interactive terminal:
 
-```bash
+```sh
+curl -fsSL https://raw.githubusercontent.com/mistrjirka/BlackDogBot/main/scripts/bootstrap.sh | sh
+```
+
+The short POSIX bootstrap script clones the source and launches the interactive Bash
+installer using `/dev/tty` (the `curl` pipe is not interactive). It never
+uses sudo and refuses to overwrite an existing config.
+
+For review before execution:
+
+```sh
+curl -fsSLo /tmp/blackdogbot-bootstrap.sh https://raw.githubusercontent.com/mistrjirka/BlackDogBot/main/scripts/bootstrap.sh
+less /tmp/blackdogbot-bootstrap.sh
+sh /tmp/blackdogbot-bootstrap.sh
+```
+
+The moving `main` reference is not cryptographically pinned; use
+a reviewed tag/commit when reproducibility is important.
+
+Alternatively, install from a Git checkout:
+
+```sh
+git clone https://github.com/mistrjirka/BlackDogBot.git
+cd BlackDogBot
 ./install.sh
 ```
 
-> **Tip:** For easiest updates, clone the repository instead of downloading a ZIP:
-> ```bash
-> git clone https://github.com/mistrjirka/BlackDogBot.git
-> cd blackdogbot
-> ./install.sh
-> ```
-> The installer is for a **new installation only**. It now refuses to overwrite an existing
-> `~/.blackdogbot/config.yaml` or `docker-compose.yaml`. For updates, follow
-> [guarded-self-update.md](guarded-self-update.md); `git pull` by itself neither
-> tests nor deploys a verified release.
+Requirements: Node.js 22+, Bash, Git, a systemd **user** session, and pnpm
+(installed by the wizard if missing). Docker Engine and Compose are optional.
+The wizard configures the model, messaging, SearXNG and Scrapling, and installs
+a **non-root user service** by default. It then prepares and starts a tested
+guarded release. It does **not** overwrite existing installations.
 
-The installer protects secrets with a restrictive file-creation mask and uses safe input handling without shell evaluation. It aborts before changing files if an existing installation is detected.
+To keep the user service active before login, an administrator may separately
+run `sudo loginctl enable-linger "$USER"`. This is optional.
 
-The script will:
-1. Check and install dependencies (Node.js, pnpm)
-2. Prompt for AI provider configuration
-3. Prompt for Telegram and/or Discord bot tokens
-4. Optionally set up Docker services (SearXNG, Scrapling)
-5. Create the config file with all required settings
-6. Create required directories
-7. Copy default prompts
+**Updates:** Never rerun `install.sh` to upgrade. Follow
+[guarded self-updates](guarded-self-update.md).
 
 ## Manual Installation
 
@@ -92,10 +105,10 @@ Create `~/.blackdogbot/docker-compose.yaml`:
 ```yaml
 services:
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng@sha256:bcfaed4091d59f7ce85670bd701a2d0295872196dc19908a3965a8353b149f83
     container_name: blackdogbot-searxng
     ports:
-      - "18731:8080"
+      - "127.0.0.1:18731:8080"
     environment:
       - SEARXNG_BASE_URL=http://localhost:18731/
       - SEARXNG_SECRET=<generate-with-openssl-rand-hex-32>
@@ -231,15 +244,27 @@ tail -f ~/.blackdogbot/logs/blackdogbot.log
 For full config options, see [Configuration Guide](./configuration.md).
 For troubleshooting, see [Troubleshooting Guide](./troubleshooting.md).
 
-## Systemd deployment limitation
 
-The interactive install wizard's optional **systemd system service** uses `sudo`
-and installs `/etc/systemd/system/blackdogbot.service`. The guarded updater
-in `docs/guarded-self-update.md` is designed for a **user** service managed
-by `systemctl --user` with an isolated release launcher. These are not
-interchangeable: do **not** run the user-service updater directly against a
-system-level installation. Migrate the service with a documented, tested
-one-time change before enabling autonomous guarded application updates.
 
-For a new server intended to self-update without privilege escalation, prefer
-the user-level service/guarded-launcher deployment used by the current host.
+## User service and automatic updates
+
+The installer calls `scripts/install-user-service.sh`, which creates
+`~/.config/systemd/user/blackdogbot.service` without root privileges.
+The initial Git revision is prepared in a test worktree and activated through
+the independent guarded release manager. It may take time to build and test
+on first installation.
+
+```sh
+systemctl --user status blackdogbot.service
+journalctl --user -u blackdogbot.service -f
+```
+
+Old root-managed services must be migrated separately to avoid having two
+competing bots polling the same Telegram token. The helper refuses to overwrite
+an existing user service.
+
+SearXNG and Scrapling are pinned to immutable image digests. Every successful
+guarded code update checks their upstream `latest` digests and updates
+each configured Docker service with canary validation and service-local
+rollback. Use `--skip-container-updates` to deploy only application code.
+See [guarded Docker updates](guarded-container-update.md).

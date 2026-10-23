@@ -122,11 +122,11 @@ check_dependencies() {
         print_success "Graphviz $(dot -V 2>&1 | cut -d' ' -f5)"
     fi
     
-    if command -v docker &> /dev/null; then
+    if command -v docker &> /dev/null && docker info >/dev/null 2>&1 && (docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1); then
         print_success "Docker $(docker --version | cut -d' ' -f3 | tr -d ',')"
         HAS_DOCKER=true
     else
-        print_warning "Docker not found. Optional services (SearXNG, Scrapling) will not be available."
+        print_warning "Docker/Compose missing or inaccessible to current user; optional services unavailable."
         HAS_DOCKER=false
     fi
     
@@ -293,7 +293,7 @@ SEARXNG_EOF
         
         cat >> "$COMPOSE_FILE" << EOF
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng@sha256:bcfaed4091d59f7ce85670bd701a2d0295872196dc19908a3965a8353b149f83
     container_name: blackdogbot-searxng
     ports:
       - "127.0.0.1:${SEARXNG_PORT}:8080"
@@ -376,6 +376,7 @@ start_docker_services() {
         print_success "Services started"
     else
         print_error "Failed to start services. Try manually: docker compose -f $COMPOSE_FILE up -d"
+        return 1
     fi
     
     print_info "Waiting for services to be ready..."
@@ -399,120 +400,29 @@ start_docker_services() {
 }
 
 create_systemd_service() {
-    echo ""
-    echo -e "${YELLOW}Systemd Service Setup${NC}"
-
-    if ! prompt_yesno "Install BlackDogBot as a systemd service?" "y"; then
-        SYSTEMD_INSTALLED=false
+    SYSTEMD_INSTALLED=false
+    if ! prompt_yesno "Install and start BlackDogBot as a non-root systemd user service?" "y"; then
+        print_warning "User service not installed; start manually with pnpm start."
         return
     fi
-
-    echo ""
-    echo "This step requires sudo and will create:"
-    echo "  - /usr/local/bin/blackdogbot-start"
-    echo "  - /etc/systemd/system/blackdogbot.service"
-
-    if ! prompt_yesno "Proceed with sudo for systemd setup?" "y"; then
-        print_warning "Skipping systemd service setup"
-        SYSTEMD_INSTALLED=false
-        return
+    local repo_dir revision
+    repo_dir="$(get_script_dir)"
+    if ! git -C "$repo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        print_error "Guarded service installation requires a Git checkout."
+        return 1
     fi
-
-    SCRIPT_DIR=$(get_script_dir)
-    SERVICE_USER="${SUDO_USER:-${USER:-$(whoami)}}"
-
-    if [ -z "$SERVICE_USER" ]; then
-        prompt_input "Run service as user" "$(whoami)" SERVICE_USER
-    fi
-
-    LAUNCH_WRAPPER="/usr/local/bin/blackdogbot-start"
-    SYSTEMD_UNIT="/etc/systemd/system/blackdogbot.service"
-
-    echo -e "${YELLOW}Creating launch wrapper...${NC}"
-    sudo tee "$LAUNCH_WRAPPER" > /dev/null << EOF
-#!/usr/bin/env bash
-set -euo pipefail
-
-REPO_DIR="${SCRIPT_DIR}"
-
-find_cuda12_dir() {
-    if ldconfig -p 2>/dev/null | grep -q 'libcublasLt.so.12'; then
-        return 0
-    fi
-
-    local candidates=(
-        "/usr/local/lib/ollama/cuda_v12"
-        "/usr/lib/ollama/cuda_v12"
-    )
-
-    for dir in "\${candidates[@]}"; do
-        if [[ -f "\$dir/libcublasLt.so.12" ]]; then
-            echo "\$dir"
-            return 0
-        fi
-    done
-
-    return 1
-}
-
-cuda12_dir=\$(find_cuda12_dir 2>/dev/null || true)
-if [[ -n "\$cuda12_dir" ]]; then
-    export LD_LIBRARY_PATH="\${cuda12_dir}\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
-fi
-
-cd "\$REPO_DIR"
-pnpm install --frozen-lockfile
-pnpm build
-exec node dist/index.js
-EOF
-    sudo chmod +x "$LAUNCH_WRAPPER"
-    print_success "Created $LAUNCH_WRAPPER"
-
-    echo -e "${YELLOW}Creating systemd unit...${NC}"
-    sudo tee "$SYSTEMD_UNIT" > /dev/null << EOF
-[Unit]
-Description=BlackDogBot AI Assistant Daemon
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=${SERVICE_USER}
-WorkingDirectory=${SCRIPT_DIR}
-ExecStart=${LAUNCH_WRAPPER}
-Restart=on-failure
-RestartSec=10
-Environment=NODE_ENV=production
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    print_success "Created $SYSTEMD_UNIT"
-
-    sudo systemctl daemon-reload
-    print_success "Reloaded systemd daemon"
-
-    if prompt_yesno "Enable service to start on boot?" "y"; then
-        sudo systemctl enable blackdogbot
-        print_success "Service enabled for boot"
-    fi
-
-    if prompt_yesno "Start service now?" "y"; then
-        sudo systemctl start blackdogbot
-        sleep 2
-
-        if sudo systemctl is-active --quiet blackdogbot; then
-            print_success "Service started successfully"
-        else
-            print_warning "Service did not report active status yet"
-            print_info "Check logs: sudo journalctl -u blackdogbot -n 50"
-        fi
-    fi
-
+    revision="$(git -C "$repo_dir" rev-parse HEAD)"
+    bash "$repo_dir/scripts/install-user-service.sh"
+    local guard_dir="$HOME/.local/lib/blackdogbot"
+    install -D -m 700 "$repo_dir/scripts/guarded-release.py" "$guard_dir/guarded-release.py"
+    install -D -m 700 "$repo_dir/scripts/guarded-container-update.py" "$guard_dir/guarded-container-update.py"
+    print_info "Preparing tested, rollback-capable initial release..."
+    python3 "$guard_dir/guarded-release.py" prepare --repo "$repo_dir" --revision "$revision"
+    python3 "$guard_dir/guarded-release.py" bootstrap --repo "$repo_dir" --revision "$revision"
     SYSTEMD_INSTALLED=true
-    SYSTEMD_SERVICE_USER="$SERVICE_USER"
+    print_success "Guarded non-root systemd user service started."
+    print_info "systemctl --user status blackdogbot.service"
+    print_info "For boot before login, optionally run: sudo loginctl enable-linger $(id -un)"
 }
 
 create_config() {
@@ -872,10 +782,9 @@ print_summary() {
 
     if [ "$SYSTEMD_INSTALLED" = true ]; then
         echo -e "${CYAN}Systemd service:${NC}"
-        echo "  Service: blackdogbot"
-        echo "  User:    $SYSTEMD_SERVICE_USER"
-        echo "  Status:  sudo systemctl status blackdogbot"
-        echo "  Logs:    sudo journalctl -u blackdogbot -f"
+        echo "  Service: blackdogbot.service (systemd user)"
+        echo "  Status:  systemctl --user status blackdogbot.service"
+        echo "  Logs:    journalctl --user -u blackdogbot.service -f"
         echo ""
     fi
 }
