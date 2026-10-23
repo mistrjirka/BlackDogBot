@@ -7,6 +7,7 @@ import { McpService } from "../services/mcp.service.js";
 import { McpRegistryService } from "../services/mcp-registry.service.js";
 import type { IMcpServerEntry } from "../shared/types/mcp.types.js";
 import { PROMPT_MAIN_AGENT } from "../shared/constants.js";
+import { buildWebResearchRoutingInstruction } from "./web-research-routing.js";
 import {
   CAPTURE_THRESHOLD_CHARS,
   INSPECT_VARIABLE_DEFAULT_CHARS,
@@ -33,11 +34,7 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
     .getAllServers()
     .filter((entry: IMcpServerEntry): boolean => entry.enabled);
   const mcpServerResults = mcpService.getServerResults();
-  contextParts.push(
-    "Web research: use a connected MCP search tool to discover sources, an extraction tool to read them, " +
-    "and a browser MCP tool for interactive or JavaScript-heavy pages. Use their discovered schemas. " +
-    "If no suitable tool is connected, curl or wget through run_cmd is an acceptable fallback; report missing evidence honestly.",
-  );
+  contextParts.push(buildWebResearchRoutingInstruction(mcpToolNames));
 
   if (configuredMcpServers.length === 0) {
     contextParts.push("MCP: no MCP servers are configured.");

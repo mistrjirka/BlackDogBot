@@ -112,6 +112,16 @@ describe("MainAgent unit", () => {
   });
 
 
+  it("should define a concrete source-to-scraper-to-browser workflow without assuming tool availability", async () => {
+    await initializeServicesAsync();
+    const prompt = await buildMainAgentPromptAsync();
+    expect(prompt).toContain("Web research tool priority");
+    expect(prompt).toContain("1. DISCOVER");
+    expect(prompt).toContain("2. READ");
+    expect(prompt).toContain("3. ESCALATE");
+    expect(prompt).toContain("When a URL is already supplied, skip searching");
+  });
+
   it("should explain the dynamic skill workflow and boundaries", async () => {
     await initializeServicesAsync();
 
