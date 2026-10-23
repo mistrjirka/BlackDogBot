@@ -50,9 +50,10 @@ If web search/scrape tools fail:
 
 1. Start optional services: `docker compose -f ~/.blackdogbot/docker-compose.yaml up -d`.
 2. Verify SearXNG: `curl "http://localhost:18731/search?q=test&format=json"`.
-3. Verify Crawl4AI health: `curl "http://localhost:18732/health"` (health is unauthenticated).
-4. Verify MCP discovery with the configured token: `source ~/.blackdogbot/.env && curl -H "Authorization: Bearer $CRAWL4AI_API_TOKEN" http://localhost:18732/mcp/schema`.
-5. Check `~/.blackdogbot/mcp-servers.json` has `searxng` configured as a stdio MCP server pointing at the local search URL, and `crawl4ai`, URL ending in `/mcp/sse`, `transport: "sse"`, and `strictOutputSchema: false`. The Crawl4AI MCP tools have no output schemas, so the strict default would hide them.
+3. Verify Scrapling Docker health using docker inspect and the named container (blackdogbot-scrapling on new installs).
+4. From the source checkout, run: node scripts/verify-scrapling.mjs 18733. This verifies real MCP negotiation, JS rendering, a browser session and a screenshot.
+5. Verify mcp-servers.json has scrapling configured as authenticated HTTP MCP at http://127.0.0.1:18733/mcp, and that both the registry and scrapling.env are private.
+6. Follow docs/guarded-container-update.md for safe image updates and rollback. Do not restart all Docker services to fix a single scraper.
 
 ## Cron Notifications Missing
 

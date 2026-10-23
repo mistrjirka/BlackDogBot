@@ -5,7 +5,7 @@
 - Node.js >= 22 (including Node.js 26)
 - pnpm
 - Git (for updating)
-- Docker & Docker Compose (optional, for SearXNG and Crawl4AI services)
+- Docker & Docker Compose (optional, for SearXNG and Scrapling services)
 
 ## Quick Install
 
@@ -27,7 +27,7 @@ The script will:
 1. Check and install dependencies (Node.js, pnpm)
 2. Prompt for AI provider configuration
 3. Prompt for Telegram and/or Discord bot tokens
-4. Optionally set up Docker services (SearXNG, Crawl4AI)
+4. Optionally set up Docker services (SearXNG, Scrapling)
 5. Create the config file with all required settings
 6. Create required directories
 7. Copy default prompts
@@ -78,7 +78,7 @@ logging:
 # Web search servers are registered in ~/.blackdogbot/mcp-servers.json.
 ```
 
-SearXNG and Crawl4AI are registered as MCP servers in `~/.blackdogbot/mcp-servers.json`; the installer creates entries for enabled services. The SearXNG MCP adapter uses pinned `mcp-searxng@2.7.0` over stdio, pointing at the local SearXNG container.
+SearXNG and Scrapling are registered as MCP servers in `~/.blackdogbot/mcp-servers.json`; the installer creates entries for enabled services. The SearXNG MCP adapter uses pinned `mcp-searxng@2.7.0` over stdio, pointing at the local SearXNG container.
 
 ### 3. Set Up Docker Services (Optional)
 
@@ -98,45 +98,32 @@ services:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     restart: unless-stopped
 
-  crawl4ai:
-    image: unclecode/crawl4ai:0.9.4
-    container_name: blackdogbot-crawl4ai
+  scrapling:
+    image: pyd4vinci/scrapling@sha256:1d876879813759959bc4ba6fbb1ce8247ebbc2b67eee77b140baf7c80af6ae6b
+    container_name: blackdogbot-scrapling
     ports:
-      - "127.0.0.1:18732:11235"
-    environment:
-      CRAWL4AI_API_TOKEN: ${CRAWL4AI_API_TOKEN:?Set in ~/.blackdogbot/.env}
-    shm_size: 3g
+      - "127.0.0.1:18733:8000"
+    env_file:
+      - ./scrapling.env
+    command: ["mcp", "--http", "--host", "0.0.0.0", "--port", "8000"]
+    shm_size: 1g
+    mem_limit: 4g
+    pids_limit: 300
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
-```
+      test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8000),3); s.close()"]
 
-Create a private token file before starting Compose (the installer does this for you):
+```
+To create a private authentication file on fresh installations:
 
 ```bash
 umask 077
-printf 'CRAWL4AI_API_TOKEN=%s\n' "$(openssl rand -hex 32)" > ~/.blackdogbot/.env
-chmod 600 ~/.blackdogbot/.env
+printf 'SCRAPLING_MCP_AUTH_TOKEN=%s\n' "$(openssl rand -hex 32)" > ~/.blackdogbot/scrapling.env
+chmod 600 ~/.blackdogbot/scrapling.env
+docker compose -f ~/.blackdogbot/docker-compose.yaml up -d scrapling
 ```
 
-Crawl4AI is connected through its native MCP SSE endpoint at `http://127.0.0.1:18732/mcp/sse`. Its `mcp-servers.json` entry uses `transport: "sse"`, `strictOutputSchema: false`, and an `Authorization: Bearer <token>` header. Keep that file private (`chmod 600`); omitting `allowedTools` exposes all tools discovered from the server.
-
-For a manual MCP setup, add this to `~/.blackdogbot/mcp-servers.json` (replace the placeholder with the token from `.env`):
-
-```json
-{
-  "mcpServers": {
-    "crawl4ai": {
-      "url": "http://127.0.0.1:18732/mcp/sse",
-      "transport": "sse",
-      "headers": { "Authorization": "Bearer <token>" },
-      "strictOutputSchema": false
-    }
-  }
-}
-```
-
-Then restrict the file permissions with `chmod 600 ~/.blackdogbot/mcp-servers.json`.
+The installer creates the same authenticated, localhost-only HTTP MCP service and registers it under mcpServers.scrapling. The bearer token remains in a protected file. See the guarded Docker upgrade guide for digest updates and rollback.
 
 **Important:** SearXNG requires a `settings.yml` file to enable JSON API access and disable bot detection for local use.
 

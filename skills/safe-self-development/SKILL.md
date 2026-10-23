@@ -11,7 +11,7 @@ Work in the trusted source checkout, not a production release directory. Read [r
 
 ## Choose the least invasive capability
 
-1. Can existing tools, prompts, configuration, or a skill solve the request? Prefer those.
+1. Can existing tools, prompts, configuration, or a skill solve the request? Prefer those. For Docker image upgrades and service health, use the `container-maintenance` skill rather than editing application source.
 2. Is it an independent capability with its own tools or service, such as a browser, Git integration, file search, or third-party API? **Prefer an external MCP server**, registered by the `mcp-management` skill, rather than adding a dedicated BlackDogBot tool.
 3. Does the request change the bot's own Telegram message processing, session lifecycle, permissions, tool invocation, context accounting, or another core integration? This requires source changes to BlackDogBot. Work through tests and a guarded deployment, not a new MCP server.
 4. If an MCP server requires privileged OS access, network exposure, credentials, or account consent, explain the boundary; do not circumvent it with a self-edit.

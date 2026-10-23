@@ -153,7 +153,7 @@ logging:
 
 ## Optional Services
 
-SearXNG and Crawl4AI are configured as MCP servers in `~/.blackdogbot/mcp-servers.json`, not as built-in HTTP tools. SearXNG uses a local stdio MCP adapter with `SEARXNG_URL` pointing to the existing container:
+SearXNG and Scrapling are configured as MCP servers in `~/.blackdogbot/mcp-servers.json`, not as built-in HTTP tools. SearXNG uses a local stdio MCP adapter with `SEARXNG_URL` pointing to the existing container:
 
 ```json
 {
@@ -169,7 +169,7 @@ SearXNG and Crawl4AI are configured as MCP servers in `~/.blackdogbot/mcp-server
 
 This is one entry inside `mcpServers`, not the entire configuration. A legacy `services.searxngUrl` field, if present, no longer controls web search. Existing cron tasks named `searxng` are resolved dynamically to the MCP search tool.
 
-Crawl4AI is configured as a remote MCP server in `~/.blackdogbot/mcp-servers.json`, not as a `services.crawl4aiUrl` entry. The standard local entry uses `url: "http://127.0.0.1:18732/mcp/sse"`, `transport: "sse"`, `strictOutputSchema: false`, and an `Authorization: Bearer <token>` header. Keep both the token environment file and `mcp-servers.json` private (`chmod 600`). If `allowedTools` is omitted, all tools discovered from the MCP server are exposed subject to channel permissions.
+Scrapling is configured as an authenticated HTTP MCP server, available at http://127.0.0.1:18733/mcp. It uses the bearer token from the private scrapling.env file and is pinned to an immutable image digest. Its MCP registry entry uses transport http, strictOutputSchema false and a narrow browser tool allowlist. See docs/guarded-container-update.md for canary-based updates and automatic rollback.
 
 ## Data Paths
 

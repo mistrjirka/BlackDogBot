@@ -13,7 +13,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 SEARXNG_PORT=18731
-CRAWL4AI_PORT=18732
+SCRAPLING_PORT=18733
 
 print_header() {
     echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
@@ -126,7 +126,7 @@ check_dependencies() {
         print_success "Docker $(docker --version | cut -d' ' -f3 | tr -d ',')"
         HAS_DOCKER=true
     else
-        print_warning "Docker not found. Optional services (SearXNG, Crawl4AI) will not be available."
+        print_warning "Docker not found. Optional services (SearXNG, Scrapling) will not be available."
         HAS_DOCKER=false
     fi
     
@@ -172,14 +172,14 @@ setup_docker_services() {
         print_warning "Skipping Docker services setup (Docker not installed)"
         START_SERVICES=false
         SETUP_SEARXNG=false
-        SETUP_CRAWL4AI=false
+        SETUP_SCRAPLING=false
         SEARXNG_URL=""
-        CRAWL4AI_URL=""
+        SCRAPLING_URL=""
         return
     fi
     
     echo -e "${YELLOW}Docker Services Setup${NC}"
-    echo "BlackDogBot can use SearXNG (web search) and Crawl4AI (web scraping) as Docker containers."
+    echo "BlackDogBot can use SearXNG (web search) and Scrapling (web scraping) as Docker containers."
     echo ""
     
     if prompt_yesno "Set up SearXNG for web search?" "y"; then
@@ -191,18 +191,18 @@ setup_docker_services() {
         prompt_input "SearXNG URL (if you have your own instance)" "" SEARXNG_URL
     fi
     
-    if prompt_yesno "Set up Crawl4AI for web scraping?" "y"; then
-        SETUP_CRAWL4AI=true
-        CRAWL4AI_URL="http://127.0.0.1:$CRAWL4AI_PORT/mcp/sse"
-        print_info "Crawl4AI MCP will be available at $CRAWL4AI_URL"
+    if prompt_yesno "Set up Scrapling (JS and stealth browser) for web scraping?" "y"; then
+        SETUP_SCRAPLING=true
+        SCRAPLING_URL="http://127.0.0.1:$SCRAPLING_PORT/mcp"
+        print_info "Scrapling MCP will be available at $SCRAPLING_URL"
     else
-        SETUP_CRAWL4AI=false
-        prompt_input "Crawl4AI MCP SSE endpoint URL (e.g. https://host/mcp/sse)" "" CRAWL4AI_URL
-        prompt_input "Crawl4AI API token (if required)" "" CRAWL4AI_API_TOKEN
+        SETUP_SCRAPLING=false
+        prompt_input "Scrapling MCP HTTP endpoint URL (e.g. https://host/mcp)" "" SCRAPLING_URL
+        prompt_input "Scrapling API token (if required)" "" SCRAPLING_MCP_AUTH_TOKEN
     fi
     
     START_SERVICES=false
-    if [ "$SETUP_SEARXNG" = true ] || [ "$SETUP_CRAWL4AI" = true ]; then
+    if [ "$SETUP_SEARXNG" = true ] || [ "$SETUP_SCRAPLING" = true ]; then
         if prompt_yesno "Start services now?" "y"; then
             START_SERVICES=true
         fi
@@ -212,7 +212,7 @@ setup_docker_services() {
 }
 
 create_docker_compose() {
-    if [ "$SETUP_SEARXNG" = false ] && [ "$SETUP_CRAWL4AI" = false ]; then
+    if [ "$SETUP_SEARXNG" = false ] && [ "$SETUP_SCRAPLING" = false ]; then
         return
     fi
     
@@ -296,7 +296,7 @@ SEARXNG_EOF
     image: searxng/searxng:latest
     container_name: blackdogbot-searxng
     ports:
-      - "${SEARXNG_PORT}:8080"
+      - "127.0.0.1:${SEARXNG_PORT}:8080"
     environment:
       - SEARXNG_BASE_URL=http://localhost:${SEARXNG_PORT}/
     volumes:
@@ -311,43 +311,37 @@ SEARXNG_EOF
 EOF
     fi
 
-    if [ "$SETUP_CRAWL4AI" = true ]; then
-        # Crawl4AI 0.9+ requires an API token for access from outside the
-        # container. Keep it in a private Compose .env file, never in YAML.
-        CRAWL4AI_ENV_FILE="$CONFIG_DIR/.env"
-        CRAWL4AI_API_TOKEN="$(grep '^CRAWL4AI_API_TOKEN=' "$CRAWL4AI_ENV_FILE" 2>/dev/null | tail -n 1 | cut -d= -f2- || true)"
-        if [ -z "$CRAWL4AI_API_TOKEN" ]; then
-            CRAWL4AI_API_TOKEN="$(openssl rand -hex 32)"
-            CRAWL4AI_ENV_TMP="$CRAWL4AI_ENV_FILE.tmp"
-            if [ -f "$CRAWL4AI_ENV_FILE" ]; then
-                grep -v '^CRAWL4AI_API_TOKEN=' "$CRAWL4AI_ENV_FILE" > "$CRAWL4AI_ENV_TMP" || true
-            else
-                : > "$CRAWL4AI_ENV_TMP"
-            fi
-            printf 'CRAWL4AI_API_TOKEN=%s\n' "$CRAWL4AI_API_TOKEN" >> "$CRAWL4AI_ENV_TMP"
-            chmod 600 "$CRAWL4AI_ENV_TMP"
-            mv "$CRAWL4AI_ENV_TMP" "$CRAWL4AI_ENV_FILE"
+    if [ "$SETUP_SCRAPLING" = true ]; then
+        SCRAPLING_ENV_FILE="$CONFIG_DIR/scrapling.env"
+        SCRAPLING_MCP_AUTH_TOKEN="$(grep '^SCRAPLING_MCP_AUTH_TOKEN=' "$SCRAPLING_ENV_FILE" 2>/dev/null | tail -n 1 | cut -d= -f2- || true)"
+        if [ -z "$SCRAPLING_MCP_AUTH_TOKEN" ]; then
+            SCRAPLING_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"
+            (umask 077; printf 'SCRAPLING_MCP_AUTH_TOKEN=%s\n' "$SCRAPLING_MCP_AUTH_TOKEN" > "$SCRAPLING_ENV_FILE")
         fi
-        chmod 600 "$CRAWL4AI_ENV_FILE"
-
+        chmod 600 "$SCRAPLING_ENV_FILE"
         cat >> "$COMPOSE_FILE" << EOF
-  crawl4ai:
-    image: unclecode/crawl4ai:0.9.4
-    container_name: blackdogbot-crawl4ai
+  scrapling:
+    image: pyd4vinci/scrapling@sha256:1d876879813759959bc4ba6fbb1ce8247ebbc2b67eee77b140baf7c80af6ae6b
+    container_name: blackdogbot-scrapling
     ports:
-      - "127.0.0.1:${CRAWL4AI_PORT}:11235"
-    environment:
-      CRAWL4AI_API_TOKEN: \${CRAWL4AI_API_TOKEN:?Set in $CRAWL4AI_ENV_FILE}
-    shm_size: 3g
+      - "127.0.0.1:$SCRAPLING_PORT:8000"
+    env_file:
+      - ./scrapling.env
+    command: ["mcp", "--http", "--host", "0.0.0.0", "--port", "8000"]
+    shm_size: 1g
+    mem_limit: 4g
+    pids_limit: 300
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
+      test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8000),3); s.close()"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 40s
+
 EOF
     fi
-    
+
     print_success "Created $COMPOSE_FILE"
     
     if [ "$SETUP_SEARXNG" = true ]; then
@@ -370,9 +364,9 @@ start_docker_services() {
         docker compose pull searxng 2>/dev/null || docker-compose pull searxng 2>/dev/null || true
     fi
     
-    if [ "$SETUP_CRAWL4AI" = true ]; then
-        print_info "Pulling Crawl4AI image..."
-        docker compose pull crawl4ai 2>/dev/null || docker-compose pull crawl4ai 2>/dev/null || true
+    if [ "$SETUP_SCRAPLING" = true ]; then
+        print_info "Pulling Scrapling image..."
+        docker compose pull scrapling 2>/dev/null || docker-compose pull scrapling 2>/dev/null || true
     fi
     
     print_info "Starting services..."
@@ -395,11 +389,11 @@ start_docker_services() {
         fi
     fi
     
-    if [ "$SETUP_CRAWL4AI" = true ]; then
-        if curl -s "http://localhost:$CRAWL4AI_PORT/health" > /dev/null 2>&1; then
-            print_success "Crawl4AI is responding"
+    if [ "$SETUP_SCRAPLING" = true ]; then
+        if [ "$(docker inspect blackdogbot-scrapling --format '{{.State.Health.Status}}' 2>/dev/null)" = "healthy" ]; then
+            print_success "Scrapling is responding"
         else
-            print_warning "Crawl4AI not responding yet (may need more time to start)"
+            print_warning "Scrapling not responding yet (may need more time to start)"
         fi
     fi
 }
@@ -767,8 +761,8 @@ fs.chmodSync(file, 0o600);
 NODE
     fi
 
-    if [ -n "$CRAWL4AI_URL" ]; then
-        CONFIG_DIR="$CONFIG_DIR" CRAWL4AI_URL="$CRAWL4AI_URL" CRAWL4AI_API_TOKEN="${CRAWL4AI_API_TOKEN:-}" node <<'NODE'
+    if [ -n "$SCRAPLING_URL" ]; then
+        CONFIG_DIR="$CONFIG_DIR" SCRAPLING_URL="$SCRAPLING_URL" SCRAPLING_MCP_AUTH_TOKEN="${SCRAPLING_MCP_AUTH_TOKEN:-}" node <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 const file = path.join(process.env.CONFIG_DIR, "mcp-servers.json");
@@ -777,21 +771,21 @@ if (fs.existsSync(file)) config = JSON.parse(fs.readFileSync(file, "utf8"));
 if (!config.mcpServers || typeof config.mcpServers !== "object" || Array.isArray(config.mcpServers)) {
   throw new Error("Invalid mcp-servers.json: expected an mcpServers object");
 }
-const previous = config.mcpServers.crawl4ai || {};
+const previous = config.mcpServers.scrapling || {};
 const headers = { ...(previous.headers || {}) };
-if (process.env.CRAWL4AI_API_TOKEN) headers.Authorization = `Bearer ${process.env.CRAWL4AI_API_TOKEN}`;
-else delete headers.Authorization;
+if (process.env.SCRAPLING_MCP_AUTH_TOKEN) headers.Authorization = "Bearer " + process.env.SCRAPLING_MCP_AUTH_TOKEN;
 const server = {
   ...previous,
-  url: process.env.CRAWL4AI_URL,
-  transport: "sse",
+  url: process.env.SCRAPLING_URL,
+  transport: "http",
   strictOutputSchema: false,
+  allowedTools: ["browser_open", "browser_fetch_once", "browser_fetch", "browser_extract",
+                 "browser_actions", "browser_screenshot", "close_session", "list_sessions",
+                 "browser_network_requests", "browser_network_request"],
 };
-delete server.allowedTools; // expose all discovered tools unless the operator configures an allowlist later
 if (Object.keys(headers).length) server.headers = headers;
-else delete server.headers;
-config.mcpServers.crawl4ai = server;
-fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+config.mcpServers.scrapling = server;
+fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
 fs.chmodSync(file, 0o600);
 NODE
     fi

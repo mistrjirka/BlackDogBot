@@ -9,6 +9,8 @@ disableModelInvocation: false
 
 Use this skill when asked to install, connect, configure, update, troubleshoot, or remove an MCP server. For **updating BlackDogBot itself**, follow [references/self-update.md](references/self-update.md) **only when the user explicitly requests an application update**, not merely an MCP installation. Use `get_skill_file` with skillName `mcp-management` for the reference pages below.
 
+For updating or repairing existing Docker containers rather than installing MCP registry entries, load the separate `container-maintenance` skill and its guarded update guide.
+
 Use the existing `run_cmd`, `read_file`, `write_file`, and terminal process tools. **Do not create extra MCP-management tools or edit bot source code as a routine installation step.** MCP configuration changes should not require restarting BlackDogBot: its registry is reloaded on the next chat-turn initialization.
 
 ## Choose the right server
