@@ -34,13 +34,13 @@ Turn raw news sources into a short, readable digest. You are an intelligent agen
 
 ## Inputs (from the task instructions)
 
-- **Sources**: one or more RSS feed URLs, and/or a search topic for `searxng`. If the task names no sources and none can be derived, stop and say what is missing — do not guess feeds.
+- **Sources**: one or more RSS feed URLs, and/or a search topic for an available search MCP tool. If the task names no sources and none can be derived, stop and say what is missing — do not guess feeds.
 - **Time window**: "since last run" (default), "last 24h", or explicit.
 - **Audience/length**: default is a compact digest (5–10 items).
 
 ## Workflow
 
-1. **Fetch** each RSS source with `fetch_rss` (unseen mode is the default — already-delivered items are filtered by the tool's seen-state). For search topics, use `searxng` with a freshness filter matching the time window.
+1. **Fetch** each RSS source with `fetch_rss` (unseen mode is the default — already-delivered items are filtered by the tool's seen-state). For search topics, use `mcp.searxng.searxng_web_search` with an appropriate `time_range` when available; ensure the scheduled task can use this tool.
 2. **Merge and deduplicate** across sources: the same story from multiple feeds is ONE item — keep the best title/summary, note the primary source.
 3. **Filter and rank** with `think`: keep items that are newsworthy for this audience (significance, novelty, relevance to the task's topic). Drop routine filler, press releases without substance, and duplicates of items already in `news_items`.
 4. **Persist** the kept items to the `news_items` table with `write_table_news_items` (create the table first with `create_table` if it does not exist — schema below). Persist BEFORE sending so a crashed run cannot double-send.

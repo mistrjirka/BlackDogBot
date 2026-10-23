@@ -31,6 +31,7 @@ import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/pe
 import { redactSensitiveData } from "../utils/log-redaction.js";
 import { attachDelegateAgentTool } from "./delegate-agent.js";
 import { VariableStore } from "../utils/variable-store.js";
+import { resolveLegacyCronToolName } from "../utils/cron-tool-validation.js";
 
 
 
@@ -350,7 +351,9 @@ export class CronAgent extends BaseAgentBase {
     const resolvedTools: ToolSet = {};
     const effectiveToolNames: string[] = toolNames;
     for (const toolName of effectiveToolNames) {
-      const tool: Tool | undefined = availableTools[toolName];
+      // Deprecated scheduled tasks remain functional, but the actual tool is
+      // discovered over MCP rather than backed by a hardcoded HTTP client.
+      const tool: Tool | undefined = availableTools[resolveLegacyCronToolName(toolName)];
 
       if (!tool) {
         this._logger.warn(`Unknown tool name "${toolName}" — skipping.`);

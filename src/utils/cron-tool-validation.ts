@@ -14,6 +14,11 @@ export function isDynamicTableToolName(toolName: string): boolean {
   return false;
 }
 
+/** Keep old scheduled tasks working without restoring the built-in HTTP client. */
+export function resolveLegacyCronToolName(toolName: string): string {
+  return toolName === "searxng" ? "mcp.searxng.searxng_web_search" : toolName;
+}
+
 export function filterInvalidTools(tools: string[]): string[] {
   const validToolSet: ReadonlySet<string> = new Set(CRON_VALID_TOOL_NAMES);
   return tools.filter((t) => !validToolSet.has(t) && !isDynamicTableToolName(t));

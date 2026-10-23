@@ -52,7 +52,7 @@ If web search/scrape tools fail:
 2. Verify SearXNG: `curl "http://localhost:18731/search?q=test&format=json"`.
 3. Verify Crawl4AI health: `curl "http://localhost:18732/health"` (health is unauthenticated).
 4. Verify MCP discovery with the configured token: `source ~/.blackdogbot/.env && curl -H "Authorization: Bearer $CRAWL4AI_API_TOKEN" http://localhost:18732/mcp/schema`.
-5. Check `~/.blackdogbot/mcp-servers.json` has server id `crawl4ai`, URL ending in `/mcp/sse`, `transport: "sse"`, and `strictOutputSchema: false`. The Crawl4AI MCP tools have no output schemas, so the strict default would hide them.
+5. Check `~/.blackdogbot/mcp-servers.json` has `searxng` configured as a stdio MCP server pointing at the local search URL, and `crawl4ai`, URL ending in `/mcp/sse`, `transport: "sse"`, and `strictOutputSchema: false`. The Crawl4AI MCP tools have no output schemas, so the strict default would hide them.
 
 ## Cron Notifications Missing
 

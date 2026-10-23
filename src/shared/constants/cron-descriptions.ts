@@ -112,9 +112,13 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "Args: url (string, required); maxItems (number, default 20); mode ('latest' | 'unseen', default 'latest').",
 
   searxng:
-    "Search the web using SearXNG. Returns search results formatted as markdown for easy reading. " +
-    "Use short specific queries (typically 2-5 words); do not paste full headlines or source domain names. " +
-    "Args: query (string, required); categories (string[], optional); maxResults (number, default 10); safesearch (0|1|2, optional); language (string, optional).",
+    "Legacy scheduled tool name, dynamically mapped to mcp.searxng.searxng_web_search. " +
+    "Search via SearXNG MCP with query and supported filters; see the discovered MCP tool schema.",
+  "mcp.searxng.searxng_web_search":
+    "Search the web using the connected SearXNG MCP server. Supports query, pagination, time range, categories and result count.",
+  "mcp.searxng.searxng_search_suggestions": "Get query suggestions from SearXNG MCP.",
+  "mcp.searxng.searxng_instance_info": "Inspect available SearXNG search engines and categories.",
+  "mcp.searxng.web_url_read": "Read a selected URL as bounded text or Markdown via SearXNG MCP.",
 
   "mcp.crawl4ai.md":
     "Fetch a web page and return its content as markdown using Crawl4AI. " +

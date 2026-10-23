@@ -34,7 +34,6 @@ export { createWriteFileTool } from "./write-file.tool.js";
 export { appendFileTool } from "./append-file.tool.js";
 export { editFileTool } from "./edit-file.tool.js";
 export { fetchRssTool } from "./fetch-rss.tool.js";
-export { searxngTool } from "./searxng.tool.js";
 export { searchTimedTool } from "./search-timed.tool.js";
 export { listTablesTool } from "./list-tables.tool.js";
 export { getTableSchemaTool } from "./get-table-schema.tool.js";

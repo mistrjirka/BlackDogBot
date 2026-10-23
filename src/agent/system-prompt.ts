@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PromptService } from "../services/prompt.service.js";
-import { ConfigService } from "../services/config.service.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { McpService } from "../services/mcp.service.js";
 import { McpRegistryService } from "../services/mcp-registry.service.js";
@@ -21,37 +20,24 @@ import {
 
 export async function buildMainAgentPromptAsync(): Promise<string> {
   const promptService: PromptService = PromptService.getInstance();
-  const configService: ConfigService = ConfigService.getInstance();
-  const config = configService.getConfig();
 
   const basePrompt: string = await promptService.getPromptAsync(PROMPT_MAIN_AGENT);
 
   // Build dynamic context about capabilities
   const contextParts: string[] = [];
 
-  // Web search and page-fetching capabilities. SearXNG comes from app config;
-  // MCP tools are discovered at runtime, so describe only what is actually
-  // connected instead of hardcoding server-specific rules here.
-  const searxngUrl: string | undefined = config.services?.searxngUrl;
+  // Web capabilities come from the MCP registry, not provider-specific HTTP clients.
   const mcpService: McpService = McpService.getInstance();
   const mcpToolNames: string[] = Object.keys(mcpService.getTools());
   const configuredMcpServers: IMcpServerEntry[] = McpRegistryService.getInstance()
     .getAllServers()
     .filter((entry: IMcpServerEntry): boolean => entry.enabled);
   const mcpServerResults = mcpService.getServerResults();
-  if (searxngUrl) {
-    contextParts.push(
-      `Web search: use the searxng tool. For page fetching, use any available web or browser tool and follow its advertised description and schema. ` +
-      `If no dedicated fetch tool is usable, run_cmd with curl or wget is an acceptable fallback. ` +
-      `Use load_skill to load advisory instructions for eligible skills. ` +
-      `SearXNG is configured at ${searxngUrl}.`,
-    );
-  } else {
-    contextParts.push(
-      `Web search: SearXNG is not configured. If the user needs web research, use whatever other tools are available ` +
-      `(including run_cmd with curl or wget where appropriate), and mention the missing SearXNG configuration if it matters.`,
-    );
-  }
+  contextParts.push(
+    "Web research: use a connected MCP search tool to discover sources, an extraction tool to read them, " +
+    "and a browser MCP tool for interactive or JavaScript-heavy pages. Use their discovered schemas. " +
+    "If no suitable tool is connected, curl or wget through run_cmd is an acceptable fallback; report missing evidence honestly.",
+  );
 
   if (configuredMcpServers.length === 0) {
     contextParts.push("MCP: no MCP servers are configured.");

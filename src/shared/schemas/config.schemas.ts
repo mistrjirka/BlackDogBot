@@ -256,10 +256,12 @@ const loggingConfigSchema = z.object({
 });
 
 const servicesConfigSchema = z.object({
+  // Read legacy config files without exposing a hardcoded search backend.
+  // New installs configure SearXNG exclusively in mcp-servers.json.
   searxngUrl: z.string()
     .url()
-    .default("http://localhost:18731")
-    .describe("SearXNG instance URL"),
+    .optional()
+    .describe("Deprecated compatibility field; no longer used for web search. Configure a search MCP server instead."),
 });
 
 const brainInterfaceConfigSchema = z.object({

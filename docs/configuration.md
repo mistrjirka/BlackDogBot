@@ -153,12 +153,21 @@ logging:
 
 ## Optional Services
 
-SearXNG is configured in `config.yaml`:
+SearXNG and Crawl4AI are configured as MCP servers in `~/.blackdogbot/mcp-servers.json`, not as built-in HTTP tools. SearXNG uses a local stdio MCP adapter with `SEARXNG_URL` pointing to the existing container:
 
-```yaml
-services:
-  searxngUrl: http://localhost:18731
+```json
+{
+  "searxng": {
+    "command": "npx",
+    "args": ["-y", "mcp-searxng@2.7.0"],
+    "env": { "SEARXNG_URL": "http://127.0.0.1:18731" },
+    "strictOutputSchema": false,
+    "allowedTools": ["searxng_web_search", "searxng_search_suggestions", "searxng_instance_info", "web_url_read"]
+  }
+}
 ```
+
+This is one entry inside `mcpServers`, not the entire configuration. A legacy `services.searxngUrl` field, if present, no longer controls web search. Existing cron tasks named `searxng` are resolved dynamically to the MCP search tool.
 
 Crawl4AI is configured as a remote MCP server in `~/.blackdogbot/mcp-servers.json`, not as a `services.crawl4aiUrl` entry. The standard local entry uses `url: "http://127.0.0.1:18732/mcp/sse"`, `transport: "sse"`, `strictOutputSchema: false`, and an `Authorization: Bearer <token>` header. Keep both the token environment file and `mcp-servers.json` private (`chmod 600`). If `allowedTools` is omitted, all tools discovered from the MCP server are exposed subject to channel permissions.
 

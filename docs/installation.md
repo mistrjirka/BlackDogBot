@@ -75,11 +75,10 @@ skills:
 logging:
   level: info
 
-services:
-  searxngUrl: http://localhost:18731
+# Web search servers are registered in ~/.blackdogbot/mcp-servers.json.
 ```
 
-Crawl4AI is registered separately as an MCP server in `~/.blackdogbot/mcp-servers.json`; the install script creates this entry when you enable Crawl4AI.
+SearXNG and Crawl4AI are registered as MCP servers in `~/.blackdogbot/mcp-servers.json`; the installer creates entries for enabled services. The SearXNG MCP adapter uses pinned `mcp-searxng@2.7.0` over stdio, pointing at the local SearXNG container.
 
 ### 3. Set Up Docker Services (Optional)
 
@@ -100,7 +99,7 @@ services:
     restart: unless-stopped
 
   crawl4ai:
-    image: unclecode/crawl4ai:latest
+    image: unclecode/crawl4ai:0.9.4
     container_name: blackdogbot-crawl4ai
     ports:
       - "127.0.0.1:18732:11235"

@@ -279,7 +279,11 @@ export const CRON_VALID_TOOL_NAMES = [
   "edit_file",
   "list_timed",
   "fetch_rss",
-  "searxng",
+  "searxng", // Legacy task name; dynamically resolved to MCP, never the built-in client.
+  "mcp.searxng.searxng_web_search",
+  "mcp.searxng.searxng_search_suggestions",
+  "mcp.searxng.searxng_instance_info",
+  "mcp.searxng.web_url_read",
   "search_timed",
   "mcp.crawl4ai.md",
   "mcp.crawl4ai.crawl",
@@ -689,30 +693,6 @@ export const modifyPromptToolInputSchema = z.object({
 });
 
 export const listPromptsToolInputSchema = z.object({});
-
-export const searxngToolInputSchema = z.object({
-  query: z.string()
-    .min(1)
-    .describe("The search query. Keep it short and specific (typically 2-5 words); avoid full headlines and source domain names."),
-  categories: z.string()
-    .array()
-    .optional()
-    .describe("Search categories to use (e.g., ['general', 'news', 'images']). Defaults to general."),
-  maxResults: z.number()
-    .int()
-    .positive()
-    .default(10)
-    .describe("Maximum number of results to return"),
-  safesearch: z.number()
-    .int()
-    .min(0)
-    .max(2)
-    .optional()
-    .describe("Safe search level: 0 (off), 1 (moderate), 2 (strict). Default: 0"),
-  language: z.string()
-    .optional()
-    .describe("Language code for results (e.g., 'en', 'all'). Default: 'all'"),
-});
 
 export const searchTimedToolInputSchema = z.object({
   query: z.string()

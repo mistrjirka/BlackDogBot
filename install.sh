@@ -332,7 +332,7 @@ EOF
 
         cat >> "$COMPOSE_FILE" << EOF
   crawl4ai:
-    image: unclecode/crawl4ai:latest
+    image: unclecode/crawl4ai:0.9.4
     container_name: blackdogbot-crawl4ai
     ports:
       - "127.0.0.1:${CRAWL4AI_PORT}:11235"
@@ -741,12 +741,30 @@ logging:
   level: ${LOG_LEVEL}
 EOF
 
-    # SearXNG is a normal HTTP service config. Crawl4AI is registered as an
-    # MCP server so its tools are discovered from the upstream server.
+    # Search and scraping are separate MCP servers. Do not embed HTTP clients
+    # in the agent or include provider-specific search URLs in its config.
     if [ -n "$SEARXNG_URL" ]; then
-        echo "" >> "$CONFIG_FILE"
-        echo "services:" >> "$CONFIG_FILE"
-        echo "  searxngUrl: ${SEARXNG_URL}" >> "$CONFIG_FILE"
+        CONFIG_DIR="$CONFIG_DIR" SEARXNG_URL="$SEARXNG_URL" node <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const file = path.join(process.env.CONFIG_DIR, "mcp-servers.json");
+let config = { mcpServers: {} };
+if (fs.existsSync(file)) config = JSON.parse(fs.readFileSync(file, "utf8"));
+if (!config.mcpServers || typeof config.mcpServers !== "object" || Array.isArray(config.mcpServers)) {
+  throw new Error("Invalid mcp-servers.json: expected an mcpServers object");
+}
+if (!config.mcpServers.searxng) {
+  config.mcpServers.searxng = {
+    command: "npx",
+    args: ["-y", "mcp-searxng@2.7.0"],
+    env: { SEARXNG_URL: process.env.SEARXNG_URL },
+    strictOutputSchema: false,
+    allowedTools: ["searxng_web_search", "searxng_search_suggestions", "searxng_instance_info", "web_url_read"],
+  };
+}
+fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+fs.chmodSync(file, 0o600);
+NODE
     fi
 
     if [ -n "$CRAWL4AI_URL" ]; then

@@ -136,7 +136,8 @@ export interface ILoggingConfig {
 }
 
 export interface IServicesConfig {
-  searxngUrl: string;
+  /** Deprecated: retained only for parsing historical configs. */
+  searxngUrl?: string;
 }
 
 export interface IBrainInterfaceConfig {

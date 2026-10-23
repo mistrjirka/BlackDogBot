@@ -30,6 +30,10 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
  * remote state. Other MCP servers remain blocked by default.
  */
 const MCP_READ_ONLY_SAFE_TOOLS: ReadonlySet<string> = new Set([
+  "mcp.searxng.searxng_web_search",
+  "mcp.searxng.searxng_search_suggestions",
+  "mcp.searxng.searxng_instance_info",
+  "mcp.searxng.web_url_read",
   "mcp.crawl4ai.md",
   "mcp.crawl4ai.html",
   "mcp.crawl4ai.screenshot",
@@ -77,7 +81,6 @@ const CORE_TOOL_NAMES: string[] = [
   "edit_once",
   "edit_interval",
   "edit_instructions",
-  "searxng",
   "list_tables",
   "create_table",
   "drop_table",
