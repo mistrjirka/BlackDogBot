@@ -109,8 +109,12 @@ check_dependencies() {
     
     if ! command -v pnpm &> /dev/null; then
         print_warning "pnpm not found. Installing..."
-        npm install -g pnpm
-        print_success "pnpm installed"
+        # npm global prefixes are often root-owned. Keep bootstrap entirely
+        # within the requesting user\'s home directory.
+        npm install --global --prefix "$HOME/.local" pnpm
+        export PATH="$HOME/.local/bin:$PATH"
+        command -v pnpm >/dev/null || { print_error "User-local pnpm installation failed"; exit 1; }
+        print_success "pnpm installed in $HOME/.local/bin"
     else
         print_success "pnpm $(pnpm -v)"
     fi

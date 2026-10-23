@@ -50,6 +50,14 @@ class InstallerSafetyTests(unittest.TestCase):
         self.assertNotIn("sudo systemctl",script)
         self.assertNotIn("/etc/systemd/system",script)
 
+    def test_local_pnpm_install_does_not_need_root(self):
+        installer=SOURCE.read_text()
+        self.assertIn('npm install --global --prefix "$HOME/.local" pnpm',installer)
+        self.assertNotIn('npm install -g pnpm',installer)
+        self.assertIn('export PATH="$HOME/.local/bin:$PATH"',installer)
+        service=(SOURCE.parent/"scripts/install-user-service.sh").read_text()
+        self.assertIn("Environment=PATH=$HOME/.local/bin:",service)
+
     def test_bootstrap_uses_tty_for_interactive_input(self):
         bootstrap=(SOURCE.parent/"scripts/bootstrap.sh").read_text()
         self.assertIn("</dev/tty",bootstrap)

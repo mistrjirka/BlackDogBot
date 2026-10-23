@@ -283,6 +283,8 @@ def bootstrap(state: Path, unit: str, rev: str, chat: str | None) -> bool:
 
 
 def main() -> int:
+    # Support npm-installed pnpm in the user directory without requiring root.
+    os.environ["PATH"] = str(Path.home() / ".local/bin") + os.pathsep + os.environ.get("PATH", "")
     parser = argparse.ArgumentParser(description="BlackDogBot: out-of-process tested release preparation and rollback")
     parser.add_argument("action", choices=["prepare", "bootstrap", "activate"])
     parser.add_argument("--repo", type=Path, default=Path.home() / "programy/better-claw")

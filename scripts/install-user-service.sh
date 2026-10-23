@@ -32,7 +32,7 @@ After=network-online.target
 Type=simple
 WorkingDirectory=$ROOT_DIR
 Environment=HOME=$HOME
-Environment=PATH=$NODE_DIR:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=$HOME/.local/bin:$NODE_DIR:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
 ExecStart=$ROOT_DIR/scripts/launch.sh
 Restart=on-failure
 RestartSec=5s
