@@ -1,6 +1,7 @@
 import { CRON_TOOL_DESCRIPTIONS } from "../shared/constants/cron-descriptions.js";
 import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "./per-table-tools.js";
 import { LoggerService } from "../services/logger.service.js";
+import { McpService } from "../services/mcp.service.js";
 
 export async function buildCronToolContextBlockAsync(tools: string[]): Promise<string> {
   const logger: LoggerService = LoggerService.getInstance();
@@ -32,7 +33,14 @@ export async function buildCronToolContextBlockAsync(tools: string[]): Promise<s
     }
   }
 
+  const discoveredMcpTools = McpService.getInstance().getTools();
   const toolContextLines: string[] = tools.map((toolName: string) => {
+    const discoveredDescription = toolName.startsWith("mcp.")
+      ? discoveredMcpTools[toolName]?.description
+      : undefined;
+    if (typeof discoveredDescription === "string" && discoveredDescription.trim()) {
+      return `  - ${toolName}: ${discoveredDescription}`;
+    }
     const staticDescription: string | undefined = CRON_TOOL_DESCRIPTIONS[toolName];
     if (staticDescription) {
       return `  - ${toolName}: ${staticDescription}`;

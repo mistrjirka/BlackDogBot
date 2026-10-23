@@ -52,9 +52,9 @@ prompt_input() {
     read -r input
     
     if [ -z "$input" ] && [ -n "$default" ]; then
-        eval "$var_name=\"$default\""
+        printf -v "$var_name" "%s" "$default"
     else
-        eval "$var_name=\"$input\""
+        printf -v "$var_name" "%s" "$input"
     fi
 }
 
@@ -66,7 +66,7 @@ prompt_required() {
         echo -ne "${BLUE}?${NC} ${prompt}: "
         read -r input
         if [ -n "$input" ]; then
-            eval "$var_name=\"$input\""
+            printf -v "$var_name" "%s" "$input"
             break
         fi
         print_error "This field is required"
@@ -143,7 +143,7 @@ install_dependencies() {
     SCRIPT_DIR=$(get_script_dir)
     cd "$SCRIPT_DIR"
     
-    pnpm install
+    pnpm install --frozen-lockfile
     print_success "Dependencies installed"
     
     # Verify native addons were built correctly
@@ -880,8 +880,21 @@ print_summary() {
     fi
 }
 
+preflight_fresh_install() {
+    # This interactive wizard is NOT an updater. Re-running it used to
+    # overwrite config.yaml, Docker Compose and secret files on the host.
+    if [[ -e "$CONFIG_FILE" || -e "$COMPOSE_FILE" ]]; then
+        print_error "Existing BlackDogBot configuration detected. Refusing destructive reinstall."
+        print_info "Use the guarded self-update procedure in docs/guarded-self-update.md instead."
+        print_info "For MCP/Docker changes use the mcp-management or container-maintenance skill."
+        return 1
+    fi
+    umask 077
+}
+
 main() {
     print_header
+    preflight_fresh_install
     check_dependencies
     install_dependencies
     setup_docker_services

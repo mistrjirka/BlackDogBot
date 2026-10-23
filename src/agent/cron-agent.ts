@@ -31,7 +31,7 @@ import { buildPerTableToolsAsync, buildUpdateTableToolsAsync } from "../utils/pe
 import { redactSensitiveData } from "../utils/log-redaction.js";
 import { attachDelegateAgentTool } from "./delegate-agent.js";
 import { VariableStore } from "../utils/variable-store.js";
-import { resolveLegacyCronToolName } from "../utils/cron-tool-validation.js";
+import { resolveLegacyCronToolName, getMissingCronTools } from "../utils/cron-tool-validation.js";
 
 
 
@@ -348,6 +348,11 @@ export class CronAgent extends BaseAgentBase {
       availableTools[name] = toolDef as Tool;
     }
 
+    const missingTools = getMissingCronTools(toolNames, availableTools);
+    if (missingTools.length > 0) {
+      throw new Error(`Scheduled task cannot run: required tools unavailable: ${missingTools.join(", ")}. Check MCP status and task tool configuration.`);
+    }
+
     const resolvedTools: ToolSet = {};
     const effectiveToolNames: string[] = toolNames;
     for (const toolName of effectiveToolNames) {
@@ -355,12 +360,9 @@ export class CronAgent extends BaseAgentBase {
       // discovered over MCP rather than backed by a hardcoded HTTP client.
       const tool: Tool | undefined = availableTools[resolveLegacyCronToolName(toolName)];
 
-      if (!tool) {
-        this._logger.warn(`Unknown tool name "${toolName}" — skipping.`);
-        continue;
-      }
-
-      resolvedTools[toolName] = tool;
+      // Every requested tool was verified above. Preserve the legacy name
+      // only as an invocation alias when executing older persisted schedules.
+      resolvedTools[toolName] = tool!;
     }
 
     // inspect_variable is infrastructure for reading captured stubs; expose it

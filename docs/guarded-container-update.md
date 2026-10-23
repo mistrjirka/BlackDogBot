@@ -37,6 +37,11 @@ Compare the returned digest with the one in Compose. If identical, no update is 
 
 ## Guarded update from a skill or terminal
 
+The updater defaults to the browser/MCP probe in the **guarded active release**
+(`~/.blackdogbot/deploy/current/scripts/verify-scrapling.mjs`), rather than
+mutable source files. If the guarded launcher has not been installed, use
+`--probe` with an explicitly tested source checkout.
+
 An explicitly requested upgrade uses `scripts/guarded-container-update.py`, installed independently at `~/.local/lib/blackdogbot/guarded-container-update.py`. For example, with a **verified** new image digest:
 
 ```bash
@@ -67,7 +72,7 @@ To intentionally revert a previously **healthy** new release, invoke the same up
 ```bash
 docker inspect betterclaw-scrapling --format '{{.State.Health.Status}} {{.Image}}'
 docker compose -f ~/.blackdogbot/docker-compose.yaml config --services
-node ~/programy/better-claw/scripts/verify-scrapling.mjs 18733
+node ~/.blackdogbot/deploy/current/scripts/verify-scrapling.mjs 18733
 ```
 
 The probe tests genuine MCP tool discovery, JavaScript execution, a persistent browser session, and native screenshot output. Docker reporting `healthy` alone is insufficient.

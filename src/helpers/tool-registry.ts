@@ -24,22 +24,16 @@ const READ_ONLY_BLOCKED_TOOLS: Set<string> = new Set([
 ]);
 
 /**
- * MCP tools safe for read_only channels. Crawl4AI's page-fetch, conversion,
- * screenshot, PDF, and library-query tools are remote reads. Its execute_js
- * tool is deliberately excluded because arbitrary page scripts can mutate
- * remote state. Other MCP servers remain blocked by default.
+ * Narrow read-only MCP allowlist. One-shot Scrapling fetching is a remote
+ * read; persistent sessions and arbitrary browser actions are full permission.
+ * Reevaluate whenever the configured MCP scraper changes.
  */
 const MCP_READ_ONLY_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "mcp.searxng.searxng_web_search",
   "mcp.searxng.searxng_search_suggestions",
   "mcp.searxng.searxng_instance_info",
   "mcp.searxng.web_url_read",
-  "mcp.crawl4ai.md",
-  "mcp.crawl4ai.html",
-  "mcp.crawl4ai.screenshot",
-  "mcp.crawl4ai.pdf",
-  "mcp.crawl4ai.crawl",
-  "mcp.crawl4ai.ask",
+  "mcp.scrapling.browser_fetch_once",
 ]);
 
 export const TIMED_VALID_TOOL_NAMES = [

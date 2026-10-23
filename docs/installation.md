@@ -17,11 +17,16 @@ Run the interactive install script:
 
 > **Tip:** For easiest updates, clone the repository instead of downloading a ZIP:
 > ```bash
-> git clone https://github.com/your-repo/blackdogbot.git
+> git clone https://github.com/mistrjirka/BlackDogBot.git
 > cd blackdogbot
 > ./install.sh
 > ```
-> Then later you can update with `git pull`.
+> The installer is for a **new installation only**. It now refuses to overwrite an existing
+> `~/.blackdogbot/config.yaml` or `docker-compose.yaml`. For updates, follow
+> [guarded-self-update.md](guarded-self-update.md); `git pull` by itself neither
+> tests nor deploys a verified release.
+
+The installer protects secrets with a restrictive file-creation mask and uses safe input handling without shell evaluation. It aborts before changing files if an existing installation is detected.
 
 The script will:
 1. Check and install dependencies (Node.js, pnpm)
@@ -37,7 +42,7 @@ The script will:
 ### 1. Install Dependencies
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 ```
 
 ### 2. Create Configuration
@@ -225,3 +230,16 @@ tail -f ~/.blackdogbot/logs/blackdogbot.log
 
 For full config options, see [Configuration Guide](./configuration.md).
 For troubleshooting, see [Troubleshooting Guide](./troubleshooting.md).
+
+## Systemd deployment limitation
+
+The interactive install wizard's optional **systemd system service** uses `sudo`
+and installs `/etc/systemd/system/blackdogbot.service`. The guarded updater
+in `docs/guarded-self-update.md` is designed for a **user** service managed
+by `systemctl --user` with an isolated release launcher. These are not
+interchangeable: do **not** run the user-service updater directly against a
+system-level installation. Migrate the service with a documented, tested
+one-time change before enabling autonomous guarded application updates.
+
+For a new server intended to self-update without privilege escalation, prefer
+the user-level service/guarded-launcher deployment used by the current host.

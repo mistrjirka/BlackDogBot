@@ -234,11 +234,13 @@ describe("filterMcpToolsForServer", () => {
   });
 });
 
-describe("read-only policy for namespaced Crawl4AI tools", () => {
-  it("allows remote-read Crawl4AI tools in read_only mode", () => {
-    for (const name of ["md", "html", "screenshot", "pdf", "crawl", "ask"]) {
-      expect(isToolAllowed(`mcp.crawl4ai.${name}`, "read_only")).toBe(true);
+describe("read-only policy after Crawl4AI retirement", () => {
+  it("allows only the known safe one-shot Scrapling fetch in read_only mode", () => {
+    expect(isToolAllowed("mcp.scrapling.browser_fetch_once", "read_only")).toBe(true);
+    for (const name of ["browser_open", "browser_actions", "browser_screenshot"]) {
+      expect(isToolAllowed(`mcp.scrapling.${name}`, "read_only")).toBe(false);
     }
+    expect(isToolAllowed("mcp.crawl4ai.md", "read_only")).toBe(false);
   });
 
   it("blocks page-script execution and unrelated MCP tools in read_only mode", () => {
@@ -253,34 +255,23 @@ describe("read-only policy for namespaced Crawl4AI tools", () => {
   });
 });
 
-describe("cron validation for namespaced Crawl4AI tools", () => {
-  const crawl4aiTools = [
-    "mcp.crawl4ai.md",
-    "mcp.crawl4ai.html",
-    "mcp.crawl4ai.screenshot",
-    "mcp.crawl4ai.pdf",
-    "mcp.crawl4ai.execute_js",
-    "mcp.crawl4ai.crawl",
-    "mcp.crawl4ai.ask",
-  ];
-
-  it("lists the discovered MCP tool names, not the bespoke name", () => {
-    for (const name of crawl4aiTools) {
-      expect(CRON_VALID_TOOL_NAMES).toContain(name);
-    }
-    expect(CRON_VALID_TOOL_NAMES).not.toContain("crawl4ai");
+describe("cron validation migrates away from retired MCP servers", () => {
+  it("does not keep retired Crawl4AI tools in the static cron list", () => {
+    expect(CRON_VALID_TOOL_NAMES.some((name) => name.startsWith("mcp.crawl4ai."))).toBe(false);
+    expect(CRON_VALID_TOOL_NAMES.some((name) => name.startsWith("mcp.scrapling."))).toBe(false);
   });
 
-  it("accepts listed MCP tools while still rejecting unknown tools", () => {
-    expect(filterInvalidTools([...crawl4aiTools, "send_message"])).toEqual([]);
-    expect(filterInvalidTools(["mcp.crawl4ai.unknown"])).toEqual(["mcp.crawl4ai.unknown"]);
-    expect(filterInvalidTools(["crawl4ai"])).toEqual(["crawl4ai"]);
+  it("rejects unconnected retired MCP tools rather than silently advertising them", () => {
+    vi.spyOn(McpService.getInstance(), "getTools").mockReturnValue({
+      "mcp.scrapling.browser_fetch_once": { description: "Fetch a webpage" },
+    } as never);
+    expect(filterInvalidTools(["mcp.scrapling.browser_fetch_once", "send_message"])).toEqual([]);
+    expect(filterInvalidTools(["mcp.crawl4ai.md", "mcp.crawl4ai.crawl"])).toEqual([
+      "mcp.crawl4ai.md", "mcp.crawl4ai.crawl",
+    ]);
   });
 
-  it("describes every Crawl4AI MCP tool without the bespoke key", () => {
-    for (const name of crawl4aiTools) {
-      expect(CRON_TOOL_DESCRIPTIONS[name]).toBeTruthy();
-    }
-    expect(CRON_TOOL_DESCRIPTIONS["crawl4ai"]).toBeUndefined();
+  it("does not inject old Crawl4AI descriptions into cron task verification", () => {
+    expect(Object.keys(CRON_TOOL_DESCRIPTIONS).some((name) => name.startsWith("mcp.crawl4ai."))).toBe(false);
   });
 });

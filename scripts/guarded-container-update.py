@@ -190,7 +190,9 @@ def main() -> int:
     parser.add_argument("--check-only", action="store_true", help="Check registry and return candidate digest; no container restart")
     parser.add_argument("--compose", type=Path, default=Path.home() / ".blackdogbot/docker-compose.yaml")
     parser.add_argument("--env-file", type=Path, default=Path.home() / ".blackdogbot/scrapling.env")
-    parser.add_argument("--probe", type=Path, default=Path.home() / "programy/better-claw/scripts/verify-scrapling.mjs")
+    # Resolve the probe from the guarded live release, not a mutable developer
+    # checkout. Rollbacks and unrelated source edits must not change checks.
+    parser.add_argument("--probe", type=Path, default=Path.home() / ".blackdogbot/deploy/current/scripts/verify-scrapling.mjs")
     parser.add_argument("--report-dir", type=Path, default=Path.home() / ".blackdogbot/deploy/container-reports")
     parser.add_argument("--chat-id")
     parser.add_argument("--production-port", type=int, default=18733)

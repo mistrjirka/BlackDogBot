@@ -1,5 +1,4 @@
-import { CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
-import { filterInvalidTools } from "../utils/cron-tool-validation.js";
+import { filterInvalidTools, getAvailableCronToolNames } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -43,7 +42,7 @@ export async function executeCronEditAsync(options: ICronEditOptions): Promise<I
     if (request.tools !== undefined) {
       const invalidTools: string[] = filterInvalidTools(request.tools);
       if (invalidTools.length > 0) {
-        return { success: false, error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}` };
+        return { success: false, error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${getAvailableCronToolNames().join(", ")}` };
       }
     }
     const existingTask: IScheduledTask | undefined = await scheduler.getTaskAsync(request.taskId);

@@ -114,39 +114,8 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
   searxng:
     "Legacy scheduled tool name, dynamically mapped to mcp.searxng.searxng_web_search. " +
     "Search via SearXNG MCP with query and supported filters; see the discovered MCP tool schema.",
-  "mcp.searxng.searxng_web_search":
-    "Search the web using the connected SearXNG MCP server. Supports query, pagination, time range, categories and result count.",
-  "mcp.searxng.searxng_search_suggestions": "Get query suggestions from SearXNG MCP.",
-  "mcp.searxng.searxng_instance_info": "Inspect available SearXNG search engines and categories.",
-  "mcp.searxng.web_url_read": "Read a selected URL as bounded text or Markdown via SearXNG MCP.",
-
-  "mcp.crawl4ai.md":
-    "Fetch a web page and return its content as markdown using Crawl4AI. " +
-    "Args and extraction options are described by the MCP tool schema.",
-
-  "mcp.crawl4ai.html":
-    "Fetch and preprocess page HTML using Crawl4AI. " +
-    "Args are described by the MCP tool schema.",
-
-  "mcp.crawl4ai.screenshot":
-    "Capture a rendered page screenshot using Crawl4AI. " +
-    "Args, including optional wait and output-path settings, are described by the MCP tool schema.",
-
-  "mcp.crawl4ai.pdf":
-    "Generate a PDF from a web page using Crawl4AI. " +
-    "Args are described by the MCP tool schema.",
-
-  "mcp.crawl4ai.execute_js":
-    "Run JavaScript in the target page through Crawl4AI. This can cause side effects on the remote site; use only when the task requires page interaction. " +
-    "Args are described by the MCP tool schema.",
-
-  "mcp.crawl4ai.crawl":
-    "Crawl one or more URLs using Crawl4AI. " +
-    "Args and crawl options are described by the MCP tool schema.",
-
-  "mcp.crawl4ai.ask":
-    "Query Crawl4AI's own library documentation/context. " +
-    "Args are described by the MCP tool schema.",
+  // MCP tool descriptions are discovered from the connected server when
+  // verifying a task; do not maintain a second stale set here.
 
   list_tables:
     "List all tables in the internal default database (read-only). " +

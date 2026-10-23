@@ -143,7 +143,7 @@ const _CategoryDefinitions: ICategoryDefinition[] = [
   {
     key: "file_and_web_tools",
     goal: "Assess whether file and web tool descriptions provide clear operational constraints and expected use patterns.",
-    toolNames: ["read_file", "inspect_variable", "read_image", "write_file", "append_file", "edit_file", "fetch_rss", "searxng", "mcp.searxng.searxng_web_search", "mcp.searxng.searxng_search_suggestions", "mcp.searxng.searxng_instance_info", "mcp.searxng.web_url_read", "mcp.crawl4ai.md", "mcp.crawl4ai.html", "mcp.crawl4ai.screenshot", "mcp.crawl4ai.pdf", "mcp.crawl4ai.execute_js", "mcp.crawl4ai.crawl", "mcp.crawl4ai.ask"],
+    toolNames: ["read_file", "inspect_variable", "read_image", "write_file", "append_file", "edit_file", "fetch_rss", "searxng"],
     allowedIssueTitles: [
       "missing description",
       "missing output fields",

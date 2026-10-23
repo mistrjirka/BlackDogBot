@@ -109,6 +109,8 @@ def prepare(repo: Path, state: Path, ref: str, chat: str | None) -> Path:
         run(["pnpm", "install", "--frozen-lockfile"], cwd=dest, timeout=600, log=log)
         run(["pnpm", "exec", "tsc", "--noEmit"], cwd=dest, timeout=180, log=log)
         run(["pnpm", "test:fast"], cwd=dest, timeout=600, log=log)
+        run(["python3", "-m", "unittest", "discover", "-s", "tests/python", "-p", "test_guarded_*.py", "-q"],
+            cwd=dest, timeout=60, log=log)
         write_atomic(dest / ".blackdog-release-tested", rev + "\n")
         notify(state, chat, f"BlackDogBot candidate {rev[:12]} passed dependency, TypeScript and full fast tests. Activation not yet performed.")
     except Exception as exc:

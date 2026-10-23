@@ -1,6 +1,6 @@
 import { tool } from "ai";
-import { addOnceToolInputSchema, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
-import { filterInvalidTools } from "../utils/cron-tool-validation.js";
+import { addOnceToolInputSchema } from "../shared/schemas/tool-schemas.js";
+import { filterInvalidTools, getAvailableCronToolNames } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { buildTaskRecord, verifyCronInstructionsAsync } from "./cron-task-helper.js";
 import { ConfigService } from "../services/config.service.js";
@@ -92,7 +92,7 @@ export const addOnceTool = tool({
         return {
           taskId: "",
           success: false,
-          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}`,
+          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${getAvailableCronToolNames().join(", ")}`,
         };
       }
 

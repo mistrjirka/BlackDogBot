@@ -280,18 +280,9 @@ export const CRON_VALID_TOOL_NAMES = [
   "list_timed",
   "fetch_rss",
   "searxng", // Legacy task name; dynamically resolved to MCP, never the built-in client.
-  "mcp.searxng.searxng_web_search",
-  "mcp.searxng.searxng_search_suggestions",
-  "mcp.searxng.searxng_instance_info",
-  "mcp.searxng.web_url_read",
+  // MCP names are checked against discovered tools by cron-tool-validation.
+  // Avoid static lists that remain stale after swapping MCP servers.
   "search_timed",
-  "mcp.crawl4ai.md",
-  "mcp.crawl4ai.crawl",
-  "mcp.crawl4ai.html",
-  "mcp.crawl4ai.screenshot",
-  "mcp.crawl4ai.pdf",
-  "mcp.crawl4ai.execute_js",
-  "mcp.crawl4ai.ask",
   "list_tables",
   "get_table_schema",
   "create_table",

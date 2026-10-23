@@ -1,5 +1,10 @@
 # Install the independent self-update supervisor (one-time setup)
 
+**Compatibility:** this procedure works only when `blackdogbot.service` is a
+**user-level systemd service** with a guarded release launcher. The optional
+system-level service created by the current `install.sh` requires migration
+first. The installer itself is not an updater; never rerun it to upgrade code.
+
 The `safe-self-development` skill contains the full architecture and development workflow. The release manager implementation is `scripts/guarded-release.py`. It is a regular Python program that runs through the user systemd manager **outside the BlackDogBot daemon**, not a new model-facing tool.
 
 ### Initial migration
@@ -14,7 +19,7 @@ The `safe-self-development` skill contains the full architecture and development
    /usr/bin/python3 "$HOME/.local/lib/blackdogbot/guarded-release.py" prepare \
      --repo /home/jirka/programy/better-claw --revision <known-good-full-sha>
    ```
-   This is a **full test**, with `pnpm install --frozen-lockfile`, TypeScript and the fast test suite in a separate worktree.
+   This is a **full test**, with `pnpm install --frozen-lockfile`, TypeScript, the fast test suite **and Python guarded-updater tests** in a separate worktree. The independent updater installed outside the repo must itself be updated from this reviewed source before using any newly added guard checks; do not assume changes to `scripts/guarded-release.py` automatically replace the external supervisor.
 4. Once prepared, have the user systemd manager start the one-time `bootstrap` action (prefer a detached transient unit), supplying the verified Telegram chat id for status messages. The script installs an external stable wrapper, adds a systemd drop-in, restarts the bot, and checks healthy startup. If startup fails it removes the drop-in, restores the original unit command and attempts to restart the prior service.
 5. Confirm the service is running, `~/.blackdogbot/deploy/current` points at the tested known-good commit and `latest.json` reports `bootstrap_healthy`.
 

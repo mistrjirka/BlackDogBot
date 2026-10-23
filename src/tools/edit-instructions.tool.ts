@@ -1,7 +1,7 @@
 import { tool } from "ai";
-import { editInstructionsToolInputSchema, TOOL_PREREQUISITES, CRON_VALID_TOOL_NAMES } from "../shared/schemas/tool-schemas.js";
+import { editInstructionsToolInputSchema, TOOL_PREREQUISITES } from "../shared/schemas/tool-schemas.js";
 import { createToolWithPrerequisites, type ToolExecuteContext } from "../utils/tool-factory.js";
-import { filterInvalidTools } from "../utils/cron-tool-validation.js";
+import { filterInvalidTools, getAvailableCronToolNames } from "../utils/cron-tool-validation.js";
 import { SchedulerService } from "../services/scheduler.service.js";
 import { ConfigService } from "../services/config.service.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -81,7 +81,7 @@ const executeEditInstructions = async (
       if (invalidTools.length > 0) {
         return {
           success: false,
-          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${CRON_VALID_TOOL_NAMES.join(", ")}`,
+          error: `Invalid tool name(s): ${invalidTools.join(", ")}. Valid tools: ${getAvailableCronToolNames().join(", ")}`,
         };
       }
     }

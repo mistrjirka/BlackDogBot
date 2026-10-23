@@ -24,7 +24,7 @@ describe("SearXNG is discovered via MCP, not a hardcoded agent tool", () => {
     expect(resolveLegacyCronToolName("searxng")).toBe("mcp.searxng.searxng_web_search");
     expect(resolveLegacyCronToolName("mcp.crawl4ai.md")).toBe("mcp.crawl4ai.md");
     expect(CRON_VALID_TOOL_NAMES).toContain("searxng");
-    expect(CRON_VALID_TOOL_NAMES).toContain("mcp.searxng.searxng_web_search");
+    expect(CRON_VALID_TOOL_NAMES).not.toContain("mcp.searxng.searxng_web_search");
     expect(CRON_TOOL_DESCRIPTIONS.searxng).toContain("Legacy");
   });
 });
