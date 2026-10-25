@@ -496,7 +496,14 @@ export class PromptService {
     }
 
     const storedHash: string | null = await this._readStoredCommitHashAsync();
-    if (storedHash === currentHash) {
+    const syncState: IPromptSyncState | null = await this._readPromptSyncStateAsync();
+    const defaultsFingerprint: string = await this._computeDefaultsFingerprintAsync();
+    const defaultsChanged: boolean = syncState !== null &&
+      syncState.lastAppliedDefaultsFingerprint !== defaultsFingerprint;
+
+    // Source prompt edits must take effect at the next startup, even when the
+    // Git revision is unchanged. User prompt overrides are backed up below.
+    if (storedHash === currentHash && !defaultsChanged) {
       return;
     }
 

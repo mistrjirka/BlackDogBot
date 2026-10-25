@@ -254,6 +254,42 @@ describe("PromptService", () => {
     );
   });
 
+  it("should preserve user prompt overrides on restart when source defaults are unchanged", async () => {
+    const service: PromptService = PromptService.getInstance();
+    await service.initializeAsync();
+    await service.writePromptAsync("main-agent", "user custom prompt");
+
+    (PromptService as unknown as { _instance: null })._instance = null;
+    const restartedService: PromptService = PromptService.getInstance();
+    await restartedService.initializeAsync();
+
+    expect(await restartedService.getPromptRawAsync("main-agent")).toBe("user custom prompt");
+  });
+
+  it("should reload source defaults on restart when their fingerprint changed without a new commit", async () => {
+    const service: PromptService = PromptService.getInstance();
+    await service.initializeAsync();
+    const originalRaw = await service.getPromptRawAsync("main-agent");
+    await service.writePromptAsync("main-agent", "old user prompt");
+
+    const syncStateFile = path.join(tempDir, ".blackdogbot", "cache", "prompt-sync-state.json");
+    const state = JSON.parse(await fs.readFile(syncStateFile, "utf-8")) as Record<string, unknown>;
+    state.lastAppliedDefaultsFingerprint = "old-source-content-fingerprint";
+    await fs.writeFile(syncStateFile, JSON.stringify(state), "utf-8");
+
+    (PromptService as unknown as { _instance: null })._instance = null;
+    const restartedService: PromptService = PromptService.getInstance();
+    await restartedService.initializeAsync();
+
+    expect(await restartedService.getPromptRawAsync("main-agent")).toBe(originalRaw);
+    expect(await restartedService.isPromptUpdateRecommendedAsync()).toBe(false);
+    const backups = await fs.readdir(getOldDatumBackupDir());
+    const mainBackup = backups.find((name) => name.includes("main-agent"));
+    expect(mainBackup).toBeDefined();
+    expect(await fs.readFile(path.join(getOldDatumBackupDir(), mainBackup!), "utf-8"))
+      .toBe("old user prompt");
+  });
+
   it("should auto-update prompts on startup when git commit hash differs", async () => {
     const service: PromptService = PromptService.getInstance();
 
