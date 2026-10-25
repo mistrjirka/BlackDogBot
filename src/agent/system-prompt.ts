@@ -78,7 +78,8 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
     `Configured tool limits: large tool results are captured above ${formatCharLimit(CAPTURE_THRESHOLD_CHARS)} characters; ` +
     `stub previews show up to ${formatCharLimit(PREVIEW_MAX_CHARS)} characters; ` +
     `inspect_variable reveals up to ${formatCharLimit(INSPECT_VARIABLE_MAX_CHARS)} characters per call ` +
-    `(default ${formatCharLimit(INSPECT_VARIABLE_DEFAULT_CHARS)}); database reads default to ${READ_DB_DEFAULT_LIMIT} rows.`,
+    `(default ${formatCharLimit(INSPECT_VARIABLE_DEFAULT_CHARS)}); database reads default to ${READ_DB_DEFAULT_LIMIT} rows. ` +
+    `Use run_code for data-only transformations of captured variables; it cannot call tools, network, files or shell.`,
   );
 
   contextParts.push(

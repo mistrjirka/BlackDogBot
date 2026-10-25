@@ -78,6 +78,8 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
     "For workspace files, pass just the filename (e.g. 'notes.txt'); use a full absolute path only for files outside the workspace. " +
     "Args: filePath (string, default '').",
 
+  run_code: "Run synchronous data-only JavaScript on stored blackboard variables. print(value) inspects a bounded excerpt, return value creates a stored code_<n> variable. No calls to tools, shell, network, or files. Args: code (string, required, max 4000 chars).",
+
   inspect_variable:
     "Read a bounded slice of a large stored tool result. Use the exact variable name from a stub; " +
     "continue at nextOffset if needed. " +

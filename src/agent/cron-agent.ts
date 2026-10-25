@@ -1,3 +1,4 @@
+import { createRunCodeTool } from "../tools/run-code.tool.js";
 import type { ToolSet, LanguageModel } from "ai";
 import type { Tool } from "ai";
 
@@ -368,6 +369,7 @@ export class CronAgent extends BaseAgentBase {
     // inspect_variable is infrastructure for reading captured stubs; expose it
     // even when older task definitions do not list it explicitly.
     resolvedTools.inspect_variable = createInspectVariableTool(() => this._currentVariableStore);
+    resolvedTools.run_code = createRunCodeTool(() => this._currentVariableStore);
 
     if (effectiveToolNames.includes("delegate_agent")) {
       attachDelegateAgentTool(resolvedTools, AiProviderService.getInstance().getModel());

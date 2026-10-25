@@ -33,8 +33,8 @@ export { CAPTURE_THRESHOLD_CHARS, PREVIEW_MAX_CHARS };
 /** Maximum number of variables retained in a single run (FIFO eviction beyond this). */
 export const MAX_VARIABLES_PER_RUN: number = 50;
 
-/** Per-variable hard cap; data above this is never truncated, so it is stored inline. */
-export const MAX_VARIABLE_BYTES: number = 1024 * 1024;
+/** Per-variable cap. Large values up to the per-run budget remain accessible. */
+export const MAX_VARIABLE_BYTES: number = 8 * 1024 * 1024;
 
 /** Total bytes across all variables in a run; oldest are evicted on overflow. */
 export const MAX_TOTAL_BYTES: number = 8 * 1024 * 1024;
@@ -94,7 +94,7 @@ interface ICapturedVariable {
 /** Shape of a captured-variable stub shown to the model instead of the full blob. */
 interface IVariableStub {
   variable: string;
-  type: "array" | "object" | "string" | "number" | "boolean";
+  type: "array" | "object" | "string" | "number" | "boolean" | "null";
   count?: number;
   sizeBytes: number;
   itemSchema?: unknown;
@@ -153,32 +153,39 @@ export class VariableStore {
    *   6. evict FIFO while over the variable count cap or the total byte cap.
    *   7. return the stub describing the captured (payload) value.
    */
-  maybeCapture(toolName: string, result: unknown): unknown {
+  maybeCapture(toolName: string, result: unknown, force = false): unknown {
     // 1. null/undefined carry no blob to store.
-    if (result === null || result === undefined) {
+    if ((result === null && !force) || result === undefined) {
       return result;
     }
 
-    // 2. Non-serializable (e.g. circular) → leave the original result inline.
+    // 2. Never forward circular or otherwise unserializable content to the model.
     let json: string;
     try {
       json = JSON.stringify(result);
     } catch {
-      return result;
+      return { error: "unserializable_result", message: "Tool output cannot be stored as JSON. Request serializable or paginated data." };
     }
     if (json === undefined) {
       // stringify returned undefined for e.g. functions/symbols → not storable.
-      return result;
+      return { error: "unserializable_result", message: "Tool output cannot be stored as JSON." };
     }
 
-    // 3. Oversized single variable: store inline, never truncate data headed for a write.
+    // 3. Never put oversized content back into model context. The caller can
+    // request a narrower/paginated result. Do not silently truncate a variable.
     const sizeBytes: number = Buffer.byteLength(json, "utf8");
     if (sizeBytes > MAX_VARIABLE_BYTES) {
-      return result;
+      return {
+        error: "result_too_large",
+        sizeBytes,
+        maxBytes: MAX_VARIABLE_BYTES,
+        preview: json.slice(0, PREVIEW_MAX_CHARS),
+        message: "Result exceeds the blackboard per-variable memory limit. No data was stored. Request a narrower or paginated result.",
+      };
     }
 
     // 4. Below threshold: inline exactly as before (decision — no below-threshold capture).
-    if (json.length < CAPTURE_THRESHOLD_CHARS) {
+    if (!force && json.length < CAPTURE_THRESHOLD_CHARS) {
       return result;
     }
 
@@ -188,7 +195,13 @@ export class VariableStore {
     const extraction: IExtraction = _extractPrimaryPayload(result, sizeBytes);
     const normalized: unknown = _normalizeKeys(extraction.payload);
     const storedSizeBytes: number = Buffer.byteLength(JSON.stringify(normalized) ?? json, "utf8");
-    const name: string = `${toolName}_${++this._counter}`;
+    if (storedSizeBytes > MAX_VARIABLE_BYTES) {
+      return { error: "result_too_large", sizeBytes: storedSizeBytes, maxBytes: MAX_VARIABLE_BYTES,
+        preview: json.slice(0, PREVIEW_MAX_CHARS),
+        message: "Normalized result exceeds the blackboard per-variable memory limit. Request narrower data." };
+    }
+    const safeToolName = toolName.replace(/[^A-Za-z0-9_]/g, "_").replace(/^[0-9]/, "_$&");
+    const name: string = `${safeToolName}_${++this._counter}`;
     if (extraction.meta === undefined) {
       this._variables.set(name, { value: normalized, sizeBytes: storedSizeBytes });
     } else {
@@ -293,11 +306,33 @@ export function wrapToolSetWithVariables(
       continue;
     }
 
-    // toModelOutput tools return a model-ready result already; capture would double-wrap.
+    // Only MCP model text gets captured AFTER its custom output conversion.
+    // Vision/inspection tools keep their original model-ready output.
+    const isMcp: boolean = toolName.startsWith("mcp.") && typeof toolDef.toModelOutput === "function";
     const captureExcluded: boolean = typeof toolDef.toModelOutput === "function";
 
     wrapped[toolName] = {
       ...toolDef,
+      ...(isMcp ? { toModelOutput: (args: Parameters<NonNullable<typeof toolDef.toModelOutput>>[0]) => {
+        const converted = toolDef.toModelOutput!(args) as {
+          type?: string; value?: Array<{ type: string; text?: string; [key: string]: unknown }>;
+        };
+        const store = getStore();
+        if (!store || converted.type !== "content" || !Array.isArray(converted.value)) return converted;
+        const textParts = converted.value.filter((part) => part.type === "text" && typeof part.text === "string");
+        if (!textParts.length) return converted;
+        const combined = textParts.map((part) => part.text).join("\n\n");
+        if (combined.length < CAPTURE_THRESHOLD_CHARS) return converted;
+        let payload: unknown = combined;
+        if (textParts.length === 1) {
+          try { payload = JSON.parse(combined); } catch { /* ordinary text */ }
+        }
+        const stub = store.maybeCapture(toolName, payload, true);
+        return { type: "content" as const, value: [
+          { type: "text" as const, text: JSON.stringify(stub) },
+          ...converted.value.filter((part) => part.type !== "text"),
+        ] };
+      } } : {}),
       execute: async (input: unknown, options: ToolExecutionOptions<never>): Promise<unknown> => {
         const store: VariableStore | null = getStore();
 
@@ -630,6 +665,7 @@ function _normalizeKeyName(key: string, produced: Set<string>): string {
 
 /** Coerce a captured value to its stub `type` discriminator. */
 function _inferValueType(value: unknown): IVariableStub["type"] {
+  if (value === null) return "null";
   if (Array.isArray(value)) {
     return "array";
   }
@@ -820,7 +856,12 @@ function _buildStub(
 
   // itemSchema for object and array variables only (scalars carry no structure).
   if (type === "object" || type === "array") {
-    stub.itemSchema = _inferItemSchema(value, 1);
+    const inferred = _inferItemSchema(value, 1);
+    if (JSON.stringify(inferred).length <= 2500) {
+      stub.itemSchema = inferred;
+    } else {
+      stub.itemSchema = { type, note: "Schema exceeds 2500 characters. Inspect a small slice or use run_code to examine keys." };
+    }
   }
 
   stub.preview = _buildPreview(value, type);

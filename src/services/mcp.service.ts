@@ -1,4 +1,5 @@
 import { tool, type ToolSet } from "ai";
+import { isDeepStrictEqual } from "node:util";
 import type { z } from "zod";
 
 import { Client } from "@modelcontextprotocol/sdk/client";
@@ -578,7 +579,7 @@ function _convertMcpToolToAiSdk(
       }
     },
     toModelOutput: ({ output }: { output: unknown }) => {
-      return _convertMcpResultToModelOutput(output, outputSchema);
+      return convertMcpResultToModelOutput(output, outputSchema);
     },
   });
 }
@@ -591,7 +592,7 @@ function _convertMcpToolToAiSdk(
  * - image → { type: "file", data: { type: "data", data }, mediaType }
  * - audio → { type: "file", data: { type: "data", data }, mediaType }
  */
-function _convertMcpResultToModelOutput(
+export function convertMcpResultToModelOutput(
   output: unknown,
   outputSchema?: Record<string, unknown>,
 ) {
@@ -656,7 +657,15 @@ function _convertMcpResultToModelOutput(
     }
   }
 
-  if (result.structuredContent && typeof result.structuredContent === "object") {
+  // Many MCP servers include the same JSON both as text and structuredContent.
+  // Compare parsed values rather than JSON strings (property order is irrelevant).
+  const structuredIsDuplicate = result.structuredContent && typeof result.structuredContent === "object" &&
+    modelParts.some((part) => {
+      if (part.type !== "text") return false;
+      try { return isDeepStrictEqual(JSON.parse(part.text), result.structuredContent); }
+      catch { return false; }
+    });
+  if (result.structuredContent && typeof result.structuredContent === "object" && !structuredIsDuplicate) {
     modelParts.push({
       type: "text",
       text: `\n\nStructured output:\n${JSON.stringify(result.structuredContent, null, 2)}`,

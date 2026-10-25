@@ -58,6 +58,7 @@ const CORE_TOOL_NAMES: string[] = [
   "stop_cmd",
   "read_file",
   "inspect_variable",
+  "run_code",
   "read_image",
   "write_file",
   "append_file",

@@ -9,6 +9,8 @@ import { BaseAgentBase, type IAgentResult } from "./base-agent.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { sanitizeSetupError } from "../helpers/skill-state.js";
+import { createInspectVariableTool } from "../tools/inspect-variable.tool.js";
+import { createRunCodeTool } from "../tools/run-code.tool.js";
 import { MAX_DELEGATE_AGENT_OUTPUT_LENGTH } from "../shared/constants.js";
 import {
   delegateAgentToolInputSchema,
@@ -49,10 +51,17 @@ class DelegateWorkerAgent extends BaseAgentBase {
   public constructor(workerOptions: IDelegateWorkerOptions) {
     super({ maxSteps: DEFAULT_DELEGATE_AGENT_MAX_STEPS });
     this._abortSignal = workerOptions.abortSignal;
+    // The worker owns an independent run/blackboard. Never reuse the parent's
+    // inspect/run_code closure, which would silently read or mutate parent data.
+    const workerTools: ToolSet = {
+      ...workerOptions.tools,
+      inspect_variable: createInspectVariableTool(() => this._currentVariableStore),
+      run_code: createRunCodeTool(() => this._currentVariableStore),
+    };
     this._buildAgent(
       workerOptions.model,
       "Complete the delegated task using only the provided tools. Do not delegate further. Report failures instead of inventing results.",
-      workerOptions.tools,
+      workerTools,
       undefined,
       undefined,
       undefined,

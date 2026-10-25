@@ -81,3 +81,5 @@ For source contributions, clone the repository, run `pnpm install --frozen-lockf
 ## License
 
 GPL-2.0 — see [LICENSE](LICENSE).
+
+Programmatic tool calling: [blackboard and data-only `run_code`](docs/programmatic-tool-calling.md).

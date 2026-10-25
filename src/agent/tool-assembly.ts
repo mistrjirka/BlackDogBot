@@ -1,6 +1,7 @@
 import type { Tool, ToolExecutionOptions, ToolSet } from "ai";
 import {
   thinkTool,
+  createRunCodeTool,
   createTableTool,
   runCmdTool,
   runCmdInputTool,
@@ -76,6 +77,7 @@ export async function assembleToolsForChat(
   tools.load_skill = loadSkillTool;
   tools.get_skill_file = getSkillFileTool;
   if (getVariableStore) {
+    tools.run_code = createRunCodeTool(getVariableStore);
     tools.inspect_variable = createInspectVariableTool(getVariableStore);
   }
 

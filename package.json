@@ -16,7 +16,7 @@
     "test:fast": "vitest run tests/unit tests/integration/core",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/workers && cp src/workers/run-code-worker.cjs dist/workers/",
     "test:build": "tsc && vitest run --config vitest.integration.config.ts"
   },
   "engines": {
@@ -33,11 +33,14 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@openrouter/ai-sdk-provider": "^2.2.3",
     "@types/turndown": "^5.0.6",
+    "acorn": "^8.19.0",
+    "acorn-walk": "^8.3.5",
     "ai": "^7.0.66",
     "better-sqlite3": "^12.11.1",
     "bottleneck": "^2.19.0",
     "discord.js": "^14.14.0",
     "dotenv": "^17.3.1",
+    "eslint-scope": "^9.1.2",
     "fuse.js": "^7.3.0",
     "grammy": "^1.35.0",
     "gray-matter": "^4.0.0",
@@ -54,6 +57,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
+    "@types/eslint-scope": "^9.1.0",
     "@types/node": "^22.0.0",
     "@types/socket.io": "^3.0.2",
     "@vitest/coverage-v8": "^3.2.4",

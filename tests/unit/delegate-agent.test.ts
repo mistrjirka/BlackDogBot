@@ -60,7 +60,11 @@ describe("delegate agent tool", () => {
       output: "worker result",
       error: null,
     });
-    expect(state.workerTools).toEqual({ think: expect.anything() });
+    expect(state.workerTools).toMatchObject({
+      think: expect.anything(),
+      inspect_variable: expect.anything(),
+      run_code: expect.anything(),
+    });
     expect(state.workerTools).not.toHaveProperty("delegate_agent");
     expect(state.generateOptions?.prompt).toBe("do the work");
     expect(state.generateOptions?.abortSignal).toBe(abortController.signal);

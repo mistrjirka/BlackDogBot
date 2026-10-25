@@ -47,6 +47,7 @@ const _CHAT_STATIC_EXTRA_TOOLS: string[] = [
   "delegate_agent",
   "create_table",
   "inspect_variable",
+  "run_code",
 ];
 
 async function _resolveIncludesAsync(content: string, depth: number): Promise<string> {

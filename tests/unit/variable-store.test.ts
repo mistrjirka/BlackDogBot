@@ -72,7 +72,7 @@ describe("variable-store — constants", () => {
   it("exposes the documented thresholds", () => {
     expect(CAPTURE_THRESHOLD_CHARS).toBe(4000);
     expect(MAX_VARIABLES_PER_RUN).toBe(50);
-    expect(MAX_VARIABLE_BYTES).toBe(1024 * 1024);
+    expect(MAX_VARIABLE_BYTES).toBe(8 * 1024 * 1024);
   });
 });
 
@@ -361,14 +361,14 @@ describe("VariableStore — eviction (group 7)", () => {
 });
 
 describe("VariableStore.maybeCapture — edge cases (group 8)", () => {
-  it("returns the original for a circular (non-serializable) value without throwing", () => {
+  it("returns a small error for a circular (non-serializable) value", () => {
     const store = new VariableStore();
     const circular: Record<string, unknown> = {};
     circular.self = circular;
 
     const result = store.maybeCapture("circ", circular);
 
-    expect(result).toBe(circular);
+    expect(result).toMatchObject({ error: "unserializable_result" });
     expect(store.names()).toEqual([]);
   });
 
@@ -379,13 +379,14 @@ describe("VariableStore.maybeCapture — edge cases (group 8)", () => {
     expect(store.names()).toEqual([]);
   });
 
-  it("returns a >1MB result inline (never truncated) and does not store it", () => {
+  it("reports a >8MiB result without putting its contents in context", () => {
     const store = new VariableStore();
     const value: string = "a".repeat(MAX_VARIABLE_BYTES + 1);
 
     const result = store.maybeCapture("big", value);
 
-    expect(result).toBe(value);
+    expect(result).toMatchObject({ error: "result_too_large", maxBytes: MAX_VARIABLE_BYTES });
+    expect(JSON.stringify(result).length).toBeLessThan(3000);
     expect(store.names()).toEqual([]);
   });
 });

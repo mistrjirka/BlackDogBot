@@ -143,7 +143,7 @@ const _CategoryDefinitions: ICategoryDefinition[] = [
   {
     key: "file_and_web_tools",
     goal: "Assess whether file and web tool descriptions provide clear operational constraints and expected use patterns.",
-    toolNames: ["read_file", "inspect_variable", "read_image", "write_file", "append_file", "edit_file", "fetch_rss", "searxng"],
+    toolNames: ["read_file", "inspect_variable", "run_code", "read_image", "write_file", "append_file", "edit_file", "fetch_rss", "searxng"],
     allowedIssueTitles: [
       "missing description",
       "missing output fields",

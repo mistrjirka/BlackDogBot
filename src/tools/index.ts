@@ -1,3 +1,4 @@
+export { createRunCodeTool } from "./run-code.tool.js";
 export { thinkTool } from "./think.tool.js";
 export { runCmdTool } from "./run-cmd.tool.js";
 export { runCmdInputTool } from "./run-cmd-input.tool.js";
