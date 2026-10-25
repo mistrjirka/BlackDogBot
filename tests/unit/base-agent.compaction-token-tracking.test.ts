@@ -26,6 +26,7 @@ vi.mock("../../src/utils/checkpoint-compaction.js", async () => {
 });
 
 import { BaseAgentBase } from "../../src/agent/base-agent.js";
+import { VariableStore } from "../../src/utils/variable-store.js";
 import type {
   IRequestLikeByteTokenEstimate,
   IRequestLikeTokenEstimate,
@@ -64,6 +65,10 @@ class TestAgent extends BaseAgentBase {
     });
   }
 
+  public setStore(store: VariableStore | null): void {
+    this._currentVariableStore = store;
+  }
+
   public get estimatedInputTokens(): number {
     return this._estimatedInputTokens;
   }
@@ -90,6 +95,38 @@ describe("BaseAgentBase compaction token tracking", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     resetSingletons();
+  });
+
+  it("supplies live blackboard names after checkpoint compaction without persisting them", async () => {
+    const agent = new TestAgent({ contextWindow: 100_000 });
+    agent.buildAgentPublic({} as LanguageModel, "Test instructions", {});
+    setPrivate<{ _tokenEstimateCorrectionFactor: number }>(agent, "_tokenEstimateCorrectionFactor", 1);
+    const store = new VariableStore();
+    const stub = store.maybeCapture("mcp.searxng.search", "NOT_FOR_SUMMARY_".repeat(350)) as { variable: string };
+    agent.setStore(store);
+    const saved: ModelMessage[][] = [];
+    agent.setMessagesSink((messages: ModelMessage[]) => saved.push(messages));
+    vi.mocked(tokenTracker.estimateRequestLikeTokens)
+      .mockReturnValueOnce({ breakdown: { total: 90_000 } } as IRequestLikeTokenEstimate)
+      .mockReturnValue({ breakdown: { total: 2000 } } as IRequestLikeTokenEstimate);
+    vi.mocked(tokenTracker.estimateRequestLikeTokensByBytes).mockReturnValue({ estimatedTokens: 2000 } as IRequestLikeByteTokenEstimate);
+    vi.mocked(tokenTracker.countTokens).mockReturnValue(1200);
+    const compacted = [{ role: "user", content: "[COMPACTED SUMMARY]" } as ModelMessage];
+    vi.mocked(checkpointCompaction.compactWithCheckpointAsync).mockResolvedValue({
+      messages: compacted, passes: 1, originalTokens: 80000, compactedTokens: 1200,
+      converged: true, dagPath: [], dagNodeVisitCounts: {}, dagTerminationReason: "checkpoint_plain_text", maxLevelReached: "L1",
+    });
+    const result = await agent.callPrepareStepAsync(0, [{ role: "user", content: "input" }]) as { messages: ModelMessage[]; instructions: string };
+    expect(result.messages).toEqual(compacted);
+    expect(result.instructions).toContain(stub.variable);
+    expect(result.instructions).not.toContain("NOT_FOR_SUMMARY");
+    expect(saved.at(-1)).toEqual(compacted);
+    const later = await agent.callPrepareStepAsync(1, compacted) as { instructions: string };
+    expect(later.instructions).toContain(stub.variable);
+    expect(store.get(stub.variable)).toBe("NOT_FOR_SUMMARY_".repeat(350));
+    agent.setStore(new VariableStore());
+    const nextTurn = await agent.callPrepareStepAsync(2, compacted) as { instructions: string };
+    expect(nextTurn.instructions).not.toContain(stub.variable);
   });
 
   it("updates estimatedInputTokens to post-compaction value", async () => {

@@ -817,3 +817,30 @@ describe("VariableStore — real run_cmd/read_file wrappers", () => {
   });
 });
 });
+
+
+describe("blackboard compaction lifecycle", () => {
+  it("lists only active variables after compaction, without copying values", () => {
+    const store = new VariableStore();
+    const stub = _asStub(store.maybeCapture("mcp.searxng.search", "SECRET_CONTENT_".repeat(400)));
+    expect(store.getCompactionGuide()).toBeNull();
+    store.markHistoryCompacted();
+    const guide = store.getCompactionGuide();
+    expect(guide).toContain(stub.variable);
+    expect(guide).toContain("this agent run only");
+    expect(guide).not.toContain("SECRET_CONTENT");
+    expect(store.get(stub.variable)).toBe("SECRET_CONTENT_".repeat(400));
+    expect(new VariableStore().getCompactionGuide()).toBeNull();
+  });
+
+  it("does not list evicted variables after compaction", () => {
+    const store = new VariableStore();
+    const first = _asStub(store.maybeCapture("first", "z".repeat(5000)));
+    for (let i = 0; i < MAX_VARIABLES_PER_RUN; i++) {
+      store.maybeCapture("more", "z".repeat(5000));
+    }
+    store.markHistoryCompacted();
+    expect(store.get(first.variable)).toBeUndefined();
+    expect(store.getCompactionGuide()).not.toContain(first.variable);
+  });
+});

@@ -137,6 +137,9 @@ export class VariableStore {
   /** Run-global capture counter; names are `<toolName>_<n>`. */
   private _counter: number = 0;
 
+  /** A checkpoint compacted the message history, possibly dropping variable stubs. */
+  private _historyCompacted = false;
+
   constructor() {
     // No arguments: the store is a per-run scratch space, created by the agent.
   }
@@ -239,6 +242,36 @@ export class VariableStore {
     }
 
     return { input: resolvedFields };
+  }
+
+  /** Track compaction independently of persisted conversation history. */
+  markHistoryCompacted(): void {
+    this._historyCompacted = true;
+  }
+
+  /**
+   * Short, live-only inventory injected into subsequent model instructions after
+   * compaction. Never serialize this as a chat message: names expire with this run.
+   */
+  getCompactionGuide(): string | null {
+    if (!this._historyCompacted || this._variables.size === 0) return null;
+    const entries = Array.from(this._variables.entries()).reverse();
+    const lines: string[] = [];
+    let used = 0;
+    for (const [name, variable] of entries) {
+      const kind = Array.isArray(variable.value) ? `array(${variable.value.length})`
+        : variable.value === null ? "null" : typeof variable.value;
+      const entry = `${name} (${kind}, ${variable.sizeBytes} bytes)`;
+      if (used + entry.length + 2 > 3000) break;
+      lines.push(entry);
+      used += entry.length + 2;
+    }
+    return "ACTIVE BLACKBOARD VARIABLES (this agent run only, never persisted): " +
+      lines.join(", ") +
+      (lines.length < entries.length ? `; ${entries.length - lines.length} older names omitted` : "") +
+      ". Values remain in memory after compaction. Use run_code with these exact names " +
+      "or inspect_variable to inspect them. Do not copy full values into prompts. " +
+      "Names visible in older conversation messages may be stale and cannot be used after the current run ends.";
   }
 
   /** Names of all currently retained variables, in capture (FIFO) order. */

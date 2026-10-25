@@ -29,6 +29,9 @@ systems where the model writes a program that calls tools directly.
   The worker has a 128 MiB V8 heap cap. JSON returns may be at most 1 MiB.
   Printed output is capped at 1,000 characters per call and 8,000 in total.
   Three consecutive failures stop further code attempts for that agent run.
+- Context compaction does not delete variables in the current run. After
+  compaction, the model receives an ephemeral list of currently live names
+  through instructions. It never enters persisted session history.
 - The store is **not persistent**. Names from previous agent runs cannot be
   resolved. A delegated worker gets its own independent store.
 - `run_code` executes in a short-lived Node VM worker. It exposes no tools,

@@ -916,6 +916,10 @@ export abstract class BaseAgentBase {
             statusService.setChatCompaction(self._statusChatId, tokenCount, postCompactionTokenCount);
           }
 
+          // Stubs may be removed by the summary. Keep variable names available
+          // through transient instructions, never persisted chat history.
+          self._currentVariableStore?.markHistoryCompacted();
+
           // Notify the caller about the compaction so they can persist the compacted messages
           if (self._compactionSink) {
             self._compactionSink(compactionResult.messages);
@@ -924,8 +928,16 @@ export abstract class BaseAgentBase {
             self._messagesSink([...compactionResult.messages]);
           }
 
-          return { messages: compactionResult.messages, activeTools: activeToolNames };
+          const guide = self._currentVariableStore?.getCompactionGuide();
+          return {
+            messages: compactionResult.messages,
+            instructions: [instructions, creationPrompt, guide].filter(Boolean).join("\n\n"),
+            activeTools: activeToolNames,
+          };
         }
+
+        const activeVariableGuide = self._currentVariableStore?.getCompactionGuide();
+        const effectiveInstructions = [instructions, activeVariableGuide].filter(Boolean).join("\n\n");
 
         // When extra tools are active, inject the creation mode guide into the instructions
         // and return activeTools so the LLM can see them. v7 carries prepareStep instruction
@@ -933,13 +945,13 @@ export abstract class BaseAgentBase {
         // instructions to reset the carried state.
         if (extraToolNames.length > 0) {
           if (creationPrompt) {
-            return { instructions: `${instructions}\n\n${creationPrompt}`, activeTools: activeToolNames };
+            return { instructions: `${effectiveInstructions}\n\n${creationPrompt}`, activeTools: activeToolNames };
           }
 
-          return { instructions, activeTools: activeToolNames };
+          return { instructions: effectiveInstructions, activeTools: activeToolNames };
         }
 
-        return { instructions };
+        return { instructions: effectiveInstructions };
       },
     });
 

@@ -68,6 +68,7 @@ You do NOT need to specify a destination — just call send_message and the syst
 - Large tool results arrive as a stub, not the full data. The stub gives you the `variable` name (always read it from the stub), an `itemSchema` with the exact keys of one item, and a small `preview`.
 - To pass stored data to a tool, set the argument to `{"type":"variable","name":"<variable_name>"}` — supported on `write_table_<name>` `data`, `write_file` `content`, and `add_knowledge` `knowledge`.
 - Never re-emit stored data yourself. Use only key names listed in `itemSchema`.
+- Compaction preserves this run's blackboard data. Use the refreshed variable inventory provided in instructions after compaction. A later scheduled run starts with an empty blackboard, so never reuse names from an earlier run.
 - Use `run_code` to transform large stored values: it runs synchronous JavaScript on blackboard data only, without any access to tools, shell, network, or files. `return value` stores a new variable; `print(value)` inspects a short preview.
 - A reference resolves to the data payload (rows array / text); the stub's `meta` field carries the tool result's wrapper extras such as pagination.
 - If a variable is unknown or evicted, the tool returns an unknown-variable error listing the available names — use one of those.
