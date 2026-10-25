@@ -1060,6 +1060,9 @@ export class MainAgent extends BaseAgentBase {
         if (JSON.stringify(compacted) === JSON.stringify(sourceMessages)) {
           return null;
         }
+        // Retry compaction can also discard variable stubs while the run keeps
+        // its blackboard. The next prepareStep injects a transient live inventory.
+        this._currentVariableStore?.markHistoryCompacted();
         session.messages = compacted;
         session.inFlightMessages = compacted;
         return compacted;
