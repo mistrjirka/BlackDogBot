@@ -16,6 +16,7 @@ import * as litesql from "../../../src/helpers/litesql.js";
 import { MessagingService, type IPlatformAdapter } from "../../../src/services/messaging.service.js";
 import { ChannelRegistryService } from "../../../src/services/channel-registry.service.js";
 import { MainAgent } from "../../../src/agent/main-agent.js";
+import { flushBlackboardAsync } from "../../../src/utils/variable-persistence.js";
 import { TelegramHandler } from "../../../src/platforms/telegram/handler.js";
 import type { ITelegramConfig } from "../../../src/platforms/telegram/types.js";
 import type { IPlatformDeps } from "../../../src/platforms/types.js";
@@ -152,6 +153,9 @@ describe("TelegramHandler", () => {
   }, 600000);
 
   afterAll(async () => {
+    // clearChatHistory persists a reset asynchronously; never remove its directory
+    // while an atomic blackboard snapshot is still being written.
+    await Promise.all([flushBlackboardAsync("100"), flushBlackboardAsync("42")]);
     process.env.HOME = originalHome;
     resetSingletons();
     await fs.rm(tempDir, { recursive: true, force: true });
