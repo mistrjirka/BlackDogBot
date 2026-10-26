@@ -53,6 +53,21 @@ describe("web research MCP tool priority", () => {
     expect(route).not.toContain("mcp.scrapling.browser_screenshot");
   });
 
+  it("routes to the stealth browser and requires closing sessions, avoiding repeated blocked sites", () => {
+    const route = buildWebResearchRoutingInstruction([
+      "mcp.searxng.searxng_web_search", "mcp.searxng.web_url_read",
+      "mcp.stealth.browser_open", "mcp.stealth.browser_navigate",
+      "mcp.stealth.browser_read_text", "mcp.stealth.browser_take_screenshot",
+    ]);
+    expect(route).toContain("mcp.stealth.browser_open");
+    expect(route).toContain("mcp.stealth.browser_read_text");
+    expect(route).toContain("browser_close");
+    expect(route).toContain("mcp.stealth.browser_take_screenshot");
+    expect(route).toContain("After two attempts");
+    expect(route).not.toContain("mcp.scrapling.");
+    expect(route).not.toContain("mcp.playwright.");
+  });
+
   it("supports environments with no MCP servers without claiming they are connected", () => {
     const route = buildWebResearchRoutingInstruction([]);
     expect(route).not.toContain("mcp.searxng.");
