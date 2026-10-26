@@ -177,6 +177,7 @@ describe("TelegramHandler", () => {
   });
 
   it("should process a normal message end-to-end without error", async () => {
+    vi.spyOn(MainAgent.getInstance(), "processMessageForChatAsync").mockResolvedValue({ text: "pong", stepsCount: 1 });
     const handler: TelegramHandler = TelegramHandler.getInstance();
     const ctx: Context = makeCtx({ text: "Say 'pong'." });
 
@@ -186,6 +187,7 @@ describe("TelegramHandler", () => {
   }, 600000);
 
   it("should reply with agent text when the agent returns non-empty text", async () => {
+    vi.spyOn(MainAgent.getInstance(), "processMessageForChatAsync").mockResolvedValue({ text: "pong", stepsCount: 1 });
     const replyTexts: string[] = [];
     const ctx: Context = makeCtx({
       text: "Say 'pong' and nothing else.",
