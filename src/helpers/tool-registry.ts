@@ -58,7 +58,6 @@ const CORE_TOOL_NAMES: string[] = [
   "think",
   "run_cmd",
   "run_cmd_input",
-  "process",
   "get_cmd_status",
   "get_cmd_output",
   "wait_for_cmd",

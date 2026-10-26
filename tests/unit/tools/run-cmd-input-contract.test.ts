@@ -14,6 +14,17 @@ describe("PTY input tool contract", () => {
     expect(runCmdInputTool.description).toContain("controlKey");
   });
 
+  it("documents all five dedicated PTY tools to the main chat agent", async () => {
+    const prompt = await fs.readFile("src/defaults/prompts/main-agent.md", "utf8");
+    const skill = await fs.readFile("skills/coding-workflow/SKILL.md", "utf8");
+    for (const name of ["run_cmd_input", "get_cmd_status", "get_cmd_output", "wait_for_cmd", "stop_cmd"]) {
+      expect(prompt).toContain(name);
+      expect(skill).toContain(name);
+    }
+    expect(prompt).not.toContain("`process`");
+    expect(skill).toContain("apply_patch");
+  });
+
   it("documents JSON escapes as different from printable slash text", () => {
     const description = runCmdInputToolInputSchema.shape.input.description ?? "";
     expect(description).toContain(String.raw`{"input":"\u0003","appendNewline":false}`);

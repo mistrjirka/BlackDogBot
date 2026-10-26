@@ -15,6 +15,14 @@ describe("tool-registry", () => {
       expect(toolRegistry.isToolAllowed("get_cron", "full")).toBe(true);
     });
 
+    it("does not advertise the retired process wrapper while retaining dedicated PTY tools", () => {
+      const fullNames = toolRegistry.getAllowedToolNames("full");
+      expect(fullNames).not.toContain("process");
+      for (const name of ["run_cmd_input", "get_cmd_status", "get_cmd_output", "wait_for_cmd", "stop_cmd"]) {
+        expect(fullNames).toContain(name);
+      }
+    });
+
     it("should block destructive tools for 'read_only' permission", () => {
       expect(toolRegistry.isToolAllowed("run_cmd", "read_only")).toBe(false);
       expect(toolRegistry.isToolAllowed("write_file", "read_only")).toBe(false);

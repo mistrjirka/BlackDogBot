@@ -50,7 +50,7 @@ import type { McpService } from "../services/mcp.service.js";
 import type { AiProviderService } from "../services/ai-provider.service.js";
 import { attachDelegateAgentTool } from "./delegate-agent.js";
 import { canonicalToolCatalog, conciseToolDescriptions } from "./tool-descriptions.js";
-import { scheduleCreateTool, scheduleEditTool, processTool } from "../tools/merged-tools.tool.js";
+import { scheduleCreateTool, scheduleEditTool } from "../tools/merged-tools.tool.js";
 import { applyPatchTool } from "../tools/apply-patch.tool.js";
 import type { IFileReadTracker } from "../utils/file-tools-helper.js";
 import type { MessagePlatform } from "../shared/types/messaging.types.js";
@@ -70,9 +70,10 @@ export async function assembleToolsForChat(
   fileSender?: FileSender | null,
 ): Promise<ToolSet> {
   const tools = createBaseToolSet(messageSender, readTracker, fileSender);
-  // Preserve legacy implementations for cron; expose merged interfaces only to chat.
-  for (const old of ["run_cmd_input", "get_cmd_status", "get_cmd_output", "wait_for_cmd", "stop_cmd", "add_once", "add_interval", "edit_once", "edit_interval"]) delete tools[old];
-  tools.process = processTool;
+  // Keep the dedicated terminal controls model-visible: their precise schemas
+  // avoid ambiguity for raw keys, newlines, and PTY lifecycle operations.
+  // Scheduled-task actions retain their compact merged chat interface.
+  for (const old of ["add_once", "add_interval", "edit_once", "edit_interval"]) delete tools[old];
   tools.apply_patch = applyPatchTool;
   tools.schedule_create = scheduleCreateTool;
   tools.schedule_edit = scheduleEditTool;

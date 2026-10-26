@@ -10,9 +10,9 @@ disableModelInvocation: false
 Ordinary coding is already possible with existing tools. Do not request extra Git, package-install, or test-runner tools unless the existing shell approach fails.
 
 1. Inspect the project and repository before editing. Use run_cmd with an explicit cwd; Git, rg, language tooling, and tests run through the shell.
-2. For edits use read_file, write_file, edit_file; absolute paths are needed outside the bot workspace. run_cmd can also run scripts to make changes. Inspect changes with git diff and git diff --check.
+2. For edits use read_file, write_file, edit_file, or apply_patch for multi-file context-checked diffs. Absolute paths are needed outside the bot workspace. run_cmd can also run scripts to make changes. Inspect changes with git diff and git diff --check.
 3. Run relevant tests after modifications. Report actual passes, failures, and anything untested.
-4. For short terminal commands use run_cmd foreground. For interactive programs, REPLs, and long-lived servers use background, then the handleId with run_cmd_input, get_cmd_output, wait_for_cmd, and stop_cmd. Prefer the `controlKey` option for special keys, e.g. `{"handleId":"...","controlKey":"CTRL_C"}`; use `input` for text. Tool descriptions define exact key names and encoding. Never assume terminal echo means the target application processed a command. Handles survive between calls but not daemon restarts.
+4. For short terminal commands use run_cmd foreground. For interactive programs, REPLs, and long-lived servers use background, then the handleId with the dedicated run_cmd_input, get_cmd_status, get_cmd_output, wait_for_cmd, and stop_cmd tools. Prefer the `controlKey` option for special keys, e.g. `{"handleId":"...","controlKey":"CTRL_C"}`; use `input` for text. Tool descriptions define exact key names and encoding. Never assume terminal echo means the target application processed a command. Handles survive between calls but not daemon restarts.
 5. Prefer project-local dependency installs and Python virtual environments. Do not make global changes or push to remote repositories without user approval.
 6. Respect existing code and repository state; avoid creating wrapper tools or unnecessary abstractions.
 

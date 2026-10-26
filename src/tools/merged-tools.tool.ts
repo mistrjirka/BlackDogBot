@@ -54,11 +54,12 @@ const scheduleCommon = {
   timezone: z.string().optional(),
   notifyUser: z.boolean().optional(),
   messageDedupEnabled: z.boolean().optional(),
+  enabled: z.boolean().optional(),
 };
 
 export const scheduleCreateTool = tool({
   description: "Create one scheduled task. kind=once needs year/month/day/hour/minute; kind=interval needs every and offsetFromDayStart. Include self-contained instructions and permitted tools.",
-  inputSchema: z.object(scheduleCommon),
+  inputSchema: z.object(scheduleCommon).omit({ enabled: true }),
   execute: async (input, options) => {
     const { kind, ...rest } = input;
     const schema = kind === "once" ? addOnceToolInputSchema : addIntervalToolInputSchema;
