@@ -334,7 +334,7 @@ EOF
     command: ["mcp", "--http", "--host", "0.0.0.0", "--port", "8000"]
     shm_size: 1g
     mem_limit: 4g
-    pids_limit: 300
+    pids_limit: 768
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8000),3); s.close()"]
