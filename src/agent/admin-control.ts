@@ -79,6 +79,12 @@ export class AdminControl {
       return false;
     }
 
+    // Obsolete automated advice must not outrank the user's intervention.
+    for (let i = session.steeringQueue.length - 1; i >= 0; i--) {
+      if (session.steeringQueue[i].startsWith("Duplicate-loop adviser recommendation:")) {
+        session.steeringQueue.splice(i, 1);
+      }
+    }
     session.steeringQueue.push(message);
     this._logger.info("Steering message queued", { chatId, queueLength: session.steeringQueue.length });
 

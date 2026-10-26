@@ -859,6 +859,9 @@ export abstract class BaseAgentBase {
             activeTools: activeToolNames,
             countTokens: (msgs: ModelMessage[]): number => countTokens(msgs),
             structuredMode: AiProviderService.getInstance().getStructuredOutputMode(),
+            // When reasoning is not explicitly disabled for constrained output,
+            // prefer a plain-text handoff instead of relying on reasoning + JSON grammar.
+            preferPlainText: ConfigService.getInstance().getConfig().ai.compactionThinking === true,
             supportsVision: AiProviderService.getInstance().getSupportsVision(),
             abortSignal: getAbortSignal?.() ?? undefined,
             archiveDir: getSessionsDir(),

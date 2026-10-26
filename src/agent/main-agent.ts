@@ -1017,12 +1017,16 @@ export class MainAgent extends BaseAgentBase {
         session.skipNextUserAppend = false;
         const messagesForCall: ModelMessage[] = baseMessages;
 
-        while (session.steeringQueue.length > 0) {
-          const steeringMessage: string = session.steeringQueue.shift() as string;
-          const steeringModelMessage: ModelMessage = {
-            role: "user",
-            content: `[STEER] ${steeringMessage}`,
-          };
+        // Automated adviser output is context, not a human instruction.
+        // Human steering is always last, even if an adviser completes later.
+        const queuedSteering: string[] = session.steeringQueue.splice(0);
+        const isAdviser = (message: string): boolean => message.startsWith("Duplicate-loop adviser recommendation:");
+        queuedSteering.sort((a: string, b: string): number => Number(isAdviser(b)) - Number(isAdviser(a)));
+        for (const steeringMessage of queuedSteering) {
+          const automated: boolean = isAdviser(steeringMessage);
+          const steeringModelMessage: ModelMessage = automated
+            ? { role: "assistant", content: `[AUTOMATED ADVISER SUGGESTION] ${steeringMessage}` }
+            : { role: "user", content: `[STEER] ${steeringMessage}` };
           messagesForCall.push(steeringModelMessage);
           this._logger.info("Injected steering message", {
             chatId,

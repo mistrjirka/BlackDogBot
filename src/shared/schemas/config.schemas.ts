@@ -135,6 +135,9 @@ const aiConfigSchema = z.object({
   disableThinkingOnStructuredOutput: z.boolean()
     .default(false)
     .describe("When true, structured-output requests disable model thinking (llama.cpp chat_template_kwargs.enable_thinking=false)."),
+  compactionThinking: z.boolean()
+    .default(false)
+    .describe("Enable reasoning while summarizing checkpoints. Defaults off: faster and JSON-compatible. If enabled, checkpoint output uses plain text."),
   generationTimeoutMs: z.number()
     .int()
     .positive()

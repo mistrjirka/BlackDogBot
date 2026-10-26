@@ -2043,7 +2043,13 @@ export class AiProviderCore {
                 modified = true;
               }
 
-              if (isStructuredRequest && this._aiConfig?.disableThinkingOnStructuredOutput === true) {
+              // Checkpoints default to non-thinking generation; thinking can be
+              // explicitly enabled via ai.compactionThinking for plain-text experiments.
+              const compactWithoutThinking: boolean =
+                getCurrentLlmCallType() === "summarization" &&
+                this._aiConfig?.compactionThinking !== true &&
+                this._supportsReasoningFormat;
+              if (compactWithoutThinking || (isStructuredRequest && this._aiConfig?.disableThinkingOnStructuredOutput === true)) {
                 const mergedChatTemplateKwargs: Record<string, unknown> = {
                   ...((body.chat_template_kwargs as Record<string, unknown> | undefined) ?? {}),
                   ...(requestBehavior.chatTemplateKwargs ?? {}),

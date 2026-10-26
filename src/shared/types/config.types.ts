@@ -87,6 +87,8 @@ export interface IAiConfig {
   compactionThreshold?: number;
   /** Disable model thinking for structured-output requests (llama.cpp). */
   disableThinkingOnStructuredOutput?: boolean;
+  /** Enable reasoning during checkpoint summarization (default false for speed/reliability). */
+  compactionThinking?: boolean;
   fallbacks?: IAiFallbackEntry[];
   generationTimeoutMs?: number;
   openrouter?: IOpenRouterConfig;
