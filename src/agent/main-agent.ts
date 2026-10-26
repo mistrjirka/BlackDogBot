@@ -29,6 +29,7 @@ import { saveSessionAsync as _saveSessionAsync, loadSessionAsync as _loadSession
 import { AdminControl, createAdminControl } from "./admin-control.js";
 import { buildPerTableToolsWithUpdatesAsync } from "../utils/per-table-tools.js";
 import { VariableStore } from "../utils/variable-store.js";
+import { loadBlackboardAsync, scheduleBlackboardSave, flushBlackboardAsync } from "../utils/variable-persistence.js";
 import { attachCompactionGuide, stripCompactionGuides } from "../utils/compaction-guide.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
 import { CheckpointCompactionError } from "../utils/checkpoint-compaction.js";
@@ -113,6 +114,7 @@ export class MainAgent extends BaseAgentBase {
   private _adminControl: AdminControl;
   private _runQueue: Promise<void>;
   private _agents: Map<string, ToolLoopAgent>;
+  private _variableStores: Map<string, VariableStore>;
 
   //#endregion Data members
 
@@ -125,6 +127,7 @@ export class MainAgent extends BaseAgentBase {
     this._adminControl = createAdminControl(this._sessions, this._logger);
     this._runQueue = Promise.resolve();
     this._agents = new Map();
+    this._variableStores = new Map();
   }
 
   //#endregion Constructors
@@ -223,6 +226,25 @@ export class MainAgent extends BaseAgentBase {
       if (saved !== null) {
         this._logger.info("Session restored from disk.", { chatId, messageCount: saved.messages.length });
       }
+      // Load one bounded blackboard per chat, separate from conversation history.
+      // No variable inventory is injected into the system prefix.
+      let store: VariableStore;
+      try {
+        store = await loadBlackboardAsync(chatId);
+      } catch (error) {
+        this._logger.error("Failed to restore chat blackboard; using an empty store.", {
+          chatId, error: error instanceof Error ? error.message : String(error),
+        });
+        store = new VariableStore();
+      }
+      store.setOnChange((): void => {
+        void scheduleBlackboardSave(chatId, store).catch((error: unknown): void => {
+          this._logger.error("Failed to persist chat blackboard", {
+            chatId, error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      });
+      this._variableStores.set(chatId, store);
     }
 
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
@@ -628,7 +650,7 @@ export class MainAgent extends BaseAgentBase {
     // Blackboard store is created here — before the outer while(true) — so it
     // outlives rebuild-restart `continue`s and is visible to hot-reloaded tool
     // rebuilds during this run.
-    this._currentVariableStore = new VariableStore();
+    this._currentVariableStore = this._variableStores.get(chatId) ?? new VariableStore();
 
     let currentUserMessage: string = userMessage;
     // Set when the loop restarts after a tool rebuild: the synthetic restart
@@ -918,7 +940,8 @@ export class MainAgent extends BaseAgentBase {
     }
 
     this._resetDuplicateLoopEscalation(chatId);
-    // Drop the store once the run is fully done.
+    await flushBlackboardAsync(chatId);
+    // Release the active pointer but retain the chat's store for later requests.
     this._currentVariableStore = null;
     return finalResult;
   }
@@ -1172,6 +1195,7 @@ private async _activateFallbackAndReinitializeAsync(
    */
   public clearChatHistory(chatId: string): void {
     this._adminControl.clearChatHistory(chatId);
+    this._variableStores.get(chatId)?.clear();
     this._agents.delete(chatId);
     StatusService.getInstance().clearChatStatus(chatId);
   }
@@ -1183,6 +1207,7 @@ private async _activateFallbackAndReinitializeAsync(
     const chatIds: string[] = Array.from(this._sessions.keys());
     this._adminControl.clearAllChatHistory();
     for (const chatId of chatIds) {
+      this._variableStores.get(chatId)?.clear();
       this._agents.delete(chatId);
       StatusService.getInstance().clearChatStatus(chatId);
     }

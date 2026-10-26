@@ -827,7 +827,7 @@ describe("blackboard compaction lifecycle", () => {
     store.markHistoryCompacted();
     const guide = store.getCompactionGuide();
     expect(guide).toContain(stub.variable);
-    expect(guide).toContain("this agent run only");
+    expect(guide).toContain("persistent across turns");
     expect(guide).not.toContain("SECRET_CONTENT");
     expect(store.get(stub.variable)).toBe("SECRET_CONTENT_".repeat(400));
     expect(new VariableStore().getCompactionGuide()).toBeNull();

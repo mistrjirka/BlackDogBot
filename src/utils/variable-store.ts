@@ -9,7 +9,7 @@ import {
 /**
  * Blackboard variable store (Phase 1 — Blackboard Core).
  *
- * Tool results that cross a size threshold are captured into a per-run store and
+ * Tool results that cross a size threshold are captured into a bounded store and
  * replaced in context with a compact "stub". Tool inputs may then reference a
  * stored variable by name instead of re-emitting the whole blob. The model never
  * names variables (names are assigned per result) and never re-reads/re-emits a
@@ -126,19 +126,75 @@ export const variableRefSchema: ZodType<IVariableRef> = z.object({
   name: z.string().min(1),
 }).strict();
 
+/** Bounded JSON snapshot used outside model context. */
+export interface IVariableStoreSnapshot {
+  version: 1;
+  counter: number;
+  variables: Array<{ name: string; value: unknown; sizeBytes: number; meta?: ICapturedVariable["meta"] }>;
+}
+
 /**
- * Per-run blackboard. Large tool results are captured here (as stubs) and small
- * ones pass through untouched. Construct one per agent run.
+ * Per-chat blackboard in MainAgent; cron agents may still use per-run stores.
+ * Large tool results are captured here (as stubs) and small
+ * ones pass through untouched. MainAgent retains one store per chat.
  */
 export class VariableStore {
   /** Insertion order = FIFO eviction order. */
   private readonly _variables: Map<string, ICapturedVariable> = new Map();
 
-  /** Run-global capture counter; names are `<toolName>_<n>`. */
+  /** Store-global capture counter; names are `<toolName>_<n>`. */
   private _counter: number = 0;
 
   /** A checkpoint compacted the message history, possibly dropping variable stubs. */
   private _historyCompacted = false;
+  private _onChange: (() => void) | null = null;
+
+  setOnChange(callback: (() => void) | null): void { this._onChange = callback; }
+
+  snapshot(): IVariableStoreSnapshot {
+    return { version: 1, counter: this._counter,
+      variables: [...this._variables.entries()].map(([name, entry]) => ({ name, ...entry })) };
+  }
+
+  static fromSnapshot(input: unknown): VariableStore {
+    const store = new VariableStore();
+    if (!input || typeof input !== "object" || Array.isArray(input)) return store;
+    const data = input as Partial<IVariableStoreSnapshot>;
+    if (data.version !== 1 || !Array.isArray(data.variables) || data.variables.length > 1000) return store;
+    for (const record of data.variables) {
+      if (!record || typeof record !== "object" || typeof record.name !== "string" ||
+          !/^[A-Za-z_][A-Za-z_0-9]{0,150}$/.test(record.name) || store._variables.has(record.name)) continue;
+      let bytes: number;
+      try { bytes = Buffer.byteLength(JSON.stringify(record.value) ?? "", "utf8"); } catch { continue; }
+      if (bytes > MAX_VARIABLE_BYTES || bytes < 1) continue;
+      const entry: ICapturedVariable = { value: record.value, sizeBytes: bytes };
+      if (record.meta && typeof record.meta === "object" && !Array.isArray(record.meta)) {
+        const meta = Object.fromEntries(Object.entries(record.meta).filter(([, val]) =>
+          val === null || ["string", "number", "boolean"].includes(typeof val)).slice(0, 8));
+        entry.meta = meta as ICapturedVariable["meta"];
+      }
+      store._variables.set(record.name, entry);
+    }
+    const maxSuffix = Math.max(0, ...store.names().map(name => Number(name.match(/_(\d+)$/)?.[1] ?? 0)));
+    const counter: number | undefined = data.counter;
+    store._counter = typeof counter === "number" && Number.isSafeInteger(counter) && counter >= 0
+      ? Math.max(counter, maxSuffix) : maxSuffix;
+    store._evictIfNeeded();
+    return store;
+  }
+
+  inventory(): Array<{ name: string; type: string; sizeBytes: number }> {
+    return [...this._variables.entries()].map(([name, entry]) => ({
+      name, type: Array.isArray(entry.value) ? "array" : entry.value === null ? "null" : typeof entry.value,
+      sizeBytes: entry.sizeBytes,
+    }));
+  }
+
+  clear(): void {
+    this._variables.clear();
+    this._historyCompacted = false;
+    this._onChange?.();
+  }
 
   constructor() {
     // No arguments: the store is a per-run scratch space, created by the agent.
@@ -213,6 +269,7 @@ export class VariableStore {
 
     // 6. Evict oldest (FIFO) while over either cap (a minimum one eviction when triggered).
     this._evictIfNeeded();
+    this._onChange?.();
 
     // 7. Stub replaces the blob in context; it describes the payload. `total` still
     //    passes through from the WHOLE result so wrapper counters survive extraction.
@@ -250,7 +307,7 @@ export class VariableStore {
   }
 
   /**
-   * Short, run-local inventory attached once to retained tool results after
+   * Short inventory attached once to retained tool results after
    * compaction. Strip it before persistence: names expire with this run.
    */
   getCompactionGuide(): string | null {
@@ -266,12 +323,12 @@ export class VariableStore {
       lines.push(entry);
       used += entry.length + 2;
     }
-    return "ACTIVE BLACKBOARD VARIABLES (this agent run only, never persisted): " +
+    return "ACTIVE CHAT BLACKBOARD VARIABLES (bounded, persistent across turns): " +
       lines.join(", ") +
       (lines.length < entries.length ? `; ${entries.length - lines.length} older names omitted` : "") +
       ". Values remain in memory after compaction. Use run_code with these exact names " +
       "or inspect_variable to inspect them. Do not copy full values into prompts. " +
-      "Names visible in older conversation messages may be stale and cannot be used after the current run ends.";
+      "Older names may have been evicted. Call inspect_variable without a name to list available variables.";
   }
 
   /** Names of all currently retained variables, in capture (FIFO) order. */

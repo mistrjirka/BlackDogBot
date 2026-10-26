@@ -8,7 +8,7 @@ import {
 import { VariableStore } from "../utils/variable-store.js";
 
 const inspectVariableInputSchema = z.object({
-  name: z.string().min(1).describe("Case-sensitive variable name shown in a stored-result stub (e.g. searxng_1)."),
+  name: z.string().min(1).optional().describe("Exact stored name. Omit to list available saved variables with sizes, not their values."),
   offset: z.number().int().nonnegative().default(0).describe("Character offset in the stored value, starting at 0."),
   maxChars: z.number()
     .int()
@@ -23,17 +23,22 @@ const inspectVariableInputSchema = z.object({
 
 type InspectResult =
   | { name: string; offset: number; totalChars: number; nextOffset: number | null; content: string }
-  | { error: "unknown_variable" | "no_active_store"; available: string[] };
+  | { error: "unknown_variable" | "no_active_store"; available: string[] }
+  | { variables: ReturnType<VariableStore["inventory"]>; count: number };
 
 /** Bounded, read-only inspection of a stored result. Does not export it to a shell. */
 export function createInspectVariableTool(getStore: () => VariableStore | null) {
   return tool({
-    description: "Inspect a bounded slice of an in-memory stored tool result. Use the exact variable name from a stub to read large run_cmd/read_file/search output, then continue at nextOffset. This does not execute code or read shell environment variables. Stored results exist only during the current agent run.",
+    description: "List saved chat variables (omit name), or inspect a bounded slice of one. Variables survive user turns and restart, subject to FIFO retention. Use run_code to filter large results instead of paging through them. No shell environment access.",
     inputSchema: inspectVariableInputSchema,
     execute: async ({ name, offset, maxChars }: z.infer<typeof inspectVariableInputSchema>): Promise<InspectResult> => {
       const store = getStore();
       if (!store) {
         return { error: "no_active_store", available: [] };
+      }
+      if (name === undefined) {
+        const variables = store.inventory();
+        return { variables, count: variables.length };
       }
       if (!store.names().includes(name)) {
         return { error: "unknown_variable", available: store.names() };
@@ -53,7 +58,7 @@ export function createInspectVariableTool(getStore: () => VariableStore | null) 
     // VariableStore must not re-capture this intentionally bounded inspection;
     // toModelOutput also makes the slice directly readable by the model.
     toModelOutput: ({ output }: { output: InspectResult }) => {
-      if ("error" in output) {
+      if ("error" in output || "variables" in output) {
         return { type: "text" as const, value: JSON.stringify(output) };
       }
 

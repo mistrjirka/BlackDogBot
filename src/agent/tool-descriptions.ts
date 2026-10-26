@@ -19,7 +19,7 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   wait_for_cmd: "Wait for completion or input on handleId; timeoutMs limits waiting only, not execution.",
   stop_cmd: "Stop a background process by handleId with SIGTERM/SIGINT/SIGKILL; cleanup and output may remain available.",
   run_timed: "Run a saved scheduled task immediately; optionally notify its user.",
-  run_code: "Execute JavaScript against persistent run-local blackboard variables; use refs instead of copying large outputs. This is not shell execution.",
+  run_code: "Filter/analyze saved chat variables with synchronous JavaScript, instead of copying large pages into prompts. Example: print(read_file_3.split('\\n').filter(x => /12\\.50|reboot/i.test(x)).slice(0,12).join('\\n')). Print short relevant excerpts; return a value to save a new variable. Only referenced names are loaded. No shell or network.",
   send_file: "Send a file from the workspace or uploads directory, optionally with a caption.",
   "mcp.searxng.web_url_read": "Retrieve and extract text from a URL using SearXNG. For dynamic or blocked pages use the browser tools.",
   "mcp.searxng.searxng_web_search": "Search the web through SearXNG. Supply keywords and search filters; use returned URLs for follow-up reading.",

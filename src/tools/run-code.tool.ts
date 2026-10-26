@@ -21,7 +21,7 @@ type WorkerReply =
   | { ok: false; category: string; message: string };
 
 /** Parse and check identifiers before spawning the worker. Tool calls are never available in code. */
-function checkCode(code: string, available: string[]): { category: string; message: string } | null {
+function checkCode(code: string, available: string[], referenced: Set<string>): { category: string; message: string } | null {
   try {
     const ast = acorn.parse(`function __run__(){\n${code}\n}`, {
       ecmaVersion: "latest", sourceType: "script", locations: true, ranges: true,
@@ -43,6 +43,10 @@ function checkCode(code: string, available: string[]): { category: string; messa
     const unknown = [...new Set((scope.globalScope?.through ?? []).map((ref) => ref.identifier.name)
       .filter((name) => !names.has(name) && !BUILTINS.has(name)))];
     if (unknown.length) return { category: "unknown_variable", message: `Unknown identifiers: ${unknown.join(", ")}. Available variables: ${available.join(", ") || "(none)"}` };
+    // Only transfer global identifiers actually referenced by submitted code.
+    for (const ref of scope.globalScope?.through ?? []) {
+      if (names.has(ref.identifier.name)) referenced.add(ref.identifier.name);
+    }
     return null;
   } catch (error) {
     const e = error as { message?: string; loc?: { line: number; column: number } };
@@ -77,7 +81,7 @@ export function createRunCodeTool(getStore: () => VariableStore | null) {
   let failures = 0;
   let lastStore: VariableStore | null = null;
   return tool({
-    description: "Transform stored blackboard values with synchronous JavaScript (max 4000 characters). Tool calls, shell commands, network and files are NOT available. Variables are injected as read-only names shown in stored-result stubs. Use print(value) or console.log(value) for bounded inspection; return a JSON-serializable value to create a new code_<n> variable (≤1 MiB). Data is passed to write_file, add_knowledge, or write_table_* by variable reference. Limit: 5 seconds, 128 MiB. If repeated errors occur, fall back to direct tools.",
+    description: "Filter/analyze saved blackboard data using synchronous JavaScript, without copying the full result into chat. Refer to stored names directly, e.g. const lines = read_file_3.split('\\n'); print(lines.filter(x => /12\\.50|GoldHEN|reboot/i.test(x)).slice(0,20).join('\\n'));. Print only brief relevant excerpts; for context around matches, select neighboring lines. Use return to save a new variable and pass {type:'variable',name:'code_N'} to supported sinks. Only referenced variables are loaded. No shell, network, or tool calls. Max 4000 code chars, 5 seconds, 128 MiB; use inspect_variable without name to list available names.",
     inputSchema: z.object({ code: z.string().min(1).max(MAX_CODE_CHARS).describe("JavaScript function body. Example: print(mcp_searxng_search_1.slice(0,2)); return mcp_searxng_search_1.filter(x => x.title);") }),
     execute: async ({ code }: { code: string }) => {
       const store = getStore();
@@ -85,10 +89,11 @@ export function createRunCodeTool(getStore: () => VariableStore | null) {
       if (!store) return { ok: false, category: "validation", message: "No active blackboard." };
       if (failures >= 3) return { ok: false, category: "validation", message: "run_code retry limit reached. Fall back to direct tools." };
       const names = store.names();
-      const issue = checkCode(code, names);
+      const referenced = new Set<string>();
+      const issue = checkCode(code, names, referenced);
       if (issue) { failures++; return { ok: false, ...issue, availableVariables: names, attempt: failures, maxAttempts: 3 }; }
       const variables: Record<string, unknown> = {};
-      for (const name of names) variables[name] = store.get(name);
+      for (const name of referenced) variables[name] = store.get(name);
       const result = await runWorker(code, variables);
       if (!result.ok) { failures++; return { ...result, availableVariables: names, attempt: failures, maxAttempts: 3 }; }
       failures = 0;
