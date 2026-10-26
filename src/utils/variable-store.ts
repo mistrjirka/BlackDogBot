@@ -250,8 +250,8 @@ export class VariableStore {
   }
 
   /**
-   * Short, live-only inventory injected into subsequent model instructions after
-   * compaction. Never serialize this as a chat message: names expire with this run.
+   * Short, run-local inventory attached once to retained tool results after
+   * compaction. Strip it before persistence: names expire with this run.
    */
   getCompactionGuide(): string | null {
     if (!this._historyCompacted || this._variables.size === 0) return null;

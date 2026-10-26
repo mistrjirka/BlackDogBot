@@ -29,6 +29,7 @@ import { saveSessionAsync as _saveSessionAsync, loadSessionAsync as _loadSession
 import { AdminControl, createAdminControl } from "./admin-control.js";
 import { buildPerTableToolsWithUpdatesAsync } from "../utils/per-table-tools.js";
 import { VariableStore } from "../utils/variable-store.js";
+import { attachCompactionGuide, stripCompactionGuides } from "../utils/compaction-guide.js";
 import { compactMessagesSummaryOnlyAsync } from "../utils/summarization-compaction.js";
 import { CheckpointCompactionError } from "../utils/checkpoint-compaction.js";
 import { countTokens } from "../utils/token-tracker.js";
@@ -1060,12 +1061,13 @@ export class MainAgent extends BaseAgentBase {
         if (JSON.stringify(compacted) === JSON.stringify(sourceMessages)) {
           return null;
         }
-        // Retry compaction can also discard variable stubs while the run keeps
-        // its blackboard. The next prepareStep injects a transient live inventory.
+        // Retry compaction can discard stubs. Attach the live inventory once
+        // to the retained tool output, never to system instructions.
         this._currentVariableStore?.markHistoryCompacted();
-        session.messages = compacted;
-        session.inFlightMessages = compacted;
-        return compacted;
+        const annotated: ModelMessage[] = attachCompactionGuide(compacted, this._currentVariableStore?.getCompactionGuide() ?? null);
+        session.messages = annotated;
+        session.inFlightMessages = annotated;
+        return annotated;
       },
     });
 
@@ -1187,6 +1189,8 @@ private async _activateFallbackAndReinitializeAsync(
   //#region Private methods
 
   private async _saveSessionAsync(chatId: string): Promise<void> {
+    const session = this._sessions.get(chatId);
+    if (session) session.messages = stripCompactionGuides(session.messages);
     await _saveSessionAsync(this._sessions, chatId);
   }
 

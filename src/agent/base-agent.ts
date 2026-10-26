@@ -22,6 +22,7 @@ export type { IDuplicateToolCallLoopInfo };
 import { repairToolCallJsonAsync } from "../utils/tool-call-repair.js";
 import { wrapToolSetWithReasoning } from "../utils/tool-reasoning-wrapper.js";
 import { VariableStore, wrapToolSetWithVariables } from "../utils/variable-store.js";
+import { attachCompactionGuide } from "../utils/compaction-guide.js";
 import { compactWithCheckpointAsync } from "../utils/checkpoint-compaction.js";
 import { getSessionsDir } from "../utils/paths.js";
 import {
@@ -916,28 +917,30 @@ export abstract class BaseAgentBase {
             statusService.setChatCompaction(self._statusChatId, tokenCount, postCompactionTokenCount);
           }
 
-          // Stubs may be removed by the summary. Keep variable names available
-          // through transient instructions, never persisted chat history.
+          // A one-time inventory survives compaction in the retained tool result.
+          // Do not mutate system instructions as tool variables are captured.
           self._currentVariableStore?.markHistoryCompacted();
+          const compactedMessages: ModelMessage[] = attachCompactionGuide(
+            compactionResult.messages,
+            self._currentVariableStore?.getCompactionGuide() ?? null,
+          );
 
           // Notify the caller about the compaction so they can persist the compacted messages
           if (self._compactionSink) {
-            self._compactionSink(compactionResult.messages);
+            self._compactionSink(compactedMessages);
           }
           if (self._messagesSink) {
-            self._messagesSink([...compactionResult.messages]);
+            self._messagesSink([...compactedMessages]);
           }
 
-          const guide = self._currentVariableStore?.getCompactionGuide();
           return {
-            messages: compactionResult.messages,
-            instructions: [instructions, creationPrompt, guide].filter(Boolean).join("\n\n"),
+            messages: compactedMessages,
+            instructions: [instructions, creationPrompt].filter(Boolean).join("\n\n"),
             activeTools: activeToolNames,
           };
         }
 
-        const activeVariableGuide = self._currentVariableStore?.getCompactionGuide();
-        const effectiveInstructions = [instructions, activeVariableGuide].filter(Boolean).join("\n\n");
+        const effectiveInstructions = instructions;
 
         // When extra tools are active, inject the creation mode guide into the instructions
         // and return activeTools so the LLM can see them. v7 carries prepareStep instruction

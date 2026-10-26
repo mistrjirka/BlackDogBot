@@ -27,6 +27,7 @@ vi.mock("../../src/utils/checkpoint-compaction.js", async () => {
 
 import { BaseAgentBase } from "../../src/agent/base-agent.js";
 import { VariableStore } from "../../src/utils/variable-store.js";
+import { stripCompactionGuides } from "../../src/utils/compaction-guide.js";
 import type {
   IRequestLikeByteTokenEstimate,
   IRequestLikeTokenEstimate,
@@ -117,16 +118,18 @@ describe("BaseAgentBase compaction token tracking", () => {
       converged: true, dagPath: [], dagNodeVisitCounts: {}, dagTerminationReason: "checkpoint_plain_text", maxLevelReached: "L1",
     });
     const result = await agent.callPrepareStepAsync(0, [{ role: "user", content: "input" }]) as { messages: ModelMessage[]; instructions: string };
-    expect(result.messages).toEqual(compacted);
-    expect(result.instructions).toContain(stub.variable);
-    expect(result.instructions).not.toContain("NOT_FOR_SUMMARY");
-    expect(saved.at(-1)).toEqual(compacted);
-    const later = await agent.callPrepareStepAsync(1, compacted) as { instructions: string };
-    expect(later.instructions).toContain(stub.variable);
+    expect(stripCompactionGuides(result.messages)).toEqual(compacted);
+    expect(JSON.stringify(result.messages)).toContain(stub.variable);
+    expect(JSON.stringify(result.messages)).not.toContain("NOT_FOR_SUMMARY");
+    expect(result.instructions).toBe("Test instructions");
+    expect(saved.at(-1)).toEqual(result.messages);
+    const later = await agent.callPrepareStepAsync(1, result.messages) as { instructions: string };
+    expect(later.instructions).toBe(result.instructions);
     expect(store.get(stub.variable)).toBe("NOT_FOR_SUMMARY_".repeat(350));
     agent.setStore(new VariableStore());
-    const nextTurn = await agent.callPrepareStepAsync(2, compacted) as { instructions: string };
-    expect(nextTurn.instructions).not.toContain(stub.variable);
+    const nextTurn = await agent.callPrepareStepAsync(2, stripCompactionGuides(result.messages)) as { instructions: string };
+    expect(nextTurn.instructions).toBe(result.instructions);
+    expect(JSON.stringify(stripCompactionGuides(result.messages))).not.toContain(stub.variable);
   });
 
   it("updates estimatedInputTokens to post-compaction value", async () => {
