@@ -475,8 +475,12 @@ export class McpService {
   private _rebuildCombinedTools(): void {
     this._combinedTools = {};
 
-    for (const [, connection] of this._connections) {
-      Object.assign(this._combinedTools, connection.tools);
+    // Stable ordering regardless of reconnect sequence (preserves cached prefix).
+    const connections = [...this._connections.entries()].sort(([a], [b]) => a.localeCompare(b, "en"));
+    for (const [, connection] of connections) {
+      for (const [name, def] of Object.entries(connection.tools).sort(([a], [b]) => a.localeCompare(b, "en"))) {
+        this._combinedTools[name] = def;
+      }
     }
   }
 

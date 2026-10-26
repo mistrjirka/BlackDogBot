@@ -48,6 +48,9 @@ const _CHAT_STATIC_EXTRA_TOOLS: string[] = [
   "create_table",
   "inspect_variable",
   "run_code",
+  "apply_patch",
+  "schedule_create",
+  "schedule_edit",
 ];
 
 async function _resolveIncludesAsync(content: string, depth: number): Promise<string> {
