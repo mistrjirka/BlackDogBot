@@ -70,6 +70,17 @@ describe("web research evidence verifier", () => {
     expect(result.results[0].note).toMatch(/does not establish/);
   });
 
+  it("rejects a synthetic quote even when run_code retains the original URL", async () => {
+    const { store, source, call } = fixture();
+    const run = createRunCodeTool(() => store);
+    const derived = await run.execute!({code:`const x=${source.variable}; return x.replace("Users of PS5 Autoloader", "Users of PS4 Autoloader");`},noOptions) as {variable:string};
+    expect(store.getSourceKind(derived.variable)).toBe("derived");
+    const checked = await call([{claim:"PS4 automatically loads GoldHEN on boot", sourceVariable:derived.variable,
+      exactQuote:"Users of PS4 Autoloader can copy a payload file to /data for automatic boot loading.",claimedPlatform:"PS4"}]) as Record<string,any>;
+    expect(checked.results[0].status).toBe("quote_not_found");
+    expect(checked.results[0].originalVariable).toBe(source.variable);
+  });
+
   it("preserves original URL across run_code-derived output and restart snapshot", async () => {
     const { store, source } = fixture();
     const runCode = createRunCodeTool(() => store);

@@ -30,11 +30,20 @@ export function createVerifyClaimEvidenceTool(getStore: () => VariableStore | nu
       const store = getStore();
       if (!store) return { ok: false, error: "no_active_blackboard" };
       const results = claims.map(({ claim, sourceVariable, exactQuote, claimedPlatform }) => {
-        const source = store.get(sourceVariable);
-        const sourceUrl = store.getSourceUrl(sourceVariable) ?? null;
-        if (source === undefined) {
-          return { claim, sourceVariable, sourceUrl, status: "missing_source_variable", quoteFound: false,
-            note: "The source variable is unavailable/evicted; do not cite it as verified." };
+        let originalVariable = sourceVariable;
+        let depth = 0;
+        while (store.getSourceKind(originalVariable) === "derived" && depth++ < 16) {
+          const parent = store.getDerivedFrom(originalVariable);
+          if (!parent) break;
+          originalVariable = parent;
+        }
+        const source = store.get(originalVariable);
+        const sourceKind = store.getSourceKind(originalVariable);
+        const sourceUrl = store.getSourceUrl(originalVariable) ?? null;
+        if (source === undefined || sourceKind === "derived") {
+          return { claim, sourceVariable, originalVariable, sourceUrl: null,
+            status: source === undefined && originalVariable === sourceVariable ? "missing_source_variable" : "primary_source_unavailable", quoteFound: false,
+            note: "Original retrieved page unavailable; cannot verify a derived excerpt." };
         }
         const rawText = typeof source === "string" ? source : JSON.stringify(source);
         const haystack = normalizeText(rawText);
@@ -46,7 +55,7 @@ export function createVerifyClaimEvidenceTool(getStore: () => VariableStore | nu
           || claimedPlatform === "PS5" && /\bPS4\b/i.test(quote) && !/\bPS5\b/i.test(quote));
         const status = !quoteFound ? "quote_not_found" : scopeMismatch ? "scope_mismatch"
           : !sourceUrl ? "source_unattributed" : "passage_found";
-        return { claim, sourceVariable, sourceUrl, status, quoteFound,
+        return { claim, sourceVariable, originalVariable, sourceUrl, status, quoteFound,
           quotedPassage: quoteFound ? quote.slice(0, 200) : undefined,
           note: !quoteFound ? "Quote not found in retained source; obtain and check the actual page."
             : scopeMismatch ? "Quoted evidence explicitly concerns the other console. It cannot prove this platform claim."

@@ -90,6 +90,8 @@ interface ICapturedVariable {
   /** Scalar wrapper fields preserved at capture when the payload was extracted (FIX-1); omitted otherwise. */
   meta?: Record<string, string | number | boolean | null>;
   sourceUrl?: string;
+  sourceKind?: "retrieved" | "derived";
+  derivedFrom?: string;
 }
 
 /** Shape of a captured-variable stub shown to the model instead of the full blob. */
@@ -110,6 +112,8 @@ interface IVariableStub {
   /** Wrapper extras (e.g. pagination) when the payload was extracted; omitted when empty. */
   meta?: Record<string, string | number | boolean | null>;
   sourceUrl?: string;
+  sourceKind?: "retrieved" | "derived";
+  derivedFrom?: string;
   note: string;
   total?: number;
 }
@@ -139,7 +143,7 @@ export const variableRefSchema: ZodType<IVariableRef> = z.object({
 export interface IVariableStoreSnapshot {
   version: 1;
   counter: number;
-  variables: Array<{ name: string; value: unknown; sizeBytes: number; meta?: ICapturedVariable["meta"]; sourceUrl?: string }>;
+  variables: Array<{ name: string; value: unknown; sizeBytes: number; meta?: ICapturedVariable["meta"]; sourceUrl?: string; sourceKind?: "retrieved" | "derived"; derivedFrom?: string }>;
 }
 
 /**
@@ -184,6 +188,8 @@ export class VariableStore {
         entry.meta = meta as ICapturedVariable["meta"];
       }
       if (typeof record.sourceUrl === "string" && isHttpUrl(record.sourceUrl)) entry.sourceUrl = record.sourceUrl;
+      if (record.sourceKind === "retrieved" || record.sourceKind === "derived") entry.sourceKind = record.sourceKind;
+      if (typeof record.derivedFrom === "string") entry.derivedFrom = record.derivedFrom;
       store._variables.set(record.name, entry);
     }
     const maxSuffix = Math.max(0, ...store.names().map(name => Number(name.match(/_(\d+)$/)?.[1] ?? 0)));
@@ -224,7 +230,8 @@ export class VariableStore {
    *   6. evict FIFO while over the variable count cap or the total byte cap.
    *   7. return the stub describing the captured (payload) value.
    */
-  maybeCapture(toolName: string, result: unknown, force = false, sourceUrl?: string): unknown {
+  maybeCapture(toolName: string, result: unknown, force = false, sourceUrl?: string,
+    sourceKind: "retrieved" | "derived" = "retrieved", derivedFrom?: string): unknown {
     // 1. null/undefined carry no blob to store.
     if ((result === null && !force) || result === undefined) {
       return result;
@@ -275,7 +282,8 @@ export class VariableStore {
     const name: string = `${safeToolName}_${++this._counter}`;
     this._variables.set(name, { value: normalized, sizeBytes: storedSizeBytes,
       ...(extraction.meta ? { meta: extraction.meta } : {}),
-      ...(isHttpUrl(sourceUrl) ? { sourceUrl } : {}),
+      ...(isHttpUrl(sourceUrl) ? { sourceUrl, sourceKind } : {}),
+      ...(sourceKind === "derived" && derivedFrom ? { sourceKind, derivedFrom } : {}),
     });
 
     // 6. Evict oldest (FIFO) while over either cap (a minimum one eviction when triggered).
@@ -285,7 +293,7 @@ export class VariableStore {
     // 7. Stub replaces the blob in context; it describes the payload. `total` still
     //    passes through from the WHOLE result so wrapper counters survive extraction.
     return _buildStub(name, normalized, storedSizeBytes, extraction.meta, extraction.extracted ? result : undefined,
-      isHttpUrl(sourceUrl) ? sourceUrl : undefined);
+      isHttpUrl(sourceUrl) ? sourceUrl : undefined, sourceKind, derivedFrom);
   }
 
   /**
@@ -354,6 +362,8 @@ export class VariableStore {
   }
 
   getSourceUrl(name: string): string | undefined { return this._variables.get(name)?.sourceUrl; }
+  getSourceKind(name: string): "retrieved" | "derived" | undefined { return this._variables.get(name)?.sourceKind; }
+  getDerivedFrom(name: string): string | undefined { return this._variables.get(name)?.derivedFrom; }
 
   setBrowserSourceUrl(url: string | null): void {
     this._browserSourceUrl = isHttpUrl(url) ? url : null;
@@ -1001,6 +1011,8 @@ function _buildStub(
   meta?: Record<string, ScalarMetaValue>,
   totalFrom?: unknown,
   sourceUrl?: string,
+  sourceKind?: "retrieved" | "derived",
+  derivedFrom?: string,
 ): IVariableStub {
   const type: IVariableStub["type"] = _inferValueType(value);
 
@@ -1056,6 +1068,8 @@ function _buildStub(
 
   stub.preview = preview;
   if (sourceUrl) stub.sourceUrl = sourceUrl;
+  if (sourceUrl && sourceKind) stub.sourceKind = sourceKind;
+  if (derivedFrom) stub.derivedFrom = derivedFrom;
 
   if (meta !== undefined) {
     stub.meta = meta;

@@ -126,8 +126,9 @@ export function createRunCodeTool(getStore: () => VariableStore | null) {
       const sources = [...referenced].map(name => store.getSourceUrl(name));
       const sourceUrl = sources.length > 0 && sources.every(url => url && url === sources[0])
         ? sources[0] : undefined;
+      const derivedFrom = referenced.size === 1 ? [...referenced][0] : undefined;
       if (result.truncated && result.bufferedOutput !== undefined) {
-        const saved = store.maybeCapture("code_output", result.bufferedOutput, true, sourceUrl);
+        const saved = store.maybeCapture("code_output", result.bufferedOutput, true, sourceUrl, "derived", derivedFrom);
         if (saved && typeof saved === "object" && "variable" in saved) {
           const name = (saved as { variable: string }).variable;
           const full = result.output.unbufferedChars === 0;
@@ -139,7 +140,7 @@ export function createRunCodeTool(getStore: () => VariableStore | null) {
         }
       }
       if (!result.returned) return { ok: true, ...displayInfo, note: "Inspection only. No returned value stored." };
-      const stub = store.maybeCapture("code", result.value, true, sourceUrl);
+      const stub = store.maybeCapture("code", result.value, true, sourceUrl, "derived", derivedFrom);
       if (stub && typeof stub === "object" && "error" in stub) return { ok: false, ...(stub as object) };
       return { ok: true, ...stub as object, ...displayInfo };
     },
