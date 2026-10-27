@@ -7,6 +7,7 @@
   "scripts": {
     "start": "scripts/launch.sh",
     "start:direct": "tsx src/index.ts",
+    "ask:local": "node brain-interface/scripts/ask-agent.mjs",
     "dev": "scripts/launch.sh --watch",
     "dev:direct": "tsx watch src/index.ts",
     "test": "vitest run",

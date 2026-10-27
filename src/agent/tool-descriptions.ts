@@ -19,12 +19,12 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   wait_for_cmd: "Wait for completion or input on handleId; timeoutMs limits waiting only, not execution.",
   stop_cmd: "Stop a background process by handleId with SIGTERM/SIGINT/SIGKILL; cleanup and output may remain available.",
   run_timed: "Run a saved scheduled task immediately; optionally notify its user.",
-  run_code: "Filter/analyze saved chat variables with synchronous JavaScript, instead of copying large pages into prompts. Example: print(read_file_3.split('\\n').filter(x => /12\\.50|reboot/i.test(x)).slice(0,12).join('\\n')). Print short relevant excerpts; return a value to save a new variable. Only referenced names are loaded. No shell or network.",
+  run_code: "Filter/analyze saved chat variables with synchronous JavaScript, instead of copying large pages into prompts. Example: print(read_file_3.split('\\n').filter(x => /12\\.50|reboot/i.test(x)).slice(0,12).join('\\n')). browser_read_text is PLAIN TEXT, not HTML: search for words, not tags. print('index:', n) shows both arguments. Print short excerpts; return to save a variable. No shell/network.",
   send_file: "Send a file from the workspace or uploads directory, optionally with a caption.",
   "mcp.searxng.web_url_read": "Retrieve and extract text from a URL using SearXNG. For dynamic or blocked pages use the browser tools.",
   "mcp.searxng.searxng_web_search": "Search the web through SearXNG. Supply keywords and search filters; use returned URLs for follow-up reading.",
   "mcp.stealth.browser_read_html": "Read current page HTML (mode: form/text/full). Always returns the whole reduced HTML; NO offset/start/limit arguments. Long results are stored in the blackboard with only a preview shown. To read later sections use inspect_variable({name,offset,maxChars}) or run_code on the returned variable. Repeating browser_read_html does NOT page through content.",
-  "mcp.stealth.browser_read_text": "Read current page prose. For long results use the stored blackboard variable with inspect_variable or run_code; another browser_read_text call does not advance an offset.",
+  "mcp.stealth.browser_read_text": "Read VISIBLE TEXT ONLY (not HTML tags, divs, classes, or element structure). Search the saved text for relevant words using run_code. If actual markup is needed, use browser_read_html. For long results use the blackboard variable; calling again does not page through content.",
   "mcp.scrapling.browser_actions": "Interact with a persistent Scrapling browser session using browser actions.",
 };
 

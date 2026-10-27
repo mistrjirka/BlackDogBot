@@ -34,6 +34,12 @@ describe("run_code: separate data-only blackboard processing", () => {
     expect(store.names()).toEqual(before);
   });
 
+  it("prints every argument, including failed-search positions", async () => {
+    const { execute } = createSetup();
+    const result = await execute('const text = "FW <= 13.52"; print("div at:", text.indexOf("<div")); console.log("firmware at:", text.indexOf("FW"));') as Record<string, unknown>;
+    expect(result).toMatchObject({ ok: true, display: "div at: -1\nfirmware at: 0" });
+  });
+
   it("returns structured syntax/identifier errors and rejects tool access", async () => {
     const { execute } = createSetup();
     const unknown = await execute("return mcp.searxng.search('bad');") as Record<string, unknown>;

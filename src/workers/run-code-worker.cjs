@@ -9,14 +9,17 @@ const MAX_RETURN_BYTES = 1024 * 1024;
 process.once("message", ({ code, variables }) => {
   let display = "";
   let truncated = false;
-  const print = (value) => {
-    let rendered;
+  // Preserve multiple arguments, as with console.log. Ignoring the second
+  // argument silently hid diagnostic positions such as print("index:", -1).
+  const render = (value) => {
     try {
-      if (typeof value === "string") rendered = value;
-      else if (Array.isArray(value)) rendered = JSON.stringify(value.slice(0, 3)) + (value.length > 3 ? ` …(+${value.length - 3} more)` : "");
-      else rendered = JSON.stringify(value);
-    } catch { rendered = String(value); }
-    rendered ??= "undefined";
+      if (typeof value === "string") return value;
+      if (Array.isArray(value)) return JSON.stringify(value.slice(0, 3)) + (value.length > 3 ? ` …(+${value.length - 3} more)` : "");
+      return JSON.stringify(value) ?? "undefined";
+    } catch { return String(value); }
+  };
+  const print = (...values) => {
+    let rendered = values.map(render).join(" ");
     if (rendered.length > MAX_PRINT_CHARS) {
       rendered = `${rendered.slice(0, MAX_PRINT_CHARS)}… [print truncated]`;
       truncated = true;
