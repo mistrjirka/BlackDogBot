@@ -22,6 +22,8 @@ describe("web research MCP tool priority", () => {
     expect(route).toContain("mcp.searxng.searxng_web_search");
     expect(route).toContain("mcp.scrapling.browser_fetch_once");
     expect(route).toContain("mcp.playwright");
+    expect(route).toContain("often return extracted plain text or Markdown rather than HTML/DOM");
+    expect(route).toContain("Only look for HTML elements when the tool actually returned HTML");
     expect(route).toContain("do not jump to a full interactive browser");
     expect(route).toContain("Do not use Playwright as the default");
     expect(route).toContain("skip search");

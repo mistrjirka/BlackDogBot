@@ -89,6 +89,13 @@ export function buildWebResearchRoutingInstruction(toolNames: readonly string[])
   }
 
   instructions.push(
+    "MCP content format: web/page tools often return extracted plain text or Markdown rather than HTML/DOM; " +
+    "some return HTML or structured JSON. Check the tool name, declared output, and actual returned data before parsing. " +
+    "For plain-text results (such as browser_read_text), search for relevant words or sections, NOT <div>/<p> tags. " +
+    "Only look for HTML elements when the tool actually returned HTML. A string indexOf() result of -1 means no match.",
+  );
+
+  instructions.push(
     "Keep page extracts bounded; do not dump entire HTML, navigation boilerplate, or base64 images into context. " +
     "Cite actual source URLs and avoid claiming a complete article or visual analysis without supporting tool output. " +
     "After two attempts produce the same bot challenge or service failure on a domain, stop retrying it; " +
