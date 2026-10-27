@@ -608,27 +608,31 @@ export const listCronsToolInputSchema = z.object({
 
 export const readFileToolInputSchema = z.object({
   filePath: z.string()
-    .default("")
-    .describe("Path to the file. Use just a filename (e.g. 'notes.txt') for the default workspace directory. Only specify a full absolute path when you need to access files outside the workspace. For most tasks, do NOT specify a path — just use the filename."),
+    .trim()
+    .min(1, "filePath is required: provide a filename or an absolute path")
+    .describe("REQUIRED, nonempty file path. Use a filename such as 'notes.txt' for ~/.blackdogbot/workspace/, or an absolute path like '/tmp/fetch.py' for a file outside the workspace. Never omit filePath or pass an empty string."),
 });
 
 export const readImageToolInputSchema = z.object({
   filePath: z.string()
-    .default("")
-    .describe("Path to an image file. Use just a filename for the default workspace directory. Use an absolute path only for files outside the workspace."),
+    .trim()
+    .min(1, "filePath is required: provide a filename or an absolute path")
+    .describe("REQUIRED, nonempty path to an image file. Use a filename within the workspace, or an absolute path for a file elsewhere. Never omit filePath."),
 });
 
 export const writeFileToolInputSchema = z.object({
   filePath: z.string()
-    .default("")
-    .describe("Path to the file. Use just a filename (e.g. 'notes.txt') for the default workspace directory. Only specify a full absolute path when you need to access files outside the workspace. For most tasks, do NOT specify a path — just use the filename."),
+    .trim()
+    .min(1, "filePath is required: provide a filename or an absolute path")
+    .describe("REQUIRED, nonempty file path. Use a filename such as 'notes.txt' for ~/.blackdogbot/workspace/, or an absolute path like '/tmp/fetch.py' for a file outside the workspace. Never omit filePath or pass an empty string."),
   content: _variableCapable(z.string().describe("Content to write to the file")),
 });
 
 export const appendFileToolInputSchema = z.object({
   filePath: z.string()
-    .default("")
-    .describe("Path to the file. Use just a filename (e.g. 'notes.txt') for the default workspace directory. Only specify a full absolute path when you need to access files outside the workspace. For most tasks, do NOT specify a path — just use the filename."),
+    .trim()
+    .min(1, "filePath is required: provide a filename or an absolute path")
+    .describe("REQUIRED, nonempty file path. Use a filename such as 'notes.txt' for ~/.blackdogbot/workspace/, or an absolute path like '/tmp/fetch.py' for a file outside the workspace. Never omit filePath or pass an empty string."),
   content: z.string()
     .min(1)
     .describe("Content to append to the file"),

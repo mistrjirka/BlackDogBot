@@ -94,6 +94,13 @@ interface ICapturedVariable {
 /** Shape of a captured-variable stub shown to the model instead of the full blob. */
 interface IVariableStub {
   variable: string;
+  /** Explicit human/model-visible storage status, alongside legacy `variable`. */
+  savedToVariable: string;
+  previewOnly: boolean;
+  /** Ready-to-use call to inspect the saved value without repeating its source tool. */
+  readNextWith: { tool: "inspect_variable"; arguments: { name: string; offset: number; maxChars: number } };
+  /** Valid JS example for accessing the stored value without fetching it again. */
+  searchWith: { tool: "run_code"; arguments: { code: string } };
   type: "array" | "object" | "string" | "number" | "boolean" | "null";
   count?: number;
   sizeBytes: number;
@@ -933,11 +940,40 @@ function _buildStub(
 ): IVariableStub {
   const type: IVariableStub["type"] = _inferValueType(value);
 
+  // Concrete next-tool arguments outperform generic instructions on the small
+  // local model (see scripts/eval-blackboard-guidance.py). The next slice can
+  // overlap the preview by adjusting the offset when its escaping is substantial.
+  const searchCode: string = type === "string"
+    ? `const x = ${name}; print(x.slice(1200, 2400))`
+    : type === "array"
+      ? `print(JSON.stringify(${name}.slice(0, 3)).slice(0, 2000))`
+      : type === "object"
+        ? `print(Object.keys(${name}))`
+        : `print(${name})`;
+
+  // `run_code` can force-capture a SHORT answer whose preview is the entire
+  // result. Never tell the model it must read more when nothing is missing.
+  const preview: unknown = _buildPreview(value, type);
+  const previewOnly: boolean = type === "array"
+    ? (value as unknown[]).length > 2 || typeof preview === "string"
+    : JSON.stringify(value).length > PREVIEW_MAX_CHARS;
+
   const stub: IVariableStub = {
     variable: name,
+    savedToVariable: name,
+    previewOnly,
+    readNextWith: {
+      tool: "inspect_variable",
+      arguments: { name, offset: type === "string" ? 1200 : 0, maxChars: 4000 },
+    },
+    searchWith: { tool: "run_code", arguments: { code: searchCode } },
     type,
     sizeBytes,
-    note: `Full data is stored in this run's blackboard, not a shell variable. Use inspect_variable with name "${name}" to read it, or {"type":"variable","name":"${name}"} only in an input field that supports references; run_cmd cannot read it.`,
+    note: (previewOnly
+      ? `SAVED TO VARIABLE: ${name}. The complete result is already stored. Do not call the source tool again to obtain later characters; this preview is intentionally incomplete. Use readNextWith to inspect or searchWith to filter. `
+      : `SAVED TO VARIABLE: ${name}. The entire result is already visible in preview; you do NOT need to fetch or inspect it again. `) +
+      `To pass the full value use {"type":"variable","name":"${name}"} only in supported inputs. ` +
+      `This is not a shell variable; run_cmd cannot read it.`,
   };
 
   if (type === "array") {
@@ -954,7 +990,7 @@ function _buildStub(
     }
   }
 
-  stub.preview = _buildPreview(value, type);
+  stub.preview = preview;
 
   if (meta !== undefined) {
     stub.meta = meta;

@@ -118,6 +118,16 @@ describe("VariableStore.maybeCapture — threshold (group 1)", () => {
   });
 });
 
+describe("VariableStore.maybeCapture — forced short result guidance", () => {
+  it("does not falsely label a complete preview as incomplete", () => {
+    const stub = _asStub(new VariableStore().maybeCapture("code", "one-line result", true));
+    expect(stub.savedToVariable).toBe("code_1");
+    expect(stub.previewOnly).toBe(false);
+    expect(stub.note).toContain("entire result is already visible");
+    expect(stub.note).not.toContain("intentionally incomplete");
+  });
+});
+
 describe("VariableStore.maybeCapture — naming (group 2)", () => {
   it("assigns run-global names of the form <toolName>_<n>", () => {
     const store = new VariableStore();
@@ -233,6 +243,9 @@ expect(meta.properties.active).toBe("boolean");
     const store = new VariableStore();
     const stub = _asStub(store.maybeCapture("v", _bigString(4500)));
     expect(stub.type).toBe("string");
+    expect(stub.savedToVariable).toBe("v_1");
+    expect(stub.readNextWith).toEqual({tool: "inspect_variable", arguments: {name: "v_1", offset: 1200, maxChars: 4000}});
+    expect(stub.searchWith.arguments.code).toBe("const x = v_1; print(x.slice(1200, 2400))");
     expect(stub.itemSchema).toBeUndefined();
     expect(typeof stub.preview).toBe("string");
     expect((stub.preview as string).length).toBeLessThanOrEqual(1200 + 4); // JSON.stringify adds quotes/ellipsis

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { ToolSet } from "ai";
 import { z } from "zod";
-import { convertMcpResultToModelOutput } from "../../src/services/mcp.service.js";
+import { convertMcpResultToModelOutput, formatMcpTransportFailure } from "../../src/services/mcp.service.js";
 import { VariableStore, wrapToolSetWithVariables, MAX_VARIABLE_BYTES } from "../../src/utils/variable-store.js";
 
 function wrapMcp(text: string, withImage = false) {
@@ -73,5 +73,49 @@ describe("MCP structuredContent deduplication", () => {
       structuredContent: { result: 5 },
     }) as { value: unknown[] };
     expect(converted.value).toHaveLength(2);
+  });
+});
+
+
+describe("MCP tool failures keep unambiguous result status", () => {
+  it("marks isError results as failed, including otherwise plausible text", () => {
+    const converted = convertMcpResultToModelOutput({
+      isError: true, content: [{ type: "text", text: "Error executing tool browser_open" }],
+    }) as { value: Array<{ type: string; text: string }> };
+    expect(converted.value[0].text).toContain("MCP_TOOL_FAILED");
+    expect(converted.value[1].text).toContain("Error executing tool browser_open");
+  });
+
+  it("does not swallow errors that have no content array", () => {
+    const converted = convertMcpResultToModelOutput({ isError: true, structuredContent: { error: "closed" } }) as { value: Array<{ text: string }> };
+    expect(converted.value[0].text).toContain("MCP_TOOL_FAILED");
+    expect(converted.value[0].text).toContain("closed");
+  });
+
+  it("distinguishes failed HTTP retrieval from successful navigation", () => {
+    const converted = convertMcpResultToModelOutput({
+      content: [{ type: "text", text: "navigated to https://example.com/ (HTTP 403)" }],
+      structuredContent: { result: "navigated to https://example.com/ (HTTP 403)" },
+    }) as { value: Array<{ text: string }> };
+    expect(converted.value).toHaveLength(2); // warning + original, no duplicate structuredContent
+    expect(converted.value[0].text).toContain("PAGE_HTTP_ERROR");
+    expect(converted.value[1].text).toContain("HTTP 403");
+  });
+
+  it("avoids duplicating plain text repeated in structuredContent.result", () => {
+    const converted = convertMcpResultToModelOutput({
+      content: [{ type: "text", text: "the browser is closed" }],
+      structuredContent: { result: "the browser is closed" },
+    }) as { value: Array<{ text: string }> };
+    expect(converted.value).toHaveLength(1);
+  });
+
+  it("distinguishes unknown outcome from transport timeout", () => {
+    expect(formatMcpTransportFailure("MCP error -32001: Request timed out"))
+      .toContain("Outcome unknown");
+    expect(formatMcpTransportFailure("ECONNREFUSED"))
+      .toContain("MCP_CONNECTION_ERROR");
+    expect(formatMcpTransportFailure("Session not found"))
+      .toBe("MCP tool error: Session not found");
   });
 });

@@ -37,6 +37,14 @@ describe("stable merged tool interfaces", () => {
     expect(conciseToolDescriptions(orig).run_cmd.description).toBe(changed.run_cmd.description);
   });
 
+  it("makes the stealth HTML paging limitation visible in the tool description", () => {
+    const orig = { "mcp.stealth.browser_read_html": { description: "Read page HTML", inputSchema: {} as never } };
+    const tool = conciseToolDescriptions(orig)["mcp.stealth.browser_read_html"];
+    expect(tool.description).toContain("NO offset/start/limit");
+    expect(tool.description).toContain("inspect_variable");
+    expect(tool.inputSchema).toBe(orig["mcp.stealth.browser_read_html"].inputSchema);
+  });
+
   it("rejects missing schedule fields using old validators", async () => {
     const once = await invoke(scheduleCreateTool, { kind: "once", name: "x" });
     expect(once.success).toBe(false);

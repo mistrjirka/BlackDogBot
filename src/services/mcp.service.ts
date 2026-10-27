@@ -578,7 +578,7 @@ function _convertMcpToolToAiSdk(
       } catch (error) {
         return {
           isError: true,
-          content: [{ type: "text", text: `MCP tool error: ${extractErrorMessage(error)}` }],
+          content: [{ type: "text", text: formatMcpTransportFailure(extractErrorMessage(error)) }],
         };
       }
     },
@@ -596,6 +596,18 @@ function _convertMcpToolToAiSdk(
  * - image → { type: "file", data: { type: "data", data }, mediaType }
  * - audio → { type: "file", data: { type: "data", data }, mediaType }
  */
+/** Caller-facing transport failure guidance. Never guess whether a timed-out call created a session. */
+export function formatMcpTransportFailure(message: string): string {
+  const raw = `MCP tool error: ${message}`;
+  if (/(-32001|request timed out|ETIMEDOUT|deadline exceeded)/i.test(message)) {
+    return `${raw}\nMCP_TRANSPORT_TIMEOUT: Outcome unknown. Check existing session state before opening another. Do not blindly repeat this call; consider a different source if the service stays unavailable.`;
+  }
+  if (/(ECONNREFUSED|ECONNRESET|EPIPE|connection closed|transport closed)/i.test(message)) {
+    return `${raw}\nMCP_CONNECTION_ERROR: Server connection failed. Repeating the same call will not fix an unavailable server; use an alternative tool or report the limitation.`;
+  }
+  return raw;
+}
+
 export function convertMcpResultToModelOutput(
   output: unknown,
   outputSchema?: Record<string, unknown>,
@@ -608,9 +620,14 @@ export function convertMcpResultToModelOutput(
   }
 
   const result = output as Record<string, unknown>;
+  const isError = result.isError === true;
   const content = result.content as Array<Record<string, unknown>> | undefined;
 
   if (!Array.isArray(content)) {
+    if (isError) {
+      return { type: "content" as const, value: [{ type: "text" as const,
+        text: `MCP_TOOL_FAILED (isError=true): ${JSON.stringify(result.structuredContent ?? output)}. The operation did not complete successfully.` }] };
+    }
     if (result.structuredContent && outputSchema) {
       return {
         type: "content" as const,
@@ -661,13 +678,29 @@ export function convertMcpResultToModelOutput(
     }
   }
 
+  // Preserve the fact that a tool reported failure even when it supplied an
+  // ordinary-looking text body or an empty result. Do not present it as success.
+  if (isError) {
+    modelParts.unshift({ type: "text", text: "MCP_TOOL_FAILED (isError=true): This operation did not complete successfully. Read the error details below; check existing browser/session state before retrying." });
+  } else {
+    // Navigation can succeed while the requested web content is unavailable.
+    // A 403/429/5xx must not be mistaken for successful page retrieval.
+    const hasHttpFailure = modelParts.some((part) => part.type === "text" &&
+      /navigated to https?:\/\/[^\s]+ \(HTTP (?:4\d\d|5\d\d)\)/i.test(part.text));
+    if (hasHttpFailure) modelParts.unshift({ type: "text", text: "PAGE_HTTP_ERROR: Navigation completed, but the site returned an HTTP error. Requested content was NOT verified. Switch to another source or report access restrictions instead of repeatedly navigating this URL." });
+  }
+
   // Many MCP servers include the same JSON both as text and structuredContent.
   // Compare parsed values rather than JSON strings (property order is irrelevant).
   const structuredIsDuplicate = result.structuredContent && typeof result.structuredContent === "object" &&
     modelParts.some((part) => {
       if (part.type !== "text") return false;
-      try { return isDeepStrictEqual(JSON.parse(part.text), result.structuredContent); }
-      catch { return false; }
+      try { if (isDeepStrictEqual(JSON.parse(part.text), result.structuredContent)) return true; }
+      catch { /* non-JSON plain text */ }
+      // Several browser MCP servers return { result: "same human text" }.
+      // This is the same payload, not independent supporting evidence.
+      const structured = result.structuredContent as Record<string, unknown>;
+      return Object.keys(structured).length === 1 && structured.result === part.text;
     });
   if (result.structuredContent && typeof result.structuredContent === "object" && !structuredIsDuplicate) {
     modelParts.push({
