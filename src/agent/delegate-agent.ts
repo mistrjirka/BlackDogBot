@@ -11,6 +11,7 @@ import { extractErrorMessage } from "../utils/error.js";
 import { sanitizeSetupError } from "../helpers/skill-state.js";
 import { createInspectVariableTool } from "../tools/inspect-variable.tool.js";
 import { createRunCodeTool } from "../tools/run-code.tool.js";
+import { createVerifyClaimEvidenceTool } from "../tools/verify-claim-evidence.tool.js";
 import { MAX_DELEGATE_AGENT_OUTPUT_LENGTH } from "../shared/constants.js";
 import {
   delegateAgentToolInputSchema,
@@ -57,6 +58,7 @@ class DelegateWorkerAgent extends BaseAgentBase {
       ...workerOptions.tools,
       inspect_variable: createInspectVariableTool(() => this._currentVariableStore),
       run_code: createRunCodeTool(() => this._currentVariableStore),
+      verify_claim_evidence: createVerifyClaimEvidenceTool(() => this._currentVariableStore),
     };
     this._buildAgent(
       workerOptions.model,

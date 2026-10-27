@@ -22,7 +22,7 @@ const inspectVariableInputSchema = z.object({
 });
 
 type InspectResult =
-  | { name: string; offset: number; totalChars: number; nextOffset: number | null; content: string }
+  | { name: string; offset: number; totalChars: number; nextOffset: number | null; content: string; sourceUrl?: string }
   | { error: "unknown_variable" | "no_active_store"; available: string[] }
   | { variables: ReturnType<VariableStore["inventory"]>; count: number };
 
@@ -53,6 +53,7 @@ export function createInspectVariableTool(getStore: () => VariableStore | null) 
         totalChars: text.length,
         nextOffset: end < text.length ? end : null,
         content: text.slice(safeOffset, end),
+        ...(store.getSourceUrl(name) ? { sourceUrl: store.getSourceUrl(name) } : {}),
       };
     },
     // VariableStore must not re-capture this intentionally bounded inspection;
@@ -67,7 +68,7 @@ export function createInspectVariableTool(getStore: () => VariableStore | null) 
         type: "text" as const,
         value:
           `[variable ${output.name}; chars ${output.offset}-${end}/${output.totalChars}; ` +
-          `nextOffset: ${output.nextOffset ?? "none"}]
+          `nextOffset: ${output.nextOffset ?? "none"}; sourceUrl: ${output.sourceUrl ?? "untracked"}]
 ${output.content}`,
       };
     },

@@ -21,6 +21,7 @@ import {
   getSkillFileTool,
   createReadImageTool,
   createInspectVariableTool,
+  createVerifyClaimEvidenceTool,
   createTableTool,
   FileReadTracker,
 } from "../tools/index.js";
@@ -297,6 +298,7 @@ export class CronAgent extends BaseAgentBase {
       get_previous_message: createGetPreviousMessageTool(executionContext),
       create_table: wrapCreateTableTool(createTableTool, onCreateTableRebuild),
       inspect_variable: createInspectVariableTool(() => this._currentVariableStore),
+      verify_claim_evidence: createVerifyClaimEvidenceTool(() => this._currentVariableStore),
     };
 
     if (supportsVision) {
@@ -370,6 +372,7 @@ export class CronAgent extends BaseAgentBase {
     // even when older task definitions do not list it explicitly.
     resolvedTools.inspect_variable = createInspectVariableTool(() => this._currentVariableStore);
     resolvedTools.run_code = createRunCodeTool(() => this._currentVariableStore);
+    resolvedTools.verify_claim_evidence = createVerifyClaimEvidenceTool(() => this._currentVariableStore);
 
     if (effectiveToolNames.includes("delegate_agent")) {
       attachDelegateAgentTool(resolvedTools, AiProviderService.getInstance().getModel());

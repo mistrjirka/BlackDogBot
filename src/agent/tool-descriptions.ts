@@ -20,6 +20,7 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
   stop_cmd: "Stop a background process by handleId with SIGTERM/SIGINT/SIGKILL; cleanup and output may remain available.",
   run_timed: "Run a saved scheduled task immediately; optionally notify its user.",
   // Kept short; input schema carries exact configurable limits.
+  verify_claim_evidence: "Compare claims to exact passages of saved retrieved sources. Finds missing quotations and PS4/PS5 scope mismatches, retains actual source URL when tracked. Matching a quote DOES NOT prove entailment, permanence, or compatibility; if untracked, it is not a verified citation. Returns an evidence ledger.",
   run_code: "Analyze saved variables with synchronous JS; print() has one combined output budget (default 3000 chars), not a 1000-char per-print limit. Optional maxOutputChars requests up to 16000. Response output reports produced/shown/omitted counts; truncated prints are saved as fullOutputVariable (or outputPrefixVariable beyond 64000 chars). Follow nextWith via inspect_variable instead of rerunning. Print concise keyword matches; browser_read_text is plain text, not HTML. For /regex/g use matchAll to obtain capture groups. Return data to store a new variable. No network/shell.",
   send_file: "Send a file from the workspace or uploads directory, optionally with a caption.",
   "mcp.searxng.web_url_read": "Retrieve and extract text from a URL using SearXNG. For dynamic or blocked pages use the browser tools.",

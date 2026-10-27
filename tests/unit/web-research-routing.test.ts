@@ -30,6 +30,14 @@ describe("web research MCP tool priority", () => {
     expect(route).toContain("HTTP 200 alone");
   });
 
+  it("triggers evidence skill for substantive research while allowing trivial lookups", () => {
+    const text = buildWebResearchRoutingInstruction(all);
+    expect(text).toContain("list_skills");
+    expect(text).toContain("web-research");
+    expect(text).toContain("trivial lookup skip the skill");
+    expect(text).toContain("matching quote alone is not sufficient proof");
+  });
+
   it("does not confuse one-shot text with a screenshot and explains the native image tool", () => {
     const route = buildWebResearchRoutingInstruction(all);
     expect(route).toContain("mcp.scrapling.browser_screenshot");

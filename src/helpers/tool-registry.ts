@@ -65,6 +65,7 @@ const CORE_TOOL_NAMES: string[] = [
   "read_file",
   "inspect_variable",
   "run_code",
+  "verify_claim_evidence",
   "read_image",
   "write_file",
   "append_file",

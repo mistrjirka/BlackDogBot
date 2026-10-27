@@ -19,6 +19,14 @@ export function buildWebResearchRoutingInstruction(toolNames: readonly string[])
     "Web research tool priority (for ordinary source discovery and article reading):",
   ];
 
+  instructions.push(
+    "Evidence workflow: for multi-source factual research, version/compatibility support, disputed claims, " +
+    "or consequential technical facts, call list_skills then load_skill({skillName:'web-research'}) " +
+    "before synthesizing an answer. It teaches evidence checking, not which browser to use. " +
+    "For a trivial lookup skip the skill. Citation requires actual retrieved source text; " +
+    "a search snippet, failed navigation, or matching quote alone is not sufficient proof.",
+  );
+
   if (hasSearch) {
     instructions.push(
       "1. DISCOVER: use mcp.searxng.searxng_web_search to find relevant source URLs. " +

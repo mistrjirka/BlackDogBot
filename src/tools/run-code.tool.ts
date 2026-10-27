@@ -121,8 +121,13 @@ export function createRunCodeTool(getStore: () => VariableStore | null) {
         truncated: result.truncated,
         output: result.output,
       };
+      // A single-origin derivation retains the source URL. Mixed/unknown inputs
+      // deliberately lose attribution rather than inventing an authoritative source.
+      const sources = [...referenced].map(name => store.getSourceUrl(name));
+      const sourceUrl = sources.length > 0 && sources.every(url => url && url === sources[0])
+        ? sources[0] : undefined;
       if (result.truncated && result.bufferedOutput !== undefined) {
-        const saved = store.maybeCapture("code_output", result.bufferedOutput, true);
+        const saved = store.maybeCapture("code_output", result.bufferedOutput, true, sourceUrl);
         if (saved && typeof saved === "object" && "variable" in saved) {
           const name = (saved as { variable: string }).variable;
           const full = result.output.unbufferedChars === 0;
@@ -134,7 +139,7 @@ export function createRunCodeTool(getStore: () => VariableStore | null) {
         }
       }
       if (!result.returned) return { ok: true, ...displayInfo, note: "Inspection only. No returned value stored." };
-      const stub = store.maybeCapture("code", result.value, true);
+      const stub = store.maybeCapture("code", result.value, true, sourceUrl);
       if (stub && typeof stub === "object" && "error" in stub) return { ok: false, ...(stub as object) };
       return { ok: true, ...stub as object, ...displayInfo };
     },

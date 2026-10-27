@@ -89,6 +89,7 @@ interface ICapturedVariable {
   sizeBytes: number;
   /** Scalar wrapper fields preserved at capture when the payload was extracted (FIX-1); omitted otherwise. */
   meta?: Record<string, string | number | boolean | null>;
+  sourceUrl?: string;
 }
 
 /** Shape of a captured-variable stub shown to the model instead of the full blob. */
@@ -108,6 +109,7 @@ interface IVariableStub {
   preview?: unknown;
   /** Wrapper extras (e.g. pagination) when the payload was extracted; omitted when empty. */
   meta?: Record<string, string | number | boolean | null>;
+  sourceUrl?: string;
   note: string;
   total?: number;
 }
@@ -137,7 +139,7 @@ export const variableRefSchema: ZodType<IVariableRef> = z.object({
 export interface IVariableStoreSnapshot {
   version: 1;
   counter: number;
-  variables: Array<{ name: string; value: unknown; sizeBytes: number; meta?: ICapturedVariable["meta"] }>;
+  variables: Array<{ name: string; value: unknown; sizeBytes: number; meta?: ICapturedVariable["meta"]; sourceUrl?: string }>;
 }
 
 /**
@@ -155,6 +157,7 @@ export class VariableStore {
   /** A checkpoint compacted the message history, possibly dropping variable stubs. */
   private _historyCompacted = false;
   private _onChange: (() => void) | null = null;
+  private _browserSourceUrl: string | null = null;
 
   setOnChange(callback: (() => void) | null): void { this._onChange = callback; }
 
@@ -180,6 +183,7 @@ export class VariableStore {
           val === null || ["string", "number", "boolean"].includes(typeof val)).slice(0, 8));
         entry.meta = meta as ICapturedVariable["meta"];
       }
+      if (typeof record.sourceUrl === "string" && isHttpUrl(record.sourceUrl)) entry.sourceUrl = record.sourceUrl;
       store._variables.set(record.name, entry);
     }
     const maxSuffix = Math.max(0, ...store.names().map(name => Number(name.match(/_(\d+)$/)?.[1] ?? 0)));
@@ -199,6 +203,7 @@ export class VariableStore {
 
   clear(): void {
     this._variables.clear();
+    this._browserSourceUrl = null;
     this._historyCompacted = false;
     this._onChange?.();
   }
@@ -219,7 +224,7 @@ export class VariableStore {
    *   6. evict FIFO while over the variable count cap or the total byte cap.
    *   7. return the stub describing the captured (payload) value.
    */
-  maybeCapture(toolName: string, result: unknown, force = false): unknown {
+  maybeCapture(toolName: string, result: unknown, force = false, sourceUrl?: string): unknown {
     // 1. null/undefined carry no blob to store.
     if ((result === null && !force) || result === undefined) {
       return result;
@@ -268,11 +273,10 @@ export class VariableStore {
     }
     const safeToolName = toolName.replace(/[^A-Za-z0-9_]/g, "_").replace(/^[0-9]/, "_$&");
     const name: string = `${safeToolName}_${++this._counter}`;
-    if (extraction.meta === undefined) {
-      this._variables.set(name, { value: normalized, sizeBytes: storedSizeBytes });
-    } else {
-      this._variables.set(name, { value: normalized, sizeBytes: storedSizeBytes, meta: extraction.meta });
-    }
+    this._variables.set(name, { value: normalized, sizeBytes: storedSizeBytes,
+      ...(extraction.meta ? { meta: extraction.meta } : {}),
+      ...(isHttpUrl(sourceUrl) ? { sourceUrl } : {}),
+    });
 
     // 6. Evict oldest (FIFO) while over either cap (a minimum one eviction when triggered).
     this._evictIfNeeded();
@@ -280,7 +284,8 @@ export class VariableStore {
 
     // 7. Stub replaces the blob in context; it describes the payload. `total` still
     //    passes through from the WHOLE result so wrapper counters survive extraction.
-    return _buildStub(name, normalized, storedSizeBytes, extraction.meta, extraction.extracted ? result : undefined);
+    return _buildStub(name, normalized, storedSizeBytes, extraction.meta, extraction.extracted ? result : undefined,
+      isHttpUrl(sourceUrl) ? sourceUrl : undefined);
   }
 
   /**
@@ -348,6 +353,14 @@ export class VariableStore {
     return this._variables.get(name)?.value;
   }
 
+  getSourceUrl(name: string): string | undefined { return this._variables.get(name)?.sourceUrl; }
+
+  setBrowserSourceUrl(url: string | null): void {
+    this._browserSourceUrl = isHttpUrl(url) ? url : null;
+  }
+
+  getBrowserSourceUrl(): string | null { return this._browserSourceUrl; }
+
   /**
    * Evict oldest (FIFO) variables while over the count cap or the total-byte cap.
    * Running totals are recomputed from the map so the logic is self-contained.
@@ -396,6 +409,7 @@ export function wrapToolSetWithVariables(
   for (const [toolName, rawTool] of Object.entries(tools)) {
     const toolDef: Tool<unknown, unknown> = rawTool as Tool<unknown, unknown>;
     const originalExecute = toolDef.execute;
+    const sourceByResult = new WeakMap<object, string>();
 
     // Tools without an execute implementation are passed through untouched.
     if (!originalExecute) {
@@ -409,7 +423,7 @@ export function wrapToolSetWithVariables(
     // run_code already bounds the model-visible display and stores any overflow
     // as a separate blackboard variable; recapturing its result as a generic
     // tool output would hide an explicitly requested larger display.
-    const captureExcluded: boolean = typeof toolDef.toModelOutput === "function" || toolName === "run_code";
+    const captureExcluded: boolean = typeof toolDef.toModelOutput === "function" || toolName === "run_code" || toolName === "verify_claim_evidence";
 
     wrapped[toolName] = {
       ...toolDef,
@@ -427,7 +441,12 @@ export function wrapToolSetWithVariables(
         if (textParts.length === 1) {
           try { payload = JSON.parse(combined); } catch { /* ordinary text */ }
         }
-        const stub = store.maybeCapture(toolName, payload, true);
+        const outputValue: unknown = (args as { output?: unknown }).output;
+        const fetchedUrl = outputValue && typeof outputValue === "object"
+          ? sourceByResult.get(outputValue) : undefined;
+        const sourceUrl = fetchedUrl ?? (/^mcp\.stealth\.browser_read_(text|html)$/.test(toolName)
+          ? store.getBrowserSourceUrl() ?? undefined : undefined);
+        const stub = store.maybeCapture(toolName, payload, true, sourceUrl);
         return { type: "content" as const, value: [
           { type: "text" as const, text: JSON.stringify(stub) },
           ...converted.value.filter((part) => part.type !== "text"),
@@ -446,6 +465,25 @@ export function wrapToolSetWithVariables(
         }
 
         const result: unknown = await originalExecute(resolved.input, options);
+        if (store && isMcp && result && typeof result === "object" &&
+            _isPlainObject(resolved.input) &&
+            ["mcp.searxng.web_url_read", "mcp.scrapling.browser_fetch_once"].includes(toolName)) {
+          const url = resolved.input.url;
+          const raw = JSON.stringify(result);
+          const failed = raw.includes("MCP_TOOL_FAILED") || raw.includes("PAGE_HTTP_ERROR") ||
+            raw.includes("Website Error (403)") || ("isError" in result && result.isError === true);
+          if (isHttpUrl(url) && !failed) sourceByResult.set(result, url);
+        }
+        if (store && (toolName === "mcp.stealth.browser_open" || toolName === "mcp.stealth.browser_close")) {
+          store.setBrowserSourceUrl(null);
+        }
+        if (store && toolName === "mcp.stealth.browser_navigate") {
+          const url = _isPlainObject(resolved.input) ? resolved.input.url : undefined;
+          const resultText = typeof result === "string" ? result : JSON.stringify(result);
+          const succeeded = /HTTP 200/i.test(resultText) &&
+            !/PAGE_HTTP_ERROR|MCP_TOOL_FAILED|isError["']?\s*:\s*true/i.test(resultText);
+          store.setBrowserSourceUrl(succeeded && typeof url === "string" ? url : null);
+        }
 
         // Preserve raw (already model-ready) results and skip capture for them.
         if (!store || captureExcluded) {
@@ -465,6 +503,12 @@ export function wrapToolSetWithVariables(
 //#region Private functions
 
 /** True only for object literals / JSON.parse results (not arrays, not class instances). */
+function isHttpUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 2048) return false;
+  try { return ["http:", "https:"].includes(new URL(value).protocol); }
+  catch { return false; }
+}
+
 function _isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -956,12 +1000,13 @@ function _buildStub(
   sizeBytes: number,
   meta?: Record<string, ScalarMetaValue>,
   totalFrom?: unknown,
+  sourceUrl?: string,
 ): IVariableStub {
   const type: IVariableStub["type"] = _inferValueType(value);
 
   // Preview strings are JSON-escaped; their raw-character continuation offset
   // must be calculated, not assumed equal to the preview character budget.
-  // Individual run_code prints are capped at 1000 characters (see worker).
+  // Offset is measured in raw UTF-16 string characters.
   const preview: unknown = _buildPreview(value, type);
   const previewOnly: boolean = type === "array"
     ? (value as unknown[]).length > 2 || typeof preview === "string"
@@ -1010,6 +1055,7 @@ function _buildStub(
   }
 
   stub.preview = preview;
+  if (sourceUrl) stub.sourceUrl = sourceUrl;
 
   if (meta !== undefined) {
     stub.meta = meta;

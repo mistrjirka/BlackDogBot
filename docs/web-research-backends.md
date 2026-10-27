@@ -40,3 +40,19 @@ The old Crawl4AI Compose `latest` tag previously caused update problems. The act
 See [guarded-container-update.md](guarded-container-update.md) for checking upstream digest, staging isolated Docker canaries, testing JavaScript rendering and screenshots, replacing only the Scrapling service, reporting progress on Telegram, and automatically restoring the previous image on failure.
 
 The `container-maintenance` skill drives this procedure with existing terminal tools. It does not grant the agent a new privileged Docker control API. SearXNG remains separate and is not restarted as part of a scraper update.
+
+## Evidence-grounded research skill
+
+`skills/web-research/SKILL.md` is loaded on demand for substantive changing facts,
+technical version compatibility, source conflicts, and other multi-source research.
+The short routing instruction tells the agent when to load it; ordinary lookups need
+not incur the extra tool calls. The skill does not grant new permissions.
+
+Browser extract variables now retain the URL of a successful stealth-browser
+navigation; a single-source `run_code` derivation retains its original attribution.
+Mixed-source outputs lose attribution rather than making up a URL. The optional
+`verify_claim_evidence` tool checks that quotes occur in the saved source and
+flags explicit PS4/PS5 mismatches. It returns an evidence ledger and distinguishes
+unattributed excerpts from URL-attributed ones. Quote matching is **not** a
+semantic entailment check: the agent must still reason about applicability,
+reboot semantics, product/version scope, and counterevidence.

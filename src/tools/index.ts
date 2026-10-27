@@ -45,3 +45,5 @@ export { deleteFromDatabaseTool } from "./delete-from-database.tool.js";
 export { createUpdateTableTool } from "./update-table.tool.js";
 export { FileReadTracker } from "../utils/file-tools-helper.js";
 export type { IFileReadTracker } from "../utils/file-tools-helper.js";
+
+export { createVerifyClaimEvidenceTool } from "./verify-claim-evidence.tool.js";

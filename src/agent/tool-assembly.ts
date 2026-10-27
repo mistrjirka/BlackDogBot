@@ -2,6 +2,7 @@ import type { Tool, ToolExecutionOptions, ToolSet } from "ai";
 import {
   thinkTool,
   createRunCodeTool,
+  createVerifyClaimEvidenceTool,
   createTableTool,
   runCmdTool,
   runCmdInputTool,
@@ -89,6 +90,7 @@ export async function assembleToolsForChat(
   if (getVariableStore) {
     tools.run_code = createRunCodeTool(getVariableStore);
     tools.inspect_variable = createInspectVariableTool(getVariableStore);
+    tools.verify_claim_evidence = createVerifyClaimEvidenceTool(getVariableStore);
   }
 
   // Merge MCP tools from connected servers

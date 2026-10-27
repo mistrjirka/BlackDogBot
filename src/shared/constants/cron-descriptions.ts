@@ -80,6 +80,7 @@ export const CRON_TOOL_DESCRIPTIONS: Record<string, string> = {
 
   run_code: "Run synchronous data-only JavaScript on stored blackboard variables. print(value) inspects a bounded excerpt, return value creates a stored code_<n> variable. No calls to tools, shell, network, or files. Args: code (string, required, max 4000 chars).",
 
+  verify_claim_evidence: "Check exact quoted evidence from saved source variables; flags missing quotes and PS4/PS5 platform mismatch. Matching passages do not prove conclusions. Args: claims (array, 1-5).",
   inspect_variable:
     "Read a bounded slice of a large stored tool result. Use the exact variable name from a stub; " +
     "continue at nextOffset if needed. " +
