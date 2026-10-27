@@ -9,7 +9,8 @@ function createSetup() {
     results: Array.from({ length: 120 }, (_, i) => ({ title: `item-${i}`, score: i, "dc:creator": "user" })),
   }) as { variable: string };
   const tool = createRunCodeTool(() => store);
-  const execute = (code: string) => tool.execute!({ code }, {} as ToolExecutionOptions<never>);
+  const execute = (code: string, maxOutputChars?: number) =>
+    tool.execute!({ code, ...(maxOutputChars === undefined ? {} : { maxOutputChars }) }, {} as ToolExecutionOptions<never>);
   return { store, stub, execute };
 }
 
@@ -40,12 +41,81 @@ describe("run_code: separate data-only blackboard processing", () => {
     expect(result).toMatchObject({ ok: true, display: "div at: -1\nfirmware at: 0" });
   });
 
-  it("signals print truncation at 1000 chars so callers do not skip unread content", async () => {
+  it("prints more than 1000 characters without per-print truncation", async () => {
+    const { store, execute } = createSetup();
+    const before = store.names();
+    const result = await execute('print("a".repeat(1500))') as Record<string, unknown>;
+    expect(result).toMatchObject({
+      ok: true, display: "a".repeat(1500), truncated: false,
+      output: { producedChars: 1500, shownChars: 1500, omittedChars: 0, bufferedChars: 1500, unbufferedChars: 0 },
+    });
+    expect(store.names()).toEqual(before);
+  });
+
+  it("caps the combined print stream by default and retains an exact continuation", async () => {
+    const { store, execute } = createSetup();
+    const full = "a".repeat(1900) + "\n" + "b".repeat(1600);
+    const result = await execute('print("a".repeat(1900)); print("b".repeat(1600));') as {
+      display: string; truncated: boolean; fullOutputVariable: string;
+      output: Record<string, number>; nextWith: { tool: string; arguments: { name: string; offset: number; maxChars: number } };
+    };
+    expect(result.display).toBe(full.slice(0, 3000));
+    expect(result.truncated).toBe(true);
+    expect(result.output).toEqual({
+      producedChars: 3501, shownChars: 3000, omittedChars: 501,
+      bufferedChars: 3501, unbufferedChars: 0,
+    });
+    expect(store.get(result.fullOutputVariable)).toBe(full);
+    expect(result.nextWith).toEqual({
+      tool: "inspect_variable", arguments: { name: result.fullOutputVariable, offset: 3000, maxChars: 4000 },
+    });
+    expect(result.display + (store.get(result.fullOutputVariable) as string).slice(result.nextWith.arguments.offset)).toBe(full);
+  });
+
+  it("honors an optional output limit, preserving UTF-16 offset continuity", async () => {
+    const { store, execute } = createSetup();
+    const text = "😀".repeat(4000);
+    const result = await execute('print("😀".repeat(4000))', 4500) as {
+      display: string; fullOutputVariable: string; output: Record<string, number>;
+    };
+    expect(result.display).toBe(text.slice(0, 4500));
+    expect(result.output).toMatchObject({ producedChars: 8000, shownChars: 4500, omittedChars: 3500 });
+    expect(store.get(result.fullOutputVariable)).toBe(text);
+  });
+
+  it("stores only a bounded prefix if print exceeds 64000 characters and reports lost bytes", async () => {
+    const { store, execute } = createSetup();
+    const result = await execute('print("x".repeat(75000))') as {
+      display: string; fullOutputVariable?: string; outputPrefixVariable: string;
+      output: Record<string, number>; nextWith: { arguments: { offset: number } };
+    };
+    expect(result.display).toHaveLength(3000);
+    expect(result.fullOutputVariable).toBeUndefined();
+    expect(result.output).toEqual({ producedChars: 75000, shownChars: 3000,
+      omittedChars: 72000, bufferedChars: 64000, unbufferedChars: 11000 });
+    expect(store.get(result.outputPrefixVariable)).toBe("x".repeat(64000));
+    expect(result.nextWith.arguments.offset).toBe(3000);
+  });
+
+  it("preserves an explicit larger display when wrapped by the automatic blackboard capture", async () => {
+    const { store } = createSetup();
+    const wrapped = wrapToolSetWithVariables({ run_code: createRunCodeTool(() => store) } as ToolSet, () => store);
+    const result = await wrapped.run_code.execute!(
+      { code: 'print("z".repeat(9500)); return { verified: true };', maxOutputChars: 7000 },
+      {} as ToolExecutionOptions<never>,
+    ) as Record<string, unknown>;
+    expect(result.ok).toBe(true);
+    expect(result.display).toBe("z".repeat(7000));
+    expect(result.output).toMatchObject({ producedChars: 9500, shownChars: 7000, omittedChars: 2500 });
+    expect(store.get(result.fullOutputVariable as string)).toBe("z".repeat(9500));
+    expect(store.get(result.variable as string)).toEqual({ verified: true });
+    expect(store.names().filter(n => n.startsWith("run_code_"))).toHaveLength(0);
+  });
+
+  it("prints the full array rather than silently shortening it to three items", async () => {
     const { execute } = createSetup();
-    const output = await execute(`print("a".repeat(1500))`) as { ok: boolean; truncated: boolean; display: string };
-    expect(output.ok).toBe(true);
-    expect(output.truncated).toBe(true);
-    expect(output.display).toContain("[print truncated]");
+    const result = await execute('print([1, 2, 3, 4, 5]);') as Record<string, unknown>;
+    expect(result).toMatchObject({ ok: true, display: "[1,2,3,4,5]", truncated: false });
   });
 
   it("returns structured syntax/identifier errors and rejects tool access", async () => {

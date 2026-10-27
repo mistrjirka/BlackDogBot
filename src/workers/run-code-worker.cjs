@@ -2,32 +2,56 @@
 // Isolated pure-data worker. No bot tool registry, file API, network API or module
 // loader is provided to evaluated code. The host enforces time and memory limits.
 const vm = require("node:vm");
-const MAX_PRINT_CHARS = 1000;
-const MAX_DISPLAY_CHARS = 8000;
+const MAX_DISPLAY_CHARS = 16_000;
+const MAX_BUFFER_CHARS = 64_000;
+const DEFAULT_DISPLAY_CHARS = 3000;
 const MAX_RETURN_BYTES = 1024 * 1024;
 
-process.once("message", ({ code, variables }) => {
-  let display = "";
-  let truncated = false;
-  // Preserve multiple arguments, as with console.log. Ignoring the second
-  // argument silently hid diagnostic positions such as print("index:", -1).
+process.once("message", ({ code, variables, maxOutputChars, maxBufferedChars }) => {
+  const displayLimit = Number.isSafeInteger(maxOutputChars)
+    ? Math.max(500, Math.min(MAX_DISPLAY_CHARS, maxOutputChars)) : DEFAULT_DISPLAY_CHARS;
+  const bufferLimit = Number.isSafeInteger(maxBufferedChars)
+    ? Math.max(displayLimit, Math.min(MAX_BUFFER_CHARS, maxBufferedChars)) : MAX_BUFFER_CHARS;
+  const parts = [];
+  let producedChars = 0;
+  let bufferedChars = 0;
+  let printCalls = 0;
+
+  // No data is silently omitted by rendering an array: only the global output
+  // budgets trim prints. Render values before counting UTF-16 string characters.
   const render = (value) => {
     try {
       if (typeof value === "string") return value;
-      if (Array.isArray(value)) return JSON.stringify(value.slice(0, 3)) + (value.length > 3 ? ` …(+${value.length - 3} more)` : "");
       return JSON.stringify(value) ?? "undefined";
     } catch { return String(value); }
   };
   const print = (...values) => {
-    let rendered = values.map(render).join(" ");
-    if (rendered.length > MAX_PRINT_CHARS) {
-      rendered = `${rendered.slice(0, MAX_PRINT_CHARS)}… [print truncated]`;
-      truncated = true;
+    const chunk = (printCalls++ ? "\n" : "") + values.map(render).join(" ");
+    producedChars += chunk.length;
+    if (bufferedChars < bufferLimit) {
+      const prefix = chunk.slice(0, bufferLimit - bufferedChars);
+      parts.push(prefix);
+      bufferedChars += prefix.length;
     }
-    const available = Math.max(0, MAX_DISPLAY_CHARS - display.length);
-    if (rendered.length + 1 > available) truncated = true;
-    display += (display ? "\n" : "") + rendered.slice(0, Math.max(0, available - (display ? 1 : 0)));
-    if (display.length > MAX_DISPLAY_CHARS) display = display.slice(0, MAX_DISPLAY_CHARS);
+  };
+  const finishPrints = () => {
+    const bufferedOutput = parts.join("");
+    const display = bufferedOutput.slice(0, displayLimit);
+    const shownChars = display.length;
+    return {
+      display,
+      truncated: shownChars < producedChars,
+      output: {
+        producedChars,
+        shownChars,
+        omittedChars: producedChars - shownChars,
+        bufferedChars,
+        unbufferedChars: producedChars - bufferedChars,
+      },
+      // Only transfer the bounded full printed stream when a continuation is
+      // necessary; never put this private payload directly into model context.
+      ...(shownChars < producedChars ? { bufferedOutput } : {}),
+    };
   };
   try {
     const sandbox = Object.create(null);
@@ -44,7 +68,7 @@ process.once("message", ({ code, variables }) => {
       return;
     }
     if (value === undefined) {
-      process.send({ ok: true, returned: false, display, truncated });
+      process.send({ ok: true, returned: false, ...finishPrints() });
       return;
     }
     const serialized = JSON.stringify(value);
@@ -56,7 +80,7 @@ process.once("message", ({ code, variables }) => {
       process.send({ ok: false, category: "validation", message: "Return value exceeds 1 MiB. Filter or slice the data before returning." });
       return;
     }
-    process.send({ ok: true, returned: true, value: JSON.parse(serialized), display, truncated });
+    process.send({ ok: true, returned: true, value: JSON.parse(serialized), ...finishPrints() });
   } catch (e) {
     process.send({ ok: false, category: /Script execution timed out/.test(String(e)) ? "timeout" : "validation", message: String(e.message || e).slice(0, 300) });
   }

@@ -35,6 +35,20 @@ export const PREVIEW_MAX_CHARS: number = readIntEnv(
   50_000,
 );
 
+/** Maximum model-requested visible output for one run_code call. */
+export const RUN_CODE_MAX_OUTPUT_CHARS: number = readIntEnv(
+  "BLACKDOGBOT_RUN_CODE_MAX_OUTPUT_CHARS", 16_000, 500, 16_000,
+);
+
+/** Default run_code display budget; per-call maxOutputChars can override it. */
+export const RUN_CODE_DEFAULT_OUTPUT_CHARS: number = Math.min(
+  RUN_CODE_MAX_OUTPUT_CHARS,
+  readIntEnv("BLACKDOGBOT_RUN_CODE_DEFAULT_OUTPUT_CHARS", 3000, 500, 16_000),
+);
+
+/** Bounded in-worker print buffer, retained for inspect_variable continuation. */
+export const RUN_CODE_OUTPUT_BUFFER_CHARS = 64_000;
+
 /** Hard cap per inspect_variable call. */
 export const INSPECT_VARIABLE_MAX_CHARS: number = readIntEnv(
   "BLACKDOGBOT_INSPECT_VARIABLE_MAX_CHARS",

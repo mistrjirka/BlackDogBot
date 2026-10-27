@@ -14,6 +14,8 @@ import {
   INSPECT_VARIABLE_MAX_CHARS,
   PREVIEW_MAX_CHARS,
   READ_DB_DEFAULT_LIMIT,
+  RUN_CODE_DEFAULT_OUTPUT_CHARS,
+  RUN_CODE_MAX_OUTPUT_CHARS,
   formatCharLimit,
 } from "../shared/limits.js";
 
@@ -79,6 +81,9 @@ export async function buildMainAgentPromptAsync(): Promise<string> {
     `stub previews show up to ${formatCharLimit(PREVIEW_MAX_CHARS)} characters; ` +
     `inspect_variable reveals up to ${formatCharLimit(INSPECT_VARIABLE_MAX_CHARS)} characters per call ` +
     `(default ${formatCharLimit(INSPECT_VARIABLE_DEFAULT_CHARS)}); database reads default to ${READ_DB_DEFAULT_LIMIT} rows. ` +
+    `run_code prints up to ${formatCharLimit(RUN_CODE_DEFAULT_OUTPUT_CHARS)} characters by default, ` +
+    `with optional maxOutputChars up to ${formatCharLimit(RUN_CODE_MAX_OUTPUT_CHARS)}. ` +
+    `Its output metadata gives exact shown/omitted counts and nextWith to inspect retained overflow. ` +
     `Use run_code for data-only transformations of captured variables; it cannot call tools, network, files or shell.`,
   );
 

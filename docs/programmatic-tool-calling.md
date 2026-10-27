@@ -25,9 +25,8 @@ systems where the model writes a program that calls tools directly.
   be at most 8 MiB. Larger results produce a **bounded error** instead of
   injecting huge content into the conversation. Request a smaller or paginated
   result. Older variables may be evicted to stay within the budget.
-- Each `run_code` call takes at most 4,000 source characters and 5 seconds.
+- Each `run_code` call takes at most 4,000 source characters and 5 seconds. Printed output has one combined display budget (default 3,000 characters, `maxOutputChars` up to 16,000), rather than a 1,000-character limit on each print. The output metadata contains exact produced/shown/omitted counts. On truncation, a retained print stream can be continued with `nextWith` via `inspect_variable`, without rerunning the code. At most 64,000 printed characters are retained; any additional unbuffered characters are counted but cannot be retrieved. To preserve large structured data, `return` it instead of printing.
   The worker has a 128 MiB V8 heap cap. JSON returns may be at most 1 MiB.
-  Printed output is capped at 1,000 characters per call and 8,000 in total.
   Three consecutive failures stop further code attempts for that agent run.
 - Context compaction does not delete variables in the current run. After
   compaction, the model receives an ephemeral list of currently live names

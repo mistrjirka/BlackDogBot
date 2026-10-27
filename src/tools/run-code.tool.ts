@@ -6,6 +6,12 @@ import { analyze } from "eslint-scope";
 import { tool } from "ai";
 import { z } from "zod";
 import type { VariableStore } from "../utils/variable-store.js";
+import {
+  RUN_CODE_DEFAULT_OUTPUT_CHARS,
+  RUN_CODE_MAX_OUTPUT_CHARS,
+  RUN_CODE_OUTPUT_BUFFER_CHARS,
+  formatCharLimit,
+} from "../shared/limits.js";
 
 const MAX_CODE_CHARS = 4000;
 const MAX_MS = 5000;
@@ -16,8 +22,17 @@ const NODE_MAJOR = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 1
 const BUILTINS = new Set(["print", "console", "Object", "Array", "JSON", "Math", "String", "Number", "Boolean", "Promise", "RegExp", "Date", "Set", "Map", "Infinity", "NaN", "undefined", "isNaN", "parseInt", "parseFloat"]);
 const BANNED_MEMBER_NAMES = new Set(["constructor", "__proto__", "prototype"]);
 
+interface PrintedOutputStats {
+  producedChars: number;
+  shownChars: number;
+  omittedChars: number;
+  bufferedChars: number;
+  unbufferedChars: number;
+}
+
 type WorkerReply =
-  | { ok: true; returned: boolean; value?: unknown; display: string; truncated: boolean }
+  | { ok: true; returned: boolean; value?: unknown; display: string; truncated: boolean;
+      bufferedOutput?: string; output: PrintedOutputStats }
   | { ok: false; category: string; message: string };
 
 /** Parse and check identifiers before spawning the worker. Tool calls are never available in code. */
@@ -54,7 +69,7 @@ function checkCode(code: string, available: string[], referenced: Set<string>): 
   }
 }
 
-function runWorker(code: string, variables: Record<string, unknown>): Promise<WorkerReply> {
+function runWorker(code: string, variables: Record<string, unknown>, maxOutputChars: number): Promise<WorkerReply> {
   return new Promise((resolve) => {
     const worker = fork(WORKER, [], {
       execArgv: ["--max-old-space-size=128", ...(NODE_MAJOR >= 26 ? ["--permission", `--allow-fs-read=${WORKER}`] : [])],
@@ -72,7 +87,7 @@ function runWorker(code: string, variables: Record<string, unknown>): Promise<Wo
     worker.once("message", (message: WorkerReply) => done(message));
     worker.once("error", (error) => done({ ok: false, category: "validation", message: error.message }));
     worker.once("exit", (exitCode, signal) => done({ ok: false, category: "memory", message: `Worker exited (${exitCode ?? signal}).` }));
-    worker.send({ code, variables }, (err) => { if (err) done({ ok: false, category: "validation", message: err.message }); });
+    worker.send({ code, variables, maxOutputChars, maxBufferedChars: RUN_CODE_OUTPUT_BUFFER_CHARS }, (err) => { if (err) done({ ok: false, category: "validation", message: err.message }); });
   });
 }
 
@@ -81,9 +96,13 @@ export function createRunCodeTool(getStore: () => VariableStore | null) {
   let failures = 0;
   let lastStore: VariableStore | null = null;
   return tool({
-    description: "Filter/analyze saved blackboard data using synchronous JavaScript, without copying the full result into chat. Refer to stored names directly, e.g. const lines = read_file_3.split('\\n'); print(lines.filter(x => /12\\.50|GoldHEN|reboot/i.test(x)).slice(0,20).join('\\n'));. The input from browser_read_text is plain text, NOT HTML markup. Search for relevant words instead of tags. print() and console.log() show all arguments, e.g. print('index:', idx), but EACH print shows at most 1000 chars. Limit slices to <=1000 or use inspect_variable, and do not advance by discarded/truncated characters. With /regex/g, string.match returns full matched strings, NOT capture groups; use matchAll or RegExp.exec for captures. Use return to save a new variable and pass {type:'variable',name:'code_N'} to supported sinks. Only referenced variables are loaded. No shell, network, or tool calls. Max 4000 code chars, 5 seconds, 128 MiB; use inspect_variable without name to list available names.",
-    inputSchema: z.object({ code: z.string().min(1).max(MAX_CODE_CHARS).describe("JavaScript function body. Example: print(mcp_searxng_search_1.slice(0,2)); return mcp_searxng_search_1.filter(x => x.title);") }),
-    execute: async ({ code }: { code: string }) => {
+    description: "Analyze saved blackboard values using synchronous JavaScript. print() / console.log() show all arguments and complete arrays, subject to ONE combined display budget, not a per-print limit. Default output " + formatCharLimit(RUN_CODE_DEFAULT_OUTPUT_CHARS) + " chars; optional maxOutputChars up to " + formatCharLimit(RUN_CODE_MAX_OUTPUT_CHARS) + ". Responses report exact printed/shown/omitted counts. If output is clipped, fullOutputVariable + nextWith allow inspection of the saved print stream without rerunning; if unbufferedChars>0 only the first " + formatCharLimit(RUN_CODE_OUTPUT_BUFFER_CHARS) + " chars were retained (outputPrefixVariable). Prefer short keyword-filtered excerpts; larger budgets intentionally cost context. browser_read_text returns PLAIN TEXT, not HTML. For /regex/g, String.match returns whole matches, not capture groups; use matchAll or exec. Use return to store structured results in the blackboard. No shell, network, file or tool calls. Max 4000 code chars, 5 seconds and 128 MiB.",
+    inputSchema: z.object({
+      code: z.string().min(1).max(MAX_CODE_CHARS).describe("Synchronous JavaScript function body; print to inspect or return a value to store."),
+      maxOutputChars: z.number().int().min(500).max(RUN_CODE_MAX_OUTPUT_CHARS).optional()
+        .describe(`Visible character budget (default ${RUN_CODE_DEFAULT_OUTPUT_CHARS}, maximum ${RUN_CODE_MAX_OUTPUT_CHARS}). Larger budgets consume more context.`),
+    }),
+    execute: async ({ code, maxOutputChars }: { code: string; maxOutputChars?: number }) => {
       const store = getStore();
       if (store !== lastStore) { failures = 0; lastStore = store; }
       if (!store) return { ok: false, category: "validation", message: "No active blackboard." };
@@ -94,13 +113,30 @@ export function createRunCodeTool(getStore: () => VariableStore | null) {
       if (issue) { failures++; return { ok: false, ...issue, availableVariables: names, attempt: failures, maxAttempts: 3 }; }
       const variables: Record<string, unknown> = {};
       for (const name of referenced) variables[name] = store.get(name);
-      const result = await runWorker(code, variables);
+      const result = await runWorker(code, variables, maxOutputChars ?? RUN_CODE_DEFAULT_OUTPUT_CHARS);
       if (!result.ok) { failures++; return { ...result, availableVariables: names, attempt: failures, maxAttempts: 3 }; }
       failures = 0;
-      if (!result.returned) return { ok: true, display: result.display, truncated: result.truncated, note: "Inspection only. Nothing returned or stored." };
+      const displayInfo: Record<string, unknown> = {
+        display: result.display,
+        truncated: result.truncated,
+        output: result.output,
+      };
+      if (result.truncated && result.bufferedOutput !== undefined) {
+        const saved = store.maybeCapture("code_output", result.bufferedOutput, true);
+        if (saved && typeof saved === "object" && "variable" in saved) {
+          const name = (saved as { variable: string }).variable;
+          const full = result.output.unbufferedChars === 0;
+          displayInfo[full ? "fullOutputVariable" : "outputPrefixVariable"] = name;
+          displayInfo.nextWith = {
+            tool: "inspect_variable",
+            arguments: { name, offset: result.output.shownChars, maxChars: 4000 },
+          };
+        }
+      }
+      if (!result.returned) return { ok: true, ...displayInfo, note: "Inspection only. No returned value stored." };
       const stub = store.maybeCapture("code", result.value, true);
       if (stub && typeof stub === "object" && "error" in stub) return { ok: false, ...(stub as object) };
-      return { ok: true, ...stub as object, ...(result.display ? { display: result.display } : {}), ...(result.truncated ? { truncated: true } : {}) };
+      return { ok: true, ...stub as object, ...displayInfo };
     },
   });
 }

@@ -73,6 +73,8 @@ These are environment-configurable and are also surfaced in the tool description
 
 ```bash
 BLACKDOGBOT_CAPTURE_THRESHOLD_CHARS=4000        # larger results become stored variables
+BLACKDOGBOT_RUN_CODE_DEFAULT_OUTPUT_CHARS=3000 # default model-visible printed chars; per-call override available
+BLACKDOGBOT_RUN_CODE_MAX_OUTPUT_CHARS=16000    # maximum per-call maxOutputChars (hard max 16000)
 BLACKDOGBOT_PREVIEW_MAX_CHARS=1200              # stub preview size
 BLACKDOGBOT_INSPECT_VARIABLE_MAX_CHARS=24000    # max chars per inspect_variable call
 BLACKDOGBOT_INSPECT_VARIABLE_DEFAULT_CHARS=4000 # default inspect_variable slice

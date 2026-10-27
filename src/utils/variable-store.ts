@@ -406,7 +406,10 @@ export function wrapToolSetWithVariables(
     // Only MCP model text gets captured AFTER its custom output conversion.
     // Vision/inspection tools keep their original model-ready output.
     const isMcp: boolean = toolName.startsWith("mcp.") && typeof toolDef.toModelOutput === "function";
-    const captureExcluded: boolean = typeof toolDef.toModelOutput === "function";
+    // run_code already bounds the model-visible display and stores any overflow
+    // as a separate blackboard variable; recapturing its result as a generic
+    // tool output would hide an explicitly requested larger display.
+    const captureExcluded: boolean = typeof toolDef.toModelOutput === "function" || toolName === "run_code";
 
     wrapped[toolName] = {
       ...toolDef,
