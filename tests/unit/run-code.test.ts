@@ -40,6 +40,14 @@ describe("run_code: separate data-only blackboard processing", () => {
     expect(result).toMatchObject({ ok: true, display: "div at: -1\nfirmware at: 0" });
   });
 
+  it("signals print truncation at 1000 chars so callers do not skip unread content", async () => {
+    const { execute } = createSetup();
+    const output = await execute(`print("a".repeat(1500))`) as { ok: boolean; truncated: boolean; display: string };
+    expect(output.ok).toBe(true);
+    expect(output.truncated).toBe(true);
+    expect(output.display).toContain("[print truncated]");
+  });
+
   it("returns structured syntax/identifier errors and rejects tool access", async () => {
     const { execute } = createSetup();
     const unknown = await execute("return mcp.searxng.search('bad');") as Record<string, unknown>;

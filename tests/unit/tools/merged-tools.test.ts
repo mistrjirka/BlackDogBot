@@ -42,6 +42,8 @@ describe("stable merged tool interfaces", () => {
     const tool = conciseToolDescriptions(orig)["mcp.stealth.browser_read_html"];
     expect(tool.description).toContain("NO offset/start/limit");
     expect(tool.description).toContain("inspect_variable");
+    expect(tool.description).toContain("mode=text returns PLAIN PROSE WITHOUT HTML TAGS");
+    expect(tool.description).toContain("mode=full returns reduced HTML markup");
     expect(tool.inputSchema).toBe(orig["mcp.stealth.browser_read_html"].inputSchema);
   });
 

@@ -925,6 +925,22 @@ function _buildPreview(value: unknown, type: IVariableStub["type"]): unknown {
 }
 
 /**
+ * Safe continuation position in a JSON-escaped string preview. The preview
+ * budget counts JSON characters (e.g. a newline takes two), while inspect_variable
+ * offsets count original string characters. Never advance by the preview budget.
+ */
+function _visibleStringPrefixChars(value: string): number {
+  let low = 0;
+  let high = Math.min(value.length, PREVIEW_MAX_CHARS);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (JSON.stringify(value.slice(0, mid)).length <= PREVIEW_MAX_CHARS) low = mid;
+    else high = mid - 1;
+  }
+  return low;
+}
+
+/**
  * Build the spec §2.1 stub shape: variable/type/count/sizeBytes/itemSchema?/
  * preview/meta?/note, plus `total` when the (whole) result carries a numeric
  * top-level totalCount | total | matchingTotal. `type`/`count`/`itemSchema`/`preview`
@@ -940,23 +956,23 @@ function _buildStub(
 ): IVariableStub {
   const type: IVariableStub["type"] = _inferValueType(value);
 
-  // Concrete next-tool arguments outperform generic instructions on the small
-  // local model (see scripts/eval-blackboard-guidance.py). The next slice can
-  // overlap the preview by adjusting the offset when its escaping is substantial.
+  // Preview strings are JSON-escaped; their raw-character continuation offset
+  // must be calculated, not assumed equal to the preview character budget.
+  // Individual run_code prints are capped at 1000 characters (see worker).
+  const preview: unknown = _buildPreview(value, type);
+  const previewOnly: boolean = type === "array"
+    ? (value as unknown[]).length > 2 || typeof preview === "string"
+    : JSON.stringify(value).length > PREVIEW_MAX_CHARS;
+  const stringOffset: number = type === "string" && previewOnly
+    ? _visibleStringPrefixChars(value as string) : 0;
+
   const searchCode: string = type === "string"
-    ? `const x = ${name}; print(x.slice(1200, 2400))`
+    ? `const x = ${name}; print(x.slice(${stringOffset}, ${stringOffset + 900}))`
     : type === "array"
       ? `print(JSON.stringify(${name}.slice(0, 3)).slice(0, 2000))`
       : type === "object"
         ? `print(Object.keys(${name}))`
         : `print(${name})`;
-
-  // `run_code` can force-capture a SHORT answer whose preview is the entire
-  // result. Never tell the model it must read more when nothing is missing.
-  const preview: unknown = _buildPreview(value, type);
-  const previewOnly: boolean = type === "array"
-    ? (value as unknown[]).length > 2 || typeof preview === "string"
-    : JSON.stringify(value).length > PREVIEW_MAX_CHARS;
 
   const stub: IVariableStub = {
     variable: name,
@@ -964,7 +980,7 @@ function _buildStub(
     previewOnly,
     readNextWith: {
       tool: "inspect_variable",
-      arguments: { name, offset: type === "string" ? 1200 : 0, maxChars: 4000 },
+      arguments: { name, offset: stringOffset, maxChars: 4000 },
     },
     searchWith: { tool: "run_code", arguments: { code: searchCode } },
     type,

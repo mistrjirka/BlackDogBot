@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import {
   CAPTURE_THRESHOLD_CHARS,
+  PREVIEW_MAX_CHARS,
   MAX_VARIABLE_BYTES,
   MAX_VARIABLES_PER_RUN,
   VARIABLE_REF_DESCRIPTION,
@@ -25,6 +26,9 @@ vi.mock("../../src/helpers/litesql.js");
 /** A stub shape, for ergonomic assertions. */
 interface IStub {
   variable: string;
+  savedToVariable: string;
+  readNextWith: { tool: string; arguments: { name: string; offset: number; maxChars: number } };
+  searchWith: { tool: string; arguments: { code: string } };
   type: "array" | "object" | "string" | "number" | "boolean";
   count?: number;
   sizeBytes: number;
@@ -244,11 +248,32 @@ expect(meta.properties.active).toBe("boolean");
     const stub = _asStub(store.maybeCapture("v", _bigString(4500)));
     expect(stub.type).toBe("string");
     expect(stub.savedToVariable).toBe("v_1");
-    expect(stub.readNextWith).toEqual({tool: "inspect_variable", arguments: {name: "v_1", offset: 1200, maxChars: 4000}});
-    expect(stub.searchWith.arguments.code).toBe("const x = v_1; print(x.slice(1200, 2400))");
+    expect(stub.readNextWith).toEqual({tool: "inspect_variable", arguments: {name: "v_1", offset: 1198, maxChars: 4000}});
+    expect(stub.searchWith.arguments.code).toBe("const x = v_1; print(x.slice(1198, 2098))");
     expect(stub.itemSchema).toBeUndefined();
     expect(typeof stub.preview).toBe("string");
     expect((stub.preview as string).length).toBeLessThanOrEqual(1200 + 4); // JSON.stringify adds quotes/ellipsis
+  });
+  it("does not skip characters after escaped string previews", () => {
+    // Previously the same 1200 serialized characters led to a raw offset of
+    // 1200, skipping source characters consumed by JSON escapes.
+    const inputs = [
+      "plain".repeat(1300),
+      "A\n\t\r".repeat(1800),
+      "<div>\n".repeat(1000),
+      "\\\"".repeat(2500),
+      "😀".repeat(2500),
+    ];
+    for (const source of inputs) {
+      const stub = _asStub(new VariableStore().maybeCapture("page", source));
+      const offset = stub.readNextWith.arguments.offset;
+      expect(offset).toBeGreaterThan(0);
+      expect(offset).toBeLessThan(1200);
+      expect(JSON.stringify(source.slice(0, offset)).length).toBeLessThanOrEqual(PREVIEW_MAX_CHARS);
+      expect(source.slice(0, offset) + source.slice(offset)).toBe(source);
+      expect(stub.searchWith.arguments.code).toBe(`const x = ${stub.variable}; print(x.slice(${offset}, ${offset + 900}))`);
+      expect(source.slice(offset, offset + 900).length).toBeLessThanOrEqual(900);
+    }
   });
 });
 
