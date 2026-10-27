@@ -52,7 +52,7 @@ Settings, prompts, MCP registry, schedules, and runtime data live under `~/.blac
 
 ## Local agent tests
 
-With the managed service running, use `pnpm ask:local -- --max-steps 12 --timeout 120 "What can PS4 firmware 12.50 run?"` to send a question in a fresh isolated chat through the authenticated Brain Interface. Add `--verbose` to inspect `run_code` calls and results. This executes real agent tools using normal permissions; it is **not** a security sandbox. Tests may queue while a Telegram run is active, and the CLI has a stop/timeout safeguard.
+With the managed service running, use `pnpm ask:local -- --max-steps 12 --timeout 120 "What can PS4 firmware 12.50 run?"` to send a question in a fresh isolated chat through the authenticated Brain Interface. Add `--verbose` to inspect `run_code` calls and results. For repeatable tests, `--chat-id cli-NAME` selects an isolated chat. **New CLI chat IDs have no tool permissions until separately registered through the channel registry**; with `ignore` permission the model cannot call research tools. This executes real agent tools using normal permissions once authorized; it is **not** a security sandbox. Tests may queue while a Telegram run is active, and the CLI has a stop/timeout safeguard.
 
 ## Updates and rollback
 

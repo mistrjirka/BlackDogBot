@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Local Brain Interface CLI. Dedicated chat; normal production tool permissions.
 // For harmless debugging only. No Telegram message is sent by the command itself.
+// The chosen chat must already be registered in channels.yaml to receive tools.
 import { io } from "socket.io-client";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
@@ -9,7 +10,7 @@ import { randomUUID } from "node:crypto";
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.length === 0) {
-  console.log('Usage: node brain-interface/scripts/ask-agent.mjs [--max-steps N] [--timeout N] [--verbose] "QUESTION"');
+  console.log('Usage: node brain-interface/scripts/ask-agent.mjs [--max-steps N] [--timeout N] [--verbose] [--chat-id cli-NAME] "QUESTION"');
   process.exit(0);
 }
 const option = (name, fallback) => {
@@ -21,11 +22,18 @@ const option = (name, fallback) => {
 };
 const maxSteps = option("--max-steps", 20);
 const timeout = option("--timeout", 180);
+const chatIdFlag = args.indexOf("--chat-id");
+let chatId = "cli-debug-" + randomUUID();
+if (chatIdFlag >= 0) {
+  const requested = args[chatIdFlag + 1] || "";
+  if (!/^cli-[A-Za-z0-9_-]{1,96}$/.test(requested)) throw new Error("--chat-id must start with cli- and be alphanumeric with hyphens/underscores");
+  chatId = requested;
+  args.splice(chatIdFlag, 2);
+}
 const verbose = args.includes("--verbose");
 if (verbose) args.splice(args.indexOf("--verbose"), 1);
 const question = args.join(" ").trim();
 if (!question || question.startsWith("--")) throw new Error("A question is required");
-const chatId = "cli-debug-" + randomUUID();
 const token = (await readFile(path.join(os.homedir(), ".blackdogbot", "brain-interface.token"), "utf8")).trim();
 const socket = io("http://127.0.0.1:3001", {
   auth: { token }, transports: ["websocket"], timeout: 5000, reconnection: false, autoConnect: false,
