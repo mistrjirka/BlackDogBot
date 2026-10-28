@@ -51,8 +51,9 @@ not incur the extra tool calls. The skill does not grant new permissions.
 Browser extract variables now retain the URL of a successful stealth-browser
 navigation; a single-source `run_code` derivation retains its original attribution.
 Mixed-source outputs lose attribution rather than making up a URL. The optional
-`verify_claim_evidence` tool checks that quotes occur in the saved source and
-flags explicit PS4/PS5 mismatches. It returns an evidence ledger and distinguishes
-unattributed excerpts from URL-attributed ones. Quote matching is **not** a
-semantic entailment check: the agent must still reason about applicability,
-reboot semantics, product/version scope, and counterevidence.
+`verify_claim_evidence` remains an **optional** quote/source inspection tool,
+not a required pre-answer gate. It can find missing quotes and a narrow set of
+scope mismatches; quotation matching does **not** prove semantic entailment.
+The research skill instead emphasizes updating hypotheses when evidence conflicts,
+distinguishing nearby capabilities/versions, and accepting negative or uncertain
+answers when the evidence warrants them.

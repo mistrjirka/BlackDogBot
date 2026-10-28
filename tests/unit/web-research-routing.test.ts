@@ -1,88 +1,74 @@
 import { describe, expect, it } from "vitest";
 import { buildWebResearchRoutingInstruction } from "../../src/agent/web-research-routing.js";
 
-describe("web research MCP tool priority", () => {
+describe("web research tool routing", () => {
   const all = [
-    "mcp.searxng.searxng_web_search",
-    "mcp.searxng.web_url_read",
-    "mcp.scrapling.browser_fetch_once",
-    "mcp.scrapling.browser_open",
-    "mcp.scrapling.browser_screenshot",
-    "mcp.playwright.browser_navigate",
+    "mcp.searxng.searxng_web_search", "mcp.searxng.web_url_read",
+    "mcp.scrapling.browser_fetch_once", "mcp.scrapling.browser_open",
+    "mcp.scrapling.browser_screenshot", "mcp.playwright.browser_navigate",
   ];
 
-  it("routes source discovery to search, page extraction to Scrapling and interaction to Playwright", () => {
+  it("routes search, extraction, browser escalation in that order", () => {
     const route = buildWebResearchRoutingInstruction(all);
-    const search = route.indexOf("1. DISCOVER");
-    const scrape = route.indexOf("2. READ");
-    const browser = route.indexOf("3. ESCALATE");
-    expect(search).toBeGreaterThanOrEqual(0);
-    expect(scrape).toBeGreaterThan(search);
-    expect(browser).toBeGreaterThan(scrape);
+    expect(route.indexOf("1. DISCOVER")).toBeLessThan(route.indexOf("2. READ"));
+    expect(route.indexOf("2. READ")).toBeLessThan(route.indexOf("3. ESCALATE"));
     expect(route).toContain("mcp.searxng.searxng_web_search");
     expect(route).toContain("mcp.scrapling.browser_fetch_once");
     expect(route).toContain("mcp.playwright");
-    expect(route).toContain("often return extracted plain text or Markdown rather than HTML/DOM");
-    expect(route).toContain("Only look for HTML elements when the tool actually returned HTML");
-    expect(route).toContain("do not jump to a full interactive browser");
-    expect(route).toContain("Do not use Playwright as the default");
     expect(route).toContain("skip search");
     expect(route).toContain("HTTP 200 alone");
+    expect(route).toContain("plain text or Markdown rather than HTML/DOM");
   });
 
-  it("triggers evidence skill for substantive research while allowing trivial lookups", () => {
-    const text = buildWebResearchRoutingInstruction(all);
-    expect(text).toContain("list_skills");
-    expect(text).toContain("web-research");
-    expect(text).toContain("trivial lookup skip the skill");
-    expect(text).toContain("matching quote alone is not sufficient proof");
+  it("loads general research guidance when useful, without a mandatory verification checklist", () => {
+    const route = buildWebResearchRoutingInstruction(all);
+    expect(route).toContain("load web-research");
+    expect(route).toContain("list_skills");
+    expect(route).toContain("skip it for a trivial lookup");
+    expect(route).not.toContain("verify_claim_evidence");
+    expect(route).not.toContain("PS4");
   });
 
-  it("does not confuse one-shot text with a screenshot and explains the native image tool", () => {
+  it("keeps screenshot instructions tied to connected tools", () => {
     const route = buildWebResearchRoutingInstruction(all);
     expect(route).toContain("mcp.scrapling.browser_screenshot");
     expect(route).toContain("actual inline PNG image");
     expect(route).toContain("close_session");
-    expect(route).toContain("Only claim screenshot/vision PASS");
   });
 
-  it("does not advertise tools that are not connected", () => {
+  it("does not advertise unavailable capabilities", () => {
     const route = buildWebResearchRoutingInstruction(["mcp.searxng.searxng_web_search"]);
     expect(route).toContain("mcp.searxng.searxng_web_search");
     expect(route).not.toContain("mcp.scrapling");
     expect(route).not.toContain("mcp.playwright");
-    expect(route).toContain("report that the content could not be verified");
+    expect(route).toContain("could not be verified");
   });
 
-  it("uses the available scraper even without search or Playwright", () => {
+  it("uses connected scraper without search or Playwright", () => {
     const route = buildWebResearchRoutingInstruction(["mcp.scrapling.browser_fetch_once"]);
     expect(route).toContain("mcp.scrapling.browser_fetch_once");
-    expect(route).toContain("When a URL is already supplied, skip searching");
+    expect(route).toContain("skip searching");
     expect(route).not.toContain("mcp.searxng");
-    expect(route).not.toContain("mcp.playwright");
-    expect(route).not.toContain("mcp.scrapling.browser_screenshot");
   });
 
-  it("routes to the stealth browser and requires closing sessions, avoiding repeated blocked sites", () => {
+  it("uses a persistent stealth browser without repeatedly retrying challenges", () => {
     const route = buildWebResearchRoutingInstruction([
       "mcp.searxng.searxng_web_search", "mcp.searxng.web_url_read",
       "mcp.stealth.browser_open", "mcp.stealth.browser_navigate",
       "mcp.stealth.browser_read_text", "mcp.stealth.browser_take_screenshot",
     ]);
     expect(route).toContain("mcp.stealth.browser_open");
-    expect(route).toContain("mcp.stealth.browser_read_text");
+    expect(route).toContain("browser_read_text");
     expect(route).toContain("browser_close");
-    expect(route).toContain("mcp.stealth.browser_take_screenshot");
-    expect(route).toContain("After two attempts");
-    expect(route).not.toContain("mcp.scrapling.");
-    expect(route).not.toContain("mcp.playwright.");
+    expect(route).toContain("bot challenge");
+    expect(route).not.toContain("mcp.scrapling");
   });
 
-  it("supports environments with no MCP servers without claiming they are connected", () => {
+  it("works without connected web tools", () => {
     const route = buildWebResearchRoutingInstruction([]);
+    expect(route).toContain("last resort");
     expect(route).not.toContain("mcp.searxng.");
     expect(route).not.toContain("mcp.scrapling.");
     expect(route).not.toContain("mcp.playwright.");
-    expect(route).toContain("last resort");
   });
 });

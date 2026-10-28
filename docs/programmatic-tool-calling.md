@@ -31,8 +31,9 @@ systems where the model writes a program that calls tools directly.
 - Context compaction does not delete variables in the current run. After
   compaction, the model receives an ephemeral list of currently live names
   through instructions. It never enters persisted session history.
-- The store is **not persistent**. Names from previous agent runs cannot be
-  resolved. A delegated worker gets its own independent store.
+- The chat-scoped store is persisted across user requests and daemon restarts, subject
+  to its size limits, eviction, and `/clear`. A delegated worker receives its own
+  separate store rather than the parent chat store.
 - `run_code` executes in a short-lived Node VM worker. It exposes no tools,
   shell, files or network interfaces to the code by design. Node VM is not a
   hardened security boundary. Node 26+ also enables filesystem, network and

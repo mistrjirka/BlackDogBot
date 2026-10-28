@@ -118,9 +118,9 @@ describe("web research evidence verifier", () => {
     const metadata = await parseSkillFrontmatterAsync(file);
     const instructions = await loadSkillInstructionsAsync(file);
     expect(metadata.name).toBe("web-research");
-    expect(instructions).toContain("verify_claim_evidence");
-    expect(instructions).toContain("PS5");
-    expect(instructions).toContain("Search snippets");
+    expect(instructions).toContain("abandon the explanation");
+    expect(instructions).toContain("Search efficiently");
+    expect(instructions).not.toContain("PS4");
   });
 
   it("attributes successfully navigated browser pages but never HTTP 403 pages", async () => {
