@@ -10,7 +10,7 @@ For a headless isolated Firefox browser, a tested entry is:
 {
   "command": "npx",
   "args": [
-    "-y", "@playwright/mcp@0.0.83",
+    "-y", "@playwright/mcp@0.0.84",
     "--browser", "firefox",
     "--headless", "--isolated", "--caps", "vision",
     "--output-dir", "/home/jirka/.blackdogbot/playwright-artifacts"
@@ -26,7 +26,7 @@ For a headless isolated Firefox browser, a tested entry is:
 }
 ```
 
-This is **one server entry** under the name `playwright`, not a complete replacement for `mcp-servers.json`. Adapt the output directory for the current user's home. The pinned example version is a *known tested version*, not a claim that it is the latest release. Confirm flags from `npx -y @playwright/mcp@0.0.83 --help` before use.
+This is **one server entry** under the name `playwright`, not a complete replacement for `mcp-servers.json`. Adapt the output directory for the current user's home. This version was the latest verified on November 7, 2026. Prefer the user-local `scripts/install-mcp-runtime.sh playwright` helper described in `docs/mcp-playwright.md`, which installs a matching browser in an isolated cache. Confirm flags from `npx -y @playwright/mcp@0.0.84 --help` before use.
 
 Install the Firefox revision required by the matching Playwright runtime (use its CLI and documented install instructions). Browser dependencies may already exist. Prefer an unprivileged user-local install and do not `sudo` blindly. If OS packages truly require elevated privileges, report the blocker instead of circumventing it.
 
