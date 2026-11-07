@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   _buildProgressText,
+  _startTelegramProgressHeartbeat,
   _parseQueueCommand,
   _tryEditMessageTextAsync,
 } from "../../src/platforms/telegram/handler.js";
@@ -109,4 +110,52 @@ describe("queue command parsing", () => {
     expect(_parseQueueCommand("/queuefoo bar")).toBeNull();
   });
 });
+});
+
+afterEach(() => { vi.useRealTimers(); });
+
+describe("Telegram progress heartbeat", () => {
+  it("updates elapsed time during a model call without tool steps", async () => {
+    vi.useFakeTimers();
+    const editMessageText = vi.fn().mockResolvedValue({});
+    const stop = _startTelegramProgressHeartbeat(
+      42,
+      { editMessageText },
+      "chat",
+      logger,
+      (status: string): string => _buildProgressText(status, ["Step 2: run_cmd"]),
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+    expect(editMessageText.mock.calls[0][2]).toContain("0m 30s elapsed");
+    expect(editMessageText.mock.calls[0][2]).toContain("Step 2: run_cmd");
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(editMessageText).toHaveBeenCalledTimes(3);
+    expect(editMessageText.mock.calls[2][2]).toContain("1m 30s elapsed");
+
+    await stop();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(editMessageText).toHaveBeenCalledTimes(3);
+  });
+
+  it("waits for an in-flight edit before allowing the final status", async () => {
+    vi.useFakeTimers();
+    let finishEdit: (() => void) | null = null;
+    const editMessageText = vi.fn((): Promise<void> => new Promise((resolve) => { finishEdit = resolve; }));
+    const stop = _startTelegramProgressHeartbeat(42, { editMessageText }, "chat", logger, (status) => status);
+    vi.advanceTimersByTime(30_000);
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+    let finished = false;
+    const stopping = stop().then(() => { finished = true; });
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    expect(finishEdit).not.toBeNull();
+    finishEdit!();
+    await stopping;
+    expect(finished).toBe(true);
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+  });
 });
