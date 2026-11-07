@@ -96,7 +96,11 @@ logging:
 # Web search servers are registered in ~/.blackdogbot/mcp-servers.json.
 ```
 
-SearXNG and Scrapling are registered as MCP servers in `~/.blackdogbot/mcp-servers.json`; the installer creates entries for enabled services. The SearXNG MCP adapter uses pinned `mcp-searxng@2.7.0` over stdio, pointing at the local SearXNG container.
+The wizard offers **three MCP servers**: SearXNG (search), Scrapling (scraping), and Playwright (browser interaction and screenshots). All three are selected by default if Docker is available. The SearXNG adapter is installed into a user-local directory as pinned `mcp-searxng@2.10.0`. Playwright uses pinned `@playwright/mcp@0.0.84` and automatically downloads the exact Firefox build required by its bundled Playwright runtime. These Node packages work on Linux x86-64 and arm64. The two Docker image digests below publish both architectures.
+
+Both Docker services are optional. Without Docker, the wizard can register an existing remote SearXNG or Scrapling endpoint, and Playwright can still be installed locally. The wizard tests the actual MCP handshake and tool list for configured servers. For Playwright, it also launches Firefox and captures a screenshot. Services intentionally left stopped are not claimed as verified.
+
+All registrations live in `~/.blackdogbot/mcp-servers.json`. MCP Node packages live in `~/.local/share/blackdogbot/mcp/`; Playwright's matching browser is stored in its own `playwright/browsers/` directory to avoid affecting other browser installations.
 
 ### 3. Set Up Docker Services (Optional)
 
@@ -105,7 +109,7 @@ Create `~/.blackdogbot/docker-compose.yaml`:
 ```yaml
 services:
   searxng:
-    image: searxng/searxng@sha256:bcfaed4091d59f7ce85670bd701a2d0295872196dc19908a3965a8353b149f83
+    image: searxng/searxng@sha256:c750ee1d859b26d3aeae51c07f6a48c3a0bfbaa9195d71a18b258862d88c4c3c
     container_name: blackdogbot-searxng
     ports:
       - "127.0.0.1:18731:8080"
@@ -117,7 +121,7 @@ services:
     restart: unless-stopped
 
   scrapling:
-    image: pyd4vinci/scrapling@sha256:1d876879813759959bc4ba6fbb1ce8247ebbc2b67eee77b140baf7c80af6ae6b
+    image: pyd4vinci/scrapling@sha256:b4e92cde7e7e2d9f5940e90ee796cbf7340843a6de7213c0c409fe3d2aadfd87
     container_name: blackdogbot-scrapling
     ports:
       - "127.0.0.1:18733:8000"

@@ -4,7 +4,7 @@ BlackDogBot discovers search and scraping capabilities through MCP; it has no bu
 
 | Service | Integration | Purpose | Deployment |
 |---|---|---|---|
-| SearXNG | `mcp.searxng.*` via pinned `mcp-searxng@2.7.0` stdio adapter | Search, categories, engine filters, time ranges, URL discovery | Docker, localhost port 18731 on new installations |
+| SearXNG | `mcp.searxng.*` via pinned `mcp-searxng@2.10.0` stdio adapter | Search, categories, engine filters, time ranges, URL discovery | Docker, localhost port 18731 on new installations |
 | Scrapling | `mcp.scrapling.*`, authenticated Streamable HTTP | Fast extraction, JavaScript rendering, stealth browser sessions, screenshot image blocks | Docker, localhost port 18733 |
 | Playwright | `mcp.playwright.*` via local stdio | Browser interactions requiring precise navigation, selectors, and debugging | Local headless browser |
 
@@ -12,7 +12,7 @@ BlackDogBot discovers search and scraping capabilities through MCP; it has no bu
 
 Crawl4AI 0.9.4 was confirmed to render a JavaScript-driven quotes page, but its screenshot MCP tool returned base64 embedded in JSON text rather than native MCP image output. The old `unclecode/crawl4ai` container is now stopped and removed from the active Compose/MCP registry. Its image, container and backup configs remain available for manual rollback.
 
-The replacement is the open-source [Scrapling](https://github.com/D4Vinci/Scrapling) 0.5 Docker image with the exact tested digest `pyd4vinci/scrapling@sha256:1d876879813759959bc4ba6fbb1ce8247ebbc2b67eee77b140baf7c80af6ae6b`. This image contains browser dependencies and 16 MCP tools. Its authenticated HTTP endpoint is `http://127.0.0.1:18733/mcp`. Keep the token in the private `~/.blackdogbot/scrapling.env` file and the restricted MCP registry.
+The current installation pins the open-source [Scrapling](https://github.com/D4Vinci/Scrapling) 0.5.1 Docker image to `pyd4vinci/scrapling@sha256:b4e92cde7e7e2d9f5940e90ee796cbf7340843a6de7213c0c409fe3d2aadfd87`. This image publishes linux/amd64 and linux/arm64 variants, contains browser dependencies, and exposes 17 MCP tools (verified on November 7, 2026). Its authenticated HTTP endpoint is `http://127.0.0.1:18733/mcp`. Keep the token in the private `~/.blackdogbot/scrapling.env` file and the restricted MCP registry.
 
 Direct tests verified:
 

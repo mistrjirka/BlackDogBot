@@ -153,13 +153,13 @@ logging:
 
 ## Optional Services
 
-SearXNG and Scrapling are configured as MCP servers in `~/.blackdogbot/mcp-servers.json`, not as built-in HTTP tools. SearXNG uses a local stdio MCP adapter with `SEARXNG_URL` pointing to the existing container:
+SearXNG and Scrapling are configured as MCP servers in `~/.blackdogbot/mcp-servers.json`, not as built-in HTTP tools. SearXNG uses a user-local stdio MCP adapter (pinned `mcp-searxng@2.10.0`) with `SEARXNG_URL` pointing to the existing container. The installer creates the absolute command path automatically; replace `YOUR_USER` for a manual config:
 
 ```json
 {
   "searxng": {
-    "command": "npx",
-    "args": ["-y", "mcp-searxng@2.7.0"],
+    "command": "/home/YOUR_USER/.local/share/blackdogbot/mcp/searxng/node_modules/.bin/mcp-searxng",
+    "args": [],
     "env": { "SEARXNG_URL": "http://127.0.0.1:18731" },
     "strictOutputSchema": false,
     "allowedTools": ["searxng_web_search", "searxng_search_suggestions", "searxng_instance_info", "web_url_read"]

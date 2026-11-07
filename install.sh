@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 CONFIG_DIR="$HOME/.blackdogbot"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
@@ -177,8 +177,12 @@ setup_docker_services() {
         START_SERVICES=false
         SETUP_SEARXNG=false
         SETUP_SCRAPLING=false
-        SEARXNG_URL=""
-        SCRAPLING_URL=""
+        echo "Docker unavailable. You can still configure remote search/scraping services."
+        prompt_input "Existing SearXNG URL (optional)" "" SEARXNG_URL
+        prompt_input "Existing Scrapling MCP URL (optional)" "" SCRAPLING_URL
+        if [ -n "$SCRAPLING_URL" ]; then
+            prompt_input "Scrapling API token (optional)" "" SCRAPLING_MCP_AUTH_TOKEN
+        fi
         return
     fi
     
@@ -213,6 +217,19 @@ setup_docker_services() {
     fi
     
     echo ""
+}
+
+prepare_mcp_runtimes() {
+    MCP_ROOT="${BLACKDOGBOT_MCP_ROOT:-$HOME/.local/share/blackdogbot/mcp}"
+    if [ -n "$SEARXNG_URL" ]; then
+        print_info "Installing pinned SearXNG MCP adapter..."
+        SEARXNG_MCP_BIN="$(bash "$(get_script_dir)/scripts/install-mcp-runtime.sh" searxng | tail -n 1)"
+    fi
+    PLAYWRIGHT_MCP_BIN=""
+    if prompt_yesno "Install Playwright MCP with a headless Firefox browser?" "y"; then
+        print_info "Installing Playwright MCP and its matching Firefox..."
+        PLAYWRIGHT_MCP_BIN="$(bash "$(get_script_dir)/scripts/install-mcp-runtime.sh" playwright | tail -n 1)"
+    fi
 }
 
 create_docker_compose() {
@@ -297,7 +314,7 @@ SEARXNG_EOF
         
         cat >> "$COMPOSE_FILE" << EOF
   searxng:
-    image: searxng/searxng@sha256:bcfaed4091d59f7ce85670bd701a2d0295872196dc19908a3965a8353b149f83
+    image: searxng/searxng@sha256:c750ee1d859b26d3aeae51c07f6a48c3a0bfbaa9195d71a18b258862d88c4c3c
     container_name: blackdogbot-searxng
     ports:
       - "127.0.0.1:${SEARXNG_PORT}:8080"
@@ -325,7 +342,7 @@ EOF
         chmod 600 "$SCRAPLING_ENV_FILE"
         cat >> "$COMPOSE_FILE" << EOF
   scrapling:
-    image: pyd4vinci/scrapling@sha256:1d876879813759959bc4ba6fbb1ce8247ebbc2b67eee77b140baf7c80af6ae6b
+    image: pyd4vinci/scrapling@sha256:b4e92cde7e7e2d9f5940e90ee796cbf7340843a6de7213c0c409fe3d2aadfd87
     container_name: blackdogbot-scrapling
     ports:
       - "127.0.0.1:$SCRAPLING_PORT:8000"
@@ -353,6 +370,14 @@ EOF
     fi
 }
 
+compose() {
+    if docker compose version >/dev/null 2>&1; then
+        docker compose "$@"
+    else
+        docker-compose "$@"
+    fi
+}
+
 start_docker_services() {
     if [ "$START_SERVICES" = false ]; then
         return
@@ -365,18 +390,16 @@ start_docker_services() {
     
     if [ "$SETUP_SEARXNG" = true ]; then
         print_info "Pulling SearXNG image..."
-        docker compose pull searxng 2>/dev/null || docker-compose pull searxng 2>/dev/null || true
+        compose -f "$COMPOSE_FILE" pull searxng || { print_error "SearXNG image download failed"; return 1; }
     fi
     
     if [ "$SETUP_SCRAPLING" = true ]; then
         print_info "Pulling Scrapling image..."
-        docker compose pull scrapling 2>/dev/null || docker-compose pull scrapling 2>/dev/null || true
+        compose -f "$COMPOSE_FILE" pull scrapling || { print_error "Scrapling image download failed"; return 1; }
     fi
     
     print_info "Starting services..."
-    if docker compose up -d 2>/dev/null; then
-        print_success "Services started"
-    elif docker-compose up -d 2>/dev/null; then
+    if compose -f "$COMPOSE_FILE" up -d; then
         print_success "Services started"
     else
         print_error "Failed to start services. Try manually: docker compose -f $COMPOSE_FILE up -d"
@@ -401,6 +424,37 @@ start_docker_services() {
             print_warning "Scrapling not responding yet (may need more time to start)"
         fi
     fi
+}
+
+verify_mcp_servers() {
+    local skip=""
+    # The user may have selected "do not start" for Docker services.
+    # Verify all other servers, but do not claim these stopped containers work.
+    if [ "$START_SERVICES" = false ]; then
+        if [ "$SETUP_SCRAPLING" = true ]; then
+            skip="scrapling"
+        fi
+        if [ "$SETUP_SEARXNG" = true ]; then
+            skip="${skip:+$skip,}searxng"
+        fi
+    fi
+    if [ ! -f "$CONFIG_DIR/mcp-servers.json" ]; then
+        print_info "No MCP servers selected; skipping MCP verification."
+        return
+    fi
+    print_info "Checking MCP handshakes and discovered tools..."
+    local attempt
+    for attempt in 1 2 3; do
+        if BLACKDOGBOT_MCP_VERIFY_SKIP="$skip" node "$(get_script_dir)/scripts/verify-mcp-install.mjs"; then
+            return
+        fi
+        if [ "$attempt" -lt 3 ]; then
+            print_warning "MCP endpoints not ready; retrying connection check..."
+            sleep 5
+        fi
+    done
+    print_error "MCP setup failed verification. Check server logs before completing setup."
+    return 1
 }
 
 create_systemd_service() {
@@ -652,7 +706,7 @@ EOF
     # Search and scraping are separate MCP servers. Do not embed HTTP clients
     # in the agent or include provider-specific search URLs in its config.
     if [ -n "$SEARXNG_URL" ]; then
-        CONFIG_DIR="$CONFIG_DIR" SEARXNG_URL="$SEARXNG_URL" node <<'NODE'
+        CONFIG_DIR="$CONFIG_DIR" SEARXNG_URL="$SEARXNG_URL" SEARXNG_MCP_BIN="$SEARXNG_MCP_BIN" node <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 const file = path.join(process.env.CONFIG_DIR, "mcp-servers.json");
@@ -663,8 +717,8 @@ if (!config.mcpServers || typeof config.mcpServers !== "object" || Array.isArray
 }
 if (!config.mcpServers.searxng) {
   config.mcpServers.searxng = {
-    command: "npx",
-    args: ["-y", "mcp-searxng@2.7.0"],
+    command: process.env.SEARXNG_MCP_BIN,
+    args: [],
     env: { SEARXNG_URL: process.env.SEARXNG_URL },
     strictOutputSchema: false,
     allowedTools: ["searxng_web_search", "searxng_search_suggestions", "searxng_instance_info", "web_url_read"],
@@ -707,6 +761,46 @@ NODE
     print_success "Created $CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
     print_success "Set restrictive permissions on config"
+}
+
+register_playwright_mcp() {
+    if [ -z "$PLAYWRIGHT_MCP_BIN" ]; then
+        return
+    fi
+
+    local artifacts
+    artifacts="$CONFIG_DIR/playwright-artifacts"
+    mkdir -p "$artifacts"
+    CONFIG_DIR="$CONFIG_DIR" PLAYWRIGHT_MCP_BIN="$PLAYWRIGHT_MCP_BIN" PLAYWRIGHT_ARTIFACTS="$artifacts" PLAYWRIGHT_BROWSERS_PATH="$MCP_ROOT/playwright/browsers" node <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const file = path.join(process.env.CONFIG_DIR, "mcp-servers.json");
+let config = { mcpServers: {} };
+if (fs.existsSync(file)) config = JSON.parse(fs.readFileSync(file, "utf8"));
+if (!config.mcpServers || typeof config.mcpServers !== "object" || Array.isArray(config.mcpServers)) {
+  throw new Error("Invalid mcp-servers.json: expected mcpServers object");
+}
+if (config.mcpServers.playwright) {
+  throw new Error("Refusing to replace an existing Playwright MCP config");
+}
+config.mcpServers.playwright = {
+  command: process.env.PLAYWRIGHT_MCP_BIN,
+  env: { PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH },
+  args: ["--browser", "firefox", "--headless", "--isolated", "--caps", "vision",
+         "--output-dir", process.env.PLAYWRIGHT_ARTIFACTS],
+  strictOutputSchema: false,
+  allowedTools: [
+    "browser_navigate", "browser_navigate_back", "browser_snapshot",
+    "browser_take_screenshot", "browser_click", "browser_type",
+    "browser_press_key", "browser_fill_form", "browser_wait_for",
+    "browser_tabs", "browser_resize", "browser_select_option",
+    "browser_console_messages", "browser_network_requests", "browser_close",
+  ],
+};
+fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+fs.chmodSync(file, 0o600);
+NODE
+    print_success "Playwright MCP and matching Firefox browser installed."
 }
 
 create_directories() {
@@ -811,11 +905,14 @@ main() {
     check_dependencies
     install_dependencies
     setup_docker_services
+    prepare_mcp_runtimes
     create_docker_compose
     create_config
     create_directories
+    register_playwright_mcp
     copy_default_prompts
     start_docker_services
+    verify_mcp_servers
     create_systemd_service
     print_summary
 }
