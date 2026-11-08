@@ -17,6 +17,8 @@ import type { ToolSet, LanguageModel } from "ai";
 let tempDir: string;
 let originalHome: string;
 let shouldSkipLmTests: boolean = false;
+// Live model calls must be explicit. The regular fast suite runs on production hosts.
+const runLiveModelTests: boolean = process.env.BLACKDOGBOT_TEST_LIVE_MODEL === "1";
 
 /**
  * Concrete subclass of BaseAgentBase for testing purposes.
@@ -148,7 +150,7 @@ describe("BaseAgentBase", () => {
     ).toBe(180_000);
   });
 
-  it("should complete on low max steps without forcing a terminal tool", async () => {
+  it.skipIf(!runLiveModelTests)("should complete on low max steps without forcing a terminal tool", async () => {
     if (shouldSkipLmTests) {
       return;
     }
@@ -172,7 +174,7 @@ describe("BaseAgentBase", () => {
     expect(result.text.length).toBeGreaterThan(0);
   }, 600000);
 
-  it("should complete when the model returns plain text without tool calls", async () => {
+  it.skipIf(!runLiveModelTests)("should complete when the model returns plain text without tool calls", async () => {
     if (shouldSkipLmTests) {
       return;
     }
