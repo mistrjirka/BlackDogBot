@@ -206,7 +206,7 @@ function createProgressOnStep(
     let formatted: string | null = null;
     if (filteredToolCalls.length > 0) {
       formatted = filteredToolCalls.map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input)).join(", ");
-      stepLogs.push(`Step ${stepNumber}: ${formatted}`);
+      stepLogs.push(Number.isInteger(stepNumber) ? `Step ${stepNumber}: ${formatted}` : `  ${stepNumber}: ${formatted}`);
     }
     onStepLogged?.(stepNumber, toolCalls, formatted);
     await _tryEditMessageTextAsync(editApi, logger, chatId, progressMsgId, buildText("⚙️ Working..."), "HTML", source);
@@ -947,8 +947,8 @@ export class TelegramHandler {
         error: processingError instanceof Error ? processingError.message : String(processingError),
       });
 
-      const compacted: boolean = await this._mainAgent.compactSessionMessagesForChatAsync(chatId);
-      if (!compacted) {
+      const compactResult = await this._mainAgent.compactSessionMessagesForChatAsync(chatId);
+      if (!compactResult.compacted) {
         throw processingError;
       }
 

@@ -5,7 +5,7 @@ import {
   type ToolSet,
 } from "ai";
 import type { z } from "zod";
-import { BaseAgentBase, type IAgentResult } from "./base-agent.js";
+import { BaseAgentBase, type IAgentResult, type IToolCallSummary, type OnStepCallback } from "./base-agent.js";
 import { LoggerService } from "../services/logger.service.js";
 import { extractErrorMessage } from "../utils/error.js";
 import { sanitizeSetupError } from "../helpers/skill-state.js";
@@ -17,6 +17,7 @@ import {
   delegateAgentToolInputSchema,
   type delegateAgentToolOutputSchema,
 } from "../shared/schemas/tool-schemas.js";
+import { pushSubSteps } from "../shared/substep-shared.js";
 
 const DEFAULT_DELEGATE_AGENT_MAX_STEPS: number = 20;
 const DELEGATE_OUTPUT_TRUNCATION_MARKER: string = "\n[delegated output truncated]";
@@ -34,6 +35,12 @@ interface IDelegateWorkerOptions {
   model: LanguageModel;
   tools: ToolSet;
   abortSignal?: AbortSignal;
+  /**
+   * Called after each worker step with the worker's step number and tool calls.
+   * The tool's execute() collects these and pushes them to the shared substep
+   * buffer so the parent agent can display them as indented sub-steps.
+   */
+  onStepCallback?: OnStepCallback;
 }
 
 function withoutDelegateAgent(tools: ToolSet): ToolSet {
@@ -64,7 +71,7 @@ class DelegateWorkerAgent extends BaseAgentBase {
       workerOptions.model,
       "Complete the delegated task using only the provided tools. Do not delegate further. Report failures instead of inventing results.",
       workerTools,
-      undefined,
+      workerOptions.onStepCallback,
       undefined,
       undefined,
       undefined,
@@ -96,12 +103,25 @@ export function createDelegateAgentTool(options: IDelegateAgentOptions) {
     ): Promise<IDelegateAgentResult> => {
       try {
         const workerTools: ToolSet = withoutDelegateAgent(options.tools);
+        // Collect worker sub-steps so the parent agent can display them as
+        // indented sub-steps in the Telegram progress message.
+        const subSteps: { stepNumber: number; toolCalls: IToolCallSummary[] }[] = [];
         const worker = new DelegateWorkerAgent({
           model: options.model,
           tools: workerTools,
           abortSignal: executionOptions.abortSignal,
+          onStepCallback: async (stepNumber, toolCalls) => {
+            subSteps.push({ stepNumber, toolCalls });
+          },
         });
         const result = await worker.runAsync(task);
+        // Push sub-steps to the shared buffer. The parent agent's
+        // combinedOnStepAsync will drain them before the next main-agent step.
+        pushSubSteps(subSteps.map((s) => ({
+          parentStepNumber: 0,
+          workerStepNumber: s.stepNumber,
+          toolCalls: s.toolCalls,
+        })));
         const output: string = result.text.length > MAX_DELEGATE_AGENT_OUTPUT_LENGTH
           ? `${result.text.slice(0, MAX_DELEGATE_AGENT_OUTPUT_LENGTH - DELEGATE_OUTPUT_TRUNCATION_MARKER.length)}${DELEGATE_OUTPUT_TRUNCATION_MARKER}`
           : result.text;

@@ -48,6 +48,7 @@ export function setupTelegramCommands(bot: Bot): void {
       "/start — Initialize the bot",
       "/help — Show this help message",
       "/clear — Clear conversation history for this chat",
+      "/compact — Compact conversation history (reduce token usage)",
       "/reset [name|all] — Reset prompt(s) to factory defaults",
       "/factory_reset — Full nuclear reset: delete all jobs, knowledge, tasks, skills, prompts, workspace, logs, and chat history",
       "/update_prompts — Update all prompts from source defaults",
@@ -82,6 +83,39 @@ export function setupTelegramCommands(bot: Bot): void {
     mainAgent.clearChatHistory(chatId);
     await ctx.reply("Conversation history cleared.");
     logger.info("Chat history cleared via /clear command.", { chatId });
+  });
+
+  // /compact command
+  bot.command("compact", async (ctx: Context): Promise<void> => {
+    const chatId: string = String(ctx.chat?.id);
+
+    await ctx.reply("Starting compaction...");
+    logger.info("Compaction started via /compact command.", { chatId });
+
+    try {
+      const result = await mainAgent.compactSessionMessagesForChatAsync(chatId);
+
+      if (!result.compacted) {
+        await ctx.reply("⚠️ No conversation history to compact.");
+        return;
+      }
+
+      const savedText = result.savedTokens > 0
+        ? `✅ Compaction complete. Saved ${result.savedTokens.toLocaleString()} tokens (${result.originalTokens.toLocaleString()} → ${result.compactedTokens.toLocaleString()}).`
+        : `✅ Compaction complete. No token savings (history was already compact).`;
+
+      await ctx.reply(savedText);
+      logger.info("Compaction finished via /compact command.", {
+        chatId,
+        originalTokens: result.originalTokens,
+        compactedTokens: result.compactedTokens,
+        savedTokens: result.savedTokens,
+      });
+    } catch (error: unknown) {
+      const errorMessage: string = extractErrorMessage(error);
+      await ctx.reply(`❌ Compaction failed: ${errorMessage}`);
+      logger.error("Compaction failed via /compact command.", { chatId, error: errorMessage });
+    }
   });
 
   // /cancel command

@@ -4,6 +4,7 @@ import { ToolSet, LanguageModel, ToolLoopAgent, type ModelMessage } from "ai";
 import { assembleToolsForChat } from "./tool-assembly.js";
 import type { ICreateTableRebuildInfo } from "../shared/types/tool-rebuild.types.js";
 import { attachDelegateAgentTool } from "./delegate-agent.js";
+import { getPendingSubSteps, type ISubStep } from "../shared/substep-shared.js";
 import { AiProviderService } from "../services/ai-provider.service.js";
 import { StatusService } from "../services/status.service.js";
 import { LoggerService } from "../services/logger.service.js";
@@ -296,6 +297,25 @@ export class MainAgent extends BaseAgentBase {
     const permission = channelRegistry.getPermission(platform, chatId);
 
     const combinedOnStepAsync = async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
+      // Drain any pending sub-steps from the previous delegate_agent call and
+      // emit them as indented sub-steps before the current main-agent step.
+      // Sub-steps use a fractional step number (e.g. 3.1, 3.2) so the Telegram
+      // handler can render them with indentation instead of the "Step N:" prefix.
+      const pendingSubSteps: ISubStep[] = getPendingSubSteps();
+      if (pendingSubSteps.length > 0) {
+        this._logger.debug("Emitting pending delegate sub-steps", {
+          chatId,
+          parentStepNumber: stepNumber - 1,
+          subStepsCount: pendingSubSteps.length,
+        });
+        for (const subStep of pendingSubSteps) {
+          const subStepNumber: number = (stepNumber - 1) + 0.1 * subStep.workerStepNumber;
+          if (onStepAsync) {
+            await onStepAsync(subStepNumber, subStep.toolCalls);
+          }
+        }
+      }
+
       session.totalSteps += 1;
       if (session.totalSteps > MAX_TASK_STEPS && !session.terminateCurrentRun) {
         session.terminateCurrentRun = true;
@@ -950,12 +970,14 @@ export class MainAgent extends BaseAgentBase {
    * Manually compacts the message history for a chat session.
    * Reduces token usage by summarizing older messages while preserving conversation context.
    * @param chatId - The chat session identifier
-   * @returns Promise resolving to true if compaction was performed, false if session not found
+   * @returns Promise resolving to { compacted, originalTokens, compactedTokens, savedTokens }
    */
-  public async compactSessionMessagesForChatAsync(chatId: string): Promise<boolean> {
+  public async compactSessionMessagesForChatAsync(
+    chatId: string,
+  ): Promise<{ compacted: boolean; originalTokens: number; compactedTokens: number; savedTokens: number }> {
     const session: IChatSession | undefined = this._sessions.get(chatId);
     if (!session) {
-      return false;
+      return { compacted: false, originalTokens: 0, compactedTokens: 0, savedTokens: 0 };
     }
 
     const aiProviderService: AiProviderService = AiProviderService.getInstance();
@@ -963,7 +985,7 @@ export class MainAgent extends BaseAgentBase {
     const previousLength: number = session.messages.length;
     const previousTokens: number = countTokens(session.messages);
 
-    session.messages = await _compactSessionMessagesAsync(
+    const compactionResult = await _compactSessionMessagesAsync(
       session.messages,
       compactionModel,
       this._logger,
@@ -971,6 +993,7 @@ export class MainAgent extends BaseAgentBase {
       this._contextWindow,
     );
 
+    session.messages = compactionResult;
     const nextTokens: number = countTokens(session.messages);
 
     this._logger.info("Manual session compaction executed for chat", {
@@ -983,7 +1006,12 @@ export class MainAgent extends BaseAgentBase {
     });
 
     await this._saveSessionAsync(chatId);
-    return true;
+    return {
+      compacted: true,
+      originalTokens: previousTokens,
+      compactedTokens: nextTokens,
+      savedTokens: previousTokens - nextTokens,
+    };
   }
 
   /**
