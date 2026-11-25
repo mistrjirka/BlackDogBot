@@ -25,7 +25,7 @@ import { extractErrorMessage } from "../../utils/error.js";
 import { isContextExceededTelegramError } from "../../utils/context-error.js";
 import { PromptService } from "../../services/prompt.service.js";
 import { StatusService } from "../../services/status.service.js";
-import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
+import { getTelegramRichMarkdown, markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 import { isCancelCommand } from "../../utils/command-utils.js";
 import { getTelegramChatsFilePath } from "../../utils/paths.js";
 import { getUploadsDir, ensureDirectoryExistsAsync } from "../../utils/paths.js";
@@ -578,21 +578,30 @@ export class TelegramHandler {
           const renderedText: string = result.text.trimStart().startsWith("<think>") && !result.text.includes("</think>")
             ? "The model did not finish generating an answer. Previous tool results are preserved; send continue to resume."
             : result.text;
-          const htmlText: string = markdownToTelegramHtml(_withSplitNotice(renderedText));
-          const chunks: string[] = splitTelegramMessage(htmlText);
-          for (let i: number = 0; i < chunks.length; i++) {
-            const options: Record<string, unknown> = {
-              parse_mode: "HTML",
-            };
-            if (i === 0) {
-              options.reply_parameters = { message_id: message.message_id };
-            }
-            try {
-              await ctx.reply(chunks[i], options);
-            } catch (replyError: unknown) {
-              const errorMsg: string = replyError instanceof Error ? replyError.message : String(replyError);
+          if (getTelegramRichMarkdown(renderedText) !== null) {
+            // Use the same adapter and durable retry path as scheduled and queued replies.
+            await this._messagingService.sendMessageAsync({
+              text: renderedText,
+              platform: "telegram",
+              userId: chatId,
+              replyToMessageId: String(message.message_id),
+            });
+          } else {
+            const htmlText: string = markdownToTelegramHtml(_withSplitNotice(renderedText));
+            const chunks: string[] = splitTelegramMessage(htmlText);
+            for (let i: number = 0; i < chunks.length; i++) {
+              const options: Record<string, unknown> = {
+                parse_mode: "HTML",
+              };
+              if (i === 0) {
+                options.reply_parameters = { message_id: message.message_id };
+              }
+              try {
+                await ctx.reply(chunks[i], options);
+              } catch (replyError: unknown) {
+                const errorMsg: string = replyError instanceof Error ? replyError.message : String(replyError);
 
-              // If the replied-to message was deleted (e.g. by /cancel), retry without reply_parameters
+                // If the replied-to message was deleted (e.g. by /cancel), retry without reply_parameters
                 if (errorMsg.includes("message to be replied not found") && options.reply_parameters) {
                   delete options.reply_parameters;
                   try {
@@ -603,24 +612,25 @@ export class TelegramHandler {
                     await this._queueTelegramMessageFallbackAsync(chatId, plainText, "final-response-reply-missing");
                   }
                 } else {
-                // HTML parse error or other issue — fall back to plain text
-                this._logger.warn("Telegram HTML parse error, falling back to plain text", {
-                  error: errorMsg,
-                });
-                const plainText: string = stripAllHtml(chunks[i]);
-                const fallbackOptions: Record<string, unknown> =
-                  i === 0 ? { reply_parameters: { message_id: message.message_id } } : {};
-                try {
-                  await ctx.reply("⚠️ Formatting error, showing plain text:", fallbackOptions);
-                  await ctx.reply(plainText, fallbackOptions);
-                } catch {
-                  // If even fallback fails (deleted message), send without reply
-                  await this._queueTelegramMessageFallbackAsync(
-                    chatId,
-                    "⚠️ Formatting error, showing plain text:",
-                    "formatting-fallback-notice",
-                  );
-                  await this._queueTelegramMessageFallbackAsync(chatId, plainText, "formatting-fallback-plain");
+                  // HTML parse error or other issue — fall back to plain text
+                  this._logger.warn("Telegram HTML parse error, falling back to plain text", {
+                    error: errorMsg,
+                  });
+                  const plainText: string = stripAllHtml(chunks[i]);
+                  const fallbackOptions: Record<string, unknown> =
+                    i === 0 ? { reply_parameters: { message_id: message.message_id } } : {};
+                  try {
+                    await ctx.reply("⚠️ Formatting error, showing plain text:", fallbackOptions);
+                    await ctx.reply(plainText, fallbackOptions);
+                  } catch {
+                    // If even fallback fails (deleted message), send without reply
+                    await this._queueTelegramMessageFallbackAsync(
+                      chatId,
+                      "⚠️ Formatting error, showing plain text:",
+                      "formatting-fallback-notice",
+                    );
+                    await this._queueTelegramMessageFallbackAsync(chatId, plainText, "formatting-fallback-plain");
+                  }
                 }
               }
             }

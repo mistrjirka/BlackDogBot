@@ -212,6 +212,23 @@ export function preprocessThinkTags(text: string): string {
     .replace(/\n<channel\|>/g, "");
 }
 
+/** Return native Telegram Markdown for table-bearing messages within the rich text limit. */
+export function getTelegramRichMarkdown(markdown: string): string | null {
+  const prepared = preprocessThinkTags(markdown);
+  // The source length is a conservative bound on the parsed text length.
+  if (!prepared.trim() || prepared.length > 32_768) {
+    return null;
+  }
+
+  let hasTable = false;
+  marked.walkTokens(marked.lexer(prepared, { gfm: true }), (token): void => {
+    if (token.type === "table") {
+      hasTable = true;
+    }
+  });
+  return hasTable ? prepared : null;
+}
+
 export function markdownToTelegramHtml(markdown: string): string {
   if (!markdown || markdown.trim() === "") {
     return "";

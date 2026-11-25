@@ -1,4 +1,4 @@
-import { Bot, InputFile } from "grammy";
+import { Bot, GrammyError, InputFile } from "grammy";
 
 import type { IPlatformAdapter } from "../../services/messaging.service.js";
 import type {
@@ -8,8 +8,9 @@ import type {
   MessagePlatform,
 } from "../../shared/types/messaging.types.js";
 import { splitTelegramMessage } from "../../utils/telegram-message.js";
-import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
+import { getTelegramRichMarkdown, markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 import { ChatNotFoundError } from "../../utils/error.js";
+import { LoggerService } from "../../services/logger.service.js";
 
 //#region TelegramAdapter
 
@@ -38,15 +39,42 @@ export class TelegramAdapter implements IPlatformAdapter {
 
   public async sendMessageAsync(message: IOutgoingMessage): Promise<string | null> {
     const chatId: string = message.userId;
-    const htmlText: string = markdownToTelegramHtml(message.text);
-    const chunks: string[] = splitTelegramMessage(htmlText);
+    const replyId = Number(message.replyToMessageId);
+    const replyParameters = Number.isSafeInteger(replyId) && replyId > 0
+      ? { reply_parameters: { message_id: replyId, allow_sending_without_reply: true } }
+      : {};
     let lastMessageId: string | null = null;
 
     try {
-      for (const chunk of chunks) {
+      const richMarkdown = getTelegramRichMarkdown(message.text);
+      if (richMarkdown !== null) {
+        try {
+          const sentMessage = await this._bot.api.sendRichMessage(
+            chatId, { markdown: richMarkdown }, replyParameters,
+          );
+          return String(sentMessage.message_id);
+        } catch (error: unknown) {
+          // Only fall back on an explicit rejection. Network errors and rate limits
+          // must reach the existing outbox rather than triggering another send here.
+          if (!(error instanceof GrammyError) ||
+              (error.error_code !== 400 && error.error_code !== 404) ||
+              this._isChatNotFoundError(error)) {
+            throw error;
+          }
+          LoggerService.getInstance().warn("Telegram rejected rich message; falling back to HTML", {
+            errorCode: error.error_code,
+          });
+        }
+      }
+
+      const htmlText: string = markdownToTelegramHtml(message.text);
+      const chunks: string[] = splitTelegramMessage(htmlText);
+      for (const [index, chunk] of chunks.entries()) {
+        const reply = index === 0 ? replyParameters : {};
         try {
           const sentMessage = await this._bot.api.sendMessage(chatId, chunk, {
             parse_mode: "HTML",
+            ...reply,
           });
           lastMessageId = String(sentMessage.message_id);
         } catch (error: unknown) {
@@ -54,7 +82,7 @@ export class TelegramAdapter implements IPlatformAdapter {
             error instanceof Error && error.message.includes("can't parse entities");
           if (isParseError) {
             const plainText: string = stripAllHtml(chunk);
-            const sentMessage = await this._bot.api.sendMessage(chatId, plainText);
+            const sentMessage = await this._bot.api.sendMessage(chatId, plainText, reply);
             lastMessageId = String(sentMessage.message_id);
           } else {
             throw error;
