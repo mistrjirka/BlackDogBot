@@ -27,7 +27,6 @@ jobs:
       CI: "true"
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
-      BLACKDOGBOT_MODELS_DIR: ${{ runner.temp }}/blackdogbot-test-models
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - name: Check out source
@@ -50,6 +49,8 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
       - name: Run isolated fast tests
+        env:
+          BLACKDOGBOT_MODELS_DIR: ${{ runner.temp }}/blackdogbot-test-models
         run: pnpm test:fast
       - name: Test installation and guarded upgrades
         run: pnpm test:python
