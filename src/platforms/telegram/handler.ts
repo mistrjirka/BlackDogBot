@@ -25,7 +25,7 @@ import { extractErrorMessage } from "../../utils/error.js";
 import { isContextExceededTelegramError } from "../../utils/context-error.js";
 import { PromptService } from "../../services/prompt.service.js";
 import { StatusService } from "../../services/status.service.js";
-import { markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
+import { getTelegramRichMarkdown, markdownToTelegramHtml, stripAllHtml } from "../../utils/telegram-format.js";
 import { isCancelCommand } from "../../utils/command-utils.js";
 import { getTelegramChatsFilePath } from "../../utils/paths.js";
 import { getUploadsDir, ensureDirectoryExistsAsync } from "../../utils/paths.js";
@@ -213,6 +213,44 @@ function createProgressOnStep(
   };
 }
 
+/** Keep the Telegram status alive during long model calls, even before a tool step finishes. */
+export function _startTelegramProgressHeartbeat(
+  progressMsgId: number,
+  editApi: ITelegramEditApi,
+  chatId: string,
+  logger: LoggerService,
+  buildText: (status: string) => string,
+  intervalMs: number = 30_000,
+  now: () => number = Date.now,
+): () => Promise<void> {
+  const startedAt: number = now();
+  let active: boolean = true;
+  let pendingEdit: Promise<void> | null = null;
+  const timer: ReturnType<typeof setInterval> = setInterval((): void => {
+    // Do not overlap edits. Stop waits for any in-flight edit before the final status.
+    if (!active || pendingEdit) return;
+    const elapsedSeconds: number = Math.max(0, Math.floor((now() - startedAt) / 1000));
+    const minutes: number = Math.floor(elapsedSeconds / 60);
+    const seconds: number = elapsedSeconds % 60;
+    const status: string = `⚙️ Working... (${minutes}m ${seconds}s elapsed)`;
+    pendingEdit = _tryEditMessageTextAsync(
+      editApi, logger, chatId, progressMsgId, buildText(status), "HTML", "progress-heartbeat",
+    ).then((): void => {}).catch((error: unknown): void => {
+      logger.warn("Telegram heartbeat edit failed", {
+        chatId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }).finally((): void => { pendingEdit = null; });
+  }, intervalMs);
+  timer.unref?.();
+
+  return async (): Promise<void> => {
+    active = false;
+    clearInterval(timer);
+    if (pendingEdit) await pendingEdit;
+  };
+}
+
 //#region TelegramHandler
 
 export class TelegramHandler {
@@ -383,6 +421,7 @@ export class TelegramHandler {
 
     // Progress message state
     let progressMsgId: number | null = null;
+    let stopProgressHeartbeatAsync: (() => Promise<void>) | null = null;
     const stepLogs: string[] = [];
     const existingCompactionEvent = StatusService.getInstance().getChatCompaction(chatId);
     const compactionState: { lastSeenAt: number } = {
@@ -425,6 +464,12 @@ export class TelegramHandler {
           error: progressError instanceof Error ? progressError.message : String(progressError),
         });
         // Continue without progress message
+      }
+
+      if (progressMsgId !== null) {
+        stopProgressHeartbeatAsync = _startTelegramProgressHeartbeat(
+          progressMsgId, ctx.api, chatId, this._logger, buildProgressText,
+        );
       }
 
       this._logger.debug("Telegram progress callback setup", {
@@ -487,6 +532,9 @@ export class TelegramHandler {
           "telegram_message",
         );
 
+        // Prevent a slow heartbeat edit from overwriting the final status.
+        await stopProgressHeartbeatAsync?.();
+
         // Update progress message to done
         if (progressMsgId !== null) {
           const stepWord: string = result.stepsCount === 1 ? "step" : "steps";
@@ -530,21 +578,30 @@ export class TelegramHandler {
           const renderedText: string = result.text.trimStart().startsWith("<think>") && !result.text.includes("</think>")
             ? "The model did not finish generating an answer. Previous tool results are preserved; send continue to resume."
             : result.text;
-          const htmlText: string = markdownToTelegramHtml(_withSplitNotice(renderedText));
-          const chunks: string[] = splitTelegramMessage(htmlText);
-          for (let i: number = 0; i < chunks.length; i++) {
-            const options: Record<string, unknown> = {
-              parse_mode: "HTML",
-            };
-            if (i === 0) {
-              options.reply_parameters = { message_id: message.message_id };
-            }
-            try {
-              await ctx.reply(chunks[i], options);
-            } catch (replyError: unknown) {
-              const errorMsg: string = replyError instanceof Error ? replyError.message : String(replyError);
+          if (getTelegramRichMarkdown(renderedText) !== null) {
+            // Use the same adapter and durable retry path as scheduled and queued replies.
+            await this._messagingService.sendMessageAsync({
+              text: renderedText,
+              platform: "telegram",
+              userId: chatId,
+              replyToMessageId: String(message.message_id),
+            });
+          } else {
+            const htmlText: string = markdownToTelegramHtml(_withSplitNotice(renderedText));
+            const chunks: string[] = splitTelegramMessage(htmlText);
+            for (let i: number = 0; i < chunks.length; i++) {
+              const options: Record<string, unknown> = {
+                parse_mode: "HTML",
+              };
+              if (i === 0) {
+                options.reply_parameters = { message_id: message.message_id };
+              }
+              try {
+                await ctx.reply(chunks[i], options);
+              } catch (replyError: unknown) {
+                const errorMsg: string = replyError instanceof Error ? replyError.message : String(replyError);
 
-              // If the replied-to message was deleted (e.g. by /cancel), retry without reply_parameters
+                // If the replied-to message was deleted (e.g. by /cancel), retry without reply_parameters
                 if (errorMsg.includes("message to be replied not found") && options.reply_parameters) {
                   delete options.reply_parameters;
                   try {
@@ -555,24 +612,25 @@ export class TelegramHandler {
                     await this._queueTelegramMessageFallbackAsync(chatId, plainText, "final-response-reply-missing");
                   }
                 } else {
-                // HTML parse error or other issue — fall back to plain text
-                this._logger.warn("Telegram HTML parse error, falling back to plain text", {
-                  error: errorMsg,
-                });
-                const plainText: string = stripAllHtml(chunks[i]);
-                const fallbackOptions: Record<string, unknown> =
-                  i === 0 ? { reply_parameters: { message_id: message.message_id } } : {};
-                try {
-                  await ctx.reply("⚠️ Formatting error, showing plain text:", fallbackOptions);
-                  await ctx.reply(plainText, fallbackOptions);
-                } catch {
-                  // If even fallback fails (deleted message), send without reply
-                  await this._queueTelegramMessageFallbackAsync(
-                    chatId,
-                    "⚠️ Formatting error, showing plain text:",
-                    "formatting-fallback-notice",
-                  );
-                  await this._queueTelegramMessageFallbackAsync(chatId, plainText, "formatting-fallback-plain");
+                  // HTML parse error or other issue — fall back to plain text
+                  this._logger.warn("Telegram HTML parse error, falling back to plain text", {
+                    error: errorMsg,
+                  });
+                  const plainText: string = stripAllHtml(chunks[i]);
+                  const fallbackOptions: Record<string, unknown> =
+                    i === 0 ? { reply_parameters: { message_id: message.message_id } } : {};
+                  try {
+                    await ctx.reply("⚠️ Formatting error, showing plain text:", fallbackOptions);
+                    await ctx.reply(plainText, fallbackOptions);
+                  } catch {
+                    // If even fallback fails (deleted message), send without reply
+                    await this._queueTelegramMessageFallbackAsync(
+                      chatId,
+                      "⚠️ Formatting error, showing plain text:",
+                      "formatting-fallback-notice",
+                    );
+                    await this._queueTelegramMessageFallbackAsync(chatId, plainText, "formatting-fallback-plain");
+                  }
                 }
               }
             }
@@ -588,6 +646,7 @@ export class TelegramHandler {
         clearInterval(typingInterval);
       }
     } catch (error: unknown) {
+      await stopProgressHeartbeatAsync?.();
       // Update progress message to error state
       if (progressMsgId !== null) {
         _appendCompactionIfNew(stepLogs, compactionState, chatId);
@@ -634,6 +693,7 @@ export class TelegramHandler {
         await this._queueTelegramMessageFallbackAsync(chatId, userMessage, "error-reply");
       }
     } finally {
+      await stopProgressHeartbeatAsync?.();
       await this._drainQueuedMessagesAsync(chatId);
       this._processing.delete(chatId);
       this._inFlightMessageIdByChat.delete(chatId);
@@ -970,6 +1030,7 @@ export class TelegramHandler {
     }
 
     let progressMsgId: number | null = null;
+    let stopProgressHeartbeatAsync: (() => Promise<void>) | null = null;
     const stepLogs: string[] = [];
     const existingCompactionEvent = StatusService.getInstance().getChatCompaction(chatId);
     const compactionState: { lastSeenAt: number } = {
@@ -1009,6 +1070,12 @@ export class TelegramHandler {
         }
       }
 
+      if (progressMsgId !== null && bot) {
+        stopProgressHeartbeatAsync = _startTelegramProgressHeartbeat(
+          progressMsgId, bot.api, chatId, this._logger, buildProgressText,
+        );
+      }
+
       const onStepAsync: OnStepCallback | undefined =
         progressMsgId !== null && bot
           ? createProgressOnStep(progressMsgId, bot.api, chatId, this._logger, stepLogs, buildProgressText, "queue-progress-step", undefined, undefined, compactionState)
@@ -1025,6 +1092,7 @@ export class TelegramHandler {
           "merged_queue_text",
         );
 
+        await stopProgressHeartbeatAsync?.();
         if (result.text) {
           await sender(result.text);
         }
@@ -1074,6 +1142,7 @@ export class TelegramHandler {
         totalStepsCount += result.stepsCount;
       }
 
+      await stopProgressHeartbeatAsync?.();
       if (progressMsgId !== null && bot) {
         const stepWord: string = totalStepsCount === 1 ? "step" : "steps";
         await _tryEditMessageTextAsync(
@@ -1097,6 +1166,7 @@ export class TelegramHandler {
         includedImages: hasAnyImageAttachment,
       });
     } catch (error: unknown) {
+      await stopProgressHeartbeatAsync?.();
       const errorDetails: IAiErrorDetails = extractAiErrorDetails(error);
       const logMessage: string = formatAiErrorForLog(errorDetails);
 
@@ -1123,6 +1193,8 @@ export class TelegramHandler {
           "queue-progress-error",
         );
       }
+    } finally {
+      await stopProgressHeartbeatAsync?.();
     }
   }
 

@@ -208,6 +208,23 @@ describe("TelegramHandler", () => {
     expect(replyTexts[0].length).toBeGreaterThan(0);
   }, 600000);
 
+  it("should route final Markdown tables through the Telegram adapter without flattening", async () => {
+    const table = "| Name | Status |\n| --- | --- |\n| DNS | OK |";
+    vi.spyOn(MainAgent.getInstance(), "processMessageForChatAsync").mockResolvedValue({ text: table, stepsCount: 1 });
+    const send = vi.spyOn(MessagingService.getInstance(), "sendMessageAsync").mockResolvedValue("888");
+    const handler = TelegramHandler.getInstance();
+    const ctx = makeCtx({ text: "Show me a table", messageId: 42 });
+
+    await handler.handleMessageAsync(ctx);
+
+    expect(send).toHaveBeenCalledWith({
+      text: table,
+      platform: "telegram",
+      userId: "100",
+      replyToMessageId: "42",
+    });
+  }, 600000);
+
   it("should skip processing when ctx.message is absent", async () => {
     const ctx: Context = { message: undefined } as unknown as Context;
     const handler: TelegramHandler = TelegramHandler.getInstance();

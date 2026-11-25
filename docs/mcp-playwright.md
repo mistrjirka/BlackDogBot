@@ -1,18 +1,26 @@
 # Playwright MCP for BlackDogBot
 
-BlackDogBot supports Playwright through its standard MCP registry. To receive screenshots as images, use a vision-capable model and enable Playwright's vision capability.
+A fresh installation offers Playwright MCP automatically. It installs the pinned `@playwright/mcp@0.0.84` under `~/.local/share/blackdogbot/mcp/playwright` and downloads Firefox with the **exact Playwright version included in that MCP package**. This supports Linux x86-64 and arm64 without a Chrome dependency.
 
-Add an entry under `mcpServers` in `~/.blackdogbot/mcp-servers.json`:
+To install only the Playwright runtime from a Git checkout:
+
+```bash
+bash scripts/install-mcp-runtime.sh playwright
+```
+
+The installer adds the following **entry** to `~/.blackdogbot/mcp-servers.json`. For manual setup, replace `YOUR_USER` with the actual home-directory name. The shown paths must be absolute.
 
 ```json
 {
   "playwright": {
-    "command": "npx",
+    "command": "/home/YOUR_USER/.local/share/blackdogbot/mcp/playwright/node_modules/.bin/playwright-mcp",
+    "env": {
+      "PLAYWRIGHT_BROWSERS_PATH": "/home/YOUR_USER/.local/share/blackdogbot/mcp/playwright/browsers"
+    },
     "args": [
-      "-y", "@playwright/mcp@0.0.83",
       "--browser", "firefox",
       "--headless", "--isolated", "--caps", "vision",
-      "--output-dir", "/home/jirka/.blackdogbot/playwright-artifacts"
+      "--output-dir", "/home/YOUR_USER/.blackdogbot/playwright-artifacts"
     ],
     "strictOutputSchema": false,
     "allowedTools": [
@@ -26,10 +34,12 @@ Add an entry under `mcpServers` in `~/.blackdogbot/mcp-servers.json`:
 }
 ```
 
-The sample is an **entry**, not a replacement for the whole existing configuration. Adjust the absolute screenshot directory to your home directory. Install Firefox for the matching Playwright runtime first (e.g. `npx -y playwright@1.64.1 install firefox`; ensure the browser version matches the MCP package's runtime if pinning versions). Restart the BlackDogBot service to refresh MCP tools.
+Do not replace the whole MCP registry with this single entry. The installer preserves existing servers and uses private file permissions. When adding an MCP entry to a running bot, the registry reloads on the next chat turn.
 
-**Why `strictOutputSchema: false`?** Playwright MCP currently advertises no `outputSchema` for its tools. Strict discovery would silently hide every Playwright tool. This exception is restricted to the Playwright server, not global MCP policy.
+The exception `strictOutputSchema: false` is local to Playwright because its tools do not advertise an output schema. The allowlist excludes unrestricted browser code execution.
 
-**Screenshots:** `browser_take_screenshot` returns both a local artifact path and a base64 `image/png` MCP content part. BlackDogBot converts image parts to AI SDK `file` model-output parts, then bridges them into actual multimodal `image_url` messages before sending OpenAI-compatible requests. The tool reply remains paired with its tool call, the model gets the image as untrusted visual context, and token accounting estimates image tokens instead of treating base64 as text. The screenshot does **not** need to be reopened with `read_image`.
+## Verification
 
-**Verification:** Ask Nate to navigate to `https://example.com`, take a screenshot, and describe what is visible. Verify `mcp.playwright.browser_take_screenshot` appears in the connected tool set. The browser is headless, uses a non-persistent profile, and saves artifacts outside the repository.
+The installer runs `scripts/verify-mcp-install.mjs`. It connects through MCP, checks the tool list, opens `about:blank`, and verifies a screenshot containing an actual `image/png` content part. This checks the browser runtime, not just the npm package.
+
+For an external test, ask the bot to navigate to `https://example.com`, take a screenshot, and describe it with a vision-capable model.

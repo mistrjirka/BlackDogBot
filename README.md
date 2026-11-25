@@ -12,7 +12,7 @@ Requirements: **Node.js 22+**, **Git**, **Bash**, and **pnpm** (installed by the
 curl -fsSL https://raw.githubusercontent.com/mistrjirka/BlackDogBot/main/scripts/bootstrap.sh | sh
 ```
 
-The bootstrap script clones the source into `~/.local/share/blackdogbot/source` and launches the interactive installer. It **does not use sudo**, doesn't overwrite an existing configuration, and asks for model, messaging, and optional Docker settings. The installer registers a **systemd user service** and, by default, prepares a guarded tested release so future updates can roll back automatically.
+The bootstrap script clones the source into `~/.local/share/blackdogbot/source` and launches the interactive installer. It **does not use sudo**, doesn't overwrite an existing configuration, and asks for model, messaging, and optional Docker settings. The installer offers **three MCP servers** (SearXNG, Scrapling, Playwright), registers a **systemd user service**, and, by default, prepares a guarded tested release so future updates can roll back automatically. The pinned Docker images and Node MCP runtimes support both Linux AMD64 and ARM64.
 
 For a review-before-execution installation, or when you want to inspect the exact script:
 
