@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 import { StartupActivationGate, validateStartupMessagingAsync } from "../../src/services/startup-activation-gate.js";
 import type { IConfig } from "../../src/shared/types/index.js";
 
@@ -14,8 +15,19 @@ let candidate: string;
 let approval: Record<string, unknown>;
 
 async function privateFile(name: string, value: unknown): Promise<void> {
-  await fs.mkdir(path.join(data, "deploy"), { recursive: true });
-  await fs.writeFile(path.join(data, "deploy", name), JSON.stringify(value), { mode: 0o600 });
+  const directory = path.join(data, "deploy");
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  const temporary = path.join(directory, "." + name + "." + crypto.randomUUID() + ".tmp");
+  try {
+    // The supervisor replaces a complete, synced file. Truncating the live
+    // approval here would create a read race that its production writer avoids.
+    const handle = await fs.open(temporary, "wx", 0o600);
+    try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); }
+    finally { await handle.close(); }
+    await fs.rename(temporary, path.join(directory, name));
+    const parent = await fs.open(directory, "r");
+    try { await parent.sync(); } finally { await parent.close(); }
+  } finally { await fs.rm(temporary, { force: true }); }
 }
 async function commit(overrides: Record<string, unknown> = {}, release = true): Promise<void> {
   approval = { ...approval, status: "committed", runtimePid: process.pid, invocationId: invocation, ...overrides };

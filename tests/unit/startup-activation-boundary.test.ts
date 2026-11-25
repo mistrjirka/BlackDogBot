@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const state = vi.hoisted(() => ({
@@ -111,13 +112,15 @@ beforeEach(async () => {
     return new Response(JSON.stringify(url.endsWith("/getMe") ? { ok: true, result: { id: 1 } }
       : url.endsWith("/getWebhookInfo") ? { ok: true, result: { url: "" } } : { id: "1" }));
   }));
+  const candidatePath = await fs.realpath(fileURLToPath(new URL("../../", import.meta.url)));
+  const preparedRelease = path.basename(path.dirname(candidatePath)) === "releases"
+    && /^[0-9a-f]{40}$/.test(path.basename(candidatePath));
   approval = {
-    protocolVersion: 1, status: "pending", nonce: "b".repeat(32), revision: "a".repeat(40),
-    candidatePath: fileURLToPath(new URL("../../", import.meta.url)).replace(/\/$/, ""),
-    dataDir: state.data, createdAt: new Date().toISOString(),
+    protocolVersion: 1, status: "pending", nonce: "b".repeat(32),
+    revision: preparedRelease ? path.basename(candidatePath) : "a".repeat(40),
+    candidatePath, dataDir: state.data, createdAt: new Date().toISOString(),
   };
-  await fs.mkdir(path.join(state.data, "deploy"));
-  await fs.writeFile(path.join(state.data, "deploy/activation.json"), JSON.stringify(approval), { mode: 0o600 });
+  await privateFile("activation.json", approval);
 });
 afterEach(async () => {
   for (const [name, original] of originalSignals) {
@@ -128,6 +131,20 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await fs.rm(state.data, { recursive: true, force: true });
 });
+async function privateFile(name: string, value: unknown): Promise<void> {
+  const directory = path.join(state.data, "deploy");
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  const temporary = path.join(directory, "." + name + "." + crypto.randomUUID() + ".tmp");
+  try {
+    // Model the supervisor's atomic publication while the real gate polls.
+    const handle = await fs.open(temporary, "wx", 0o600);
+    try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); }
+    finally { await handle.close(); }
+    await fs.rename(temporary, path.join(directory, name));
+    const parent = await fs.open(directory, "r");
+    try { await parent.sync(); } finally { await parent.close(); }
+  } finally { await fs.rm(temporary, { force: true }); }
+}
 async function waitFor(check: () => boolean | Promise<boolean>): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt++) {
     if (await check()) return;
@@ -150,10 +167,10 @@ it("the actual daemon entry holds every external startup boundary until acceptan
   expect(state.events.filter(event => event.startsWith("validate-"))).toEqual(["validate-getMe", "validate-getWebhookInfo", "validate-@me"]);
 
   approval = { ...approval, status: "committed", runtimePid: process.pid, invocationId: process.env.INVOCATION_ID };
-  await fs.writeFile(path.join(state.data, "deploy/activation.json"), JSON.stringify(approval), { mode: 0o600 });
+  await privateFile("activation.json", approval);
   await new Promise(resolve => setTimeout(resolve, 20));
   expect(state.events.filter(event => external.includes(event))).toEqual([]);
-  await fs.writeFile(path.join(state.data, "deploy/activation-release.json"), JSON.stringify(approval), { mode: 0o600 });
+  await privateFile("activation-release.json", approval);
   await waitFor(() => state.events.includes("ready-daemon"));
   expect(state.events.filter(event => external.includes(event))).toEqual(external);
   const after = vi.fn();
