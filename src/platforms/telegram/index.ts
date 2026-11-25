@@ -7,6 +7,7 @@ import { TelegramHandler } from "./handler.js";
 import { setupTelegramCommands } from "./commands.js";
 import type { ITelegramConfig } from "./types.js";
 import { extractErrorMessage } from "../../utils/error.js";
+import { reportServiceReadiness } from "../../utils/service-readiness.js";
 
 interface ITelegramPlatformState {
   _bot?: Bot;
@@ -73,6 +74,7 @@ export const telegramPlatform: IPlatform<ITelegramConfig> = {
     bot.start({
       onStart: (): void => {
         deps.logger.info("Telegram bot is now receiving updates.");
+        reportServiceReadiness("telegram", "ready");
       },
     });
 

@@ -1,39 +1,161 @@
-# Install the independent self-update supervisor (one-time setup)
+# Guarded application updates
 
-**Compatibility:** this procedure works only when `blackdogbot.service` is a
-**user-level systemd service** with a guarded release launcher. Fresh installs create user-level services and bootstrap guarded releases. Older
-root-managed system services require deliberate migration; never rerun
-`install.sh` as an upgrade.
+The release manager prepares a tested Git snapshot, stops the user service,
+migrates supported data, and checks the new process. If startup fails, it restores
+migration-owned files before it starts the previous code.
 
-The `safe-self-development` skill contains the full architecture and development workflow. The release manager implementation is `scripts/guarded-release.py`. It is a regular Python program that runs through the user systemd manager **outside the BlackDogBot daemon**, not a new model-facing tool.
+This procedure requires a **user-level** `blackdogbot.service`. Older system-wide
+services need a separate service migration. Do not rerun `install.sh` to upgrade
+an existing installation.
 
-### Initial migration
+## What is protected
 
-1. Verify the trusted source checkout, current `blackdogbot.service` systemd unit and `~/.blackdogbot` runtime files. Confirm the service is currently healthy.
-2. Copy the *reviewed* release manager to a protected path outside the repository; this copy must survive updates:
+The first data schema covers the format of scheduled-task files under
+`~/.blackdogbot/timed`. The migration runner validates configuration, records the
+data version in `.data-schema.json`, and saves original file bytes and a journal
+under `.migrations/transactions/<transaction-id>`.
+
+Rollback checks every file that the migration changed before restoring any file.
+If the candidate or a user edited one of those files afterwards, rollback stops
+with a conflict. After a verified stop, the supervisor retains the stopped state and the
+candidate startup checks. If stopping itself fails, the report marks
+`service_stopped: false` and no data restoration is attempted. It does not silently replace newer edits.
+
+This is **not a backup of all runtime data**. It does not roll back sessions,
+SQLite databases, knowledge files, Docker state, or messages already sent.
+Scheduled tasks and message handling can run during the startup health check.
+Take a separate consistent backup before changes outside the supported schema.
+
+Unknown data versions, invalid tasks, incomplete transactions, and legacy code
+that cannot verify a versioned data directory block an automatic start or
+downgrade.
+
+## Install or refresh the independent supervisor
+
+Run these commands from the reviewed source checkout:
+
+```bash
+install -D -m 700 scripts/guarded-release.py "$HOME/.local/lib/blackdogbot/guarded-release.py"
+install -D -m 700 scripts/guarded-container-update.py "$HOME/.local/lib/blackdogbot/guarded-container-update.py"
+```
+
+These copies run outside the daemon and survive application updates. Editing the
+source scripts does not refresh the installed copies.
+
+The source checkout is discovered from `--repo`, `BLACKDOGBOT_SOURCE_DIR`, the
+script location, the current working directory, the last successfully prepared
+source location, or the fresh install location
+`~/.local/share/blackdogbot/source`. Supply `--repo` when there is ambiguity.
+
+## Prepare and activate an update
+
+1. Commit the candidate in the source checkout.
+2. Prepare its full commit ID:
+
    ```bash
-   install -D -m 700 scripts/guarded-release.py "$HOME/.local/lib/blackdogbot/guarded-release.py"
+   python3 "$HOME/.local/lib/blackdogbot/guarded-release.py" prepare \
+     --repo /path/to/BlackDogBot --revision <candidate-full-sha>
    ```
-3. Prepare a snapshot of the current known-good commit without modifying the running service:
+
+   Preparation creates a detached release worktree. It runs dependency
+   installation with the frozen lockfile, TypeScript, the fast test suite, and
+   Python guarded-updater tests. It does not change the running release.
+
+3. Inspect the preparation log and release marker under
+   `~/.blackdogbot/deploy`.
+4. Activate the tested commit:
+
    ```bash
-   /usr/bin/python3 "$HOME/.local/lib/blackdogbot/guarded-release.py" prepare \
-     --repo /home/jirka/programy/better-claw --revision <known-good-full-sha>
+   python3 "$HOME/.local/lib/blackdogbot/guarded-release.py" activate \
+     --revision <candidate-full-sha> --skip-container-updates
    ```
-   This is a **full test**, with `pnpm install --frozen-lockfile`, TypeScript, the fast test suite **and Python guarded-updater tests** in a separate worktree. The independent updater installed outside the repo must itself be updated from this reviewed source before using any newly added guard checks; do not assume changes to `scripts/guarded-release.py` automatically replace the external supervisor.
-4. Once prepared, have the user systemd manager start the one-time `bootstrap` action (prefer a detached transient unit), supplying the verified Telegram chat id for status messages. The script installs an external stable wrapper, adds a systemd drop-in, restarts the bot, and checks healthy startup. If startup fails it removes the drop-in, restores the original unit command and attempts to restart the prior service.
-5. Confirm the service is running, `~/.blackdogbot/deploy/current` points at the tested known-good commit and `latest.json` reports `bootstrap_healthy`.
 
-The active **source repository** remains available for editing. The running **release worktree** is isolated. Rebuild and restart are never performed on the only active code copy.
+   When the bot itself starts this command, run the external supervisor through
+   a detached `systemd-run --user` unit so stopping the bot cannot stop its
+   updater. Supply `--chat-id` only for the intended status recipient.
 
-### Future updates
+5. Inspect `~/.blackdogbot/deploy/reports/latest.json` and the user service.
 
-1. Modify/test source in a separate checkout or branch and commit the candidate locally.
-2. Run `guarded-release.py prepare --revision <candidate-full-sha>`.
-3. Review the test logs and release marker.
-4. **After telling the user**, schedule the external `activate` command using `systemd-run --user --on-active=20s --unit=<unique-deploy-unit> ...`, so the initiating bot turn can end safely.
-5. The supervisor posts Telegram statuses, changes the current symlink atomically, restarts, checks new PID and startup logs for a stable interval. If checks fail, it restores the previous release, restarts, retains the bad release and logs, and posts a rollback report.
-6. On the next bot turn inspect `~/.blackdogbot/deploy/reports/latest.json`; a `rolled_back` status is also added to the main agent's short runtime context.
+Activation checks the candidate's migration plan while the current bot is still
+running. It then stops the service, verifies that its process has exited, points
+the stable launcher at the candidate, and applies the migration. Moving the
+pointer before migration ensures that an interrupted upgrade starts code that
+understands pending transaction checks.
 
-The guard's reports are user-private files. Avoid exposing credentials in logs, and do not send the chat's bot token to the user. The report records the failed revision, healthy previous revision and journal path, allowing the model to iterate without losing evidence.
+The runner replans under its exclusive data lock after shutdown. It saves all
+originals before the first write. Migration errors leave the bot stopped for
+recovery.
 
-This is a process recovery mechanism, not a guarantee against incompatible database migrations, OS/power failures or permanently broken user systemd. External changes to runtime data require their own backup and migration plan.
+After migration, the supervisor starts the candidate. Readiness logs must belong
+to its current systemd invocation. The same process and invocation must remain
+healthy for six seconds. Telegram polling readiness is required only when
+Telegram is configured. Discord-only and no-messaging configurations are
+supported.
+
+If health fails, the supervisor stops the candidate, restores its migration
+transaction, checks that the previous release can read the resulting schema,
+and restarts that release. A restore conflict prevents the old code from
+starting. Reports include the transaction ID.
+
+Omitting `--skip-container-updates` retains the existing behavior of checking
+enabled Docker services after application health. Container updates have their
+own validation and rollback. They are not part of the data migration transaction.
+
+`--data-dir` selects the data directory passed to the migration runner. Its default
+honors `BLACKDOGBOT_DATA_DIR`, otherwise it is `~/.blackdogbot`. The guard verifies
+that it matches the daemon's environment before stopping or migrating. A stopped
+service with `EnvironmentFiles` requires a running-process check because its
+effective data root cannot be safely inferred. The flag does not configure the
+systemd service. Symlink data roots are rejected.
+
+## Bootstrap a guarded launcher
+
+For a user service that still runs directly from a checkout:
+
+1. Prepare the current known-good commit.
+2. Verify that its migration plan needs no changes. If task conversion is
+   required, stop the service and use the migration CLI before bootstrap.
+3. Run:
+
+   ```bash
+   python3 "$HOME/.local/lib/blackdogbot/guarded-release.py" bootstrap \
+     --repo /path/to/BlackDogBot --revision <known-good-full-sha>
+   ```
+
+4. Confirm `bootstrap_healthy` in the latest report.
+
+Bootstrap refuses a release whose data still needs migration. It installs an
+external launcher and a user systemd drop-in. If the service does not start, it
+restores the original unit configuration. It does not convert system-wide units.
+
+## Recover an interrupted migration
+
+Keep the service stopped until recovery completes:
+
+```bash
+systemctl --user stop blackdogbot.service
+candidate="$HOME/.blackdogbot/deploy/current"
+"$candidate/node_modules/.bin/tsx" "$candidate/src/migrations/cli.ts" recover \
+  --data-dir "$HOME/.blackdogbot" --offline
+```
+
+Recovery rolls back incomplete published transactions. It refuses a live data
+lock or files that no longer match the transaction's recorded contents. If it
+reports a conflict, preserve the journal and both file versions and resolve the
+difference before restarting.
+
+After successful recovery, either apply the candidate migration again while
+stopped, or activate the previous tested commit from the deployment report.
+An explicit rollback of a completed migration uses:
+
+```bash
+"$candidate/node_modules/.bin/tsx" "$candidate/src/migrations/cli.ts" rollback \
+  --data-dir "$HOME/.blackdogbot" --transaction <transaction-id> --offline
+```
+
+The migration CLI manages data only. It does not stop services, change release
+pointers, or undo external effects. Do not run mutating commands against an
+active legacy process that does not participate in the data lock.
+
+Reports and backups are private files. They can contain runtime data and
+credentials. Do not publish them.

@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    setupFiles: ["tests/setup-data-dir.ts"],
     include: ["tests/integration/**/*.test.ts"],
     fileParallelism: false,
     testTimeout: 3000000,   // 50 minutes

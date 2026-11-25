@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { restoreTestDataDir, writeTestConfigAsync } from "../../helpers/test-config.js";
 
 import { ConfigService } from "../../../src/services/config.service.js";
 import { resetSingletons, silenceLogger } from "../../utils/test-helpers.js";
@@ -11,14 +12,14 @@ import { PromptService } from "../../../src/services/prompt.service.js";
 import { factoryResetAsync } from "../../../src/services/factory-reset.service.js";
 
 let tempDir: string;
-let originalHome: string;
+let originalDataDir: string | undefined;
 
 
 describe("factoryResetAsync", () => {
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-factory-reset-"));
-    originalHome = process.env.HOME ?? os.homedir();
-    process.env.HOME = tempDir;
+    originalDataDir = process.env.BLACKDOGBOT_DATA_DIR;
+    vi.stubEnv("BLACKDOGBOT_DATA_DIR", path.join(tempDir, ".blackdogbot"));
 
     resetSingletons();
 
@@ -58,9 +59,8 @@ describe("factoryResetAsync", () => {
     const logger: LoggerService = LoggerService.getInstance();
     silenceLogger(logger);
 
-    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
     const tempConfigPath: string = path.join(blackdogbotDir, "config.yaml");
-    await fs.cp(realConfigPath, tempConfigPath);
+    await writeTestConfigAsync(tempConfigPath, { schedulerEnabled: true });
 
     const configService: ConfigService = ConfigService.getInstance();
     await configService.initializeAsync(tempConfigPath);
@@ -82,7 +82,7 @@ describe("factoryResetAsync", () => {
     resetSingletons();
     vi.restoreAllMocks();
 
-    process.env.HOME = originalHome;
+    restoreTestDataDir(originalDataDir);
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 

@@ -1,18 +1,17 @@
 /**
- * 6 failing tests — one per behavioral issue from the impl-check review.
+ * Regression checks for six behavioral issues from the implementation review.
  *
  * Tests 1 & 5 exercise real code (schemas). Tests 2–4 & 6 verify source code
  * contains the correct pattern (the functions are private / deeply nested and
  * cannot be unit-tested without complex mocking).
  *
- * Before fix: all 6 fail.
- * After fix:  all 6 pass.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { scheduleOnceSchema } from "../../src/shared/schemas/cron.schemas.js";
 import { configSchema } from "../../src/shared/schemas/config.schemas.js";
+import { migrateLegacyTimedTask } from "../../src/migrations/legacy-timed-tasks.js";
 
 const SRC = resolve(import.meta.dirname, "../../src");
 
@@ -22,16 +21,19 @@ function readSrc(relativePath: string): string {
 
 // ============================================================================
 // Issue 1: Once-task migration drops `runAt`
-// Source: src/services/scheduler.service.ts:599-613
+// Source: src/migrations/legacy-timed-tasks.ts
 //
-// The migration object must include `runAt` for once-type schedules,
-// otherwise scheduleOnceSchema validation fails and the task is silently lost.
+// The converted schedule must keep the original `runAt`. Replacing it with a
+// newly calculated time can run a task again or change when it fires.
 // ============================================================================
 describe("Issue 1: Once-task migration drops runAt", () => {
-  it("scheduler.service migration for once-type must include runAt", () => {
-    const source = readSrc("services/scheduler.service.ts");
-    // After fix: the migration branch for once-type must set runAt
-    expect(source).toMatch(/migratedSchedule\.runAt\s*=/);
+  it("preserves the exact stored runAt when migrating a legacy once task", () => {
+    const fixturePath = resolve(import.meta.dirname, "../fixtures/migrations/timed/legacy-once.json");
+    const original = JSON.parse(readFileSync(fixturePath, "utf-8"));
+    const result = migrateLegacyTimedTask(original, { defaultTimezone: "UTC" });
+    const schedule = scheduleOnceSchema.parse(result.task.schedule);
+
+    expect(schedule.runAt).toBe(original.schedule.runAt);
   });
 });
 

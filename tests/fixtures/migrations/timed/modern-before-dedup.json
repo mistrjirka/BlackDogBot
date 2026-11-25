@@ -1,0 +1,51 @@
+{
+  "taskId": "historical-task-1",
+  "name": "Saved task",
+  "description": "Migration fixture, no live data",
+  "instructions": "Use the configured tools to prepare a summary.",
+  "tools": [
+    "send_message"
+  ],
+  "enabled": false,
+  "notifyUser": false,
+  "lastRunAt": "2026-04-08T17:00:00.000Z",
+  "lastRunStatus": "success",
+  "lastRunError": null,
+  "createdAt": "2026-04-08T12:00:00.000Z",
+  "updatedAt": "2026-04-08T17:00:00.000Z",
+  "messageHistory": [
+    {
+      "messageId": "fixture-message",
+      "content": "Prior summary",
+      "sentAt": "2026-04-08T17:00:00.000Z",
+      "extension": {
+        "keep": true
+      }
+    }
+  ],
+  "messageSummary": "Prior summaries",
+  "summaryGeneratedAt": "2026-04-08T17:00:00.000Z",
+  "extension": {
+    "owner": "fixture",
+    "settings": [
+      1,
+      2,
+      3
+    ]
+  },
+  "schedule": {
+    "type": "interval",
+    "every": {
+      "hours": 24,
+      "minutes": 0
+    },
+    "offsetFromDayStart": {
+      "hours": 18,
+      "minutes": 0
+    },
+    "timezone": "Europe/Prague",
+    "extension": {
+      "keep": "schedule"
+    }
+  }
+}

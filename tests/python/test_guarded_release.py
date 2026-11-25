@@ -17,6 +17,11 @@ class GuardedReleaseTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.state = Path(self.tmp.name)
+        self.data = self.state / "data"
+        self.data.mkdir()
+        data_check = patch.object(guard, "validate_service_data_directory")
+        data_check.start()
+        self.addCleanup(data_check.stop)
         (self.state / "releases").mkdir()
         (self.state / "reports").mkdir()
         self.old_sha = "1" * 40
@@ -44,7 +49,7 @@ class GuardedReleaseTests(unittest.TestCase):
              patch.object(guard, "restart_and_probe", side_effect=restart), \
              patch.object(guard, "notify"), \
              patch.object(guard, "save_journal", return_value=self.state / "reports" / "failed.log"):
-            healthy = guard.activate(self.state, "blackdogbot.service", self.new_sha, None, timeout=3)
+            healthy = guard.activate(self.state, "blackdogbot.service", self.new_sha, None, timeout=3, data_dir=self.data)
         self.assertFalse(healthy)
         self.assertEqual(len(attempts), 2)
         self.assertEqual((self.state / "current").resolve(), self.old)
@@ -58,7 +63,7 @@ class GuardedReleaseTests(unittest.TestCase):
         with patch.object(guard, "service_state", return_value=("active", 444)), \
              patch.object(guard, "restart_and_probe", return_value=(True, 111.0)) as restart, \
              patch.object(guard, "notify"):
-            healthy = guard.activate(self.state, "blackdogbot.service", self.new_sha, None, timeout=3)
+            healthy = guard.activate(self.state, "blackdogbot.service", self.new_sha, None, timeout=3, data_dir=self.data)
         self.assertTrue(healthy)
         restart.assert_called_once()
         self.assertEqual((self.state / "current").resolve(), self.new)
@@ -70,7 +75,7 @@ class GuardedReleaseTests(unittest.TestCase):
              patch.object(guard,"restart_and_probe",return_value=(True,111.0)), \
              patch.object(guard,"update_docker_services",return_value={"searxng":"CONTAINER_DEPLOY_STATUS searxng healthy","scrapling":"failed:CalledProcessError"}) as updates, \
              patch.object(guard,"notify"):
-            result=guard.activate(self.state,"blackdogbot.service",self.new_sha,None,timeout=3)
+            result=guard.activate(self.state,"blackdogbot.service",self.new_sha,None,timeout=3,data_dir=self.data)
         self.assertTrue(result)
         updates.assert_called_once()
         report=json.loads((self.state/"reports/latest.json").read_text())
@@ -82,14 +87,14 @@ class GuardedReleaseTests(unittest.TestCase):
              patch.object(guard,"restart_and_probe",return_value=(True,111.0)), \
              patch.object(guard,"update_docker_services") as updates, \
              patch.object(guard,"notify"):
-            result=guard.activate(self.state,"blackdogbot.service",self.new_sha,None,timeout=3,update_containers=False)
+            result=guard.activate(self.state,"blackdogbot.service",self.new_sha,None,timeout=3,update_containers=False,data_dir=self.data)
         self.assertTrue(result)
         updates.assert_not_called()
 
     def test_refuses_activation_without_pretested_candidate(self):
         (self.new / ".blackdog-release-tested").unlink()
         with self.assertRaisesRegex(RuntimeError, "passing tests"):
-            guard.activate(self.state, "blackdogbot.service", self.new_sha, None)
+            guard.activate(self.state, "blackdogbot.service", self.new_sha, None, data_dir=self.data)
         self.assertEqual((self.state / "current").resolve(), self.old)
 
     def test_atomic_report_and_recovery_metadata(self):

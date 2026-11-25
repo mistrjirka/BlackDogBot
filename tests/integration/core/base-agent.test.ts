@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { restoreTestDataDir, writeTestConfigAsync } from "../../helpers/test-config.js";
 
 import { BaseAgentBase } from "../../../src/agent/base-agent.js";
 import type { IAgentResult } from "../../../src/agent/base-agent.js";
@@ -15,7 +16,7 @@ import type { ToolSet, LanguageModel } from "ai";
 
 
 let tempDir: string;
-let originalHome: string;
+let originalDataDir: string | undefined;
 let shouldSkipLmTests: boolean = false;
 // Live model calls must be explicit. The regular fast suite runs on production hosts.
 const runLiveModelTests: boolean = process.env.BLACKDOGBOT_TEST_LIVE_MODEL === "1";
@@ -45,17 +46,24 @@ class TestAgent extends BaseAgentBase {
 describe("BaseAgentBase", () => {
   beforeAll(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-base-agent-"));
-    originalHome = process.env.HOME ?? os.homedir();
-    process.env.HOME = tempDir;
+    originalDataDir = process.env.BLACKDOGBOT_DATA_DIR;
+    vi.stubEnv("BLACKDOGBOT_DATA_DIR", path.join(tempDir, ".blackdogbot"));
 
     resetSingletons();
 
-    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
     const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });
-    await fs.cp(realConfigPath, tempConfigPath);
+    if (runLiveModelTests) {
+      const explicitConfigPath = process.env.BLACKDOGBOT_TEST_CONFIG;
+      if (!explicitConfigPath) {
+        throw new Error("Live model tests require BLACKDOGBOT_TEST_CONFIG to name an explicit test config.");
+      }
+      await fs.copyFile(explicitConfigPath, tempConfigPath);
+    } else {
+      await writeTestConfigAsync(tempConfigPath);
+    }
 
     const loggerService: LoggerService = LoggerService.getInstance();
     await loggerService.initializeAsync("info", path.join(tempDir, "logs"));
@@ -71,7 +79,7 @@ describe("BaseAgentBase", () => {
   });
 
   afterAll(async () => {
-    process.env.HOME = originalHome;
+    restoreTestDataDir(originalDataDir);
     resetSingletons();
     await fs.rm(tempDir, { recursive: true, force: true });
   });

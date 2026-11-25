@@ -9,6 +9,13 @@ const _BaseDirName: string = ".blackdogbot";
 //#region Public functions
 
 export function getBaseDir(): string {
+  const configured: string | undefined = process.env.BLACKDOGBOT_DATA_DIR;
+  if (configured !== undefined) {
+    if (!path.isAbsolute(configured)) {
+      throw new Error("BLACKDOGBOT_DATA_DIR must be an absolute path.");
+    }
+    return path.resolve(configured);
+  }
   return path.join(os.homedir(), _BaseDirName);
 }
 

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { IScheduledTask } from "../shared/types/index.js";
-import { scheduledTaskSchema } from "../shared/schemas/index.js";
+import { migrateLegacyTimedTask } from "../migrations/legacy-timed-tasks.js";
 import {
   getTimedDir,
   getTimedFilePath,
@@ -25,15 +25,6 @@ const DEFAULT_CRON_QUEUE_SIZE: number = 3;
 interface IQueuedTask {
   task: IScheduledTask;
   executeCallback: () => Promise<void>;
-}
-
-interface IIntervalScheduleLegacy {
-  type: "interval";
-  intervalMs?: number;
-  offsetMinutes?: number;
-  every?: ITimeParts;
-  offsetFromDayStart?: ITimeParts;
-  timezone?: string;
 }
 
 interface IEveryGridParts {
@@ -164,7 +155,7 @@ export class SchedulerService {
   }
 
   public async addTaskAsync(task: IScheduledTask): Promise<void> {
-    const validatedTask: IScheduledTask = scheduledTaskSchema.parse(task);
+    const validatedTask: IScheduledTask = this._parseTaskPreservingFields(task);
 
     await this._saveTaskAsync(validatedTask);
     this._tasks.set(validatedTask.taskId, validatedTask);
@@ -238,10 +229,13 @@ export class SchedulerService {
     const enabledChanged: boolean =
       patch.enabled !== undefined && patch.enabled !== task.enabled;
 
-    Object.assign(task, patch);
-    task.updatedAt = new Date().toISOString();
-
-    const validatedTask: IScheduledTask = scheduledTaskSchema.parse(task);
+    const updatedTask: IScheduledTask = this._parseTaskPreservingFields({
+      ...task,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    });
+    // Existing timer callbacks retain this object. Validate before mutating it.
+    const validatedTask: IScheduledTask = Object.assign(task, updatedTask);
 
     this._tasks.set(taskId, validatedTask);
     await this._saveTaskAsync(validatedTask);
@@ -314,35 +308,22 @@ export class SchedulerService {
         const content: string = await fs.readFile(filePath, "utf-8");
         const parsed: unknown = JSON.parse(content);
 
-        // Migrate legacy interval/offset format to every/offsetFromDayStart format.
-        const migrationResult = await this._migrateLegacyTimedScheduleFields(parsed, filePath);
-        let task: IScheduledTask = scheduledTaskSchema.parse(migrationResult.task);
-        const hasMessageDedupEnabledField: boolean = this._hasOwnProperty(migrationResult.task, "messageDedupEnabled");
-        let shouldPersistTask: boolean = migrationResult.migrated || !hasMessageDedupEnabledField;
+        // The startup migration transaction owns persistent conversions. Loading
+        // a task must not rewrite files before its backup has been committed.
+        const migrationResult = migrateLegacyTimedTask(parsed, {
+          defaultTimezone: this._resolveScheduleTimezone(undefined),
+        });
+        // The pure helper validates every known field and retains user extensions.
+        const task = migrationResult.task as unknown as IScheduledTask;
 
         if (migrationResult.migrated) {
-          this._logger.info("Migrated legacy timed task schedule fields", {
+          this._logger.info("Loaded legacy timed task without rewriting its file", {
             taskId: task.taskId,
-            name: task.name,
+            fields: migrationResult.changes,
           });
         }
 
-        if (!hasMessageDedupEnabledField) {
-          this._logger.info("Backfilled timed task default fields", {
-            taskId: task.taskId,
-            name: task.name,
-            fields: ["messageDedupEnabled"],
-          });
-        }
-
-        const effectiveTask: IScheduledTask = task;
-
-        if (shouldPersistTask) {
-          await fs.writeFile(filePath, JSON.stringify(effectiveTask, null, 2), "utf-8");
-        }
-
-
-        this._tasks.set(effectiveTask.taskId, effectiveTask);
+        this._tasks.set(task.taskId, task);
       } catch (error: unknown) {
         this._logger.warn("Failed to parse task file, skipping", {
           filePath,
@@ -354,28 +335,12 @@ export class SchedulerService {
 
   }
 
-  private _hasOwnProperty(target: unknown, key: string): boolean {
-    if (!target || typeof target !== "object") {
-      return false;
-    }
-
-    return Object.prototype.hasOwnProperty.call(target, key);
-  }
-
-  private _parseLegacyEvery(intervalMs: number): ITimeParts {
-    const totalMinutes: number = Math.max(1, Math.floor(intervalMs / 60000));
-    return {
-      hours: Math.floor(totalMinutes / 60),
-      minutes: totalMinutes % 60,
-    };
-  }
-
-  private _parseLegacyOffset(offsetMinutes: number): ITimeParts {
-    const safeOffset: number = Math.max(0, Math.floor(offsetMinutes));
-    return {
-      hours: Math.floor(safeOffset / 60),
-      minutes: safeOffset % 60,
-    };
+  private _parseTaskPreservingFields(raw: unknown): IScheduledTask {
+    // Validation must not discard extension fields when a loaded task is saved.
+    const result = migrateLegacyTimedTask(raw, {
+      defaultTimezone: this._resolveScheduleTimezone(undefined),
+    });
+    return result.task as unknown as IScheduledTask;
   }
 
   private _normalizeEvery(parts: ITimeParts): IEveryGridParts {
@@ -517,95 +482,6 @@ export class SchedulerService {
     const nextSlotMs: number = firstSlotMs + (increments * everyMs);
 
     return nextSlotMs;
-  }
-
-  private async _migrateLegacyTimedScheduleFields(
-    rawParsed: unknown,
-    filePath: string,
-  ): Promise<{ task: unknown; migrated: boolean }> {
-    const raw = rawParsed as Record<string, unknown>;
-    const rawSchedule = raw.schedule as IIntervalScheduleLegacy | undefined;
-
-    if (!rawSchedule || (rawSchedule.type !== "interval" && rawSchedule.type !== "once")) {
-      return { task: rawParsed, migrated: false };
-    }
-
-    if (rawSchedule.type === "interval") {
-      const hasModernIntervalFields: boolean =
-        rawSchedule.every !== undefined
-        && rawSchedule.offsetFromDayStart !== undefined
-        && typeof rawSchedule.timezone === "string"
-        && rawSchedule.timezone.length > 0;
-
-      if (hasModernIntervalFields) {
-        return { task: rawParsed, migrated: false };
-      }
-
-      const intervalMs: number = typeof rawSchedule.intervalMs === "number" && rawSchedule.intervalMs > 0
-        ? rawSchedule.intervalMs
-        : 60000;
-
-      const offsetMinutes: number = typeof rawSchedule.offsetMinutes === "number" && rawSchedule.offsetMinutes >= 0
-        ? rawSchedule.offsetMinutes
-        : 0;
-
-      const migratedTask: Record<string, unknown> = {
-        ...raw,
-        schedule: {
-          type: "interval",
-          every: this._parseLegacyEvery(intervalMs),
-          offsetFromDayStart: this._parseLegacyOffset(offsetMinutes),
-          timezone: this._resolveScheduleTimezone(rawSchedule.timezone),
-        },
-        updatedAt: new Date().toISOString(),
-      };
-
-      const normalizedSchedule = migratedTask.schedule as {
-        every: ITimeParts;
-        offsetFromDayStart: ITimeParts;
-      };
-
-      normalizedSchedule.every = this._parseLegacyEvery(intervalMs);
-      normalizedSchedule.offsetFromDayStart = this._normalizeOffsetFromDayStart(this._parseLegacyOffset(offsetMinutes));
-
-      await fs.writeFile(filePath, JSON.stringify(migratedTask, null, 2), "utf-8");
-      return { task: migratedTask, migrated: true };
-    }
-
-    const onceSchedule = rawSchedule as { offsetFromDayStart?: ITimeParts; timezone?: string };
-    const hasModernOnceFields: boolean =
-      onceSchedule.offsetFromDayStart !== undefined
-      && typeof onceSchedule.timezone === "string"
-      && onceSchedule.timezone.length > 0;
-
-    if (hasModernOnceFields) {
-      return { task: rawParsed, migrated: false };
-    }
-
-    const migratedSchedule: Record<string, unknown> = {
-      type: rawSchedule.type,
-      offsetFromDayStart: {
-        hours: 0,
-        minutes: 0,
-      },
-      timezone: this._resolveScheduleTimezone(rawSchedule.timezone),
-    };
-
-    // once-type schedules require runAt — compute from legacy interval/offset
-    const baseTime: Date = new Date();
-    const offsetMs: number = ((rawSchedule.offsetMinutes ?? 0) * 60_000);
-    const intervalMs: number = (rawSchedule.intervalMs ?? 0);
-    migratedSchedule.runAt = new Date(baseTime.getTime() + offsetMs + intervalMs).toISOString();
-
-    const migratedTask: Record<string, unknown> = {
-      ...raw,
-      schedule: migratedSchedule,
-      updatedAt: new Date().toISOString(),
-    };
-
-    await fs.writeFile(filePath, JSON.stringify(migratedTask, null, 2), "utf-8");
-
-    return { task: migratedTask, migrated: true };
   }
 
   private async _saveTaskAsync(task: IScheduledTask): Promise<void> {

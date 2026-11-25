@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    setupFiles: ["tests/setup-data-dir.ts"],
     fileParallelism: false,
     include: [
       "tests/unit/**/*.test.ts",

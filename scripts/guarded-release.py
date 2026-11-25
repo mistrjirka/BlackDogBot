@@ -9,6 +9,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
+import pwd
 import shutil
 import subprocess
 import sys
@@ -18,17 +20,21 @@ import urllib.request
 
 SERVICE_DEFAULT = "blackdogbot.service"
 ID_RE = re.compile(r"^[0-9a-f]{40}$")
-STARTED = ("BlackDogBot daemon is running.", "Telegram bot is now receiving updates.")
+STARTED = "BlackDogBot daemon is running."
+TELEGRAM_READY = ("Telegram bot is now receiving updates.", "Telegram not configured. Bot will not start.")
+DAEMON_READY_PROTOCOL = "BLACKDOGBOT_READY daemon ready"
+TELEGRAM_READY_PROTOCOL = ("BLACKDOGBOT_READY telegram ready", "BLACKDOGBOT_READY telegram disabled")
 
 
-def run(argv: list[str], *, cwd: Path | None = None, timeout: int = 180, log: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run(argv: list[str], *, cwd: Path | None = None, timeout: int = 180, log: Path | None = None, separate_stderr: bool = False) -> subprocess.CompletedProcess[str]:
     if log:
         fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         with os.fdopen(fd, "a", encoding="utf-8") as out:
             out.write(f"\n$ {' '.join(argv)}\n")
             out.flush()
             return subprocess.run(argv, cwd=cwd, text=True, stdout=out, stderr=subprocess.STDOUT, timeout=timeout, check=True)
-    return subprocess.run(argv, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, check=True)
+    return subprocess.run(argv, cwd=cwd, text=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE if separate_stderr else subprocess.STDOUT, timeout=timeout, check=True)
 
 
 def write_atomic(path: Path, content: str, mode: int = 0o600) -> None:
@@ -38,9 +44,20 @@ def write_atomic(path: Path, content: str, mode: int = 0o600) -> None:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
+        sync_directory(path.parent)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def sync_directory(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def point_to(path: Path, target: Path) -> None:
@@ -48,6 +65,7 @@ def point_to(path: Path, target: Path) -> None:
     try:
         link.symlink_to(target)
         os.replace(link, path)
+        sync_directory(path.parent)
     finally:
         link.unlink(missing_ok=True)
 
@@ -79,6 +97,39 @@ def report(state: Path, result: dict[str, object]) -> Path:
     write_atomic(path, json.dumps(result, indent=2, default=str) + "\n")
     write_atomic(state / "reports" / "latest.json", json.dumps(result, indent=2, default=str) + "\n")
     return path
+
+
+def source_repository(explicit: Path | None, state: Path) -> Path:
+    """Find the user's source checkout without embedding a maintainer's path."""
+    def valid(candidate: Path) -> bool:
+        try:
+            return (candidate / ".git").exists() and json.loads((candidate / "package.json").read_text()).get("name") == "blackdogbot"
+        except (OSError, ValueError, AttributeError):
+            return False
+
+    if explicit is not None:
+        candidate = explicit.expanduser().resolve()
+        if not valid(candidate):
+            raise RuntimeError(f"Not a BlackDogBot source checkout: {candidate}")
+        return candidate
+    configured = os.environ.get("BLACKDOGBOT_SOURCE_DIR")
+    if configured:
+        return source_repository(Path(configured), state)
+
+    candidates = [Path(__file__).resolve().parent.parent]
+    cwd = Path.cwd()
+    candidates.extend([cwd, *cwd.parents])
+    try:
+        saved = json.loads((state / "source-repository.json").read_text())["path"]
+        if isinstance(saved, str):
+            candidates.append(Path(saved).expanduser())
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    candidates.append(Path.home() / ".local/share/blackdogbot/source")
+    for candidate in candidates:
+        if valid(candidate):
+            return candidate.resolve()
+    raise RuntimeError("Source checkout not found. Supply --repo or BLACKDOGBOT_SOURCE_DIR.")
 
 
 def revision(repo: Path, ref: str) -> str:
@@ -121,32 +172,54 @@ def prepare(repo: Path, state: Path, ref: str, chat: str | None) -> Path:
     return dest
 
 
-def service_state(unit: str) -> tuple[str, int]:
-    result = run(["systemctl", "--user", "show", unit, "-p", "ActiveState", "-p", "MainPID"])
+def service_identity(unit: str) -> tuple[str, int, str]:
+    result = run(["systemctl", "--user", "show", unit, "-p", "ActiveState", "-p", "MainPID", "-p", "InvocationID"])
     values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-    return values.get("ActiveState", "unknown"), int(values.get("MainPID") or "0")
+    return values.get("ActiveState", "unknown"), int(values.get("MainPID") or "0"), values.get("InvocationID", "")
+
+
+def service_state(unit: str) -> tuple[str, int]:
+    active, pid, _ = service_identity(unit)
+    return active, pid
 
 
 def health(unit: str, before_pid: int, started_at: float, *, timeout: int = 75) -> bool:
     end = time.monotonic() + timeout
     stable_since: float | None = None
+    stable_identity: tuple[int, str] | None = None
     while time.monotonic() < end:
         try:
-            active, pid = service_state(unit)
-            if active != "active" or pid <= 0 or pid == before_pid:
+            active, pid, invocation = service_identity(unit)
+            if active != "active" or pid <= 0 or pid == before_pid or not re.fullmatch(r"[0-9a-f]{32}", invocation):
                 stable_since = None
+                stable_identity = None
                 time.sleep(1.5)
                 continue
-            after = run(["journalctl", "--user", "-u", unit, "--since", f"@{int(started_at)}", "--no-pager", "-o", "cat"], timeout=10).stdout
-            if all(marker in after for marker in STARTED):
+            identity = (pid, invocation)
+            if identity != stable_identity:
+                stable_since = None
+                stable_identity = identity
+            # An invocation identifies one service start, including its child
+            # processes. Earlier ready logs must not bless a restart loop.
+            after = run(["journalctl", "--user", "-u", unit,
+                         f"_SYSTEMD_INVOCATION_ID={invocation}", "--since", f"@{int(started_at)}",
+                         "--no-pager", "-o", "cat"], timeout=10).stdout
+            lines = set(after.splitlines())
+            daemon_ready = DAEMON_READY_PROTOCOL in lines or STARTED in after
+            telegram_ready = any(marker in lines for marker in TELEGRAM_READY_PROTOCOL) or any(marker in after for marker in TELEGRAM_READY)
+            if daemon_ready and telegram_ready:
                 if stable_since is None:
                     stable_since = time.monotonic()
                 if time.monotonic() - stable_since >= 6:
+                    if service_identity(unit) != ("active", pid, invocation):
+                        stable_since = None
+                        continue
                     return True
             else:
                 stable_since = None
         except Exception:
             stable_since = None
+            stable_identity = None
         time.sleep(2)
     return False
 
@@ -202,30 +275,229 @@ def update_docker_services(state: Path, chat: str | None) -> dict[str, str]:
     return updates
 
 
-def activate(state: Path, unit: str, ref: str, chat: str | None, *, timeout: int = 75, update_containers: bool = True) -> bool:
+def default_data_directory() -> Path:
+    configured = os.environ.get("BLACKDOGBOT_DATA_DIR")
+    if configured is not None:
+        if not Path(configured).is_absolute():
+            raise RuntimeError("BLACKDOGBOT_DATA_DIR must be an absolute path")
+        return Path(configured)
+    return Path.home() / ".blackdogbot"
+
+
+def normalize_data_directory(data_dir: Path) -> Path:
+    if not data_dir.is_absolute():
+        raise RuntimeError("Data directory must be an absolute path")
+    # Match Node path.resolve without following a symlink that the data runner
+    # would reject during daemon startup.
+    normalized = Path(os.path.abspath(data_dir))
+    if normalized.is_symlink():
+        raise RuntimeError("Data directory must not be a symlink")
+    return normalized
+
+
+def validate_service_data_directory(unit: str, pid: int, data_dir: Path) -> None:
+    """Check the actual service environment without exposing unrelated values."""
+    if pid > 0:
+        try:
+            raw = Path(f"/proc/{pid}/environ").read_bytes()
+        except OSError:
+            raise RuntimeError("Cannot verify the running service data directory. Retry after checking the service process.") from None
+        environment = {}
+        for item in raw.split(b"\0"):
+            key, separator, value = item.partition(b"=")
+            if separator and key in (b"HOME", b"BLACKDOGBOT_DATA_DIR"):
+                environment[key.decode()] = os.fsdecode(value)
+    else:
+        properties = run(["systemctl", "--user", "show", unit, "-p", "Environment",
+                          "-p", "EnvironmentFiles", "-p", "UnsetEnvironment"]).stdout
+        values = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
+        if values.get("EnvironmentFiles", "").strip():
+            raise RuntimeError("Cannot verify a stopped service with EnvironmentFiles. Verify its data directory while the service is running.")
+        manager = run(["systemctl", "--user", "show-environment"]).stdout
+        environment = {}
+        for line in manager.splitlines():
+            entries = shlex.split(line)
+            if len(entries) == 1 and "=" in entries[0]:
+                key, value = entries[0].split("=", 1)
+                environment[key] = value
+        for entry in shlex.split(values.get("Environment", "")):
+            key, separator, value = entry.partition("=")
+            if separator:
+                environment[key] = value
+        for entry in shlex.split(values.get("UnsetEnvironment", "")):
+            key, separator, value = entry.partition("=")
+            if not separator or environment.get(key) == value:
+                environment.pop(key, None)
+    configured = environment.get("BLACKDOGBOT_DATA_DIR")
+    if configured is not None:
+        if not Path(configured).is_absolute():
+            raise RuntimeError("Service BLACKDOGBOT_DATA_DIR is not absolute")
+        actual = normalize_data_directory(Path(configured))
+    else:
+        service_home = environment.get("HOME") or pwd.getpwuid(os.geteuid()).pw_dir
+        actual = normalize_data_directory(Path(service_home) / ".blackdogbot")
+    if actual != data_dir:
+        raise RuntimeError(f"Requested data directory does not match service data directory: {actual}. Use matching --data-dir.")
+
+
+def stop_and_verify(unit: str) -> None:
+    run(["systemctl", "--user", "stop", unit], timeout=45)
+    active, pid = service_state(unit)
+    if pid != 0 or active not in ("inactive", "failed"):
+        raise RuntimeError("Service has not stopped. Runtime data must not be migrated with an active writer.")
+
+
+def migration_script(release: Path) -> Path:
+    return release / "src/migrations/cli.ts"
+
+
+def migration_command(release: Path, data_dir: Path, action: str, transaction: str | None = None) -> dict:
+    argv = [str(release / "node_modules/.bin/tsx"), str(migration_script(release)),
+            action, "--data-dir", str(data_dir)]
+    if action != "plan":
+        argv.append("--offline")
+    if transaction is not None:
+        argv.extend(["--transaction", transaction])
+    response = run(argv, cwd=release, timeout=600, separate_stderr=True)
+    try:
+        result = json.loads(response.stdout)
+    except (ValueError, TypeError):
+        raise RuntimeError("Migration command did not return valid JSON") from None
+    if not isinstance(result, dict) or result.get("protocolVersion") != 1:
+        raise RuntimeError("Unsupported migration command protocol")
+    if action == "plan":
+        if not isinstance(result.get("needsMigration"), bool):
+            raise RuntimeError("Migration plan is incomplete")
+    elif action == "apply":
+        if result.get("status") not in ("applied", "unchanged"):
+            raise RuntimeError("Migration command did not complete")
+        transaction_id = result.get("transactionId")
+        if result["status"] == "applied" and not isinstance(transaction_id, str):
+            raise RuntimeError("Migration command omitted its rollback receipt")
+        if transaction_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", transaction_id):
+            raise RuntimeError("Invalid migration transaction receipt")
+    elif action == "rollback" and result.get("status") != "rolled_back":
+        raise RuntimeError("Migration rollback did not complete")
+    return result
+
+
+def can_start_release(release: Path, data_dir: Path) -> None:
+    if migration_script(release).is_file():
+        plan = migration_command(release, data_dir, "plan")
+        if plan["needsMigration"]:
+            raise RuntimeError("Release requires a data migration before startup")
+    else:
+        marker = data_dir / ".data-schema.json"
+        migration_dir = data_dir / ".migrations"
+        if migration_dir.is_symlink():
+            raise RuntimeError("Migration metadata directory must not be a symlink")
+        barriers = [marker, migration_dir / "lock.json", migration_dir / "recovery.json"]
+        if any(barrier.exists() or barrier.is_symlink() for barrier in barriers):
+            raise RuntimeError("Release cannot verify this data schema. Refusing an unverified downgrade.")
+        transactions = data_dir / ".migrations/transactions"
+        if transactions.is_symlink():
+            raise RuntimeError("Migration journal location is unsafe")
+        if transactions.exists():
+            for entry in transactions.iterdir():
+                if entry.name.startswith(".staging-"):
+                    continue
+                if entry.is_symlink() or not entry.is_dir():
+                    raise RuntimeError("Migration history contains an unknown entry")
+                try:
+                    journal_path = entry / "journal.json"
+                    if journal_path.is_symlink():
+                        raise ValueError("symlink")
+                    journal = json.loads(journal_path.read_text())
+                    if journal.get("formatVersion") != 1 or journal.get("id") != entry.name or journal.get("status") != "rolled_back":
+                        raise ValueError("incomplete or unknown transaction")
+                except (OSError, ValueError, AttributeError):
+                    raise RuntimeError("Migration history must be recovered before starting a legacy release") from None
+
+
+def activate(state: Path, unit: str, ref: str, chat: str | None, *, timeout: int = 75,
+             update_containers: bool = True, data_dir: Path | None = None) -> bool:
+    data_dir = normalize_data_directory(data_dir or default_data_directory())
     current = state / "current"
     if not current.is_symlink():
         raise RuntimeError("Guarded release launcher is not bootstrapped; refusing unguarded deployment")
     previous = current.resolve(strict=True)
     rev = ref if ID_RE.fullmatch(ref) else revision(previous, ref)
     candidate = release_for(state, rev)
-    if not candidate.is_dir() or not (candidate / ".blackdog-release-tested").is_file():
-        raise RuntimeError("Candidate does not have a passing tests marker")
+    marker = candidate / ".blackdog-release-tested"
+    if not candidate.is_dir() or not marker.is_file() or marker.read_text().strip() != rev:
+        raise RuntimeError("Candidate does not have a passing tests marker for this revision")
     if candidate == previous:
+        can_start_release(candidate, data_dir)
+        active, pid = service_state(unit)
+        validate_service_data_directory(unit, pid, data_dir)
+        if active != "active" or pid <= 0:
+            raise RuntimeError("Selected release is stopped. Recover any pending migration and restart explicitly.")
         return True
+
+    has_migrations = migration_script(candidate).is_file()
+    if has_migrations:
+        # Reject unknown data before stopping a healthy service. Apply replans
+        # after shutdown because runtime files can change while planning.
+        migration_command(candidate, data_dir, "plan")
+    else:
+        can_start_release(candidate, data_dir)
     _, old_pid = service_state(unit)
+    validate_service_data_directory(unit, old_pid, data_dir)
+    transaction: str | None = None
     notify(state, chat, f"BlackDogBot: activating tested release {rev[:12]}. Rollback release {previous.name[:12]} is preserved.")
-    point_to(current, candidate)
+    if has_migrations:
+        try:
+            stop_and_verify(unit)
+        except Exception as exc:
+            report(state, {"status": "stop_failed", "revision": rev, "previous": previous.name,
+                           "unit": unit, "error": type(exc).__name__, "data_unchanged": True})
+            return False
+        # If this manager is interrupted during migration, a subsequent boot
+        # must use the candidate's pending-transaction startup checks.
+        point_to(current, candidate)
+        try:
+            receipt = migration_command(candidate, data_dir, "apply")
+            transaction = receipt.get("transactionId")
+        except Exception as exc:
+            report(state, {"status": "migration_failed", "revision": rev, "previous": previous.name,
+                           "unit": unit, "error": type(exc).__name__, "service_stopped": True,
+                           "data_dir": str(data_dir), "manual_recovery_required": True,
+                           "recovery_action": "Run candidate migration CLI recover while the service is stopped."})
+            notify(state, chat, "BlackDogBot data migration failed. The service remains stopped. Inspect the migration journal and recover before restarting.")
+            return False
+    else:
+        point_to(current, candidate)
+
     ok, started = restart_and_probe(unit, old_pid, timeout=timeout)
     if ok:
         container_results = update_docker_services(state, chat) if update_containers else {"status": "skipped_by_request"}
         path = report(state, {"status": "healthy", "revision": rev, "previous": previous.name,
                               "unit": unit, "activated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-                              "container_updates": container_results})
+                              "migration_transaction": transaction, "container_updates": container_results})
         notify(state, chat, f"BlackDogBot: release {rev[:12]} healthy. Container updates: {container_results}. Report: {path}")
         return True
 
     journal = save_journal(unit, state, f"failed-{rev[:12]}", started)
+    candidate_stopped = False
+    recovery_phase = "stop_candidate" if has_migrations else "check_previous_schema"
+    try:
+        if has_migrations:
+            stop_and_verify(unit)
+            candidate_stopped = True
+            recovery_phase = "restore_data"
+            if transaction is not None:
+                migration_command(candidate, data_dir, "rollback", transaction)
+        recovery_phase = "check_previous_schema"
+        can_start_release(previous, data_dir)
+    except Exception as exc:
+        path = report(state, {"status": "data_recovery_failed", "failed_revision": rev,
+                              "previous_revision": previous.name, "unit": unit, "journal": str(journal),
+                              "migration_transaction": transaction, "error": type(exc).__name__,
+                              "manual_recovery_required": True, "candidate": str(candidate),
+                              "service_stopped": candidate_stopped, "recovery_phase": recovery_phase})
+        notify(state, chat, f"BlackDogBot: candidate health failed and data could not be safely restored. Prior code was not started. Inspect {path}.")
+        return False
+
     point_to(current, previous)
     _, failed_pid = service_state(unit)
     restored, _ = restart_and_probe(unit, failed_pid, timeout=timeout)
@@ -233,6 +505,7 @@ def activate(state: Path, unit: str, ref: str, chat: str | None, *, timeout: int
         "status": "rolled_back" if restored else "rollback_failed",
         "failed_revision": rev, "restored_revision": previous.name, "unit": unit,
         "journal": str(journal), "candidate": str(candidate), "previous_available": previous.is_dir(),
+        "migration_transaction": transaction,
     }
     path = report(state, outcome)
     notify(state, chat, f"BlackDogBot: candidate {rev[:12]} FAILED health check. " +
@@ -241,11 +514,13 @@ def activate(state: Path, unit: str, ref: str, chat: str | None, *, timeout: int
     return False
 
 
-def bootstrap(state: Path, unit: str, rev: str, chat: str | None) -> bool:
+def bootstrap(state: Path, unit: str, rev: str, chat: str | None, *, data_dir: Path | None = None) -> bool:
     """One-time migration. Restores original unit override on startup failure."""
     release = release_for(state, rev)
+    data_dir = normalize_data_directory(data_dir or default_data_directory())
     if not (release / ".blackdog-release-tested").exists():
         raise RuntimeError("Bootstrap requires a fully tested baseline release")
+    can_start_release(release, data_dir)
     if (state / "current").exists() or (state / "current").is_symlink():
         raise RuntimeError("Already bootstrapped; refusing to overwrite current release")
     wrapper = Path.home() / ".local" / "lib" / "blackdogbot" / "launch-stable.sh"
@@ -253,9 +528,10 @@ def bootstrap(state: Path, unit: str, rev: str, chat: str | None) -> bool:
     if dropin.exists():
         raise RuntimeError("Existing guarded launcher override found; refusing overwrite")
     script = "#!/bin/sh\nset -eu\nexec " + shutil.which("bash") + ' "' + str(state / "current" / "scripts" / "launch.sh") + '"\n'
+    _, old_pid = service_state(unit)
+    validate_service_data_directory(unit, old_pid, data_dir)
     write_atomic(wrapper, script, 0o700)
     os.chmod(wrapper, 0o700)
-    _, old_pid = service_state(unit)
     point_to(state / "current", release)
     dropin_text = "[Service]\nExecStart=\nExecStart=" + str(wrapper) + "\nWorkingDirectory=" + str(state / "current") + "\n"
     write_atomic(dropin, dropin_text, 0o600)
@@ -287,8 +563,9 @@ def main() -> int:
     os.environ["PATH"] = str(Path.home() / ".local/bin") + os.pathsep + os.environ.get("PATH", "")
     parser = argparse.ArgumentParser(description="BlackDogBot: out-of-process tested release preparation and rollback")
     parser.add_argument("action", choices=["prepare", "bootstrap", "activate"])
-    parser.add_argument("--repo", type=Path, default=Path.home() / "programy/better-claw")
+    parser.add_argument("--repo", type=Path, help="Source checkout (or BLACKDOGBOT_SOURCE_DIR)")
     parser.add_argument("--state", type=Path, default=Path.home() / ".blackdogbot" / "deploy")
+    parser.add_argument("--data-dir", type=Path, default=default_data_directory(), help="Runtime data root for migration checks (must match service)")
     parser.add_argument("--revision", required=True, help="Commit revision for preparation/activation")
     parser.add_argument("--unit", default=SERVICE_DEFAULT)
     parser.add_argument("--chat-id", help="Authorized Telegram chat to receive status notifications")
@@ -310,14 +587,16 @@ def main() -> int:
     with (state / "deploy.lock").open("a") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         if args.action == "prepare":
-            path = prepare(args.repo.resolve(), state, args.revision, args.chat_id)
+            repo = source_repository(args.repo, state)
+            path = prepare(repo, state, args.revision, args.chat_id)
+            write_atomic(state / "source-repository.json", json.dumps({"path": str(repo)}) + "\n")
             print(f"Prepared and tested: {path}")
             return 0
         if args.action == "bootstrap":
-            rev = revision(args.repo.resolve(), args.revision)
-            return 0 if bootstrap(state, args.unit, rev, args.chat_id) else 1
+            rev = revision(source_repository(args.repo, state), args.revision)
+            return 0 if bootstrap(state, args.unit, rev, args.chat_id, data_dir=args.data_dir.expanduser()) else 1
         return 0 if activate(state, args.unit, args.revision, args.chat_id, timeout=args.timeout,
-                             update_containers=not args.skip_container_updates) else 1
+                             update_containers=not args.skip_container_updates, data_dir=args.data_dir.expanduser()) else 1
 
 
 if __name__ == "__main__":

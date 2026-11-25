@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach, beforeAll, afterAll } 
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { restoreTestDataDir, writeTestConfigAsync } from "../../helpers/test-config.js";
 
 import { ConfigService } from "../../../src/services/config.service.js";
 import { LoggerService } from "../../../src/services/logger.service.js";
@@ -21,8 +22,7 @@ describe("SchedulerService interval scheduling", () => {
   let scheduler: SchedulerService;
   let mockExecutor: ReturnType<typeof vi.fn>;
   let tempDir: string;
-  let originalHome: string;
-  let realConfigPath: string;
+  let originalDataDir: string | undefined;
 
   //#endregion Data members
 
@@ -30,8 +30,8 @@ describe("SchedulerService interval scheduling", () => {
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "scheduler-offset-"));
-    originalHome = process.env.HOME ?? os.homedir();
-    process.env.HOME = tempDir;
+    originalDataDir = process.env.BLACKDOGBOT_DATA_DIR;
+    vi.stubEnv("BLACKDOGBOT_DATA_DIR", path.join(tempDir, ".blackdogbot"));
 
     resetSingletons([SchedulerService, ConfigService]);
 
@@ -45,9 +45,8 @@ describe("SchedulerService interval scheduling", () => {
     vi.spyOn(logger, "warn").mockReturnValue(undefined);
     vi.spyOn(logger, "error").mockReturnValue(undefined);
 
-    realConfigPath = path.join(originalHome, ".blackdogbot", "config.yaml");
     const tempConfigPath = path.join(blackdogbotDir, "config.yaml");
-    await fs.copyFile(realConfigPath, tempConfigPath);
+    await writeTestConfigAsync(tempConfigPath, { schedulerEnabled: true });
 
     const configService = ConfigService.getInstance();
     await configService.initializeAsync(tempConfigPath);
@@ -64,7 +63,7 @@ describe("SchedulerService interval scheduling", () => {
   afterEach(async () => {
     await scheduler.stopAsync();
     resetSingletons([SchedulerService, ConfigService]);
-    process.env.HOME = originalHome;
+    restoreTestDataDir(originalDataDir);
     try {
       await fs.rm(tempDir, { recursive: true, force: true });
     } catch {
@@ -213,7 +212,7 @@ describe("SchedulerService interval scheduling", () => {
   //#region Legacy migration
 
   describe("legacy schedule migration", () => {
-    it("should migrate legacy intervalMs/offsetMinutes fields to new schedule format", async () => {
+    it("should normalize known legacy fields in memory without rewriting the file", async () => {
       const legacyTaskWithoutOffset = {
         taskId: "legacy-no-offset",
         name: "Legacy No Offset",
@@ -222,7 +221,7 @@ describe("SchedulerService interval scheduling", () => {
         tools: ["test_tool"],
         schedule: {
           type: "interval",
-          intervalMs: 5000,
+          intervalMs: 300000,
           // offsetMinutes intentionally missing
         },
         enabled: true,
@@ -245,7 +244,7 @@ describe("SchedulerService interval scheduling", () => {
         "utf-8"
       );
 
-      // Start scheduler - should load and migrate
+      // Startup owns persistence. The scheduler only reads and normalizes.
       await scheduler.startAsync();
 
       const loadedTask = await scheduler.getTaskAsync("legacy-no-offset");
@@ -254,15 +253,16 @@ describe("SchedulerService interval scheduling", () => {
       expect(loadedTask!.schedule).toHaveProperty("offsetFromDayStart");
       expect(loadedTask!.schedule).toHaveProperty("timezone");
 
-      // Verify file was persisted in new format.
+      // Loading must not bypass the migration transaction and its backup.
       const fileContent = await fs.readFile(
         path.join(timedDir, "legacy-no-offset.json"),
         "utf-8"
       );
-      const persisted = JSON.parse(fileContent);
-      expect(persisted.schedule.every).toBeDefined();
-      expect(persisted.schedule.offsetFromDayStart).toEqual({ hours: 0, minutes: 0 });
-      expect(typeof persisted.schedule.timezone).toBe("string");
+      expect(fileContent).toBe(JSON.stringify(legacyTaskWithoutOffset, null, 2));
+      expect(loadedTask!.schedule).toMatchObject({
+        every: { hours: 0, minutes: 5 },
+        offsetFromDayStart: { hours: 0, minutes: 0 },
+      });
     });
 
     it("should keep modern schedule shape unchanged", async () => {
@@ -332,8 +332,69 @@ describe("SchedulerService interval scheduling", () => {
         path.join(timedDir, "legacy-evening.json"),
         "utf-8",
       );
-      const persistedTask = JSON.parse(persistedContent) as { messageDedupEnabled?: boolean };
-      expect(persistedTask.messageDedupEnabled).toBe(true);
+      expect(persistedContent).toBe(JSON.stringify(legacyEveningTask, null, 2));
+    });
+
+    it("should retain extensions when a loaded task is edited and saved", async () => {
+      const modernTask = {
+        ...createIntervalTask({ taskId: "extensions", name: "Extensions" }),
+        enabled: false,
+        extension: { keep: "top-level" },
+        schedule: {
+          type: "interval",
+          every: { hours: 1, minutes: 0, extension: "parts" },
+          offsetFromDayStart: { hours: 0, minutes: 0 },
+          timezone: "UTC",
+          extension: { keep: "schedule" },
+        },
+        messageHistory: [{
+          messageId: "saved-message",
+          content: "Saved history",
+          sentAt: "2026-04-10T12:00:00.000Z",
+          extension: "history",
+        }],
+      };
+      const filePath = path.join(tempDir, ".blackdogbot", "timed", "extensions.json");
+      await fs.writeFile(filePath, JSON.stringify(modernTask));
+      await scheduler.startAsync();
+      await scheduler.updateTaskAsync("extensions", { name: "Renamed" });
+      await scheduler.setTaskEnabledAsync("extensions", false);
+
+      const saved = JSON.parse(await fs.readFile(filePath, "utf8"));
+      expect(saved.extension).toEqual(modernTask.extension);
+      expect(saved.schedule).toEqual(modernTask.schedule);
+      expect(saved.messageHistory).toEqual(modernTask.messageHistory);
+      expect(saved.name).toBe("Renamed");
+    });
+
+    it("should keep a legacy one-time task's runAt and file unchanged", async () => {
+      const legacyOnce = {
+        ...createIntervalTask({ taskId: "once-preserve-time", name: "Once" }),
+        enabled: false,
+        schedule: { type: "once", runAt: "2026-04-10T12:00:00.000Z" },
+      };
+      const filePath = path.join(tempDir, ".blackdogbot", "timed", "once-preserve-time.json");
+      const content = JSON.stringify(legacyOnce, null, 2);
+      await fs.writeFile(filePath, content);
+      await scheduler.startAsync();
+
+      const task = await scheduler.getTaskAsync("once-preserve-time");
+      expect(task!.schedule).toHaveProperty("runAt", legacyOnce.schedule.runAt);
+      expect(await fs.readFile(filePath, "utf8")).toBe(content);
+    });
+
+    it("should leave an unsupported legacy task untouched", async () => {
+      const unsupported = {
+        ...createIntervalTask({ taskId: "subminute", name: "Subminute" }),
+        schedule: { type: "interval", intervalMs: 5000 },
+      };
+      const filePath = path.join(tempDir, ".blackdogbot", "timed", "subminute.json");
+      const content = JSON.stringify(unsupported, null, 2);
+      await fs.writeFile(filePath, content);
+      await scheduler.startAsync();
+
+      expect(await scheduler.getTaskAsync("subminute")).toBeUndefined();
+      expect(await fs.readFile(filePath, "utf8")).toBe(content);
     });
 
     it("should resolve next slot using day-start anchor semantics", async () => {

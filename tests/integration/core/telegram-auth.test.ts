@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { restoreTestDataDir, writeTestConfigAsync } from "../../helpers/test-config.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { ConfigService } from "../../../src/services/config.service.js";
@@ -15,7 +16,7 @@ import type { ITelegramConfig } from "../../../src/platforms/telegram/types.js";
 import type { IPlatformDeps } from "../../../src/platforms/types.js";
 
 let tempDir: string;
-let originalHome: string;
+let originalDataDir: string | undefined;
 
 
 function createMockDeps(): IPlatformDeps {
@@ -67,8 +68,8 @@ async function modifyYamlConfig(configPath: string, modifier: (config: any) => v
 describe("TelegramHandler authorization", () => {
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-telegram-auth-"));
-    originalHome = process.env.HOME ?? os.homedir();
-    process.env.HOME = tempDir;
+    originalDataDir = process.env.BLACKDOGBOT_DATA_DIR;
+    vi.stubEnv("BLACKDOGBOT_DATA_DIR", path.join(tempDir, ".blackdogbot"));
 
     resetSingletons();
     (TelegramHandler as unknown as { _instance: TelegramHandler | null })._instance = null;
@@ -76,12 +77,11 @@ describe("TelegramHandler authorization", () => {
     const logger: LoggerService = LoggerService.getInstance();
     silenceLogger(logger);
 
-    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
     const blackdogbotDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(blackdogbotDir, "config.yaml");
 
     await fs.mkdir(blackdogbotDir, { recursive: true });
-    await fs.cp(realConfigPath, tempConfigPath);
+    await writeTestConfigAsync(tempConfigPath);
 
     const configService: ConfigService = ConfigService.getInstance();
     await configService.initializeAsync(tempConfigPath);
@@ -92,7 +92,7 @@ describe("TelegramHandler authorization", () => {
     (TelegramHandler as unknown as { _instance: TelegramHandler | null })._instance = null;
     vi.restoreAllMocks();
 
-    process.env.HOME = originalHome;
+    restoreTestDataDir(originalDataDir);
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 

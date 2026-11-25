@@ -18,7 +18,12 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc && mkdir -p dist/workers && cp src/workers/run-code-worker.cjs dist/workers/",
-    "test:build": "tsc && vitest run --config vitest.integration.config.ts"
+    "test:build": "tsc && vitest run --config vitest.integration.config.ts",
+    "migrate:plan": "tsx src/migrations/cli.ts plan",
+    "migrate:apply": "tsx src/migrations/cli.ts apply",
+    "migrate:rollback": "tsx src/migrations/cli.ts rollback",
+    "migrate:recover": "tsx src/migrations/cli.ts recover",
+    "test:migrations": "vitest run tests/unit/migrations"
   },
   "engines": {
     "node": ">=22.0.0"

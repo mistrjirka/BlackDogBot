@@ -5,6 +5,8 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { Server as SocketIOServer } from "socket.io";
 import { ConfigService } from "./services/config.service.js";
+import { prepareRuntimeDataAsync } from "./migrations/data-migrations.js";
+import { reportServiceReadiness } from "./utils/service-readiness.js";
 import { LoggerService } from "./services/logger.service.js";
 import { SkillLoaderService } from "./services/skill-loader.service.js";
 import { AiProviderService } from "./services/ai-provider.service.js";
@@ -25,7 +27,7 @@ import { telegramPlatform } from "./platforms/telegram/index.js";
 import { discordPlatform } from "./platforms/discord/index.js";
 import type { IPlatformDeps } from "./platforms/types.js";
 import type { IConfig, IScheduledTask, IExecutionContext } from "./shared/types/index.js";
-import { getJobLogsDir, getBrainInterfaceTokenFilePath, ensureAllDirectoriesAsync, ensureDirectoryExistsAsync } from "./utils/paths.js";
+import { getBaseDir, getJobLogsDir, getBrainInterfaceTokenFilePath, ensureAllDirectoriesAsync, ensureDirectoryExistsAsync } from "./utils/paths.js";
 import { ensureDefaultDatabaseAsync } from "./helpers/litesql.js";
 import { executeCronTaskAsync } from "./executors/cron-task-executor.js";
 import { extractErrorMessage } from "./utils/error.js";
@@ -44,6 +46,12 @@ function createBrainInterfaceJwtSecret(): string {
 //#region Main
 
 async function mainAsync(): Promise<void> {
+  // Validate stored data before any service can rewrite files or execute tasks.
+  const stopDuringStartup = (): never => process.exit(1);
+  process.on("SIGINT", stopDuringStartup);
+  process.on("SIGTERM", stopDuringStartup);
+  await prepareRuntimeDataAsync(getBaseDir());
+
   // 1. Load config
   const configService: ConfigService = ConfigService.getInstance();
 
@@ -285,6 +293,7 @@ async function mainAsync(): Promise<void> {
     logger.info("Telegram bot initialized.");
   } else {
     logger.warn("Telegram not configured. Bot will not start.");
+    reportServiceReadiness("telegram", "disabled");
   }
 
   // 8.6. Initialize Discord bot (if configured)
@@ -416,6 +425,7 @@ async function mainAsync(): Promise<void> {
   logger.info("BrainInterface WebSocket server started.", { port: BRAIN_INTERFACE_PORT });
 
   logger.info("BlackDogBot daemon is running.");
+  reportServiceReadiness("daemon", "ready");
 
   // 11. Graceful shutdown
   const shutdownAsync = async (): Promise<void> => {
@@ -442,6 +452,9 @@ async function mainAsync(): Promise<void> {
     logger.info("BlackDogBot stopped. Goodbye.");
     process.exit(0);
   };
+
+  process.off("SIGINT", stopDuringStartup);
+  process.off("SIGTERM", stopDuringStartup);
 
   process.on("SIGTERM", (): void => {
     void shutdownAsync();

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } 
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { restoreTestDataDir, writeTestConfigAsync } from "../../helpers/test-config.js";
 import { APICallError } from "ai";
 
 import { ConfigService } from "../../../src/services/config.service.js";
@@ -25,7 +26,7 @@ import * as toolRegistry from "../../../src/helpers/tool-registry.js";
 
 
 let tempDir: string;
-let originalHome: string;
+let originalDataDir: string | undefined;
 
 
 function createMockTelegramConfig(allowedUsers?: string[]): ITelegramConfig {
@@ -107,17 +108,16 @@ describe("TelegramHandler", () => {
 
   beforeAll(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-tg-handler-"));
-    originalHome = process.env.HOME ?? os.homedir();
-    process.env.HOME = tempDir;
+    originalDataDir = process.env.BLACKDOGBOT_DATA_DIR;
+    vi.stubEnv("BLACKDOGBOT_DATA_DIR", path.join(tempDir, ".blackdogbot"));
 
     resetSingletons();
 
-    const realConfigPath: string = path.join(originalHome, ".blackdogbot", "config.yaml");
     const tempConfigDir: string = path.join(tempDir, ".blackdogbot");
     const tempConfigPath: string = path.join(tempConfigDir, "config.yaml");
 
     await fs.mkdir(tempConfigDir, { recursive: true });
-    await fs.cp(realConfigPath, tempConfigPath);
+    await writeTestConfigAsync(tempConfigPath);
 
     const loggerService: LoggerService = LoggerService.getInstance();
 
@@ -156,7 +156,7 @@ describe("TelegramHandler", () => {
     // clearChatHistory persists a reset asynchronously; never remove its directory
     // while an atomic blackboard snapshot is still being written.
     await Promise.all([flushBlackboardAsync("100"), flushBlackboardAsync("42")]);
-    process.env.HOME = originalHome;
+    restoreTestDataDir(originalDataDir);
     resetSingletons();
     await fs.rm(tempDir, { recursive: true, force: true });
   });

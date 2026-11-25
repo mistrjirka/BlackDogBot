@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -29,16 +29,16 @@ import {
 //#region Helpers
 
 let tempDir: string;
-let originalHome: string;
+let originalDataDir: string | undefined;
 
-async function setupTempHomeAsync(): Promise<void> {
+async function setupTempDataAsync(): Promise<void> {
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-paths-test-"));
-  originalHome = process.env.HOME ?? os.homedir();
-  process.env.HOME = tempDir;
+  originalDataDir = process.env.BLACKDOGBOT_DATA_DIR;
+  vi.stubEnv("BLACKDOGBOT_DATA_DIR", path.join(tempDir, ".blackdogbot"));
 }
 
-async function cleanupTempHomeAsync(): Promise<void> {
-  process.env.HOME = originalHome;
+async function cleanupTempDataAsync(): Promise<void> {
+  vi.stubEnv("BLACKDOGBOT_DATA_DIR", originalDataDir);
   await fs.rm(tempDir, { recursive: true, force: true });
 }
 
@@ -48,14 +48,26 @@ async function cleanupTempHomeAsync(): Promise<void> {
 
 describe("paths utility", () => {
   beforeEach(async () => {
-    await setupTempHomeAsync();
+    await setupTempDataAsync();
   });
 
   afterEach(async () => {
-    await cleanupTempHomeAsync();
+    await cleanupTempDataAsync();
   });
 
-  it("should return the base directory under HOME", () => {
+  it("uses the standard home directory when no override is configured", () => {
+    vi.stubEnv("BLACKDOGBOT_DATA_DIR", undefined);
+    expect(getBaseDir()).toBe(path.join(os.homedir(), ".blackdogbot"));
+  });
+
+  it("rejects relative and empty data directory overrides", () => {
+    for (const value of ["relative/path", ""]) {
+      vi.stubEnv("BLACKDOGBOT_DATA_DIR", value);
+      expect(() => getBaseDir()).toThrow("absolute path");
+    }
+  });
+
+  it("should return the explicitly configured data directory", () => {
     const base: string = getBaseDir();
 
     expect(base).toBe(path.join(tempDir, ".blackdogbot"));
