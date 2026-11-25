@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 import { EmbeddingService } from "../../src/services/embedding.service.js";
 import { DEFAULT_LOCAL_EMBEDDING_FALLBACK_MODEL } from "../../src/shared/constants.js";
@@ -15,9 +19,18 @@ function resetEmbeddingSingleton(): void {
 //#region Tests
 
 describe("EmbeddingService (local fallback)", () => {
-  afterEach(() => {
+  let modelDir: string;
+  let previousModelsDir: string | undefined;
+  beforeEach(async () => {
+    modelDir = await fs.mkdtemp(path.join(os.tmpdir(), "blackdogbot-embedding-unit-"));
+    previousModelsDir = process.env.BLACKDOGBOT_MODELS_DIR;
+    vi.stubEnv("BLACKDOGBOT_MODELS_DIR", modelDir);
+  });
+  afterEach(async () => {
     vi.restoreAllMocks();
     resetEmbeddingSingleton();
+    vi.stubEnv("BLACKDOGBOT_MODELS_DIR", previousModelsDir);
+    await fs.rm(modelDir, { recursive: true, force: true });
   });
 
   it("should fall back to the compatible local model when cache reset retry still protobuf-fails", async () => {

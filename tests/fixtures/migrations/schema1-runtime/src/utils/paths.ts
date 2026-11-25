@@ -1,0 +1,201 @@
+import path from "node:path";
+import os from "node:os";
+import fs from "node:fs/promises";
+import crypto from "node:crypto";
+
+
+const _BaseDirName: string = ".blackdogbot";
+
+//#region Public functions
+
+export function getBaseDir(): string {
+  const configured: string | undefined = process.env.BLACKDOGBOT_DATA_DIR;
+  if (configured !== undefined) {
+    if (!path.isAbsolute(configured)) {
+      throw new Error("BLACKDOGBOT_DATA_DIR must be an absolute path.");
+    }
+    return path.resolve(configured);
+  }
+  return path.join(os.homedir(), _BaseDirName);
+}
+
+export function getConfigPath(): string {
+  return path.join(getBaseDir(), "config.yaml");
+}
+
+export function getSkillsDir(): string {
+  return path.join(getBaseDir(), "skills");
+}
+
+export function getSkillStateDir(): string {
+  return path.join(getBaseDir(), "skill-state");
+}
+
+export function getJobsDir(): string {
+  return path.join(getBaseDir(), "jobs");
+}
+
+
+export function getKnowledgeDir(): string {
+  return path.join(getBaseDir(), "knowledge");
+}
+
+export function getLanceDbDir(): string {
+  return path.join(getKnowledgeDir(), "lancedb");
+}
+
+export function getTimedDir(): string {
+  return path.join(getBaseDir(), "timed");
+}
+
+export function getLogsDir(): string {
+  return path.join(getBaseDir(), "logs");
+}
+
+export function getCacheDir(): string {
+  return path.join(getBaseDir(), "cache");
+}
+
+export function getJobLogsDir(): string {
+  return path.join(getLogsDir(), "jobs");
+}
+
+export function getWorkspaceDir(): string {
+  return path.join(getBaseDir(), "workspace");
+}
+
+export function getUploadsDir(): string {
+  return path.join(getBaseDir(), "uploads");
+}
+
+export function getPromptsDir(): string {
+  return path.join(getBaseDir(), "prompts");
+}
+
+export function getModelProfilesDir(): string {
+  return path.join(getBaseDir(), "model-profiles");
+}
+
+export function getPromptFragmentsDir(): string {
+  return path.join(getPromptsDir(), "prompt-fragments");
+}
+
+export function getSessionsDir(): string {
+  return path.join(getBaseDir(), "sessions");
+}
+
+export function getSessionFilePath(chatId: string): string {
+  return path.join(getSessionsDir(), `${chatId}.json`);
+}
+
+export function getSkillDir(skillName: string): string {
+  return path.join(getSkillsDir(), skillName);
+}
+
+
+export function getSkillStatePath(skillName: string, stateScope: string | null = null): string {
+  if (stateScope) {
+    const scopeHash: string = crypto.createHash("sha256").update(`${stateScope}:${skillName}`).digest("hex");
+    return path.join(getSkillStateDir(), `${scopeHash}.json`);
+  }
+
+  return path.join(getSkillDir(skillName), "state.json");
+}
+
+
+export function getTimedFilePath(taskId: string): string {
+  return path.join(getTimedDir(), `${taskId}.json`);
+}
+
+export function getPromptFilePath(promptName: string): string {
+  return path.join(getPromptsDir(), `${promptName}.md`);
+}
+
+export function getRssStateDir(): string {
+  return path.join(getBaseDir(), "rss-state");
+}
+
+export function getChannelsFilePath(): string {
+  return path.join(getBaseDir(), "channels.yaml");
+}
+
+export function getMcpServersFilePath(): string {
+  return path.join(getBaseDir(), "mcp-servers.json");
+}
+
+export function getRssStateFilePath(feedUrl: string): string {
+  const hash: string = crypto.createHash("sha256").update(feedUrl).digest("hex");
+  return path.join(getRssStateDir(), `${hash}.json`);
+}
+
+export function getDatabasesDir(): string {
+  return path.join(getBaseDir(), "databases");
+}
+
+export function getTelegramChatsFilePath(): string {
+  return path.join(getBaseDir(), "known-telegram-chats.json");
+}
+
+export function getBrainInterfaceTokenFilePath(): string {
+  return path.join(getBaseDir(), "brain-interface.token");
+}
+
+export function getModelsDir(): string {
+  const envModelsDir: string | undefined = process.env.BLACKDOGBOT_MODELS_DIR;
+
+  if (envModelsDir && envModelsDir.trim().length > 0) {
+    return envModelsDir;
+  }
+
+  return path.join(getBaseDir(), "models");
+}
+
+export function getDatabasePath(databaseName: string): string {
+  return path.join(getDatabasesDir(), `${databaseName}.db`);
+}
+
+export function getTelegramOutboxDbPath(): string {
+  return getDatabasePath("telegram-outbox");
+}
+
+export async function ensureDirectoryExistsAsync(dirPath: string): Promise<void> {
+  await fs.mkdir(dirPath, { recursive: true });
+}
+
+export async function ensureAllDirectoriesAsync(): Promise<void> {
+  const directories: string[] = [
+    getBaseDir(),
+    getSkillsDir(),
+    getJobsDir(),
+    getKnowledgeDir(),
+    getLanceDbDir(),
+    getTimedDir(),
+    getLogsDir(),
+    getCacheDir(),
+    getJobLogsDir(),
+    getWorkspaceDir(),
+    getUploadsDir(),
+    getRssStateDir(),
+    getPromptsDir(),
+    getPromptFragmentsDir(),
+    getModelProfilesDir(),
+    getDatabasesDir(),
+    getSessionsDir(),
+    getModelsDir(),
+  ];
+
+  for (const dir of directories) {
+    await ensureDirectoryExistsAsync(dir);
+  }
+}
+
+
+export function getOldDatumBackupDir(): string {
+  return path.join(getBaseDir(), ".old.datumofthesave");
+}
+
+export function getCommitHashPath(): string {
+  return path.join(getBaseDir(), ".commit-hash");
+}
+
+//#endregion Public functions

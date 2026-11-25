@@ -12,7 +12,7 @@ export default defineConfig({
     testTimeout: 3000000,   // 50 minutes
     hookTimeout: 3000000,   // 50 minutes
     env: {
-      BLACKDOGBOT_MODELS_DIR: path.join(os.homedir(), ".blackdogbot", "models"),
+      BLACKDOGBOT_MODELS_DIR: process.env.BLACKDOGBOT_MODELS_DIR ?? path.join(os.homedir(), ".blackdogbot", "models"),
     },
   },
 });

@@ -1,5 +1,6 @@
 """Isolated release/migration orchestration tests. No service or network calls."""
 import importlib.util
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -46,18 +47,26 @@ class MigrationReleaseTests(unittest.TestCase):
         self.events = []
         self.transaction = "t-123-abc"
 
-    def activate(self):
+    def activate(self, **options):
         return guard.activate(self.state, "blackdogbot.service", self.new_sha, None,
-                              data_dir=self.data, update_containers=False, timeout=10)
+                              data_dir=self.data, update_containers=False, timeout=10, **options)
 
-    def migration(self, release, data_dir, action, transaction=None):
+    def migration(self, release, data_dir, action, transaction=None, **options):
         self.assertEqual(data_dir, self.data)
         self.events.append(action)
         if action == "plan":
-            return {"protocolVersion": 1, "needsMigration": release == self.new}
+            return {"protocolVersion": 1, "backupProtocolVersion": 1, "backupReady": True, "needsMigration": release == self.new}
+        if action in ("backup-create", "backup-verify"):
+            self.assertEqual(self.current.resolve(), self.old)
+            self.assertEqual(self.events[-2], "stop" if action == "backup-create" else "backup-create")
+            return {"protocolVersion": 1, "status": "created" if action == "backup-create" else "verified",
+                    "backupPath": str(options["backup_dir"]), "manifestSha256": "a" * 64,
+                    "fileCount": 2, "totalBytes": 10}
         if action == "apply":
             self.assertEqual(self.current.resolve(), self.new)
-            self.assertEqual(self.events[-2], "stop")
+            self.assertEqual(self.events[-2], "backup-verify")
+            self.assertEqual(self.outcome()["status"], "backup_ready")
+            self.assertEqual(self.outcome()["backup"]["manifestSha256"], "a" * 64)
             (self.data / ".data-schema.json").write_text('{"version":1}')
             return {"protocolVersion": 1, "status": "applied", "transactionId": self.transaction}
         if action == "rollback":
@@ -79,10 +88,162 @@ class MigrationReleaseTests(unittest.TestCase):
              patch.object(guard, "migration_command", side_effect=self.migration), \
              patch.object(guard, "restart_and_probe", return_value=(True, 10.0)) as start:
             self.assertTrue(self.activate())
-        self.assertEqual(self.events, ["plan", "stop", "apply"])
+        self.assertEqual(self.events, ["plan", "stop", "backup-create", "backup-verify", "apply"])
         self.assertEqual(self.current.resolve(), self.new)
         self.assertEqual(self.outcome()["migration_transaction"], self.transaction)
         start.assert_called_once()
+
+    def test_candidate_without_backup_capability_is_rejected_before_stop(self):
+        with patch.object(guard, "migration_command", return_value={"protocolVersion": 1, "needsMigration": False}), \
+             patch.object(guard, "stop_and_verify") as stop:
+            with self.assertRaisesRegex(RuntimeError, "does not support verified"):
+                self.activate()
+        stop.assert_not_called()
+        self.assertEqual(self.current.resolve(), self.old)
+
+    def test_backup_preflight_issue_is_actionable_and_never_stops_service(self):
+        issue = "Configured skill directory is outside the runtime data root."
+        plan = {"protocolVersion": 1, "backupProtocolVersion": 1, "backupReady": False,
+                "backupIssue": issue, "needsMigration": False}
+        with patch.object(guard, "migration_command", return_value=plan), \
+             patch.object(guard, "stop_and_verify") as stop:
+            with self.assertRaisesRegex(guard.MigrationCommandError, "outside the runtime"):
+                self.activate()
+        stop.assert_not_called()
+        self.assertEqual(self.outcome()["status"], "preflight_failed")
+        self.assertEqual(self.outcome()["reason"], issue)
+        self.assertTrue(self.outcome()["service_unchanged"])
+        self.assertEqual(self.current.resolve(), self.old)
+
+    def test_structured_cli_failure_preserves_safe_reason_and_transaction(self):
+        failure = json.dumps({"protocolVersion": 1, "status": "failed",
+                              "error": "Task changed after migration", "transactionId": self.transaction})
+        error = subprocess.CalledProcessError(1, ["tsx"], output=failure, stderr="UNSAFE STDERR")
+        with patch.object(guard, "run", side_effect=error):
+            with self.assertRaises(guard.MigrationCommandError) as caught:
+                guard.migration_command(self.new, self.data, "rollback", self.transaction)
+        self.assertEqual(str(caught.exception), "Task changed after migration")
+        self.assertEqual(caught.exception.transaction_id, self.transaction)
+        self.assertNotIn("UNSAFE STDERR", str(caught.exception))
+
+    def test_unknown_cli_failure_does_not_expose_raw_output(self):
+        error = subprocess.CalledProcessError(1, ["tsx"], output="private key in raw output", stderr="secret stderr")
+        with patch.object(guard, "run", side_effect=error):
+            with self.assertRaises(guard.MigrationCommandError) as caught:
+                guard.migration_command(self.new, self.data, "plan")
+        self.assertNotIn("private key", str(caught.exception))
+        self.assertNotIn("secret stderr", str(caught.exception))
+        self.assertIsNone(caught.exception.transaction_id)
+
+    def test_failed_plan_records_structured_reason_without_mutation(self):
+        error = guard.MigrationCommandError("Unsupported schema version")
+        with patch.object(guard, "migration_command", side_effect=error), \
+             patch.object(guard, "stop_and_verify") as stop:
+            with self.assertRaises(guard.MigrationCommandError):
+                self.activate()
+        stop.assert_not_called()
+        self.assertEqual(self.outcome()["reason"], "Unsupported schema version")
+        self.assertTrue(self.outcome()["data_unchanged"])
+
+    def test_legacy_candidate_without_backup_command_is_not_silently_unprotected(self):
+        self.cli.unlink()
+        with patch.object(guard, "stop_and_verify") as stop:
+            with self.assertRaisesRegex(RuntimeError, "does not support verified"):
+                self.activate()
+        stop.assert_not_called()
+        self.assertEqual(self.current.resolve(), self.old)
+
+    def test_backup_creation_failure_keeps_old_pointer_and_blocks_migration(self):
+        def migration(release, data_dir, action, transaction=None, **options):
+            if action == "backup-create":
+                raise RuntimeError("not enough disk space")
+            return self.migration(release, data_dir, action, transaction, **options)
+        with patch.object(guard, "service_state", return_value=("active", 44)), \
+             patch.object(guard, "stop_and_verify", side_effect=self.stop) as stop, \
+             patch.object(guard, "migration_command", side_effect=migration) as commands, \
+             patch.object(guard, "restart_and_probe") as start:
+            self.assertFalse(self.activate())
+        stop.assert_called_once()
+        start.assert_not_called()
+        self.assertEqual([c.args[2] for c in commands.call_args_list], ["plan", "backup-create"])
+        self.assertEqual(self.current.resolve(), self.old)
+        self.assertEqual(self.outcome()["status"], "backup_failed")
+        self.assertTrue(self.outcome()["data_unchanged"])
+        self.assertTrue(self.outcome()["service_stopped"])
+
+    def test_backup_verification_mismatch_blocks_activation(self):
+        def migration(release, data_dir, action, transaction=None, **options):
+            result = self.migration(release, data_dir, action, transaction, **options)
+            if action == "backup-verify":
+                result["manifestSha256"] = "b" * 64
+            return result
+        with patch.object(guard, "service_state", return_value=("active", 44)), \
+             patch.object(guard, "stop_and_verify", side_effect=self.stop), \
+             patch.object(guard, "migration_command", side_effect=migration), \
+             patch.object(guard, "restart_and_probe") as start:
+            self.assertFalse(self.activate())
+        start.assert_not_called()
+        self.assertNotIn("apply", self.events)
+        self.assertEqual(self.current.resolve(), self.old)
+        self.assertFalse(self.outcome()["backup_verified"])
+
+    def test_backup_receipt_is_durable_before_pointer_switch(self):
+        with patch.object(guard, "service_state", return_value=("active", 44)), \
+             patch.object(guard, "stop_and_verify", side_effect=self.stop), \
+             patch.object(guard, "migration_command", side_effect=self.migration), \
+             patch.object(guard, "point_to", side_effect=RuntimeError("simulated process interruption")):
+            with self.assertRaisesRegex(RuntimeError, "simulated process interruption"):
+                self.activate()
+        self.assertEqual(self.current.resolve(), self.old)
+        self.assertEqual(self.outcome()["status"], "backup_ready")
+        self.assertEqual(self.outcome()["backup"]["manifestSha256"], "a" * 64)
+        self.assertNotIn("apply", self.events)
+
+    def test_backup_root_is_external_and_each_destination_is_unique(self):
+        first = guard.backup_destination(self.data, self.new_sha, None)
+        second = guard.backup_destination(self.data, self.new_sha, None)
+        self.assertEqual(first.parent, self.data.parent / "data-backups")
+        self.assertNotEqual(first, second)
+        self.assertFalse(first.exists())
+
+    def test_internal_backup_root_is_rejected_before_stop(self):
+        with patch.object(guard, "migration_command", side_effect=self.migration), \
+             patch.object(guard, "stop_and_verify") as stop:
+            with self.assertRaisesRegex(RuntimeError, "outside the runtime"):
+                self.activate(backup_root=self.data / "backups")
+        stop.assert_not_called()
+
+    def test_import_flag_is_forwarded_only_to_plan_and_apply(self):
+        with patch.object(guard, "service_state", return_value=("active", 44)), \
+             patch.object(guard, "stop_and_verify", side_effect=self.stop), \
+             patch.object(guard, "migration_command", side_effect=self.migration) as commands, \
+             patch.object(guard, "restart_and_probe", return_value=(True, 10.0)):
+            self.assertTrue(self.activate(import_legacy_tasks=True))
+        for call in commands.call_args_list:
+            self.assertEqual(call.kwargs.get("import_legacy_tasks", False), call.args[2] in ("plan", "apply"))
+
+    def test_backup_verify_command_is_read_only_and_has_no_live_data_argument(self):
+        backup = self.root / "saved-backup"
+        result = subprocess.CompletedProcess([], 0, json.dumps({
+            "protocolVersion": 1, "status": "verified", "backupPath": str(backup),
+            "manifestSha256": "a" * 64, "fileCount": 1, "totalBytes": 10,
+        }))
+        with patch.object(guard, "run", return_value=result) as run:
+            guard.migration_command(self.new, self.data, "backup-verify", backup_dir=backup)
+        argv = run.call_args.args[0]
+        self.assertNotIn("--offline", argv)
+        self.assertNotIn("--data-dir", argv)
+        self.assertIn("--backup-dir", argv)
+
+    def test_backup_receipt_requires_a_manifest_hash(self):
+        backup = self.root / "saved-backup"
+        result = subprocess.CompletedProcess([], 0, json.dumps({
+            "protocolVersion": 1, "status": "created", "backupPath": str(backup),
+            "fileCount": 1, "totalBytes": 10,
+        }))
+        with patch.object(guard, "run", return_value=result):
+            with self.assertRaisesRegex(RuntimeError, "manifest hash"):
+                guard.migration_command(self.new, self.data, "backup-create", backup_dir=backup)
 
     def test_failed_health_restores_data_before_starting_previous_code(self):
         def start(unit, pid, timeout):
@@ -96,15 +257,92 @@ class MigrationReleaseTests(unittest.TestCase):
              patch.object(guard, "migration_command", side_effect=self.migration), \
              patch.object(guard, "restart_and_probe", side_effect=start):
             self.assertFalse(self.activate())
-        self.assertEqual(self.events, ["plan", "stop", "apply", "start-new", "stop", "rollback", "start-old"])
+        self.assertEqual(self.events, ["plan", "stop", "backup-create", "backup-verify", "apply", "start-new", "stop", "rollback", "start-old"])
         self.assertEqual(self.current.resolve(), self.old)
         self.assertEqual(self.outcome()["status"], "rolled_back")
 
+    def test_journal_write_failure_does_not_prevent_stopping_and_rollback(self):
+        def start(unit, pid, timeout):
+            return self.current.resolve() == self.old, 10.0
+        def failed_journal(*args):
+            self.assertEqual(self.events[-1], "stop")
+            raise OSError("simulated full disk")
+        with patch.object(guard, "service_state", return_value=("active", 44)), \
+             patch.object(guard, "stop_and_verify", side_effect=self.stop), \
+             patch.object(guard, "migration_command", side_effect=self.migration), \
+             patch.object(guard, "restart_and_probe", side_effect=start), \
+             patch.object(guard, "save_journal", side_effect=failed_journal):
+            self.assertFalse(self.activate())
+        self.assertEqual(self.events.count("stop"), 2)
+        self.assertIn("rollback", self.events)
+        self.assertEqual(self.current.resolve(), self.old)
+        self.assertEqual(self.outcome()["status"], "rolled_back")
+        self.assertIsNone(self.outcome()["journal"])
+        self.assertEqual(self.outcome()["journal_save_error"], "OSError")
+
+    def test_final_report_failure_does_not_mask_successful_restore(self):
+        real_report = guard.report
+        def report(state, outcome):
+            if outcome["status"] == "rolled_back":
+                raise OSError("simulated full disk")
+            return real_report(state, outcome)
+        def start(unit, pid, timeout):
+            return self.current.resolve() == self.old, 10.0
+        error_output = io.StringIO()
+        with patch.object(guard, "service_state", return_value=("active", 44)), \
+             patch.object(guard, "stop_and_verify", side_effect=self.stop), \
+             patch.object(guard, "migration_command", side_effect=self.migration), \
+             patch.object(guard, "restart_and_probe", side_effect=start), \
+             patch.object(guard, "report", side_effect=report), \
+             patch.object(guard.sys, "stderr", error_output):
+            self.assertFalse(self.activate())
+        self.assertEqual(self.current.resolve(), self.old)
+        self.assertIn("rollback", self.events)
+        self.assertIn("reached rolled_back", error_output.getvalue())
+
+    def test_recovery_failure_report_error_cannot_start_prior_code(self):
+        real_report = guard.report
+        def report(state, outcome):
+            if outcome["status"] == "data_recovery_failed":
+                raise OSError("simulated full disk")
+            return real_report(state, outcome)
+        def stop(unit):
+            self.stop(unit)
+            if self.events.count("stop") > 1:
+                raise RuntimeError("still running")
+        with patch.object(guard, "service_state", return_value=("active", 44)), \
+             patch.object(guard, "stop_and_verify", side_effect=stop), \
+             patch.object(guard, "migration_command", side_effect=self.migration), \
+             patch.object(guard, "restart_and_probe", return_value=(False, 10.0)) as start, \
+             patch.object(guard, "report", side_effect=report), \
+             patch.object(guard.sys, "stderr", io.StringIO()):
+            self.assertFalse(self.activate())
+        start.assert_called_once()
+        self.assertNotIn("rollback", self.events)
+        self.assertEqual(self.current.resolve(), self.new)
+
+    def test_healthy_report_error_does_not_trigger_rollback(self):
+        real_report = guard.report
+        def report(state, outcome):
+            if outcome["status"] == "healthy":
+                raise OSError("simulated full disk")
+            return real_report(state, outcome)
+        with patch.object(guard, "service_state", return_value=("active", 44)), \
+             patch.object(guard, "stop_and_verify", side_effect=self.stop), \
+             patch.object(guard, "migration_command", side_effect=self.migration), \
+             patch.object(guard, "restart_and_probe", return_value=(True, 10.0)), \
+             patch.object(guard, "report", side_effect=report), \
+             patch.object(guard.sys, "stderr", io.StringIO()):
+            self.assertTrue(self.activate())
+        self.assertEqual(self.current.resolve(), self.new)
+        self.assertNotIn("rollback", self.events)
+        self.assertEqual(self.events.count("stop"), 1)
+
     def test_apply_failure_retains_candidate_gate_and_leaves_service_stopped(self):
-        def migration(release, data_dir, action, transaction=None):
+        def migration(release, data_dir, action, transaction=None, **options):
             if action == "apply":
                 raise subprocess.CalledProcessError(1, ["tsx"])
-            return self.migration(release, data_dir, action, transaction)
+            return self.migration(release, data_dir, action, transaction, **options)
         with patch.object(guard, "service_state", return_value=("active", 44)), \
              patch.object(guard, "stop_and_verify", side_effect=self.stop), \
              patch.object(guard, "migration_command", side_effect=migration), \
@@ -133,10 +371,10 @@ class MigrationReleaseTests(unittest.TestCase):
         self.assertEqual(self.outcome()["status"], "stop_failed")
 
     def test_restore_conflict_never_starts_old_code(self):
-        def migration(release, data_dir, action, transaction=None):
+        def migration(release, data_dir, action, transaction=None, **options):
             if action == "rollback":
                 raise RuntimeError("Task was edited after migration")
-            return self.migration(release, data_dir, action, transaction)
+            return self.migration(release, data_dir, action, transaction, **options)
         with patch.object(guard, "service_state", return_value=("active", 44)), \
              patch.object(guard, "stop_and_verify", side_effect=self.stop), \
              patch.object(guard, "migration_command", side_effect=migration), \
@@ -187,16 +425,18 @@ class MigrationReleaseTests(unittest.TestCase):
             guard.activate(self.state, "blackdogbot.service", self.new_sha, None, data_dir=link)
 
     def test_failed_stop_during_recovery_records_that_candidate_may_be_running(self):
+        def stop(unit):
+            self.stop(unit)
+            if self.events.count("stop") > 1:
+                raise RuntimeError("still running")
         with patch.object(guard, "service_state", return_value=("active", 44)), \
-             patch.object(guard, "stop_and_verify", side_effect=[None, RuntimeError("still running")]), \
-             patch.object(guard, "migration_command", side_effect=lambda release, data, action, transaction=None: {
-                 "protocolVersion": 1, "needsMigration": True, "status": "applied", "transactionId": self.transaction,
-             }) as migration, \
+             patch.object(guard, "stop_and_verify", side_effect=stop), \
+             patch.object(guard, "migration_command", side_effect=self.migration) as migration, \
              patch.object(guard, "restart_and_probe", return_value=(False, 10.0)):
             self.assertFalse(self.activate())
         self.assertFalse(self.outcome()["service_stopped"])
         self.assertEqual(self.outcome()["recovery_phase"], "stop_candidate")
-        self.assertEqual([c.args[2] for c in migration.call_args_list], ["plan", "apply"])
+        self.assertEqual([c.args[2] for c in migration.call_args_list], ["plan", "backup-create", "backup-verify", "apply"])
         self.assertEqual(self.current.resolve(), self.new)
 
     def real_migration_fixture(self):
@@ -211,6 +451,8 @@ class MigrationReleaseTests(unittest.TestCase):
             "ai:\n  provider: openai-compatible\n  openAiCompatible:\n"
             "    baseUrl: http://127.0.0.1:9/v1\n    apiKey: test-only\n    model: fixture\n"
             "scheduler:\n  enabled: false\n  timezone: UTC\n"
+            "skills:\n  directories: []\n  autoSetup: false\n"
+            "knowledge:\n  lancedbPath: " + json.dumps(str(self.data / "knowledge/lancedb")) + "\n"
         )
         original = (repository / "tests/fixtures/migrations/timed/legacy-interval.json").read_bytes()
         task = self.data / "timed/historical-task-1.json"
@@ -239,6 +481,10 @@ class MigrationReleaseTests(unittest.TestCase):
         self.assertFalse((self.data / ".data-schema.json").exists())
         self.assertEqual(self.current.resolve(), self.old)
         self.assertEqual(self.outcome()["status"], "rolled_back")
+        backup = self.outcome()["backup"]
+        self.assertTrue(Path(backup["backupPath"]).is_dir())
+        verified = guard.migration_command(self.new, self.data, "backup-verify", backup_dir=Path(backup["backupPath"]))
+        self.assertEqual(verified["manifestSha256"], backup["manifestSha256"])
 
     @unittest.skipUnless((MODULE_PATH.parents[1] / "node_modules/.bin/tsx").is_file(), "pnpm dependencies required")
     def test_real_cli_keeps_post_upgrade_task_edit_and_blocks_old_code(self):
@@ -263,6 +509,7 @@ class MigrationReleaseTests(unittest.TestCase):
         self.assertEqual(self.current.resolve(), self.new)
         self.assertEqual(self.outcome()["status"], "data_recovery_failed")
         self.assertTrue(self.outcome()["service_stopped"])
+        self.assertTrue(Path(self.outcome()["backup"]["backupPath"]).is_dir())
 
     def test_same_release_stopped_is_not_reported_as_success(self):
         guard.point_to(self.current, self.new)

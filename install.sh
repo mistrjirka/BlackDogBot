@@ -96,29 +96,42 @@ check_dependencies() {
     echo -e "${YELLOW}Checking dependencies...${NC}"
     
     if ! command -v node &> /dev/null; then
-        print_error "Node.js is not installed. Please install Node.js 22+ first."
+        print_error "Node.js is not installed. Please install Node.js 22.13.0 or newer first."
         exit 1
     fi
     
-    NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
-    if [ "$NODE_VERSION" -lt 22 ]; then
-        print_error "Node.js version 22+ is required. Current version: $(node -v)"
+    if ! node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 13) ? 0 : 1)'; then
+        print_error "Node.js 22.13.0 or newer is required. Current version: $(node -v)"
         exit 1
     fi
     print_success "Node.js $(node -v)"
-    
-    if ! command -v pnpm &> /dev/null; then
-        print_warning "pnpm not found. Installing..."
-        # npm global prefixes are often root-owned. Keep bootstrap entirely
-        # within the requesting user\'s home directory.
-        npm install --global --prefix "$HOME/.local" pnpm
-        export PATH="$HOME/.local/bin:$PATH"
-        command -v pnpm >/dev/null || { print_error "User-local pnpm installation failed"; exit 1; }
-        print_success "pnpm installed in $HOME/.local/bin"
-    else
-        print_success "pnpm $(pnpm -v)"
+
+    if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'; then
+        print_error "Python 3.9 or newer is required for guarded updates and atomic data backups. Install it before continuing."
+        exit 1
     fi
-    
+
+    local required_pnpm
+    required_pnpm="$(node -e 'const pkg = require(process.argv[1]); if (!/^pnpm@[0-9]+\.[0-9]+\.[0-9]+$/.test(pkg.packageManager ?? "")) process.exit(1); console.log(pkg.packageManager.slice(5))' "$(get_script_dir)/package.json")" || {
+        print_error "package.json must declare an exact pnpm version."
+        exit 1
+    }
+    local installed_pnpm=""
+    if command -v pnpm >/dev/null 2>&1; then
+        installed_pnpm="$(pnpm --version 2>/dev/null || true)"
+    fi
+    if [ "$installed_pnpm" != "$required_pnpm" ]; then
+        print_info "Installing the declared pnpm version: $required_pnpm"
+        npm install --global --prefix "$HOME/.local" "pnpm@$required_pnpm"
+        export PATH="$HOME/.local/bin:$PATH"
+        hash -r
+        if [ "$(pnpm --version 2>/dev/null || true)" != "$required_pnpm" ]; then
+            print_error "The declared pnpm version is not available on PATH."
+            exit 1
+        fi
+    fi
+    print_success "pnpm $required_pnpm"
+
     if ! command -v dot &> /dev/null; then
         print_warning "Graphviz (dot) not found. Graph rendering will not work."
         print_warning "Install with: sudo pacman -S graphviz (Arch) or sudo apt install graphviz (Debian/Ubuntu)"
@@ -141,6 +154,10 @@ get_script_dir() {
     cd "$(dirname "$0")" && pwd
 }
 
+verify_native_sqlite() {
+    node --input-type=module -e 'import Database from "better-sqlite3"; const db = new Database(":memory:"); db.prepare("SELECT 1").get(); db.close();' >/dev/null 2>&1
+}
+
 install_dependencies() {
     echo -e "${YELLOW}Installing dependencies...${NC}"
     
@@ -150,24 +167,16 @@ install_dependencies() {
     pnpm install --frozen-lockfile
     print_success "Dependencies installed"
     
-    # Verify native addons were built correctly
-    echo -e "${YELLOW}Verifying native addons...${NC}"
-    
-    # Check better-sqlite3
-    SQLITE_BINDING=$(find node_modules -name "better_sqlite3.node" -type f 2>/dev/null | head -1)
-    if [ -z "$SQLITE_BINDING" ]; then
-        print_warning "better-sqlite3 native addon not found, rebuilding..."
-        pnpm rebuild better-sqlite3 2>/dev/null || true
-        SQLITE_BINDING=$(find node_modules -name "better_sqlite3.node" -type f 2>/dev/null | head -1)
-        if [ -n "$SQLITE_BINDING" ]; then
-            print_success "better-sqlite3 rebuilt successfully"
-        else
-            print_error "Failed to build better-sqlite3. You may need to install build tools (gcc, make, python3)"
+    # Loading and querying detects wrong-ABI or unusable native bindings too.
+    if ! verify_native_sqlite; then
+        print_warning "SQLite native addon is unusable. Rebuilding..."
+        if ! pnpm rebuild better-sqlite3 || ! verify_native_sqlite; then
+            print_error "SQLite native addon is still unusable. Check the Node version and build tools (C++, make, Python 3), then retry."
+            exit 1
         fi
-    else
-        print_success "better-sqlite3 native addon OK"
     fi
-    
+    print_success "SQLite native addon verified"
+
     echo ""
 }
 

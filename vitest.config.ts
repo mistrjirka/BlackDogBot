@@ -1,6 +1,4 @@
 import { defineConfig } from "vitest/config";
-import os from "node:os";
-import path from "node:path";
 
 export default defineConfig({
   test: {
@@ -36,7 +34,8 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 60000,
     env: {
-      BLACKDOGBOT_MODELS_DIR: path.join(os.homedir(), ".blackdogbot", "models"),
+      BLACKDOGBOT_TEST_LIVE_MODEL: "0",
+      BLACKDOGBOT_RUN_LIVE_PROMPT_AUDIT: "0",
     },
   },
 });

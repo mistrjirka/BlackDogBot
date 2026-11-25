@@ -32,6 +32,24 @@ class GuardedReleaseTests(unittest.TestCase):
             directory.mkdir()
             (directory / ".blackdog-release-tested").write_text(revision)
         (self.state / "current").symlink_to(self.old)
+        cli = self.new / "src/migrations/cli.ts"
+        cli.parent.mkdir(parents=True)
+        cli.write_text("// test candidate")
+        migrations = patch.object(guard, "migration_command", return_value={
+            "protocolVersion": 1, "backupProtocolVersion": 1, "backupReady": True, "needsMigration": False,
+            "status": "unchanged", "transactionId": None,
+        })
+        migrations.start()
+        self.addCleanup(migrations.stop)
+        stopped = patch.object(guard, "stop_and_verify")
+        stopped.start()
+        self.addCleanup(stopped.stop)
+        backups = patch.object(guard, "create_verified_backup", side_effect=lambda release, data, destination: {
+            "protocolVersion": 1, "status": "verified", "backupPath": str(destination),
+            "manifestSha256": "a" * 64, "fileCount": 0, "totalBytes": 0,
+        })
+        backups.start()
+        self.addCleanup(backups.stop)
 
     def test_atomic_switch_and_previous_release_remains(self):
         guard.point_to(self.state / "current", self.new)

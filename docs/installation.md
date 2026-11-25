@@ -2,8 +2,10 @@
 
 ## Requirements
 
-- Node.js >= 22 (including Node.js 26)
-- pnpm
+- Linux with a systemd user session
+- Node.js >= 22.13.0 (including Node.js 26)
+- Python 3.9 or newer
+- The exact pnpm version declared in `package.json#packageManager`
 - Git (for updating)
 - Docker & Docker Compose (optional, for SearXNG and Scrapling services)
 
@@ -38,8 +40,8 @@ cd BlackDogBot
 ./install.sh
 ```
 
-Requirements: Node.js 22+, Bash, Git, a systemd **user** session, and pnpm
-(installed by the wizard if missing). Docker Engine and Compose are optional.
+Requirements: Node.js 22.13.0+, Python 3.9+, Bash, Git, a systemd **user** session, and
+the declared pnpm version (installed by the wizard when needed). Docker Engine and Compose are optional.
 The wizard configures the model, messaging, SearXNG and Scrapling, and installs
 a **non-root user service** by default. It then prepares and starts a tested
 guarded release. It does **not** overwrite existing installations.
@@ -60,7 +62,8 @@ pnpm install --frozen-lockfile
 
 ### 2. Create Configuration
 
-Create `~/.blackdogbot/config.yaml`:
+Create `~/.blackdogbot/config.yaml`. Replace `YOUR_USER` below with the actual
+absolute home directory. The vector-store path does not expand `~`:
 
 ```yaml
 ai:
@@ -85,7 +88,7 @@ knowledge:
   embeddingProvider: local
   embeddingModelPath: onnx-community/Qwen3-Embedding-0.6B-ONNX
   embeddingOpenRouterModel: nvidia/llama-nemotron-embed-vl-1b-v2:free
-  lancedbPath: ~/.blackdogbot/knowledge/lancedb
+  lancedbPath: /home/YOUR_USER/.blackdogbot/knowledge/lancedb
 
 skills:
   directories: []

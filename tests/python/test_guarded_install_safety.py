@@ -52,7 +52,7 @@ class InstallerSafetyTests(unittest.TestCase):
 
     def test_local_pnpm_install_does_not_need_root(self):
         installer=SOURCE.read_text()
-        self.assertIn('npm install --global --prefix "$HOME/.local" pnpm',installer)
+        self.assertIn('npm install --global --prefix "$HOME/.local" "pnpm@$required_pnpm"',installer)
         self.assertNotIn('npm install -g pnpm',installer)
         self.assertIn('export PATH="$HOME/.local/bin:$PATH"',installer)
         service=(SOURCE.parent/"scripts/install-user-service.sh").read_text()

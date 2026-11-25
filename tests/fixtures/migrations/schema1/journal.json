@@ -1,0 +1,18 @@
+{
+  "sequence": 1,
+  "formatVersion": 1,
+  "id": "t-1770000000000-00000000-0000-4000-8000-000000000001",
+  "createdAt": "2026-02-02T02:40:00.000Z",
+  "fromVersion": 0,
+  "toVersion": 1,
+  "status": "applied",
+  "files": [
+    {
+      "path": ".data-schema.json",
+      "beforeSha256": null,
+      "afterSha256": "d8ec29344061731119823645353da844314d9a990692e1732eac52fb5d7fa9fc",
+      "beforeMode": null,
+      "afterMode": 384
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "commit": "d00c480b5e9b0381b430e8f6a3c89ec269238f6a",
+  "files": {
+    "src/migrations/cli.ts": "7bd6ba62e9c61ecfe38a1f7cb78ba411cd43967478b64ae76e04ba3c1945f772",
+    "src/migrations/data-migrations.ts": "884400ad34197379969ee2c551f7ca68c8fac330150a828f6482df479648ae0d",
+    "src/migrations/data-lock.ts": "ab3c5b6bab33efed4bc6f5cac32e4b6069e345be31da4e09d0a198aa45f3c41d",
+    "src/migrations/legacy-timed-tasks.ts": "79966c6e3f554aacb6beb3a8b4a6272cbc6f1ea0739778229731cda7a7a03a5a",
+    "src/migrations/legacy-cron-records.ts": "4de83e53380cd1149e751c87b2caf8ab06d8a2a2a1533be9adf49fcb1d28f190",
+    "src/shared/schemas/config.schemas.ts": "a5c677aa0d69802c39575841db992ab4f8c21e6fff879ebbe78238570ee80d35",
+    "src/shared/schemas/cron.schemas.ts": "aff4cb85c2f42ef4a3dc7644cfdd20d7380fa42364a32dc52dfd066a5dcade48",
+    "src/shared/constants.ts": "d6b77cfbe84110afd50c4b33541aac08bb438ddb259037165774b0b5c90e324c",
+    "src/utils/paths.ts": "54984ffe7fc2f7b15e73ac15fab556e4f3de25ba42f2014125434141285267d6"
+  }
+}

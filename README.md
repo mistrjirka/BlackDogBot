@@ -6,7 +6,7 @@ BlackDogBot runs under your **systemd user session**. Its optional web services 
 
 ## Quick start (Linux)
 
-Requirements: **Node.js 22+**, **Git**, **Bash**, and **pnpm** (installed by the wizard if missing). Docker Engine with the Compose plugin is optional but recommended for local web research. A running user systemd manager is required for the managed service.
+Requirements: **Node.js 22.13.0+**, **Python 3.9+**, **Git**, **Bash**, and the **pnpm version declared in `package.json`** (installed by the wizard when needed). Docker Engine with the Compose plugin is optional but recommended for local web research. A running user systemd manager is required for the managed service.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mistrjirka/BlackDogBot/main/scripts/bootstrap.sh | sh
@@ -59,7 +59,7 @@ With the managed service running, use `pnpm ask:local -- --max-steps 12 --timeou
 Do **not** rerun `install.sh` to upgrade an existing installation. Application updates are performed by an independent user-level guarded release manager:
 
 1. Prepare a chosen Git commit in an isolated worktree and run the typecheck and test suites.
-2. Switch the user service to the tested release and verify startup; roll back the app if the new release fails.
+2. Stop the user service, create and verify a persistent-data snapshot, apply supported migrations, and check the new release. If startup fails, restore unchanged migration-owned files before restarting compatible previous code.
 3. When the app is healthy, check upstream Docker images for **SearXNG and Scrapling** and test newer image digests in isolated containers. Upgrade each service separately, restoring its prior image if functional checks fail.
 
 Docker containers are updated on successful guarded application activation by default; pass `--skip-container-updates` to the release manager when you only want a code deployment. A Docker failure leaves the healthy bot release running but is recorded and reported.
@@ -75,12 +75,14 @@ See [guarded app updates](docs/guarded-self-update.md) and [guarded Docker updat
 | [Commands](docs/commands.md) | Telegram and Discord commands |
 | [Web research](docs/web-research-backends.md) | SearXNG, Scrapling, Playwright routing |
 | [Guarded self-update](docs/guarded-self-update.md) | Release snapshots, health checks, application rollback |
+| [Data migrations](docs/data-migrations.md) | Historical task formats, explicit imports, scoped recovery |
+| [Data backups](docs/data-backups.md) | Persistent-data snapshots, verification, staged restore |
 | [Guarded container updates](docs/guarded-container-update.md) | Latest digest discovery, canaries, Docker rollback |
 | [Architecture](docs/architecture.md) | Agent, services, skill and tool structure |
 | [Testing](docs/testing.md) | TypeScript and Python regression tests |
 | [Troubleshooting](docs/troubleshooting.md) | Diagnosing failed startup, MCP and scheduled jobs |
 
-For source contributions, clone the repository, run `pnpm install --frozen-lockfile`, `pnpm exec tsc --noEmit`, and `pnpm test:fast`. See [testing](docs/testing.md) and [code style](docs/code-style.md).
+For source contributions, use the declared pnpm version and run `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test:fast`, `pnpm test:python`, and `pnpm build`. GitHub CI runs these checks on Linux with Node 22, 24, and 26. CI validates commits but does not publish a versioned release. See [testing](docs/testing.md) and [code style](docs/code-style.md).
 
 ## License
 

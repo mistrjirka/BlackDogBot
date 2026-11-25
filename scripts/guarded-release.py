@@ -17,6 +17,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import uuid
 
 SERVICE_DEFAULT = "blackdogbot.service"
 ID_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -99,6 +100,16 @@ def report(state: Path, result: dict[str, object]) -> Path:
     return path
 
 
+def report_best_effort(state: Path, result: dict[str, object]) -> Path | None:
+    """Terminal diagnostics must not prevent or misreport a recovery decision."""
+    try:
+        return report(state, result)
+    except Exception as exc:
+        print(f"Guarded deployment reached {result.get('status', 'unknown')}, but the report could not be written ({type(exc).__name__}).",
+              file=sys.stderr)
+        return None
+
+
 def source_repository(explicit: Path | None, state: Path) -> Path:
     """Find the user's source checkout without embedding a maintainer's path."""
     def valid(candidate: Path) -> bool:
@@ -160,12 +171,12 @@ def prepare(repo: Path, state: Path, ref: str, chat: str | None) -> Path:
         run(["pnpm", "install", "--frozen-lockfile"], cwd=dest, timeout=600, log=log)
         run(["pnpm", "exec", "tsc", "--noEmit"], cwd=dest, timeout=180, log=log)
         run(["pnpm", "test:fast"], cwd=dest, timeout=600, log=log)
-        run(["python3", "-m", "unittest", "discover", "-s", "tests/python", "-p", "test_guarded_*.py", "-q"],
+        run(["python3", "-m", "unittest", "discover", "-s", "tests/python", "-p", "test_*.py", "-q"],
             cwd=dest, timeout=60, log=log)
         write_atomic(dest / ".blackdog-release-tested", rev + "\n")
         notify(state, chat, f"BlackDogBot candidate {rev[:12]} passed dependency, TypeScript and full fast tests. Activation not yet performed.")
     except Exception as exc:
-        report(state, {"status": "prepare_failed", "revision": rev, "error": type(exc).__name__,
+        report(state, {"status": "prepare_failed", "revision": rev, **error_details(exc),
                        "log": str(log), "candidate": str(dest), "live_unchanged": True})
         notify(state, chat, f"BlackDogBot candidate {rev[:12]} failed preparation ({type(exc).__name__}). Current bot unchanged; diagnostics: {log}")
         raise
@@ -351,19 +362,64 @@ def migration_script(release: Path) -> Path:
     return release / "src/migrations/cli.ts"
 
 
-def migration_command(release: Path, data_dir: Path, action: str, transaction: str | None = None) -> dict:
-    argv = [str(release / "node_modules/.bin/tsx"), str(migration_script(release)),
-            action, "--data-dir", str(data_dir)]
-    if action != "plan":
+class MigrationCommandError(RuntimeError):
+    """Only a supported CLI's sanitized failure fields may cross this boundary."""
+    def __init__(self, reason: str, transaction_id: str | None = None):
+        super().__init__(reason)
+        self.transaction_id = transaction_id
+
+
+def migration_failure(output: str | None) -> MigrationCommandError:
+    try:
+        failure = json.loads(output or "")
+    except (ValueError, TypeError):
+        failure = None
+    if (isinstance(failure, dict) and type(failure.get("protocolVersion")) is int
+            and failure["protocolVersion"] == 1 and failure.get("status") == "failed"
+            and isinstance(failure.get("error"), str) and failure["error"].strip()):
+        reason = failure["error"].replace("\r", " ").replace("\n", " ").strip()[:1000]
+        transaction = failure.get("transactionId")
+        if not isinstance(transaction, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", transaction):
+            transaction = None
+        return MigrationCommandError(reason, transaction)
+    return MigrationCommandError("Migration command failed without a supported structured error. Keep the service stopped if it was stopped.")
+
+
+def error_details(error: Exception) -> dict:
+    details = {"error": type(error).__name__}
+    if isinstance(error, MigrationCommandError):
+        details["reason"] = str(error)
+        if error.transaction_id is not None:
+            details["migration_transaction"] = error.transaction_id
+    return details
+
+
+def migration_command(release: Path, data_dir: Path, action: str, transaction: str | None = None, *,
+                      backup_dir: Path | None = None, import_legacy_tasks: bool = False) -> dict:
+    argv = [str(release / "node_modules/.bin/tsx"), str(migration_script(release)), action]
+    if action != "backup-verify":
+        argv.extend(["--data-dir", str(data_dir)])
+    if action not in ("plan", "backup-verify"):
         argv.append("--offline")
     if transaction is not None:
         argv.extend(["--transaction", transaction])
-    response = run(argv, cwd=release, timeout=600, separate_stderr=True)
+    if backup_dir is not None:
+        argv.extend(["--backup-dir", str(backup_dir)])
+    if import_legacy_tasks:
+        if action not in ("plan", "apply"):
+            raise ValueError("Legacy import is valid only for plan/apply")
+        argv.append("--import-legacy-tasks")
+    try:
+        response = run(argv, cwd=release, timeout=1800 if action.startswith("backup-") else 600, separate_stderr=True)
+    except subprocess.CalledProcessError as exc:
+        raise migration_failure(exc.stdout) from None
+    except subprocess.TimeoutExpired:
+        raise MigrationCommandError("Migration command timed out. Keep the service stopped and inspect the migration journal before recovery.") from None
     try:
         result = json.loads(response.stdout)
     except (ValueError, TypeError):
         raise RuntimeError("Migration command did not return valid JSON") from None
-    if not isinstance(result, dict) or result.get("protocolVersion") != 1:
+    if not isinstance(result, dict) or type(result.get("protocolVersion")) is not int or result["protocolVersion"] != 1:
         raise RuntimeError("Unsupported migration command protocol")
     if action == "plan":
         if not isinstance(result.get("needsMigration"), bool):
@@ -378,7 +434,40 @@ def migration_command(release: Path, data_dir: Path, action: str, transaction: s
             raise RuntimeError("Invalid migration transaction receipt")
     elif action == "rollback" and result.get("status") != "rolled_back":
         raise RuntimeError("Migration rollback did not complete")
+    elif action in ("backup-create", "backup-verify"):
+        expected_status = "created" if action == "backup-create" else "verified"
+        if result.get("status") != expected_status or result.get("backupPath") != str(backup_dir):
+            raise RuntimeError("Backup command returned an unexpected status or location")
+        digest = result.get("manifestSha256")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise RuntimeError("Backup command omitted a valid manifest hash")
+        if any(type(result.get(key)) is not int or result[key] < 0 for key in ("fileCount", "totalBytes")):
+            raise RuntimeError("Backup command omitted valid inventory totals")
     return result
+
+
+def backup_destination(data_dir: Path, rev: str, root: Path | None) -> Path:
+    root = root if root is not None else data_dir.parent / (data_dir.name + "-backups")
+    if not root.is_absolute():
+        raise RuntimeError("Backup root must be an absolute path")
+    root = Path(os.path.abspath(root))
+    if root == data_dir or root.is_relative_to(data_dir):
+        raise RuntimeError("Backup root must be outside the runtime data directory")
+    if any(candidate.is_symlink() for candidate in (root, *root.parents)):
+        raise RuntimeError("Backup root must not use symlink directories")
+    if root.exists() and not root.is_dir():
+        raise RuntimeError("Backup root must be a directory")
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return root / f"{stamp}-{rev[:12]}-{uuid.uuid4().hex}"
+
+
+def create_verified_backup(release: Path, data_dir: Path, destination: Path) -> dict:
+    created = migration_command(release, data_dir, "backup-create", backup_dir=destination)
+    verified = migration_command(release, data_dir, "backup-verify", backup_dir=destination)
+    for key in ("backupPath", "manifestSha256", "fileCount", "totalBytes"):
+        if created.get(key) != verified.get(key):
+            raise MigrationCommandError("Backup verification does not match the created snapshot")
+    return verified
 
 
 def can_start_release(release: Path, data_dir: Path) -> None:
@@ -415,7 +504,8 @@ def can_start_release(release: Path, data_dir: Path) -> None:
 
 
 def activate(state: Path, unit: str, ref: str, chat: str | None, *, timeout: int = 75,
-             update_containers: bool = True, data_dir: Path | None = None) -> bool:
+             update_containers: bool = True, data_dir: Path | None = None,
+             backup_root: Path | None = None, import_legacy_tasks: bool = False) -> bool:
     data_dir = normalize_data_directory(data_dir or default_data_directory())
     current = state / "current"
     if not current.is_symlink():
@@ -435,67 +525,106 @@ def activate(state: Path, unit: str, ref: str, chat: str | None, *, timeout: int
         return True
 
     has_migrations = migration_script(candidate).is_file()
+    migration_options = {"import_legacy_tasks": True} if import_legacy_tasks else {}
     if has_migrations:
         # Reject unknown data before stopping a healthy service. Apply replans
         # after shutdown because runtime files can change while planning.
-        migration_command(candidate, data_dir, "plan")
+        try:
+            plan = migration_command(candidate, data_dir, "plan", **migration_options)
+        except Exception as exc:
+            report(state, {"status": "preflight_failed", "revision": rev, "previous": previous.name,
+                           "unit": unit, "data_unchanged": True, "service_unchanged": True, **error_details(exc)})
+            raise
     else:
         can_start_release(candidate, data_dir)
+        plan = {}
+    if type(plan.get("backupProtocolVersion")) is not int or plan["backupProtocolVersion"] != 1:
+        raise RuntimeError("Candidate does not support verified persistent-data backups. Prepare a newer release before activation.")
+    if plan.get("backupReady") is not True:
+        issue = plan.get("backupIssue")
+        reason = issue.replace("\r", " ").replace("\n", " ").strip()[:1000] if isinstance(issue, str) else "Backup preflight is not ready. Inspect the migration plan."
+        error = MigrationCommandError(reason or "Backup preflight is not ready.")
+        report(state, {"status": "preflight_failed", "revision": rev, "previous": previous.name,
+                       "unit": unit, "data_unchanged": True, "service_unchanged": True, **error_details(error)})
+        raise error
+    destination = backup_destination(data_dir, rev, backup_root)
     _, old_pid = service_state(unit)
     validate_service_data_directory(unit, old_pid, data_dir)
     transaction: str | None = None
+    backup: dict | None = None
     notify(state, chat, f"BlackDogBot: activating tested release {rev[:12]}. Rollback release {previous.name[:12]} is preserved.")
-    if has_migrations:
-        try:
-            stop_and_verify(unit)
-        except Exception as exc:
-            report(state, {"status": "stop_failed", "revision": rev, "previous": previous.name,
-                           "unit": unit, "error": type(exc).__name__, "data_unchanged": True})
-            return False
-        # If this manager is interrupted during migration, a subsequent boot
-        # must use the candidate's pending-transaction startup checks.
-        point_to(current, candidate)
-        try:
-            receipt = migration_command(candidate, data_dir, "apply")
-            transaction = receipt.get("transactionId")
-        except Exception as exc:
-            report(state, {"status": "migration_failed", "revision": rev, "previous": previous.name,
-                           "unit": unit, "error": type(exc).__name__, "service_stopped": True,
-                           "data_dir": str(data_dir), "manual_recovery_required": True,
-                           "recovery_action": "Run candidate migration CLI recover while the service is stopped."})
-            notify(state, chat, "BlackDogBot data migration failed. The service remains stopped. Inspect the migration journal and recover before restarting.")
-            return False
-    else:
-        point_to(current, candidate)
+    try:
+        stop_and_verify(unit)
+    except Exception as exc:
+        report(state, {"status": "stop_failed", "revision": rev, "previous": previous.name,
+                       "unit": unit, **error_details(exc), "data_unchanged": True})
+        return False
+    try:
+        backup = create_verified_backup(candidate, data_dir, destination)
+        # This receipt is durable before any code or schema change. Every later
+        # outcome retains it, including failures and rollback conflicts.
+        report(state, {"status": "backup_ready", "revision": rev, "previous": previous.name,
+                       "unit": unit, "service_stopped": True, "backup": backup})
+    except Exception as exc:
+        report(state, {"status": "backup_failed", "revision": rev, "previous": previous.name,
+                       "unit": unit, **error_details(exc), "service_stopped": True,
+                       "data_unchanged": True, "backup_path": str(destination), "backup_verified": False})
+        notify(state, chat, "BlackDogBot backup failed. The service remains stopped, the previous release is selected, and no migration was applied.")
+        return False
+
+    # If this manager is interrupted during migration, a subsequent boot must
+    # use the candidate's pending-transaction startup checks.
+    point_to(current, candidate)
+    try:
+        receipt = migration_command(candidate, data_dir, "apply", **migration_options)
+        transaction = receipt.get("transactionId")
+    except Exception as exc:
+        report(state, {"status": "migration_failed", "revision": rev, "previous": previous.name,
+                       "unit": unit, **error_details(exc), "service_stopped": True,
+                       "data_dir": str(data_dir), "backup": backup, "manual_recovery_required": True,
+                       "recovery_action": "Run candidate migration CLI recover while the service is stopped."})
+        notify(state, chat, "BlackDogBot data migration failed. The service remains stopped. Inspect the migration journal and recover before restarting.")
+        return False
 
     ok, started = restart_and_probe(unit, old_pid, timeout=timeout)
     if ok:
         container_results = update_docker_services(state, chat) if update_containers else {"status": "skipped_by_request"}
-        path = report(state, {"status": "healthy", "revision": rev, "previous": previous.name,
+        path = report_best_effort(state, {"status": "healthy", "revision": rev, "previous": previous.name,
                               "unit": unit, "activated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-                              "migration_transaction": transaction, "container_updates": container_results})
-        notify(state, chat, f"BlackDogBot: release {rev[:12]} healthy. Container updates: {container_results}. Report: {path}")
+                              "migration_transaction": transaction, "backup": backup, "container_updates": container_results})
+        report_note = f"Report: {path}" if path is not None else "Deployment report could not be written."
+        notify(state, chat, f"BlackDogBot: release {rev[:12]} healthy. Container updates: {container_results}. {report_note}")
         return True
 
-    journal = save_journal(unit, state, f"failed-{rev[:12]}", started)
+    journal: Path | None = None
+    diagnostics: dict[str, str] = {}
     candidate_stopped = False
     recovery_phase = "stop_candidate" if has_migrations else "check_previous_schema"
     try:
         if has_migrations:
             stop_and_verify(unit)
             candidate_stopped = True
+        # Stop the failed process before collecting logs. Disk or permission
+        # failures in diagnostics must never prevent the restore decision.
+        try:
+            journal = save_journal(unit, state, f"failed-{rev[:12]}", started)
+        except Exception as exc:
+            diagnostics["journal_save_error"] = type(exc).__name__
+        if has_migrations:
             recovery_phase = "restore_data"
             if transaction is not None:
                 migration_command(candidate, data_dir, "rollback", transaction)
         recovery_phase = "check_previous_schema"
         can_start_release(previous, data_dir)
     except Exception as exc:
-        path = report(state, {"status": "data_recovery_failed", "failed_revision": rev,
-                              "previous_revision": previous.name, "unit": unit, "journal": str(journal),
-                              "migration_transaction": transaction, "error": type(exc).__name__,
+        path = report_best_effort(state, {"status": "data_recovery_failed", "failed_revision": rev,
+                              "previous_revision": previous.name, "unit": unit,
+                              "journal": str(journal) if journal is not None else None,
+                              "migration_transaction": transaction, **error_details(exc), **diagnostics,
                               "manual_recovery_required": True, "candidate": str(candidate),
-                              "service_stopped": candidate_stopped, "recovery_phase": recovery_phase})
-        notify(state, chat, f"BlackDogBot: candidate health failed and data could not be safely restored. Prior code was not started. Inspect {path}.")
+                              "service_stopped": candidate_stopped, "recovery_phase": recovery_phase, "backup": backup})
+        report_note = f"Inspect {path}." if path is not None else "Report unavailable. Inspect the service and migration journal."
+        notify(state, chat, f"BlackDogBot: candidate health failed and data could not be safely restored. Prior code was not started. {report_note}")
         return False
 
     point_to(current, previous)
@@ -504,13 +633,15 @@ def activate(state: Path, unit: str, ref: str, chat: str | None, *, timeout: int
     outcome = {
         "status": "rolled_back" if restored else "rollback_failed",
         "failed_revision": rev, "restored_revision": previous.name, "unit": unit,
-        "journal": str(journal), "candidate": str(candidate), "previous_available": previous.is_dir(),
-        "migration_transaction": transaction,
+        "journal": str(journal) if journal is not None else None,
+        "candidate": str(candidate), "previous_available": previous.is_dir(),
+        "migration_transaction": transaction, "backup": backup, **diagnostics,
     }
-    path = report(state, outcome)
+    path = report_best_effort(state, outcome)
+    report_note = f"Logs and report saved at {path}." if path is not None else "Deployment report could not be written."
     notify(state, chat, f"BlackDogBot: candidate {rev[:12]} FAILED health check. " +
            (f"Rolled back to {previous.name[:12]}." if restored else "Rollback ALSO FAILED; manual recovery needed!") +
-           f" Logs and report saved at {path}. Failed candidate retained.")
+           f" {report_note} Failed candidate retained.")
     return False
 
 
@@ -566,12 +697,16 @@ def main() -> int:
     parser.add_argument("--repo", type=Path, help="Source checkout (or BLACKDOGBOT_SOURCE_DIR)")
     parser.add_argument("--state", type=Path, default=Path.home() / ".blackdogbot" / "deploy")
     parser.add_argument("--data-dir", type=Path, default=default_data_directory(), help="Runtime data root for migration checks (must match service)")
+    parser.add_argument("--backup-root", type=Path, help="Snapshot parent directory outside runtime data (default: data-root sibling)")
+    parser.add_argument("--import-legacy-tasks", action="store_true", help="Explicitly import supported legacy task directories during activation")
     parser.add_argument("--revision", required=True, help="Commit revision for preparation/activation")
     parser.add_argument("--unit", default=SERVICE_DEFAULT)
     parser.add_argument("--chat-id", help="Authorized Telegram chat to receive status notifications")
     parser.add_argument("--timeout", type=int, default=75)
     parser.add_argument("--skip-container-updates", action="store_true", help="Deploy app only")
     args = parser.parse_args()
+    if (args.import_legacy_tasks or args.backup_root is not None) and args.action != "activate":
+        parser.error("--import-legacy-tasks and --backup-root are valid only for activate")
     if not re.fullmatch(r"[a-zA-Z0-9_.@-]+\.service", args.unit):
         parser.error("Invalid systemd unit")
     state = args.state.expanduser().resolve()
@@ -596,7 +731,9 @@ def main() -> int:
             rev = revision(source_repository(args.repo, state), args.revision)
             return 0 if bootstrap(state, args.unit, rev, args.chat_id, data_dir=args.data_dir.expanduser()) else 1
         return 0 if activate(state, args.unit, args.revision, args.chat_id, timeout=args.timeout,
-                             update_containers=not args.skip_container_updates, data_dir=args.data_dir.expanduser()) else 1
+                             update_containers=not args.skip_container_updates, data_dir=args.data_dir.expanduser(),
+                             backup_root=args.backup_root.expanduser() if args.backup_root is not None else None,
+                             import_legacy_tasks=args.import_legacy_tasks) else 1
 
 
 if __name__ == "__main__":

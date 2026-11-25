@@ -5,17 +5,20 @@ import { parse as parseYaml } from "yaml";
 import { configSchema } from "../shared/schemas/config.schemas.js";
 import { migrateLegacyTimedTask } from "./legacy-timed-tasks.js";
 import { isCompletedLegacyCronRecord } from "./legacy-cron-records.js";
+import { isSafeStoredTaskId, parseLegacyCronImportLedger, type LegacyCronImportEntry, type LegacyCronImportLedger } from "./legacy-cron-imports.js";
 import { acquireDataLockAsync, recoverStaleDataLockAsync } from "./data-lock.js";
 
-export const DATA_SCHEMA_VERSION = 1;
+export const DATA_SCHEMA_VERSION = 2;
 export const DATA_SCHEMA_FILE = ".data-schema.json";
+export const LEGACY_IMPORTS_FILE = ".migrations/legacy-imports.json";
 const TRANSACTIONS_DIR = ".migrations/transactions";
+export const RETIRED_TRANSACTIONS_DIR = ".migrations/retired-transactions";
 const ID_PATTERN = /^t-[0-9]+-[0-9a-f-]{36}$/;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const SCHEMA_CONTENT = Buffer.from(JSON.stringify({
   formatVersion: 1,
   schemaVersion: DATA_SCHEMA_VERSION,
-  components: { timedTasks: 1 },
+  components: { timedTasks: 1, legacyCronImports: 1 },
 }, null, 2) + "\n");
 
 type Status = "prepared" | "applying" | "applied" | "rolling_back" | "rolled_back";
@@ -54,11 +57,17 @@ export interface DataMigrationPlan {
   timezone: string;
   scope: "timed-tasks";
   preservedLegacyRecords: number;
+  legacyTasksToImport: number;
+  recordedLegacyImports: number;
+}
+export interface DataMigrationOptions {
+  importLegacyTasks?: boolean;
 }
 interface InternalPlan {
   public: DataMigrationPlan;
   changes: Change[];
-  configSnapshot: Snapshot;
+  inputs: { path: string; snapshot: Snapshot | null }[];
+  directories: { path: string; entries: string[] }[];
 }
 export interface MigrationReceipt {
   protocolVersion: 1;
@@ -91,7 +100,7 @@ function parseJson(content: Buffer, label: string): unknown {
   catch { return fail(`Invalid JSON in ${label}. Restore or correct the file before upgrading.`); }
 }
 function validManagedPath(value: unknown): value is string {
-  return value === DATA_SCHEMA_FILE || (
+  return value === DATA_SCHEMA_FILE || value === LEGACY_IMPORTS_FILE || (
     typeof value === "string" && /^timed\/[^/\\]+\.json$/.test(value)
     && !value.includes("\0")
   );
@@ -182,11 +191,16 @@ function versionFromSnapshot(snapshot: Snapshot | null): number {
   if ((raw.schemaVersion as number) > DATA_SCHEMA_VERSION) {
     return fail("This data was written by a newer release. Use a compatible release or a verified backup.");
   }
-  if (raw.schemaVersion !== DATA_SCHEMA_VERSION || !isRecord(raw.components)
-    || raw.components.timedTasks !== 1 || Object.keys(raw.components).some(key => key !== "timedTasks")) {
+  const components = raw.components;
+  const versionOne = raw.schemaVersion === 1 && isRecord(components)
+    && components.timedTasks === 1 && Object.keys(components).length === 1;
+  const versionTwo = raw.schemaVersion === 2 && isRecord(components)
+    && components.timedTasks === 1 && components.legacyCronImports === 1
+    && Object.keys(components).length === 2;
+  if (!versionOne && !versionTwo) {
     return fail("Unsupported data schema. An explicit migration is required.");
   }
-  return raw.schemaVersion;
+  return raw.schemaVersion as number;
 }
 async function directoryEntriesAsync(dataDir: string, relative: string): Promise<string[]> {
   const directory = await safePathAsync(dataDir, relative);
@@ -204,13 +218,15 @@ function decodeJournal(raw: unknown, id: string): Journal {
     || typeof raw.createdAt !== "string" || !Number.isFinite(Date.parse(raw.createdAt))
     || !Number.isSafeInteger(raw.sequence) || (raw.sequence as number) < 1
     || !Number.isInteger(raw.fromVersion) || !Number.isInteger(raw.toVersion)
-    || (raw.fromVersion !== 0 && raw.fromVersion !== 1) || raw.toVersion !== 1
+    || !((raw.toVersion === 1 && (raw.fromVersion === 0 || raw.fromVersion === 1))
+      || (raw.toVersion === 2 && (raw.fromVersion === 0 || raw.fromVersion === 1 || raw.fromVersion === 2)))
     || !statuses.includes(raw.status as Status) || !Array.isArray(raw.files) || raw.files.length === 0) {
     return fail(`Invalid migration journal ${id}. Keep the service stopped and inspect its backup.`, id);
   }
   const paths = new Set<string>();
   for (const file of raw.files) {
     if (!isRecord(file) || !validManagedPath(file.path) || paths.has(file.path)
+      || (raw.toVersion === 1 && file.path === LEGACY_IMPORTS_FILE)
       || (file.beforeSha256 !== null && (typeof file.beforeSha256 !== "string" || !HASH_PATTERN.test(file.beforeSha256)))
       || typeof file.afterSha256 !== "string" || !HASH_PATTERN.test(file.afterSha256)
       || !Number.isInteger(file.afterMode) || (file.afterMode as number) < 0 || (file.afterMode as number) > 0o777
@@ -228,6 +244,15 @@ async function readJournalAsync(dataDir: string, id: string): Promise<Journal> {
   if (!snapshot) fail(`Migration journal missing for ${id}.`, id);
   return decodeJournal(parseJson(snapshot.content, "migration journal"), id);
 }
+async function readRetiredJournalAsync(dataDir: string, id: string): Promise<Journal | null> {
+  if (!ID_PATTERN.test(id)) fail("Invalid migration transaction ID.");
+  const snapshot = await readSnapshotAsync(dataDir, `${RETIRED_TRANSACTIONS_DIR}/${id}/journal.json`);
+  if (!snapshot) return null;
+  const journal = decodeJournal(parseJson(snapshot.content, "retired migration journal"), id);
+  if (journal.status !== "rolled_back") fail("Retired migration history contains an unfinished transaction. Inspect its verified backup.", id);
+  return journal;
+}
+
 async function listJournalsAsync(dataDir: string): Promise<Journal[]> {
   const entries = await directoryEntriesAsync(dataDir, TRANSACTIONS_DIR);
   const journals: Journal[] = [];
@@ -242,17 +267,96 @@ async function listJournalsAsync(dataDir: string): Promise<Journal[]> {
   }
   return journals.sort((a, b) => a.sequence - b.sequence);
 }
+function olderReaderVersion(dataVersion: number): number {
+  // Schema 1 is the first release with a journal reader. Earlier daemons do not
+  // read this directory, but keeping it readable by schema 1 also supports them.
+  return Math.max(1, dataVersion);
+}
+async function assertNoUnretiredHistoryAsync(dataDir: string, dataVersion: number): Promise<void> {
+  const unretired = (await listJournalsAsync(dataDir)).find(journal =>
+    journal.toVersion > olderReaderVersion(dataVersion) && journal.status === "rolled_back");
+  if (unretired) fail("Rollback history retirement is incomplete. Keep the service stopped and run migrate:recover --offline.", unretired.id);
+}
+
+/** Preserve future-schema receipts outside the directory read by old releases. */
+async function retireRolledBackHistoryAsync(dataDir: string): Promise<string[]> {
+  const dataVersion = versionFromSnapshot(await readSnapshotAsync(dataDir, DATA_SCHEMA_FILE));
+  const future = (await listJournalsAsync(dataDir)).filter(journal => journal.toVersion > olderReaderVersion(dataVersion));
+  if (future.some(journal => journal.status !== "rolled_back")) {
+    fail("Future-schema migration history is not fully rolled back. Keep the service stopped and recover the data before starting older code.");
+  }
+  if (!future.length) {
+    // Complete directory durability after a prior process stopped just after a move.
+    for (const relative of [RETIRED_TRANSACTIONS_DIR, TRANSACTIONS_DIR]) {
+      const directory = await safePathAsync(dataDir, relative);
+      try { await syncDirectoryAsync(directory); }
+      catch (error) { if (!isMissing(error)) throw error; }
+    }
+    return [];
+  }
+  const retiredDirectory = await mkdirPrivateAsync(dataDir, RETIRED_TRANSACTIONS_DIR);
+  const transactionsDirectory = await safePathAsync(dataDir, TRANSACTIONS_DIR);
+  const retired: string[] = [];
+  for (const journal of future) {
+    const source = await safePathAsync(dataDir, `${TRANSACTIONS_DIR}/${journal.id}`);
+    const destination = await safePathAsync(dataDir, `${RETIRED_TRANSACTIONS_DIR}/${journal.id}`);
+    try {
+      await fs.lstat(destination);
+      fail("Retired migration evidence already exists for this transaction. Inspect both copies before recovery.", journal.id);
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+    if (!(await fs.lstat(source)).isDirectory()) fail("Migration history directory was replaced.", journal.id);
+    await fs.rename(source, destination);
+    await syncDirectoryAsync(retiredDirectory);
+    await syncDirectoryAsync(transactionsDirectory);
+    retired.push(journal.id);
+  }
+  return retired;
+}
+async function finishRollbackHistoryAsync(dataDir: string, id?: string): Promise<string[]> {
+  try { return await retireRolledBackHistoryAsync(dataDir); }
+  catch (error) {
+    if (error instanceof DataMigrationError) throw error;
+    fail("Restored data is preserved, but rollback history retirement is incomplete. Keep the service stopped and run migrate:recover --offline.", id);
+  }
+}
+
 async function assertNoPendingAsync(dataDir: string): Promise<void> {
   const pending = (await listJournalsAsync(dataDir)).find(j =>
     j.status === "prepared" || j.status === "applying" || j.status === "rolling_back");
   if (pending) fail(`Migration ${pending.id} is incomplete. Stop the service and run migrate:recover --offline.`, pending.id);
 }
+async function assertCommittedLedgerAsync(dataDir: string, snapshot: Snapshot): Promise<void> {
+  const entries = (await listJournalsAsync(dataDir))
+    .filter(journal => journal.status === "applied")
+    .map(journal => journal.files.find(file => file.path === LEGACY_IMPORTS_FILE))
+    .filter((file): file is JournalFile => file !== undefined);
+  const latest = entries.at(-1);
+  if (!latest || digest(snapshot.content) !== latest.afterSha256 || snapshot.mode !== latest.afterMode) {
+    fail("Legacy import ledger does not match its committed migration history. Keep the history and restore a matching verified backup; do not rebuild the ledger.");
+  }
+}
+
 async function writeJournalAsync(dataDir: string, journal: Journal): Promise<void> {
   const file = await safePathAsync(dataDir, `${TRANSACTIONS_DIR}/${journal.id}/journal.json`);
   await atomicWriteAsync(file, JSON.stringify(journal, null, 2) + "\n", 0o600);
 }
 
-async function buildPlanAsync(dataDir: string): Promise<InternalPlan> {
+function validateTaskIdentity(raw: unknown, fileName: string, relative: string): asserts raw is Record<string, unknown> & { taskId: string } {
+  if (!isRecord(raw) || !isSafeStoredTaskId(raw.taskId) || fileName !== `${raw.taskId}.json`) {
+    fail(`${relative} must match its stored taskId. Correct the filename or ID before upgrading.`);
+  }
+}
+function convertTask(raw: unknown, relative: string, timezone: string): ReturnType<typeof migrateLegacyTimedTask> {
+  try { return migrateLegacyTimedTask(raw, { defaultTimezone: timezone }); }
+  catch (error) {
+    // Converter errors contain field paths and fixed reasons, never stored values.
+    fail(`${relative}: ${error instanceof Error ? error.message : "Unsupported task shape."}`);
+  }
+}
+
+async function buildPlanAsync(dataDir: string, options: DataMigrationOptions = {}): Promise<InternalPlan> {
   await safePathAsync(dataDir);
   await assertNoPendingAsync(dataDir);
   const configSnapshot = await readSnapshotAsync(dataDir, "config.yaml");
@@ -270,47 +374,107 @@ async function buildPlanAsync(dataDir: string): Promise<InternalPlan> {
   try { new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(0); }
   catch { return fail("scheduler.timezone is not supported by this runtime."); }
 
-  // Earlier releases used cron/. Retain provably completed one-time records,
-  // but never silently drop or activate unresolved jobs during a directory move.
-  let preservedLegacyRecords = 0;
-  for (const entry of await directoryEntriesAsync(dataDir, "cron")) {
-    if (!entry.endsWith(".json")) continue;
-    const relative = `cron/${entry}`;
-    const record = await readSnapshotAsync(dataDir, relative);
-    if (!record || !isCompletedLegacyCronRecord(parseJson(record.content, relative), {
-      fileName: entry, defaultTimezone: timezone,
-    })) {
-      fail("Legacy cron/*.json data requires an explicit directory/schedule migration. No files were changed.");
-    }
-    preservedLegacyRecords++;
-  }
   const marker = await readSnapshotAsync(dataDir, DATA_SCHEMA_FILE);
   const fromVersion = versionFromSnapshot(marker);
+  await assertNoUnretiredHistoryAsync(dataDir, fromVersion);
+  const ledgerSnapshot = await readSnapshotAsync(dataDir, LEGACY_IMPORTS_FILE);
+  if (fromVersion === 2 && !ledgerSnapshot) {
+    fail("The schema 2 legacy import ledger is missing. Restore its verified backup; rebuilding it could resurrect deleted tasks.");
+  }
+  if (fromVersion < 2 && ledgerSnapshot) {
+    fail("A legacy import ledger exists without schema 2. Recover the interrupted migration or restore matching metadata.");
+  }
+  let ledger: LegacyCronImportLedger = { formatVersion: 1, entries: [] };
+  if (ledgerSnapshot) {
+    try { ledger = parseLegacyCronImportLedger(parseJson(ledgerSnapshot.content, LEGACY_IMPORTS_FILE)); }
+    catch { return fail("Invalid legacy import ledger. Restore its verified backup before upgrading."); }
+    await assertCommittedLedgerAsync(dataDir, ledgerSnapshot);
+  }
+
+  const cronEntries = await directoryEntriesAsync(dataDir, "cron");
+  const timedEntries = await directoryEntriesAsync(dataDir, "timed");
+  const inputs: InternalPlan["inputs"] = [
+    { path: "config.yaml", snapshot: configSnapshot },
+    { path: DATA_SCHEMA_FILE, snapshot: marker },
+    { path: LEGACY_IMPORTS_FILE, snapshot: ledgerSnapshot },
+  ];
+  const legacyRecords = new Map<string, { fileName: string; snapshot: Snapshot; raw: unknown }>();
+  for (const fileName of cronEntries) {
+    if (!fileName.endsWith(".json")) continue;
+    const relative = `cron/${fileName}`;
+    const snapshot = await readSnapshotAsync(dataDir, relative);
+    if (!snapshot) fail(`${relative} changed while planning. Stop all writers and retry.`);
+    inputs.push({ path: relative, snapshot });
+    legacyRecords.set(relative, { fileName, snapshot, raw: parseJson(snapshot.content, relative) });
+  }
+
+  // A recorded import remains recorded even if the user later deletes its target.
+  // Never reconstruct the ledger from files or silently accept changed sources.
+  const recordedSources = new Set<string>();
+  for (const entry of ledger.entries) {
+    const source = legacyRecords.get(entry.source);
+    if (!source || digest(source.snapshot.content) !== entry.sourceSha256) {
+      fail("A recorded legacy import source is missing or changed. Restore matching source data or resolve the conflict explicitly.");
+    }
+    validateTaskIdentity(source.raw, source.fileName, entry.source);
+    if (source.raw.taskId !== entry.taskId) fail("Legacy import ledger task identity does not match its source.");
+    convertTask(source.raw, entry.source, timezone);
+    recordedSources.add(entry.source);
+  }
+
   const changes: Change[] = [];
-  for (const entry of await directoryEntriesAsync(dataDir, "timed")) {
-    if (!entry.endsWith(".json")) continue;
-    const relative = `timed/${entry}`;
+  for (const fileName of timedEntries) {
+    if (!fileName.endsWith(".json")) continue;
+    const relative = `timed/${fileName}`;
     const before = await readSnapshotAsync(dataDir, relative);
     if (!before) fail(`${relative} changed while planning. Retry after stopping all writers.`);
+    inputs.push({ path: relative, snapshot: before });
     const raw = parseJson(before.content, relative);
-    if (!isRecord(raw) || typeof raw.taskId !== "string" || raw.taskId === "." || raw.taskId === ".."
-      || raw.taskId.includes("/") || raw.taskId.includes("\\") || entry !== `${raw.taskId}.json`) {
-      fail(`${relative} must match its stored taskId. Correct the filename or ID before upgrading.`);
-    }
-    let result;
-    try { result = migrateLegacyTimedTask(raw, { defaultTimezone: timezone }); }
-    catch (error) {
-      // The converter reports field names and fixed reasons, never task content.
-      const reason = error instanceof Error ? error.message : "Unsupported task shape.";
-      fail(`${relative}: ${reason}`);
-    }
+    validateTaskIdentity(raw, fileName, relative);
+    const result = convertTask(raw, relative, timezone);
     if (result.migrated) {
       changes.push({ path: relative, reasons: result.changes, before,
         after: Buffer.from(JSON.stringify(result.task, null, 2) + "\n"), afterMode: before.mode });
     }
   }
+
+  let preservedLegacyRecords = 0;
+  const newImports: LegacyCronImportEntry[] = [];
+  for (const [relative, source] of legacyRecords) {
+    if (recordedSources.has(relative)) continue;
+    if (isCompletedLegacyCronRecord(source.raw, { fileName: source.fileName, defaultTimezone: timezone })) {
+      preservedLegacyRecords++;
+      continue;
+    }
+    if (options.importLegacyTasks !== true) {
+      fail("Legacy cron/*.json data requires an explicit directory/schedule migration. Review migrate:plan with --import-legacy-tasks before applying. No files were changed.");
+    }
+    validateTaskIdentity(source.raw, source.fileName, relative);
+    const result = convertTask(source.raw, relative, timezone);
+    const target = `timed/${source.fileName}`;
+    if (timedEntries.includes(source.fileName) || newImports.some(entry => entry.target === target)) {
+      fail(`Cannot import ${relative}: its target already exists. Resolve the duplicate task explicitly; no files were changed.`);
+    }
+    const targetSnapshot = await readSnapshotAsync(dataDir, target);
+    if (targetSnapshot) fail(`Cannot import ${relative}: its target already exists. No files were changed.`);
+    inputs.push({ path: target, snapshot: null });
+    changes.push({ path: target,
+      reasons: ["Import legacy task into timed/ while preserving its original cron/ file", ...result.changes],
+      before: null, after: Buffer.from(JSON.stringify(result.task, null, 2) + "\n"), afterMode: source.snapshot.mode });
+    newImports.push({ source: relative, sourceSha256: digest(source.snapshot.content), taskId: source.raw.taskId, target });
+  }
+
+  if (!ledgerSnapshot || newImports.length > 0) {
+    const nextLedger: LegacyCronImportLedger = {
+      formatVersion: 1,
+      entries: [...ledger.entries, ...newImports].sort((first, second) => first.source.localeCompare(second.source)),
+    };
+    changes.push({ path: LEGACY_IMPORTS_FILE,
+      reasons: [newImports.length > 0 ? "Record imported sources so removed tasks are never re-imported" : "Initialize the legacy import ledger"],
+      before: ledgerSnapshot, after: Buffer.from(JSON.stringify(nextLedger, null, 2) + "\n"), afterMode: 0o600 });
+  }
   if (fromVersion < DATA_SCHEMA_VERSION) {
-    changes.push({ path: DATA_SCHEMA_FILE, reasons: ["Record managed timed-task schema version 1"],
+    changes.push({ path: DATA_SCHEMA_FILE, reasons: ["Record data schema version 2 with legacy import tracking"],
       before: marker, after: SCHEMA_CONTENT, afterMode: 0o600 });
   }
   return {
@@ -320,14 +484,16 @@ async function buildPlanAsync(dataDir: string): Promise<InternalPlan> {
       changes: changes.map(change => ({ path: change.path, reasons: change.reasons })),
       config: { telegramEnabled: !!config.telegram?.botToken, discordEnabled: !!config.discord?.botToken },
       timezone, scope: "timed-tasks", preservedLegacyRecords,
+      legacyTasksToImport: newImports.length, recordedLegacyImports: ledger.entries.length,
     },
-    changes, configSnapshot,
+    changes, inputs,
+    directories: [{ path: "cron", entries: cronEntries }, { path: "timed", entries: timedEntries }],
   };
 }
 
 /** Read-only. It never loads a provider, opens a database, or starts a task. */
-export async function planDataMigrationAsync(dataDir: string): Promise<DataMigrationPlan> {
-  return (await buildPlanAsync(dataDir)).public;
+export async function planDataMigrationAsync(dataDir: string, options: DataMigrationOptions = {}): Promise<DataMigrationPlan> {
+  return (await buildPlanAsync(dataDir, options)).public;
 }
 
 async function assertSnapshotAsync(dataDir: string, relative: string, expected: Snapshot | null): Promise<void> {
@@ -337,6 +503,27 @@ async function assertSnapshotAsync(dataDir: string, relative: string, expected: 
     fail(`${relative} changed after planning. Stop all writers and retry.`);
   }
 }
+async function assertPlanInputsAsync(dataDir: string, plan: InternalPlan): Promise<void> {
+  for (const input of plan.inputs) await assertSnapshotAsync(dataDir, input.path, input.snapshot);
+  for (const directory of plan.directories) {
+    const current = await directoryEntriesAsync(dataDir, directory.path);
+    if (JSON.stringify(current) !== JSON.stringify(directory.entries)) {
+      fail(`${directory.path}/ changed after planning. Stop all writers and retry.`);
+    }
+  }
+}
+async function ensureTimedDirectoryAsync(dataDir: string): Promise<void> {
+  const directory = await safePathAsync(dataDir, "timed");
+  try {
+    await fs.mkdir(directory, { mode: 0o700 });
+    await syncDirectoryAsync(directory);
+    await syncDirectoryAsync(dataDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+    if (!(await fs.lstat(directory)).isDirectory()) fail("The timed task path must be a directory.");
+  }
+}
+
 async function applyUnderLockAsync(dataDir: string, plan: InternalPlan): Promise<MigrationReceipt> {
   if (plan.changes.length === 0) return { protocolVersion: 1, status: "unchanged", transactionId: null };
   const id = `t-${Date.now()}-${crypto.randomUUID()}`;
@@ -355,7 +542,7 @@ async function applyUnderLockAsync(dataDir: string, plan: InternalPlan): Promise
   };
   let published = false;
   try {
-    await assertSnapshotAsync(dataDir, "config.yaml", plan.configSnapshot);
+    await assertPlanInputsAsync(dataDir, plan);
     for (let index = 0; index < plan.changes.length; index++) {
       const change = plan.changes[index];
       await assertSnapshotAsync(dataDir, change.path, change.before);
@@ -371,11 +558,19 @@ async function applyUnderLockAsync(dataDir: string, plan: InternalPlan): Promise
     journal.status = "applying";
     await writeJournalAsync(dataDir, journal);
     // Check the entire input again before the first mutation.
-    await assertSnapshotAsync(dataDir, "config.yaml", plan.configSnapshot);
+    await assertPlanInputsAsync(dataDir, plan);
     for (const change of plan.changes) await assertSnapshotAsync(dataDir, change.path, change.before);
+    if (plan.changes.some(change => change.path.startsWith("timed/"))) {
+      await ensureTimedDirectoryAsync(dataDir);
+    }
     for (const change of plan.changes) {
       await assertSnapshotAsync(dataDir, change.path, change.before);
       await atomicWriteAsync(await safePathAsync(dataDir, change.path), change.after, change.afterMode);
+    }
+    // Sources, configuration, and unchanged tasks must still match their plan.
+    const managedPaths = new Set(plan.changes.map(change => change.path));
+    for (const input of plan.inputs) {
+      if (!managedPaths.has(input.path)) await assertSnapshotAsync(dataDir, input.path, input.snapshot);
     }
     journal.status = "applied";
     await writeJournalAsync(dataDir, journal);
@@ -391,17 +586,29 @@ async function applyUnderLockAsync(dataDir: string, plan: InternalPlan): Promise
 }
 
 /** The caller must stop legacy processes too. New daemons hold this same lock. */
-export async function applyDataMigrationAsync(dataDir: string): Promise<MigrationReceipt> {
+export async function applyDataMigrationAsync(dataDir: string, options: DataMigrationOptions = {}): Promise<MigrationReceipt> {
   const lock = await acquireDataLockAsync(dataDir, "migration");
-  try { return await applyUnderLockAsync(dataDir, await buildPlanAsync(dataDir)); }
+  try { return await applyUnderLockAsync(dataDir, await buildPlanAsync(dataDir, options)); }
   finally { await lock.releaseAsync(); }
 }
 
 async function rollbackUnderLockAsync(dataDir: string, id: string): Promise<MigrationReceipt> {
   const journals = await listJournalsAsync(dataDir);
   const journal = journals.find(item => item.id === id);
-  if (!journal) fail("Migration transaction not found.");
-  if (journal.status === "rolled_back") return { protocolVersion: 1, status: "rolled_back", transactionId: id };
+  if (!journal) {
+    const retired = await readRetiredJournalAsync(dataDir, id);
+    if (retired) {
+      await finishRollbackHistoryAsync(dataDir, id);
+      return { protocolVersion: 1, status: "rolled_back", transactionId: id };
+    }
+    fail("Migration transaction not found.");
+  }
+  if (journal.status === "rolled_back") {
+    await finishRollbackHistoryAsync(dataDir, id);
+    return { protocolVersion: 1, status: "rolled_back", transactionId: id };
+  }
+  // Do not restore an old task transaction into a newer, unsupported data schema.
+  versionFromSnapshot(await readSnapshotAsync(dataDir, DATA_SCHEMA_FILE));
   const latest = journals.filter(item => item.status !== "rolled_back").at(-1);
   if (latest?.id !== id) fail("Rollback requires the newest remaining migration transaction first.", id);
   const originals: (Snapshot | null)[] = [];
@@ -427,12 +634,20 @@ async function rollbackUnderLockAsync(dataDir: string, id: string): Promise<Migr
     const destination = await safePathAsync(dataDir, file.path);
     if (original) await atomicWriteAsync(destination, original.content, original.mode);
     else {
-      await fs.rm(destination, { force: true });
-      await syncDirectoryAsync(path.dirname(destination));
+      try {
+        await fs.unlink(destination);
+        await syncDirectoryAsync(path.dirname(destination));
+      } catch (error) {
+        // A new task may never have been written, including its parent directory.
+        if (!isMissing(error)) throw error;
+      }
     }
   }
   journal.status = "rolled_back";
   await writeJournalAsync(dataDir, journal);
+  // The completed receipt is durable before its directory is moved. Recovery
+  // can finish retirement without replaying data restoration after interruption.
+  await finishRollbackHistoryAsync(dataDir, id);
   return { protocolVersion: 1, status: "rolled_back", transactionId: id };
 }
 async function assertRollbackTargetAsync(dataDir: string, file: JournalFile, id: string): Promise<void> {
@@ -457,7 +672,12 @@ export async function recoverDataMigrationAsync(dataDir: string): Promise<Migrat
     const pending = (await listJournalsAsync(dataDir)).filter(j =>
       j.status === "prepared" || j.status === "applying" || j.status === "rolling_back");
     if (pending.length > 1) fail("Multiple interrupted transactions require manual inspection. Keep the service stopped.");
-    if (!pending.length) return { protocolVersion: 1, status: "unchanged", transactionId: null };
+    if (!pending.length) {
+      const retired = await finishRollbackHistoryAsync(dataDir);
+      return retired.length
+        ? { protocolVersion: 1, status: "rolled_back", transactionId: retired.at(-1)! }
+        : { protocolVersion: 1, status: "unchanged", transactionId: null };
+    }
     return await rollbackUnderLockAsync(dataDir, pending[0].id);
   } finally { await lock.releaseAsync(); }
 }
@@ -480,7 +700,9 @@ export async function prepareRuntimeDataAsync(dataDir: string): Promise<Awaited<
   };
   try {
     const plan = await buildPlanAsync(dataDir);
-    if (plan.changes.some(change => change.path !== DATA_SCHEMA_FILE)) {
+    if (plan.changes.some(change => change.path !== DATA_SCHEMA_FILE
+      && !(change.path === LEGACY_IMPORTS_FILE && change.before === null
+        && plan.public.legacyTasksToImport === 0 && plan.public.recordedLegacyImports === 0))) {
       fail("Stored tasks require migration. Stop the service, run migrate:plan, then migrate:apply --offline before starting.");
     }
     await applyUnderLockAsync(dataDir, plan);

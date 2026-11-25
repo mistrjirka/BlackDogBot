@@ -23,10 +23,14 @@
     "migrate:apply": "tsx src/migrations/cli.ts apply",
     "migrate:rollback": "tsx src/migrations/cli.ts rollback",
     "migrate:recover": "tsx src/migrations/cli.ts recover",
-    "test:migrations": "vitest run tests/unit/migrations"
+    "test:migrations": "vitest run tests/unit/migrations",
+    "backup:create": "tsx src/migrations/cli.ts backup-create",
+    "backup:verify": "tsx src/migrations/cli.ts backup-verify",
+    "backup:restore": "tsx src/migrations/cli.ts backup-restore",
+    "test:python": "python3 -m unittest discover -s tests/python -p 'test_*.py'"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.13.0"
   },
   "license": "GPL-2.0",
   "dependencies": {
@@ -70,5 +74,6 @@
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
-  }
+  },
+  "packageManager": "pnpm@11.28.3"
 }

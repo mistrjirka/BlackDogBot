@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24", "26"]
+    env:
+      CI: "true"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      BLACKDOGBOT_MODELS_DIR: ${{ runner.temp }}/blackdogbot-test-models
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Set up the declared pnpm version
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check shell syntax
+        run: |
+          for script in install.sh scripts/*.sh; do
+            bash -n "$script"
+          done
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Run isolated fast tests
+        run: pnpm test:fast
+      - name: Test installation and guarded upgrades
+        run: pnpm test:python
+      - name: Build distributable code
+        run: pnpm build

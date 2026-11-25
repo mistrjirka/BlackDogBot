@@ -538,7 +538,7 @@ describe("cron-agent prompt audit", () => {
 
   it("audits cron tool-description quality by category with structured output and no tool calls", async () => {
     if (!_RunLivePromptAudit) {
-      console.log("Skipping live prompt audit. Set BLACKDOGBOT_RUN_LIVE_PROMPT_AUDIT=1 to run.");
+      console.log("Skipping live prompt audit. Use BLACKDOGBOT_RUN_LIVE_PROMPT_AUDIT=1 with pnpm test:integration to run.");
       return;
     }
 
