@@ -22,6 +22,25 @@ class GuardedReleaseTests(unittest.TestCase):
         data_check = patch.object(guard, "validate_service_data_directory")
         data_check.start()
         self.addCleanup(data_check.stop)
+        current_service = patch.object(guard, "service_state", return_value=("active", 44))
+        current_service.start()
+        self.addCleanup(current_service.stop)
+        cwd_check = patch.object(guard, "service_runtime_cwd", return_value=None)
+        cwd_check.start()
+        self.addCleanup(cwd_check.stop)
+        def staged_start(unit, old_pid, data_dir, approval, *, timeout=75, restart=True):
+            # This fixture simulates the process boundary. Dedicated protocol
+            # tests exercise durable commit/release and invocation checks.
+            result = guard.restart_and_probe(unit, old_pid, timeout=timeout)
+            if result[0]:
+                accepted = {**approval, "status": "committed", "runtimePid": 123,
+                            "invocationId": "c" * 32}
+                guard.write_atomic(guard.activation_file(data_dir), json.dumps(accepted))
+                guard.write_atomic(data_dir / "deploy/activation-release.json", json.dumps(accepted))
+            return result
+        staged = patch.object(guard, "guarded_start_and_probe", side_effect=staged_start)
+        staged.start()
+        self.addCleanup(staged.stop)
         (self.state / "releases").mkdir()
         (self.state / "reports").mkdir()
         self.old_sha = "1" * 40
@@ -36,7 +55,7 @@ class GuardedReleaseTests(unittest.TestCase):
         cli.parent.mkdir(parents=True)
         cli.write_text("// test candidate")
         migrations = patch.object(guard, "migration_command", return_value={
-            "protocolVersion": 1, "backupProtocolVersion": 1, "backupReady": True, "needsMigration": False,
+            "protocolVersion": 1, "backupProtocolVersion": 1, "activationProtocolVersion": 1, "backupReady": True, "needsMigration": False,
             "status": "unchanged", "transactionId": None,
         })
         migrations.start()

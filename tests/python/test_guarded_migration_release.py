@@ -25,6 +25,25 @@ class MigrationReleaseTests(unittest.TestCase):
         data_check = patch.object(guard, "validate_service_data_directory")
         data_check.start()
         self.addCleanup(data_check.stop)
+        current_service = patch.object(guard, "service_state", return_value=("active", 44))
+        current_service.start()
+        self.addCleanup(current_service.stop)
+        cwd_check = patch.object(guard, "service_runtime_cwd", return_value=None)
+        cwd_check.start()
+        self.addCleanup(cwd_check.stop)
+        def staged_start(unit, old_pid, data_dir, approval, *, timeout=75, restart=True):
+            # This fixture simulates the process boundary. Dedicated protocol
+            # tests exercise durable commit/release and invocation checks.
+            result = guard.restart_and_probe(unit, old_pid, timeout=timeout)
+            if result[0]:
+                accepted = {**approval, "status": "committed", "runtimePid": 123,
+                            "invocationId": "c" * 32}
+                guard.write_atomic(guard.activation_file(data_dir), json.dumps(accepted))
+                guard.write_atomic(data_dir / "deploy/activation-release.json", json.dumps(accepted))
+            return result
+        staged = patch.object(guard, "guarded_start_and_probe", side_effect=staged_start)
+        staged.start()
+        self.addCleanup(staged.stop)
         self.old_sha = "1" * 40
         self.new_sha = "2" * 40
         self.old = self.state / "releases" / self.old_sha
@@ -55,7 +74,7 @@ class MigrationReleaseTests(unittest.TestCase):
         self.assertEqual(data_dir, self.data)
         self.events.append(action)
         if action == "plan":
-            return {"protocolVersion": 1, "backupProtocolVersion": 1, "backupReady": True, "needsMigration": release == self.new}
+            return {"protocolVersion": 1, "backupProtocolVersion": 1, "activationProtocolVersion": 1, "backupReady": True, "needsMigration": release == self.new}
         if action in ("backup-create", "backup-verify"):
             self.assertEqual(self.current.resolve(), self.old)
             self.assertEqual(self.events[-2], "stop" if action == "backup-create" else "backup-create")
@@ -103,7 +122,7 @@ class MigrationReleaseTests(unittest.TestCase):
 
     def test_backup_preflight_issue_is_actionable_and_never_stops_service(self):
         issue = "Configured skill directory is outside the runtime data root."
-        plan = {"protocolVersion": 1, "backupProtocolVersion": 1, "backupReady": False,
+        plan = {"protocolVersion": 1, "backupProtocolVersion": 1, "activationProtocolVersion": 1, "backupReady": False,
                 "backupIssue": issue, "needsMigration": False}
         with patch.object(guard, "migration_command", return_value=plan), \
              patch.object(guard, "stop_and_verify") as stop:
@@ -618,6 +637,11 @@ class ReleaseHealthTests(unittest.TestCase):
 
 
 class ServiceDataDirectoryTests(unittest.TestCase):
+    def setUp(self):
+        runtime = patch.object(guard, "runtime_process_pid", side_effect=lambda pid: pid)
+        runtime.start()
+        self.addCleanup(runtime.stop)
+
     def test_running_service_uses_actual_inherited_data_path(self):
         expected = Path("/tmp/blackdog-test-data").resolve()
         raw = b"HOME=/home/service\0BLACKDOGBOT_DATA_DIR=/tmp/blackdog-test-data\0UNRELATED_SECRET=not-output\0"

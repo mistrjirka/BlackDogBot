@@ -34,6 +34,92 @@ retain their current formats. The schema marker does not certify future changes
 to those stores. [Persistent-data backups](data-backups.md) protect their current
 on-disk bytes before an upgrade.
 
+## Database path repair
+
+Fresh configurations use an absolute LanceDB path under the selected data
+directory: `DATA/knowledge/lancedb`. Existing configurations are not silently
+relocated at startup. An enabled knowledge provider with a relative or omitted
+stored path must complete the explicit repair first.
+
+Some older configurations stored `~/.blackdogbot/knowledge/lancedb` or
+`~/.betterclaw/knowledge/lancedb`. The old runtime passed these strings to the
+database without expanding `~`. The resulting directory could therefore be
+inside the running release's working directory. A home-expanded legacy directory
+can also contain the intended data. These are different candidates.
+
+Inspect both locations using the **previous process's actual working directory**:
+
+```bash
+pnpm exec tsx src/migrations/cli.ts paths-plan \
+  --data-dir /absolute/data \
+  --runtime-cwd /absolute/previous-release
+```
+
+The plan reads config and candidate filesystem inventories. It does not open
+databases or create directories. It reports paths, file counts, byte counts, and
+checksums. It never reports config values or stored records. For an omitted path,
+it uses the historical default for discovery, not the new absolute default.
+
+If populated stores differ, the command fails and returns
+`databasePathCandidates`. Review those paths and repeat with
+`--source /absolute/chosen/database`. Explicit selection does not merge stores
+or replace a different populated destination. Symlinks, unsupported file types,
+overlapping sources, and unclear directory ownership require manual inspection.
+
+For standalone repair:
+
+1. Stop every writer, including old services that do not honor the lock.
+2. Apply the chosen path plan with the same source/cwd arguments:
+
+   ```bash
+   pnpm exec tsx src/migrations/cli.ts paths-apply \
+     --data-dir /absolute/data \
+     --runtime-cwd /absolute/previous-release \
+     --offline
+   ```
+
+3. Create and verify the [full backup](data-backups.md).
+4. Apply any required scheduled-task migrations.
+5. Start compatible code.
+
+This ordering is an explicit exception for databases that the original full
+backup cannot cover. The path repair first retains the original config bytes
+privately, leaves the source untouched, copies into a private staging directory,
+verifies every copied file, and opens only that private copy for LanceDB schema
+and streamed record checks. It publishes the database without overwriting a target,
+then changes only the stored database path. An existing empty target is retained
+inside the transaction. The config's other values and existing file permissions
+survive.
+
+Unified `plan` reports `pathMigrationProtocolVersion: 1`,
+`databasePathMigration`, and `preBackupMigrationReady`. The last field is
+true only when this exact path repair would resolve all backup blockers.
+External mutable profile stores and included symlinks still block activation.
+The guarded updater repairs the path offline, replans, and requires
+`backupReady: true` before taking the full snapshot. Path moves do not change
+database bytes or scheduled-task schema 2.
+
+Path receipts live under `.migrations/database-paths/<transactionId>/`.
+Keep them with the original external store. For an interrupted operation:
+
+```bash
+pnpm exec tsx src/migrations/cli.ts paths-recover --data-dir /absolute/data --offline
+```
+
+Pending path journals block startup before providers or external effects. A
+completed repair can be reversed explicitly:
+
+```bash
+pnpm exec tsx src/migrations/cli.ts paths-rollback \
+  --data-dir /absolute/data --transaction p-TRANSACTION_ID --offline
+```
+
+Rollback verifies the original source, config, and migrated database. New rows,
+new files, changed permissions, or later config edits prevent automatic rollback.
+An unchanged copied database moves into the journal's `retained-data`
+directory. It is not deleted. The original config and any original empty target
+are restored. Recovery and repeated rollback preserve these retained copies.
+
 ## Inspect and apply
 
 Run from the source checkout with dependencies installed:
@@ -166,7 +252,7 @@ is separate. Neither can undo messages or other external effects. See
 [guarded application updates](guarded-self-update.md) for stop, backup, migration,
 health-check, and rollback ordering.
 
-## Verification and remaining work
+## Verification and compatibility limits
 
 ```bash
 pnpm typecheck
@@ -178,7 +264,10 @@ Tests cover historical shapes, schema 1 upgrades, explicit import, deleted-task
 tracking, repeated apply, interruptions, backup corruption, newer edits, and
 lock recovery.
 
-Remaining release work includes unsupported historical schedule types,
-system-wide service conversion, schemas for future database changes, and
-holding external task/message effects until activation is committed. The CI
-workflow validates source commits. It does not publish a versioned release.
+Unknown historical schedule types still stop for explicit review. A future change
+to database record structure must add its own versioned data migration. The path
+migration copies existing compatible database bytes and does not rewrite records.
+
+Supported older services use the [upgrade command](upgrade.md). External work
+waits for durable activation acceptance. Version tags pass the complete CI
+matrix before [release assets](releases.md) are published.

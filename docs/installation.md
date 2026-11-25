@@ -14,7 +14,7 @@
 For a fresh, non-root Linux installation, run in an interactive terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mistrjirka/BlackDogBot/main/scripts/bootstrap.sh | sh
+curl -fsSL https://github.com/mistrjirka/BlackDogBot/releases/latest/download/blackdogbot-install.sh | sh
 ```
 
 The short POSIX bootstrap script clones the source and launches the interactive Bash
@@ -24,13 +24,13 @@ uses sudo and refuses to overwrite an existing config.
 For review before execution:
 
 ```sh
-curl -fsSLo /tmp/blackdogbot-bootstrap.sh https://raw.githubusercontent.com/mistrjirka/BlackDogBot/main/scripts/bootstrap.sh
+curl -fsSLo /tmp/blackdogbot-bootstrap.sh https://github.com/mistrjirka/BlackDogBot/releases/latest/download/blackdogbot-install.sh
 less /tmp/blackdogbot-bootstrap.sh
 sh /tmp/blackdogbot-bootstrap.sh
 ```
 
-The moving `main` reference is not cryptographically pinned; use
-a reviewed tag/commit when reproducibility is important.
+The released installer pins a full commit ID. The `latest` URL selects the newest
+published stable version. See [releases](releases.md) for fixed versions and checksums.
 
 Alternatively, install from a Git checkout:
 
@@ -50,7 +50,7 @@ To keep the user service active before login, an administrator may separately
 run `sudo loginctl enable-linger "$USER"`. This is optional.
 
 **Updates:** Never rerun `install.sh` to upgrade. Follow
-[guarded self-updates](guarded-self-update.md).
+[upgrading existing installations](upgrade.md).
 
 ## Manual Installation
 
@@ -63,7 +63,8 @@ pnpm install --frozen-lockfile
 ### 2. Create Configuration
 
 Create `~/.blackdogbot/config.yaml`. Replace `YOUR_USER` below with the actual
-absolute home directory. The vector-store path does not expand `~`:
+absolute home directory. The vector-store path is absolute. If omitted, it defaults
+to `knowledge/lancedb` under the selected data root:
 
 ```yaml
 ai:
@@ -266,9 +267,10 @@ systemctl --user status blackdogbot.service
 journalctl --user -u blackdogbot.service -f
 ```
 
-Old root-managed services must be migrated separately to avoid having two
-competing bots polling the same Telegram token. The helper refuses to overwrite
-an existing user service.
+For older system services, use the [upgrade planner](upgrade.md). Supported units
+that run as your non-root user require an explicit administrator handoff before
+the user service starts. Unsupported privileged layouts stop for review. The
+fresh-install helper refuses an existing user service.
 
 SearXNG and Scrapling are pinned to immutable image digests. Every successful
 guarded code update checks their upstream `latest` digests and updates

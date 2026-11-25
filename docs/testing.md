@@ -111,3 +111,25 @@ pnpm exec vitest run tests/unit/migrations/data-migrations.test.ts
 Use a focused test for the changed behavior, then run the required checks before
 merging. Do not replace behavior tests with assertions that source code contains
 a particular variable name or implementation pattern.
+
+
+## Upgrade and release checks
+
+The migration suites include native LanceDB copies, historical task fixtures,
+configuration conflicts, source changes during copying, and interrupted recovery.
+Startup tests execute the actual initialization boundary with mocks and verify
+that pending releases cannot start skills, MCP, message polling, outbox delivery,
+scheduled tasks, or Brain commands.
+
+Python tests cover supervisor acceptance, service conversion, publication retries,
+and bootstrap checkout of annotated tags and full commit IDs. Filesystem and Git
+fixtures stay in temporary directories. They do not stop or start the host bot.
+
+Backup-retention tests verify corruption preservation, current and unresolved
+recovery references, deployment lock exclusion, and changes during retirement.
+Release tests verify exact commit pins, checksums, interrupted draft uploads,
+metadata drift, and tag changes during publication.
+
+The release workflow resolves its source commit once. Every Node matrix job and
+the publication job use that same SHA. A version tag must still identify that
+commit before the release is made public.

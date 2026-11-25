@@ -2,27 +2,27 @@
 
 **Self-hosted AI assistant for Linux**, controlled through Telegram or Discord. BlackDogBot can use tools, browse the web, manage files, load reusable skills, and run scheduled tasks. It works with OpenAI-compatible local model servers as well as supported hosted providers.
 
-BlackDogBot runs under your **systemd user session**. Its optional web services use Docker, and application updates use a tested release snapshot with automatic rollback when startup fails.
+BlackDogBot runs under your **systemd user session**. Its optional web services use Docker, and application updates use a tested release snapshot. Failed candidate validation can restore the previous release before message and task processing starts.
 
 ## Quick start (Linux)
 
 Requirements: **Node.js 22.13.0+**, **Python 3.9+**, **Git**, **Bash**, and the **pnpm version declared in `package.json`** (installed by the wizard when needed). Docker Engine with the Compose plugin is optional but recommended for local web research. A running user systemd manager is required for the managed service.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mistrjirka/BlackDogBot/main/scripts/bootstrap.sh | sh
+curl -fsSL https://github.com/mistrjirka/BlackDogBot/releases/latest/download/blackdogbot-install.sh | sh
 ```
 
-The bootstrap script clones the source into `~/.local/share/blackdogbot/source` and launches the interactive installer. It **does not use sudo**, doesn't overwrite an existing configuration, and asks for model, messaging, and optional Docker settings. The installer offers **three MCP servers** (SearXNG, Scrapling, Playwright), registers a **systemd user service**, and, by default, prepares a guarded tested release so future updates can roll back automatically. The pinned Docker images and Node MCP runtimes support both Linux AMD64 and ARM64.
+The bootstrap script clones the source into `~/.local/share/blackdogbot/source` and launches the interactive installer. It **does not use sudo**, does not overwrite an existing configuration, and asks for model, messaging, and optional Docker settings. The installer offers **three MCP servers** (SearXNG, Scrapling, Playwright), registers a **systemd user service**, and, by default, prepares a guarded tested release so future updates can roll back automatically. The pinned Docker images and Node MCP runtimes support both Linux AMD64 and ARM64.
 
 For a review-before-execution installation, or when you want to inspect the exact script:
 
 ```sh
-curl -fsSLo /tmp/blackdogbot-bootstrap.sh https://raw.githubusercontent.com/mistrjirka/BlackDogBot/main/scripts/bootstrap.sh
+curl -fsSLo /tmp/blackdogbot-bootstrap.sh https://github.com/mistrjirka/BlackDogBot/releases/latest/download/blackdogbot-install.sh
 less /tmp/blackdogbot-bootstrap.sh
 sh /tmp/blackdogbot-bootstrap.sh
 ```
 
-`curl | sh` executes code fetched from the repository's moving `main` branch: use it only if you trust the source. For a reproducible installation, inspect a tagged or commit-pinned source instead. **Run the installer as your ordinary user, never as root.** Prompts require an interactive terminal.
+The release asset pins an exact tested commit. The `latest` download selects the newest published stable version. See [releases](docs/releases.md) for a fixed version and checksums. **Run the installer as your ordinary user, never as root.** Prompts require an interactive terminal.
 
 Already have a checkout? Run `./install.sh` **only for a fresh installation**, not for upgrades. See the [installation guide](docs/installation.md).
 
@@ -56,21 +56,36 @@ With the managed service running, use `pnpm ask:local -- --max-steps 12 --timeou
 
 ## Updates and rollback
 
-Do **not** rerun `install.sh` to upgrade an existing installation. Application updates are performed by an independent user-level guarded release manager:
+Use the standalone upgrade command for older installations or the package command
+after updating to v0.2.0:
 
-1. Prepare a chosen Git commit in an isolated worktree and run the typecheck and test suites.
-2. Stop the user service, create and verify a persistent-data snapshot, apply supported migrations, and check the new release. If startup fails, restore unchanged migration-owned files before restarting compatible previous code.
-3. When the app is healthy, check upstream Docker images for **SearXNG and Scrapling** and test newer image digests in isolated containers. Upgrade each service separately, restoring its prior image if functional checks fail.
+~~~sh
+pnpm upgrade:bot plan --repo /absolute/path/to/BlackDogBot
+pnpm upgrade:bot apply --repo /absolute/path/to/BlackDogBot
+~~~
 
-Docker containers are updated on successful guarded application activation by default; pass `--skip-container-updates` to the release manager when you only want a code deployment. A Docker failure leaves the healthy bot release running but is recorded and reported.
+The command prepares and tests an exact release, refreshes the supervisor, stops
+the service, resolves supported legacy database paths, verifies a data snapshot,
+and applies supported migrations. The candidate validates before it can process
+messages or tasks. A failure before acceptance restores unchanged migration-owned
+files and compatible previous code. A failure after acceptance stops for explicit
+recovery because the bot may already have produced external effects.
 
-See [guarded app updates](docs/guarded-self-update.md) and [guarded Docker updates](docs/guarded-container-update.md). Updates use immutable image digests even when upstream publishes moving `latest` tags.
+Container updates are skipped by default by this entry point. Optional container
+upgrades use separate canary checks and service-local rollback.
+
+See [upgrading older installations](docs/upgrade.md), [release assets](docs/releases.md),
+[guarded app updates](docs/guarded-self-update.md), and
+[guarded Docker updates](docs/guarded-container-update.md). Do not rerun
+`install.sh` over an existing installation.
 
 ## Documentation
 
 | Guide | Covers |
 |---|---|
 | [Installation](docs/installation.md) | Prerequisites, interactive setup, optional Docker services |
+| [Upgrading](docs/upgrade.md) | One upgrade command, older services, recovery |
+| [Releases](docs/releases.md) | Versioned downloads, checksums, publication |
 | [Configuration](docs/configuration.md) | Model providers, messaging, MCP, runtime paths |
 | [Commands](docs/commands.md) | Telegram and Discord commands |
 | [Web research](docs/web-research-backends.md) | SearXNG, Scrapling, Playwright routing |
@@ -82,7 +97,7 @@ See [guarded app updates](docs/guarded-self-update.md) and [guarded Docker updat
 | [Testing](docs/testing.md) | TypeScript and Python regression tests |
 | [Troubleshooting](docs/troubleshooting.md) | Diagnosing failed startup, MCP and scheduled jobs |
 
-For source contributions, use the declared pnpm version and run `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test:fast`, `pnpm test:python`, and `pnpm build`. GitHub CI runs these checks on Linux with Node 22, 24, and 26. CI validates commits but does not publish a versioned release. See [testing](docs/testing.md) and [code style](docs/code-style.md).
+For source contributions, use the declared pnpm version and run `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test:fast`, `pnpm test:python`, and `pnpm build`. GitHub CI runs these checks on Linux with Node 22, 24, and 26. Version tags publish release assets only after the same checks pass. See [testing](docs/testing.md) and [code style](docs/code-style.md).
 
 ## License
 

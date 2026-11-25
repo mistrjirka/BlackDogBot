@@ -27,8 +27,10 @@ packages, Docker images, and external volumes need their own recovery procedure.
 
 `knowledge.lancedbPath` must identify its actual absolute location within the
 selected data root. The current vector store uses that value literally. A
-relative path or `~` shorthand can point elsewhere. Inspect where the existing
-service stored its data before correcting configuration or moving a store.
+relative path or `~` shorthand can point elsewhere. The upgrade command can
+resolve and copy supported legacy locations through a journaled path migration.
+It retains originals and refuses conflicting populated stores. See
+[data migrations](data-migrations.md).
 
 ## Inspect coverage
 
@@ -76,9 +78,9 @@ opening a WAL database cannot change either the source or saved bytes. Hashes
 detect accidental changes. They are not a signature against an attacker who can
 replace both manifest and payload.
 
-Backups are retained after successful and failed upgrades. There is no automatic
-retention policy. Keep enough free disk space for the snapshot and disposable
-SQLite validation copies.
+Backups are retained after successful and failed upgrades. Cleanup is explicit,
+using the retention command below. Keep enough free disk space for the snapshot
+and disposable SQLite validation copies.
 
 ## Restore into a new directory
 
@@ -100,10 +102,55 @@ code compatible with the restored schema before any live switch. Keep the
 current data until the recovered copy is verified.
 
 The guarded updater never restores this whole snapshot automatically after a
-failed health check. The candidate may already have received messages or changed
+failed health check. After activation acceptance, the candidate may have received messages or changed
 databases. Automatic recovery restores only unchanged migration-owned files.
 The full snapshot remains available for an explicit recovery decision.
 
 See [data migrations](data-migrations.md) for scoped rollback and
 [guarded updates](guarded-self-update.md) for activation reports and using backup
 tools from a retained candidate after the running code has rolled back.
+
+
+## Backup retention
+
+Preview cleanup without changing files:
+
+~~~sh
+pnpm backup:prune --data-dir /absolute/path/to/.blackdogbot
+~~~
+
+Apply the same policy after reviewing the preview:
+
+~~~sh
+pnpm backup:prune --data-dir /absolute/path/to/.blackdogbot --apply
+~~~
+
+The command verifies each complete snapshot before deciding what can be removed.
+It keeps:
+
+- The newest three verified snapshots for this exact data root.
+- All snapshots newer than 14 days.
+- Backups referenced by the current deployment or unresolved recovery reports.
+- Corrupt snapshots, other installations, unknown entries, staging directories,
+  and interrupted cleanup evidence.
+
+Use `--keep N` and `--min-age-days DAYS` to change the policy. At least two
+verified backups and a one-day minimum age are required. `--backup-root` selects
+a nonstandard backup directory. `--state` must identify the actual supervisor
+state when it is outside the default `DATA_DIR/deploy`.
+
+The default backup root is a sibling named `DATA_DIR-backups`. The cleanup
+operation holds deployment and retention locks, rechecks reports and hashes,
+then moves each eligible backup into a private retirement path before deletion.
+A report change or verification failure preserves that retired copy and its
+receipt. Missing or corrupt guarded deployment reports block cleanup.
+
+Receipts live in `BACKUP_ROOT/.retention-receipts`. Interrupted copies have
+`.retiring-` names and are never removed by a later cleanup automatically.
+Inspect the receipt and restore or remove that copy explicitly after resolving
+the interruption. If the cleanup process died while holding its metadata lock,
+`--apply --recover-lock` can reclaim only a confirmed stale lock.
+
+Preview and apply both read every snapshot's bytes. Large backup sets can take
+time and need temporary space for SQLite verification. Cleanup does not delete
+legacy database sources, import ledgers, or migration journals.

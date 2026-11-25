@@ -197,7 +197,7 @@ async function requireCoveredPathAsync(root: string, value: string, field: strin
   await safeAbsoluteAsync(resolved, field, true);
 }
 
-async function coverageAsync(dataDir: string): Promise<BackupCoverage & { configSha256: string }> {
+async function coverageAsync(dataDir: string, migratedDatabasePath?: string): Promise<BackupCoverage & { configSha256: string }> {
   await atomicPublisherAsync(["--check"]);
   const root = await requireDirectoryAsync(dataDir, "Source data directory");
   const configPath = await safeAbsoluteAsync(path.join(root, "config.yaml"), "Configuration");
@@ -212,7 +212,11 @@ async function coverageAsync(dataDir: string): Promise<BackupCoverage & { config
   // VectorStoreService currently passes this value to mkdir/connect verbatim.
   // Expanding '~' here would falsely certify coverage of a different database.
   if (config.knowledge.embeddingProvider) {
-    await requireCoveredPathAsync(root, config.knowledge.lancedbPath, "knowledge.lancedbPath");
+    const storedPath = (raw as { knowledge?: { lancedbPath?: unknown } }).knowledge?.lancedbPath;
+    if (!migratedDatabasePath && typeof storedPath !== "string") {
+      fail("knowledge.lancedbPath is omitted. Resolve the previous runtime default with the database path migration before creating a snapshot.");
+    }
+    await requireCoveredPathAsync(root, migratedDatabasePath ?? config.knowledge.lancedbPath, "knowledge.lancedbPath");
   }
   const providerKeys = { openrouter: "openrouter", "openai-compatible": "openaiCompatible", "lm-studio": "lmStudio" } as const;
   const activeProviders = new Set([config.ai.provider, ...(config.ai.fallbacks ?? []).map(item => item.provider)]);
@@ -279,6 +283,17 @@ export async function planDataBackupAsync(dataDir: string): Promise<BackupCovera
   status: "planned"; fileCount: number; totalBytes: number;
 }> {
   const coverage = await validateDataBackupSourceAsync(dataDir);
+  return { ...coverage, status: "planned", ...counts((await scanAsync(coverage.sourceDataDir, true)).entries) };
+}
+
+/** The sole pre-backup exception: model this supported path repair in memory.
+ * All unrelated config coverage and filesystem checks still run unchanged. */
+export async function planDataBackupAfterPathMigrationAsync(dataDir: string, destination: string): Promise<BackupCoverage & {
+  status: "planned"; fileCount: number; totalBytes: number;
+}> {
+  const canonical = path.join(path.resolve(dataDir), "knowledge", "lancedb");
+  if (destination !== canonical) fail("The pre-backup path repair must target the canonical database directory.");
+  const { configSha256: _configSha256, ...coverage } = await coverageAsync(dataDir, canonical);
   return { ...coverage, status: "planned", ...counts((await scanAsync(coverage.sourceDataDir, true)).entries) };
 }
 

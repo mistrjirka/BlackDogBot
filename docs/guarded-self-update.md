@@ -1,231 +1,274 @@
 # Guarded application updates
 
-The release manager prepares a tested Git snapshot, stops the user service,
-creates and verifies a persistent-data backup, migrates supported data, and checks
-the new process. If startup fails, it restores migration-owned files before it
-starts the previous code.
+The supervisor tests a candidate, stops the current service, preserves runtime
+data, and starts the candidate with external work paused. It validates that exact
+process before accepting it. Telegram updates, Discord events, scheduled tasks,
+agent calls, skill installation, MCP processes, outgoing messages, and Brain
+commands stay paused until acceptance is durable.
 
-This procedure requires a **user-level** `blackdogbot.service`. Older system-wide
-services need a separate service migration. Do not rerun `install.sh` to upgrade
-an existing installation.
+For an existing installation, use the [upgrade entry point](upgrade.md).
+It discovers the actual service and data directory, refreshes the independent
+supervisor from tested code, and handles direct-checkout and system-service
+conversion. Do not rerun the fresh installer to upgrade existing data.
+
+This document describes the lower-level supervisor. Its service operations use
+a **user-level** systemd unit. Converting an older system-wide unit is a separate,
+recorded step in the upgrade entry point.
+
+## Activation sequence
+
+| Step | What changes | Can external work run? |
+| --- | --- | --- |
+| Prepare | Create an isolated release, install frozen dependencies, run checks | Only the old service |
+| Plan | Discover the old process directory, inspect data and backup coverage | Only the old service |
+| Stop | Confirm the old service has no process | No |
+| Relocate, if required | Copy and verify a legacy knowledge database, record configuration changes | No |
+| Snapshot and migrate | Verify a full backup, record its receipt, migrate task files | No |
+| Validate candidate | Initialize local services, bind the Brain port, authenticate messaging, write readiness | No |
+| Accept | Sync approval, then publish a separate release signal | Candidate work may begin |
+| Verify active startup | Require daemon and configured messaging readiness for the current invocation | Yes |
+
+Database relocation runs before the full snapshot so the snapshot includes the
+active database. A separate path transaction preserves its original inventory
+and configuration. The guard does not bypass unrelated backup coverage errors
+because a path migration is available.
+
+Before path or task changes, the launcher selects code that understands their
+startup barriers. A crash during these changes cannot silently restart an older
+release that ignores the new journal. If no path relocation is needed, the
+release pointer changes only after the verified snapshot is recorded.
 
 ## What is protected
 
-Every activation that changes the release requires a verified backup of the
-runtime data directory. The snapshot includes configuration and secrets,
-sessions, scheduled tasks, databases and their required on-disk state, knowledge,
-custom skills and prompts, other user files, and migration history.
+Each activation that changes the release requires a verified snapshot of the
+runtime data directory. It covers configuration and secrets, sessions, scheduled
+tasks, databases and their required on-disk state, knowledge, custom skills and
+prompts, other user files, and migration history.
 
-The backup excludes only the top-level `deploy`, `models`, `cache`, and `logs`
-directories plus the active `.migrations/lock.json` and
-`.migrations/recovery.json` files. It records its source directory, file inventory,
-and content hashes. Included symlinks and special files are rejected. Configured
-active database or model-profile paths outside the runtime root need separate
-handling and block this automatic backup path. External skill-source directories
-are read-only inputs and are listed as references rather than copied. See
-[persistent-data backups](data-backups.md) for coverage and runtime requirements.
+The snapshot excludes the top-level `deploy`, `models`, `cache`, and `logs`
+directories, plus the active `.migrations/lock.json` and
+`.migrations/recovery.json` files. It records its source directory, inventory,
+and content hashes. Included symlinks and special files are rejected. Active
+database or model-profile paths outside the runtime root block backup until
+covered. External skill-source directories are read-only references.
+See [persistent-data backups](data-backups.md) for the complete coverage rules.
 
-Backups must be outside the runtime directory. By default they are created in
-a sibling directory, such as `~/.blackdogbot-backups`, with a unique name for each
-activation. `--backup-root /absolute/backup/location` selects another parent
-directory. Snapshots are retained after success and failure. There is no automatic
-retention cleanup yet.
+Backups live outside the runtime directory. The default is a sibling such as
+`~/.blackdogbot-backups`, with a unique snapshot name per activation.
+`--backup-root /absolute/location` selects another parent directory. The guard
+retains snapshots after success and failure. The separate
+[retention command](data-backups.md#backup-retention) previews or applies cleanup
+and protects recent snapshots and unresolved recovery receipts.
 
-The guard verifies the snapshot and saves its path and manifest hash in a durable
-`backup_ready` deployment report before changing the release pointer or data.
-Every later outcome retains this backup receipt. Backup failure leaves the
-service stopped with the previous release selected and no migration applied.
+A durable `backup_ready` report records the verified snapshot path and manifest
+hash before task migration. Later outcomes retain that receipt. If the snapshot
+fails after a completed database relocation, the guard attempts the recorded
+path rollback. It keeps the service stopped. A path rollback conflict preserves
+the candidate selection and requires explicit recovery.
 
-### Automatic rollback has a narrower scope
+## Readiness and durable acceptance
 
-Scheduled-task migrations record their originals under
-`.migrations/transactions/<transaction-id>`. Automatic rollback checks every
-file that the migration changed before restoring any file. If the candidate or
-a user edited one of those files afterwards, rollback stops with a conflict.
+Activation metadata always lives under the selected data root:
 
-After a verified stop, the supervisor retains the stopped state and the candidate
-startup checks. If stopping itself fails, the report marks
-`service_stopped: false` and no data restoration is attempted.
+- `deploy/activation.json`: candidate path, revision, random nonce, pending or
+  committed state, and accepted process identity.
+- `deploy/activation-ready.json`: readiness for that nonce and the current
+  systemd invocation.
+- `deploy/activation-release.json`: permission to begin external work, written
+  only after the committed approval and its directory have been synced.
+- `deploy/activations/<nonce>/context.json`: previous approval, previous code,
+  task and path transaction receipts, and snapshot receipt.
 
-The full persistent-data snapshot is retained for **explicit recovery**. The
-supervisor does not restore the whole directory automatically after a failed
-health check. This avoids discarding new sessions, messages, or database writes.
-Scheduled tasks and message handling can run during the health check. A snapshot
-cannot undo messages or other external effects that already happened.
+These files are outside snapshot payloads. Restoring data into a staging
+directory cannot resurrect an old process approval.
 
-Unknown data versions, invalid tasks, incomplete transactions, and legacy code
-that cannot verify a versioned data directory block an automatic start or
-downgrade. A candidate without backup protocol support is rejected before the
-service stops. Automatic rollback may still use an older tested release when the
-restored data is compatible.
+During pending validation, the daemon checks recovery barriers before opening
+runtime data. It initializes configuration, providers, local storage and the
+actual Brain listening port. Brain connections are rejected with a retryable
+startup error. Telegram validation calls only `getMe` and `getWebhookInfo`.
+It never calls `getUpdates`, advances an update offset, or deletes a webhook.
+Discord validation uses a read-only identity request and does not connect its
+gateway. Discord has the usual offline-service downtime during this stage.
 
-## Install or refresh the independent supervisor
+Skills, dependency checks, auto-setup, MCP connections, outbox workers, messaging
+adapters, scheduler execution, and Brain command handlers start after release.
+A connection cannot be accepted early and have its command silently discarded.
 
-Run these commands from the reviewed source checkout:
+The supervisor requires a stable readiness receipt from the current systemd
+invocation for six seconds. It checks the actual runtime process, including a
+Node child of the service's main process. It commits acceptance, syncs it, then
+writes the separate release signal. Active startup must subsequently report
+daemon readiness and Telegram readiness or disabled state for the same live
+invocation. Readiness does not depend on the configured log level.
 
-```bash
+A prepared release under `releases/<full-sha>` refuses startup without matching
+approval. Candidates must advertise `activationProtocolVersion: 1` and
+`backupProtocolVersion: 1`. An older supervisor cannot start a new prepared
+release while accidentally bypassing this protocol. Normal direct source
+starts with no pending activation and healthy restarts of an accepted release
+continue to work.
+
+## Failure and rollback
+
+**Before acceptance**, the candidate has not consumed messages or started
+external work. The guard stops it, rolls back task changes, rolls back database
+path changes, checks the previous code's data compatibility, restores its
+approval, and restarts it. Each rollback checks that current contents match the
+recorded transaction. A conflict leaves the service stopped with both versions
+and receipts preserved.
+
+**After commitment**, external work may already have started. A failed startup
+check produces `activation_committed_unhealthy` and stops the service. The guard
+retains the selected candidate, current data, and all receipts. It does not
+automatically select older code or restore data over possible new work.
+
+The full snapshot is always for explicit recovery. Even a complete snapshot
+cannot undo a message or another external effect. Unknown schemas, incomplete
+transactions, malformed approvals, incompatible candidates, or an unverified
+service stop block automatic restoration. A failed stop records
+`service_stopped: false`.
+
+## Prepare and activate with the lower-level supervisor
+
+Run from the reviewed source checkout:
+
+~~~bash
 install -D -m 700 scripts/guarded-release.py "$HOME/.local/lib/blackdogbot/guarded-release.py"
 install -D -m 700 scripts/guarded-container-update.py "$HOME/.local/lib/blackdogbot/guarded-container-update.py"
-```
+~~~
 
-These copies run outside the daemon and survive application updates. Editing the
-source scripts does not refresh the installed copies.
+These independent copies survive daemon updates. Editing a source script alone
+does not refresh its installed copy. The upgrade entry point refreshes them
+from its tested candidate.
+
+Prepare a committed revision:
+
+~~~bash
+python3 "$HOME/.local/lib/blackdogbot/guarded-release.py" prepare \
+  --repo /path/to/BlackDogBot --revision <candidate-full-sha>
+~~~
+
+Preparation creates a detached worktree and runs frozen dependency installation,
+TypeScript, fast tests, and Python deployment tests. It does not switch the
+running release. Inspect its log and passing marker under the selected state
+directory before activation:
+
+~~~bash
+python3 "$HOME/.local/lib/blackdogbot/guarded-release.py" activate \
+  --revision <candidate-full-sha> --skip-container-updates
+~~~
+
+When the bot launches its own upgrade, run the supervisor in a detached
+`systemd-run --user` unit so stopping the bot cannot stop its updater.
+Notifications are disabled unless `--chat-id` explicitly names the intended
+recipient. Known chat files are never used to choose a status recipient.
+
+Useful options:
+
+| Option | Meaning |
+| --- | --- |
+| `--data-dir /absolute/path` | Runtime data root. Must match the service environment. Defaults to `BLACKDOGBOT_DATA_DIR`, otherwise `~/.blackdogbot`. |
+| `--state /absolute/path` | Supervisor releases, current pointer and reports. Approval still lives in `DATA_DIR/deploy`. |
+| `--runtime-cwd /absolute/path` | Actual previous process directory for resolving a legacy relative database path. |
+| `--database-source /absolute/path` | Explicit reviewed legacy database source when discovery is ambiguous. |
+| `--import-legacy-tasks` | Explicitly import supported legacy task directories during planning and application. |
+| `--skip-container-updates` | Deploy the bot without separately updating enabled Docker services. |
+| `--timeout SECONDS` | Time budget for each validation and active-health phase. |
+
+The supervisor discovers the current process directory before stopping it.
+It verifies the actual data directory from the process environment. A stopped
+service with `EnvironmentFiles` needs a verified running-process check.
+Changing `--data-dir` does not change the unit's configuration.
 
 The source checkout is discovered from `--repo`, `BLACKDOGBOT_SOURCE_DIR`, the
-script location, the current working directory, the last successfully prepared
-source location, or the fresh install location
-`~/.local/share/blackdogbot/source`. Supply `--repo` when there is ambiguity.
+script or current directory, the saved preparation source, or the fresh install
+source at `~/.local/share/blackdogbot/source`.
 
-## Prepare and activate an update
+## Resume an interrupted activation
 
-1. Commit the candidate in the source checkout.
-2. Prepare its full commit ID:
+If the approval is pending and the candidate is already selected, repeat
+`activate` with the same full revision, state directory and unit. The guard uses
+the original snapshot and transaction receipts. It revalidates the live
+invocation or restarts the stopped candidate. It does not reapply migrations
+or report success while the gate is closed.
 
-   ```bash
-   python3 "$HOME/.local/lib/blackdogbot/guarded-release.py" prepare \
-     --repo /path/to/BlackDogBot --revision <candidate-full-sha>
-   ```
+A crash after durable commitment but before the release signal also leaves work
+paused. Repeating activation revalidates the current candidate before releasing
+it. An already accepted but stopped candidate requires inspection and an
+explicit restart. A different pending revision, missing recovery context or
+damaged approval requires recovery before another activation.
 
-   Preparation creates a detached release worktree. It runs dependency
-   installation with the frozen lockfile, TypeScript, the fast test suite, and
-   Python installer, MCP, and guarded-updater tests. It does not change the running release.
+Do not delete or edit approval files to force startup.
 
-3. Inspect the preparation log and release marker under
-   `~/.blackdogbot/deploy`.
-4. Activate the tested commit:
+## Bootstrap a fresh guarded user launcher
 
-   ```bash
-   python3 "$HOME/.local/lib/blackdogbot/guarded-release.py" activate \
-     --revision <candidate-full-sha> --skip-container-updates
-   ```
+The `bootstrap` command is for a tested candidate whose task and database-path
+plans already need no changes. Existing direct-checkout and system services
+should use the upgrade entry point, which preserves their original runtime
+directory and pinned rollback code.
 
-   When the bot itself starts this command, run the external supervisor through
-   a detached `systemd-run --user` unit so stopping the bot cannot stop its
-   updater. Supply `--chat-id` only for the intended status recipient.
+~~~bash
+python3 "$HOME/.local/lib/blackdogbot/guarded-release.py" bootstrap \
+  --repo /path/to/BlackDogBot --revision <candidate-full-sha>
+~~~
 
-5. Inspect `~/.blackdogbot/deploy/reports/latest.json` and the user service.
+Bootstrap takes a verified snapshot, installs the external launcher and user
+drop-in, and uses the same pending, committed and released protocol. A failure
+before acceptance restores the original unit. A failure after commitment keeps
+the candidate stopped for explicit recovery.
 
-Importing supported legacy task files is explicit. Add
-`--import-legacy-tasks` to the activation command only after reviewing its
-migration plan. The flag is forwarded to planning and application, and the
-snapshot preserves the original legacy files before import.
+## Recover data transactions
 
-Activation checks the candidate's migration plan while the current bot is still
-running. It checks backup support and source eligibility, then stops the service
-and verifies that its process has exited. It creates and verifies the snapshot
-and records its receipt. Only then does it point the stable launcher at the
-candidate and apply the migration. Moving the pointer before migration ensures
-that an interrupted upgrade starts code that understands pending transaction
-checks.
+Keep the service stopped. Use the retained candidate that owns the transaction:
 
-The runner replans under its exclusive data lock after shutdown. It saves all
-originals before the first write. Migration errors leave the bot stopped for
-recovery.
-
-After migration, the supervisor starts the candidate. Startup readiness records
-must belong to its current systemd invocation. The same process and invocation must remain
-healthy for six seconds. Telegram polling readiness is required only when
-Telegram is configured. Discord-only and no-messaging configurations are
-supported.
-
-If health fails, the supervisor stops the candidate, restores its migration
-transaction, checks that the previous release can read the resulting schema,
-and restarts that release. A restore conflict prevents the old code from
-starting. Reports include the transaction ID.
-
-Omitting `--skip-container-updates` retains the existing behavior of checking
-enabled Docker services after application health. Container updates have their
-own validation and rollback. They are not part of the data migration transaction.
-
-`--data-dir` selects the data directory passed to the migration runner. Its default
-honors `BLACKDOGBOT_DATA_DIR`, otherwise it is `~/.blackdogbot`. The guard verifies
-that it matches the daemon's environment before stopping or migrating. A stopped
-service with `EnvironmentFiles` requires a running-process check because its
-effective data root cannot be safely inferred. The flag does not configure the
-systemd service. Symlink data roots are rejected.
-
-## Bootstrap a guarded launcher
-
-For a user service that still runs directly from a checkout:
-
-1. Prepare the current known-good commit.
-2. Verify that its migration plan needs no changes. If task conversion is
-   required, stop the service and use the migration CLI before bootstrap.
-3. Run:
-
-   ```bash
-   python3 "$HOME/.local/lib/blackdogbot/guarded-release.py" bootstrap \
-     --repo /path/to/BlackDogBot --revision <known-good-full-sha>
-   ```
-
-4. Confirm `bootstrap_healthy` in the latest report.
-
-Bootstrap refuses a release whose data still needs migration. It installs an
-external launcher and a user systemd drop-in. If the service does not start, it
-restores the original unit configuration. It does not convert system-wide units.
-
-## Inspect or restore a full snapshot
-
-Use the backup path from a deployment report and the tested candidate that
-created it. That release is retained even if the live bot rolled back to older
-code without backup commands:
-
-```bash
-snapshot_tool="$HOME/.blackdogbot/deploy/releases/<candidate-full-sha>"
-"$snapshot_tool/node_modules/.bin/tsx" "$snapshot_tool/src/migrations/cli.ts" backup-verify \
-  --backup-dir /absolute/path/from/report
-```
-
-Verification needs only the snapshot. It does not read or modify the live data
-directory. To restore into a new staging directory:
-
-```bash
-"$snapshot_tool/node_modules/.bin/tsx" "$snapshot_tool/src/migrations/cli.ts" backup-restore \
-  --backup-dir /absolute/path/from/report \
-  --destination /absolute/path/that/does/not/exist --offline
-```
-
-The destination must not exist. Restoration does not overwrite a live
-installation or change its service or release pointer. The result identifies
-the original `sourceDataDir`.
-
-**Treat this as a staging restore.** Configuration retains its original absolute
-paths. Inspect configuration and all referenced directories before using the
-restored copy. Choose code that supports the restored schema before switching
-any live paths. Keep the current data until recovery has been verified.
-
-## Recover an interrupted migration
-
-Keep the service stopped until recovery completes:
-
-```bash
+~~~bash
 systemctl --user stop blackdogbot.service
 candidate="$HOME/.blackdogbot/deploy/current"
 "$candidate/node_modules/.bin/tsx" "$candidate/src/migrations/cli.ts" recover \
   --data-dir "$HOME/.blackdogbot" --offline
-```
+~~~
 
-Recovery rolls back incomplete published transactions. It refuses a live data
-lock or files that no longer match the transaction's recorded contents. If it
-reports a conflict, preserve the journal and both file versions and resolve the
-difference before restarting.
+Recovery rolls back incomplete published task transactions. To undo a completed
+task transaction, use its receipt:
 
-After successful recovery, apply the candidate migration again while stopped,
-or select a compatible tested release that supports verified backups. The new
-supervisor rejects a fresh activation of pre-backup code. Returning to such code
-after an interrupted operation requires an explicit manual recovery decision
-with verified compatible data. Immediate automatic rollback after a failed
-activation remains supported.
-An explicit rollback of a completed migration uses:
-
-```bash
+~~~bash
 "$candidate/node_modules/.bin/tsx" "$candidate/src/migrations/cli.ts" rollback \
-  --data-dir "$HOME/.blackdogbot" --transaction <transaction-id> --offline
-```
+  --data-dir "$HOME/.blackdogbot" --transaction <task-transaction-id> --offline
+~~~
 
-The migration CLI manages data only. It does not stop services, change release
-pointers, or undo external effects. Do not run mutating commands against an
-active legacy process that does not participate in the data lock.
+Recover incomplete path changes with `paths-recover`. Undo a completed path
+transaction with `paths-rollback --transaction <path-transaction-id>`.
+Restore task changes before path changes. Both commands require `--offline`
+and the correct `--data-dir`. A conflict means current bytes differ from the
+receipt. Preserve both versions and resolve it before restarting.
 
-Reports and backups are private files. They can contain runtime data and
-credentials. Do not publish them.
+These commands change data only. They do not stop services, alter approvals,
+switch releases, or undo external effects. Old code that does not participate
+in the data lock must remain stopped throughout recovery.
+
+## Verify or restore a full snapshot
+
+Use the snapshot path from the deployment report and the tested release that
+created it:
+
+~~~bash
+snapshot_tool="$HOME/.blackdogbot/deploy/releases/<candidate-full-sha>"
+"$snapshot_tool/node_modules/.bin/tsx" "$snapshot_tool/src/migrations/cli.ts" backup-verify \
+  --backup-dir /absolute/path/from/report
+~~~
+
+Verification reads only the snapshot. Restore into a new staging directory:
+
+~~~bash
+"$snapshot_tool/node_modules/.bin/tsx" "$snapshot_tool/src/migrations/cli.ts" backup-restore \
+  --backup-dir /absolute/path/from/report \
+  --destination /absolute/path/that/does/not/exist --offline
+~~~
+
+The destination must not exist. This does not overwrite live data or switch its
+service. Configuration retains original absolute paths. Review them and choose
+code compatible with the restored schema before using the staging copy.
+Keep current data until recovery has been verified.
+
+Reports and snapshots are private and can contain credentials. Do not publish
+them.

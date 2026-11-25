@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable version tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+    permissions:
+      contents: read
+
+  publish:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the validated tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare, verify, and publish release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_OUTPUT: ${{ runner.temp }}/blackdogbot-release
+        run: python3 scripts/release.py publish --tag "$RELEASE_TAG" --output "$RELEASE_OUTPUT"

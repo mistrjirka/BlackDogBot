@@ -6,16 +6,39 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+    outputs:
+      commit:
+        description: Exact commit validated by all matrix jobs
+        value: ${{ jobs.resolve.outputs.commit }}
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ inputs.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - name: Resolve source once
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+      - id: source
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   validate:
+    needs: resolve
     name: Node ${{ matrix.node }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -33,6 +56,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          ref: ${{ needs.resolve.outputs.commit }}
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:

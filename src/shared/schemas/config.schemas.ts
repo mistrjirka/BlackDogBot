@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { getLanceDbDir } from "../../utils/paths.js";
 import { ALLOWED_INSTALL_KINDS, DEFAULT_ALLOWED_INSTALL_KINDS, DEFAULT_SKILL_INSTALL_TIMEOUT_MS } from "../constants.js";
 
 //#region Config Schemas
@@ -210,8 +211,8 @@ const knowledgeConfigSchema = z.object({
     .optional()
     .describe("Optional OpenRouter API key override for embeddings. Falls back to ai.openrouter.apiKey."),
   lancedbPath: z.string()
-    .default("~/.blackdogbot/knowledge/lancedb")
-    .describe("Path to the LanceDB data directory"),
+    .default(getLanceDbDir)
+    .describe("Absolute path to the LanceDB data directory in the selected data root"),
 });
 
 const skillsConfigSchema = z.object({

@@ -6,6 +6,8 @@ import path from "node:path";
 import { Server as SocketIOServer } from "socket.io";
 import { ConfigService } from "./services/config.service.js";
 import { prepareRuntimeDataAsync } from "./migrations/data-migrations.js";
+import { assertDatabasePathMigrationReadyAsync } from "./migrations/database-path-migrations.js";
+import { StartupActivationGate, validateStartupMessagingAsync } from "./services/startup-activation-gate.js";
 import { reportServiceReadiness } from "./utils/service-readiness.js";
 import { LoggerService } from "./services/logger.service.js";
 import { SkillLoaderService } from "./services/skill-loader.service.js";
@@ -50,6 +52,8 @@ async function mainAsync(): Promise<void> {
   const stopDuringStartup = (): never => process.exit(1);
   process.on("SIGINT", stopDuringStartup);
   process.on("SIGTERM", stopDuringStartup);
+  const activation = await StartupActivationGate.createAsync(getBaseDir());
+  await assertDatabasePathMigrationReadyAsync(getBaseDir());
   await prepareRuntimeDataAsync(getBaseDir());
 
   // 1. Load config
@@ -173,6 +177,33 @@ async function mainAsync(): Promise<void> {
     logger.info("Knowledge features disabled (embeddingProvider not configured).");
   }
 
+  // Bind the real listening port during validation, but reject connections.
+  // No message update is fetched or acknowledged until approval is durable.
+  const httpServer = createServer();
+  const io: SocketIOServer = new SocketIOServer(httpServer, {
+    cors: { origin: "*", methods: ["GET", "POST"] },
+  });
+  let processingEnabled = false;
+  io.use((_socket, next): void => {
+    next(processingEnabled ? undefined : new Error("BlackDogBot is starting. Retry after activation completes."));
+  });
+  await new Promise<void>((resolve, reject): void => {
+    httpServer.once("error", reject);
+    httpServer.listen(BRAIN_INTERFACE_PORT, (): void => {
+      httpServer.off("error", reject);
+      resolve();
+    });
+  });
+  logger.info("BrainInterface port bound.", { port: BRAIN_INTERFACE_PORT });
+
+  if (activation.isPending()) {
+    await validateStartupMessagingAsync(config);
+    await activation.markReadyAsync();
+    await activation.waitForAcceptanceAsync();
+  }
+
+  // Everything below may run code, consume incoming messages, or send output.
+  // Keep this entire section after the guarded-activation barrier.
   // 6. Initialize skill loader
   const skillLoaderService: SkillLoaderService = SkillLoaderService.getInstance();
   const skipOsCheck = config.skills.skipOsCheck;
@@ -399,15 +430,8 @@ async function mainAsync(): Promise<void> {
     logger.info("Scheduler disabled in config.");
   }
 
-  // 10. Initialize BrainInterface (WebSocket server for debug UI)
-  const httpServer = createServer();
-  const io: SocketIOServer = new SocketIOServer(httpServer, {
-    cors: {
-      origin: "*",
-      methods: ["GET", "POST"],
-    },
-  });
-
+  // Processing remains unavailable through the Brain Interface until all
+  // accepted-startup services have been initialized.
   const brainInterface: BrainInterfaceService = BrainInterfaceService.getInstance();
   brainInterface.initialize(
     io,
@@ -415,15 +439,8 @@ async function mainAsync(): Promise<void> {
     config.brainInterface.jwtIssuer,
     config.brainInterface.jwtAudience,
   );
-
-  await new Promise<void>((resolve): void => {
-    httpServer.listen(BRAIN_INTERFACE_PORT, (): void => {
-      resolve();
-    });
-  });
-
-  logger.info("BrainInterface WebSocket server started.", { port: BRAIN_INTERFACE_PORT });
-
+  processingEnabled = true;
+  await activation.markActiveAsync();
   logger.info("BlackDogBot daemon is running.");
   reportServiceReadiness("daemon", "ready");
 

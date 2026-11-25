@@ -702,8 +702,10 @@ EOF
 EOF
     fi
 
+    local lancedb_path_json
+    lancedb_path_json="$(node -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$CONFIG_DIR/knowledge/lancedb")"
     cat >> "$CONFIG_FILE" << EOF
-  lancedbPath: ~/.blackdogbot/knowledge/lancedb
+  lancedbPath: ${lancedb_path_json}
 
 skills:
   directories: []
