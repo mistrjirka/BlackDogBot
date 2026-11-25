@@ -123,7 +123,7 @@ export interface IToolCallSummary {
   isError?: boolean;
 }
 
-export type OnStepCallback = (stepNumber: number, toolCalls: IToolCallSummary[]) => Promise<void>;
+export type OnStepCallback = (stepNumber: number, toolCalls: IToolCallSummary[], workerStepNumber?: number) => Promise<void>;
 
 /**
  * Error thrown when duplicate tool call escalation exhausts all attempts

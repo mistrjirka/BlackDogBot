@@ -304,7 +304,7 @@ describe("TelegramHandler", () => {
 
     const compactSpy = vi
       .spyOn(mainAgent, "compactSessionMessagesForChatAsync")
-      .mockResolvedValue(true);
+      .mockResolvedValue({ compacted: true, originalTokens: 100, compactedTokens: 50, savedTokens: 50 });
 
     let processCallCount: number = 0;
     vi.spyOn(mainAgent, "processMessageForChatAsync").mockImplementation(async () => {

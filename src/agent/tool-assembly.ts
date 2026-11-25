@@ -50,6 +50,7 @@ import * as knowledge from "../helpers/knowledge.js";
 import type { McpService } from "../services/mcp.service.js";
 import type { AiProviderService } from "../services/ai-provider.service.js";
 import { attachDelegateAgentTool } from "./delegate-agent.js";
+import type { SubStepBuffer } from "../shared/substep-shared.js";
 import { canonicalToolCatalog, conciseToolDescriptions } from "./tool-descriptions.js";
 import { scheduleCreateTool, scheduleEditTool } from "../tools/merged-tools.tool.js";
 import { applyPatchTool } from "../tools/apply-patch.tool.js";
@@ -69,6 +70,7 @@ export async function assembleToolsForChat(
   onCreateTableAsync?: (info: ICreateTableRebuildInfo) => void | Promise<void>,
   getVariableStore?: () => VariableStore | null,
   fileSender?: FileSender | null,
+  subSteps?: SubStepBuffer,
 ): Promise<ToolSet> {
   const tools = createBaseToolSet(messageSender, readTracker, fileSender);
   // Keep the dedicated terminal controls model-visible: their precise schemas
@@ -118,7 +120,7 @@ export async function assembleToolsForChat(
 
   const filteredTools: ToolSet = filterToolsByPermission(tools, { platform, chatId });
   if (aiProviderService && ChannelRegistryService.getInstance().getPermission(platform, chatId) !== "ignore") {
-    attachDelegateAgentTool(filteredTools, aiProviderService.getModel());
+    attachDelegateAgentTool(filteredTools, aiProviderService.getModel(), subSteps);
   }
   // Canonical order is essential to llama.cpp prompt-prefix cache reuse.
   return conciseToolDescriptions(canonicalToolCatalog(filteredTools));

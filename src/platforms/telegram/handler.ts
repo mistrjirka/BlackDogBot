@@ -195,7 +195,7 @@ function createProgressOnStep(
   onStepLogged?: (stepNumber: number, toolCalls: IToolCallSummary[], formatted: string | null) => void,
   compactionState?: { lastSeenAt: number },
 ): OnStepCallback {
-  return async (stepNumber: number, toolCalls: IToolCallSummary[]): Promise<void> => {
+  return async (stepNumber: number, toolCalls: IToolCallSummary[], workerStepNumber?: number): Promise<void> => {
     onStepStarted?.(stepNumber, toolCalls);
 
     if (compactionState) {
@@ -206,7 +206,7 @@ function createProgressOnStep(
     let formatted: string | null = null;
     if (filteredToolCalls.length > 0) {
       formatted = filteredToolCalls.map((tc: IToolCallSummary): string => _formatToolCall(tc.name, tc.input)).join(", ");
-      stepLogs.push(Number.isInteger(stepNumber) ? `Step ${stepNumber}: ${formatted}` : `  ${stepNumber}: ${formatted}`);
+      stepLogs.push(workerStepNumber === undefined ? `Step ${stepNumber}: ${formatted}` : `  ${stepNumber}.${workerStepNumber}: ${formatted}`);
     }
     onStepLogged?.(stepNumber, toolCalls, formatted);
     await _tryEditMessageTextAsync(editApi, logger, chatId, progressMsgId, buildText("⚙️ Working..."), "HTML", source);
