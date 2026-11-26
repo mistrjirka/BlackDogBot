@@ -44,6 +44,7 @@ import { ConfigService } from "../config.service.js";
 import { HARD_GATE_THRESHOLD_PERCENTAGE } from "../../shared/constants.js";
 import { fetchLlmAsync, LlmRequestTimeoutError, LlmIncompleteResponseError } from "../../utils/llm-fetch.js";
 import { bridgeMcpToolImages } from "../../utils/mcp-tool-image-bridge.js";
+import { toWellFormedText } from "../../utils/unicode.js";
 import { extractErrorCauses } from "../../utils/error.js";
 
 interface IOpenRouterModelListEntry {
@@ -67,6 +68,49 @@ interface IOpenAiCompatibleModelListEntry {
 
 interface IOpenAiCompatibleModelListResponse {
   data?: IOpenAiCompatibleModelListEntry[];
+}
+
+// JSON.stringify escapes lone surrogates, but strict JSON decoders reject them.
+function normalizeRequestUnicode(body: string): string {
+  const wellFormedBody = toWellFormedText(body);
+  if (!/\\u[dD][89a-fA-F][0-9a-fA-F]{2}/.test(wellFormedBody)) {
+    return wellFormedBody;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(wellFormedBody);
+  } catch {
+    return wellFormedBody;
+  }
+
+  let changed = false;
+  const serialized = JSON.stringify(parsed, (_key: string, value: unknown): unknown => {
+    if (typeof value === "string") {
+      const normalized = toWellFormedText(value);
+      changed ||= normalized !== value;
+      return normalized;
+    }
+
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      const entries = Object.entries(value);
+      if (entries.some(([key]) => toWellFormedText(key) !== key)) {
+        const keys = new Set<string>();
+        const normalizedEntries = entries.map(([key, entry]) => {
+          const normalized = toWellFormedText(key);
+          if (keys.has(normalized)) {
+            throw new Error("Malformed Unicode creates duplicate JSON keys");
+          }
+          keys.add(normalized);
+          return [normalized, entry];
+        });
+        changed = true;
+        return Object.fromEntries(normalizedEntries);
+      }
+    }
+    return value;
+  });
+  return changed ? serialized : wellFormedBody;
 }
 
 function normalizeBaseUrl(url: string): string {
@@ -1661,6 +1705,14 @@ export class AiProviderCore {
     const logger: LoggerService = LoggerService.getInstance();
 
     return async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (init?.method === "POST" && typeof init.body === "string") {
+        const body = normalizeRequestUnicode(init.body);
+        if (body !== init.body) {
+          init = { ...init, body };
+          logger.warn("Normalized malformed Unicode in model request", { provider: providerName });
+        }
+      }
+
       logger.info("Making API request to provider", {
         provider: providerName,
         url: typeof url === 'string' ? url : url.toString(),

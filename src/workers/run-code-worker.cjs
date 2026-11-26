@@ -36,7 +36,9 @@ process.once("message", ({ code, variables, maxOutputChars, maxBufferedChars }) 
   };
   const finishPrints = () => {
     const bufferedOutput = parts.join("");
-    const display = bufferedOutput.slice(0, displayLimit);
+    // Node >=22 supports this without importing code into the isolated worker.
+    // Repair the display only; retain the original buffer and UTF-16 offsets.
+    const display = bufferedOutput.slice(0, displayLimit).toWellFormed();
     const shownChars = display.length;
     return {
       display,
@@ -82,6 +84,6 @@ process.once("message", ({ code, variables, maxOutputChars, maxBufferedChars }) 
     }
     process.send({ ok: true, returned: true, value: JSON.parse(serialized), ...finishPrints() });
   } catch (e) {
-    process.send({ ok: false, category: /Script execution timed out/.test(String(e)) ? "timeout" : "validation", message: String(e.message || e).slice(0, 300) });
+    process.send({ ok: false, category: /Script execution timed out/.test(String(e)) ? "timeout" : "validation", message: String(e.message || e).slice(0, 300).toWellFormed() });
   }
 });

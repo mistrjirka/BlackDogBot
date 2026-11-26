@@ -5,6 +5,7 @@ import {
   CAPTURE_THRESHOLD_CHARS,
   PREVIEW_MAX_CHARS,
 } from "../shared/limits.js";
+import { toWellFormedText } from "./unicode.js";
 
 /**
  * Blackboard variable store (Phase 1 — Blackboard Core).
@@ -257,7 +258,7 @@ export class VariableStore {
         error: "result_too_large",
         sizeBytes,
         maxBytes: MAX_VARIABLE_BYTES,
-        preview: json.slice(0, PREVIEW_MAX_CHARS),
+        preview: toWellFormedText(json.slice(0, PREVIEW_MAX_CHARS)),
         message: "Result exceeds the blackboard per-variable memory limit. No data was stored. Request a narrower or paginated result.",
       };
     }
@@ -275,7 +276,7 @@ export class VariableStore {
     const storedSizeBytes: number = Buffer.byteLength(JSON.stringify(normalized) ?? json, "utf8");
     if (storedSizeBytes > MAX_VARIABLE_BYTES) {
       return { error: "result_too_large", sizeBytes: storedSizeBytes, maxBytes: MAX_VARIABLE_BYTES,
-        preview: json.slice(0, PREVIEW_MAX_CHARS),
+        preview: toWellFormedText(json.slice(0, PREVIEW_MAX_CHARS)),
         message: "Normalized result exceeds the blackboard per-variable memory limit. Request narrower data." };
     }
     const safeToolName = toolName.replace(/[^A-Za-z0-9_]/g, "_").replace(/^[0-9]/, "_$&");
@@ -630,7 +631,7 @@ function _extractMeta(result: Record<string, unknown>, payloadKey: string): Reco
     }
 
     const normalizedValue: ScalarMetaValue = typeof value === "string" && value.length > 300
-      ? `${value.slice(0, 300)}…`
+      ? `${toWellFormedText(value.slice(0, 300))}…`
       : value;
 
     meta[key] = normalizedValue;
@@ -972,13 +973,13 @@ function _buildPreview(value: unknown, type: IVariableStub["type"]): unknown {
       return items;
     }
     // Items too large to fit as an array preview → fall back to a bounded string.
-    return serialized.slice(0, PREVIEW_MAX_CHARS);
+    return toWellFormedText(serialized.slice(0, PREVIEW_MAX_CHARS));
   }
 
   const serialized: string = JSON.stringify(value);
   return serialized.length <= PREVIEW_MAX_CHARS
     ? serialized
-    : `${serialized.slice(0, PREVIEW_MAX_CHARS)}…`;
+    : `${toWellFormedText(serialized.slice(0, PREVIEW_MAX_CHARS))}…`;
 }
 
 /**

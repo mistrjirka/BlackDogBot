@@ -15,6 +15,20 @@ function createSetup() {
 }
 
 describe("run_code: separate data-only blackboard processing", () => {
+
+  it("repairs a surrogate split by the display limit while preserving stored output and offsets", async () => {
+    const { store, execute } = createSetup();
+    const original = "a".repeat(2999) + "\uD83C\uDF3Ftail";
+    const result = await execute('print("a".repeat(2999) + "\\uD83C\\uDF3Ftail")') as {
+      display: string; fullOutputVariable: string; output: Record<string, number>;
+      nextWith: { arguments: { offset: number } };
+    };
+    expect(result.display).toBe("a".repeat(2999) + "\uFFFD");
+    expect(result.display).not.toMatch(/[\uD800-\uDFFF]/u);
+    expect(result.output).toMatchObject({ producedChars: 3005, shownChars: 3000, omittedChars: 5 });
+    expect(result.nextWith.arguments.offset).toBe(3000);
+    expect(store.get(result.fullOutputVariable)).toBe(original);
+  });
   it("filters structured MCP data, prints a preview and stores new data", async () => {
     const { store, stub, execute } = createSetup();
     expect(stub.variable).toMatch(/^mcp_searxng_search_\d+$/);

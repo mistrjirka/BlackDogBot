@@ -66,4 +66,68 @@ describe("local generation timeout", () => {
       errorCauses: expect.arrayContaining([expect.objectContaining({ code: "UND_ERR_HEADERS_TIMEOUT" })]),
     }));
   });
+
+  it("repairs malformed Unicode in persisted history before sending JSON", async () => {
+    let received: Record<string, any> | undefined;
+    await withServer((req, res) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", chunk => { body += chunk; });
+      req.on("end", () => {
+        received = JSON.parse(body) as Record<string, any>;
+        res.end('{"ok":true}');
+      });
+    }, async url => {
+      const body = JSON.stringify({
+        model: "local",
+        messages: [{ role: "tool", tool_call_id: "inspect", content: "\udf3f note \ud83c" }],
+        metadata: {
+          validEmoji: "\ud83c\udf3f",
+          literalEscape: "\\udf3f",
+          ["key\ud800"]: "value",
+        },
+      });
+      const init: RequestInit = { method: "POST", body };
+      const response = await new TestProvider().request(1000)(url, init);
+      expect(response.status).toBe(200);
+      expect(init.body).toBe(body);
+      expect(received?.messages[0].content).toBe("\ufffd note \ufffd");
+      expect(received?.metadata).toEqual({
+        validEmoji: "\ud83c\udf3f",
+        literalEscape: "\\udf3f",
+        ["key\ufffd"]: "value",
+      });
+      expect(LoggerService.getInstance().warn).toHaveBeenCalledWith(
+        "Normalized malformed Unicode in model request",
+        expect.objectContaining({ provider: "openai-compatible" }),
+      );
+    });
+  });
+
+  it("preserves well-formed request bytes and escaped literal text", async () => {
+    let received = "";
+    await withServer((req, res) => {
+      req.setEncoding("utf8");
+      req.on("data", chunk => { received += chunk; });
+      req.on("end", () => { res.end('{"ok":true}'); });
+    }, async url => {
+      const body = '{ "messages": [{ "role": "user", "content": "\\ud83c\\udf3f literal \\\\udf3f" }] }';
+      await new TestProvider().request(1000)(url, { method: "POST", body });
+      expect(received).toBe(body);
+      expect(LoggerService.getInstance().warn).not.toHaveBeenCalledWith(
+        "Normalized malformed Unicode in model request", expect.anything(),
+      );
+    });
+  });
+
+  it("rejects Unicode key collisions without sending a lossy request", async () => {
+    let calls = 0;
+    await withServer((_req, res) => { calls++; res.end('{"ok":true}'); }, async url => {
+      const body = JSON.stringify({ metadata: { ["\ud800"]: "first", ["\ud801"]: "second" } });
+      await expect(new TestProvider().request(1000)(url, { method: "POST", body }))
+        .rejects.toThrow("Malformed Unicode creates duplicate JSON keys");
+      expect(calls).toBe(0);
+    });
+  });
+
 });

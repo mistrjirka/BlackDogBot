@@ -882,3 +882,18 @@ describe("blackboard compaction lifecycle", () => {
     expect(store.getCompactionGuide()).not.toContain(first.variable);
   });
 });
+
+
+describe("VariableStore surrogate-safe display previews", () => {
+  it.each(["string", "array"] as const)("repairs a surrogate at a %s preview cut without changing stored data", (kind) => {
+    const store = new VariableStore();
+    const prefixChars = PREVIEW_MAX_CHARS - (kind === "array" ? 3 : 2);
+    const text = "a".repeat(prefixChars) + "\uD83C\uDF3F" + "z".repeat(CAPTURE_THRESHOLD_CHARS);
+    const value = kind === "array" ? [text] : text;
+    const stub = _asStub(store.maybeCapture("source", value, true));
+    expect(typeof stub.preview).toBe("string");
+    expect(stub.preview as string).not.toMatch(/[\uD800-\uDFFF]/u);
+    expect(stub.preview as string).toContain("\uFFFD");
+    expect(store.get(stub.variable)).toEqual(value);
+  });
+});

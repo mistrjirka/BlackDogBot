@@ -6,6 +6,7 @@ import {
   formatCharLimit,
 } from "../shared/limits.js";
 import { VariableStore } from "../utils/variable-store.js";
+import { toWellFormedText } from "../utils/unicode.js";
 
 const inspectVariableInputSchema = z.object({
   name: z.string().min(1).optional().describe("Exact stored name. Omit to list available saved variables with sizes, not their values."),
@@ -66,10 +67,12 @@ export function createInspectVariableTool(getStore: () => VariableStore | null) 
       const end: number = output.offset + output.content.length;
       return {
         type: "text" as const,
-        value:
+        // Render only. Raw stored data and UTF-16 pagination stay unchanged.
+        value: toWellFormedText(
           `[variable ${output.name}; chars ${output.offset}-${end}/${output.totalChars}; ` +
           `nextOffset: ${output.nextOffset ?? "none"}; sourceUrl: ${output.sourceUrl ?? "untracked"}]
 ${output.content}`,
+        ),
       };
     },
   });
